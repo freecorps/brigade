@@ -241,7 +241,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     fails open, RFC 0006 "Who is paged", Q18).
   - Done since (Q18 decided): a policy may escalate only from a severity (`minSeverity`, "Escalate from" in the policy
     editor): below it a run pages its first level once and ends (`paged_once`: no later level, repeat or page to
-    everyone; its page reaching nobody emails the owners and admins); a member declaring by hand may pick the policy
+    everyone; its page reaching nobody emails the owners and admins; a raise up to the threshold or a member
+    escalating by hand runs it in full); a member declaring by hand may pick the policy
     (dashboard, app, `POST /workspaces/:id/incidents`), first in the order, a deleted one falling back to the usual
     order; the "a page reached nobody" email goes to owners and admins; more than five members a page missed for the
     same reason read as one timeline line (RFC 0006 "Who is paged", RFC 0003 "Escalation policies"). Left: picking the

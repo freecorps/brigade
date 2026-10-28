@@ -21,11 +21,14 @@ export type OperatorEnv = {
   OPERATOR_EMAILS?: string;
 };
 
-/** `OPERATOR_EMAILS` as addresses: trimmed, each once, things that are not an address dropped, at most 10. */
+/**
+ * `OPERATOR_EMAILS` as addresses: trimmed, each once (lowercased, so one written twice in another case is emailed
+ * once), things that are not an address dropped, at most 10.
+ */
 export function operatorAddresses(raw: string | undefined): string[] {
   const seen = new Set<string>();
   for (const part of (raw ?? "").split(",")) {
-    const address = part.trim();
+    const address = part.trim().toLowerCase();
     if (!/^[^\s@<>,]+@[^\s@<>,]+\.[^\s@<>,]+$/.test(address)) continue;
     seen.add(address);
     if (seen.size === MAX_OPERATOR_RECIPIENTS) break;

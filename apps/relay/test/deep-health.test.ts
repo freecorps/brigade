@@ -75,26 +75,44 @@ describe("GET /health?deep=1", () => {
     expect(calls.sent[0]!.headers.get("authorization")).toMatch(/^bearer ey/);
   });
 
-  test("a revoked APNs key, or APNs not answering, is an error by reason (503)", async () => {
-    for (const [answer, reason] of [
-      [{ status: 403, reason: "InvalidProviderToken" }, "InvalidProviderToken"],
-      [{ status: 403, reason: "ExpiredProviderToken" }, "ExpiredProviderToken"],
-      [{ status: 500 }, "status_500"],
+  test("a revoked APNs key, or APNs not answering, is an error by reason (503); only the second may pass", async () => {
+    for (const [answer, reason, transient] of [
+      [{ status: 403, reason: "InvalidProviderToken" }, "InvalidProviderToken", false],
+      [{ status: 403, reason: "ExpiredProviderToken" }, "ExpiredProviderToken", false],
+      [{ status: 500 }, "status_500", true],
+      [{ status: 503, reason: "ServiceUnavailable" }, "ServiceUnavailable", true],
     ] as const) {
       const response = await handle(deep(), env, providers(answer).send);
       expect(response.status).toBe(503);
-      expect(await response.json()).toMatchObject({ ok: false, apns: { status: "error", reason } });
+      const body = (await response.json()) as { apns: object };
+      expect(body).toMatchObject({ ok: false, apns: { status: "error", reason } });
+      if (transient) expect(body.apns).toMatchObject({ transient: true });
+      else expect(body.apns).not.toHaveProperty("transient");
     }
     const down = await handle(deep(), env, async () => {
       throw new Error("connection refused");
     });
-    expect(await down.json()).toMatchObject({ apns: { status: "error", reason: "unreachable" } });
+    expect(await down.json()).toMatchObject({
+      apns: { status: "error", reason: "unreachable", transient: true },
+    });
     const badKey = await handle(
       deep(),
       { ...env, APNS_KEY: "not a key" },
       providers({ status: 400 }).send,
     );
-    expect(await badKey.json()).toMatchObject({ apns: { status: "error", reason: "key_invalid" } });
+    const refused = (await badKey.json()) as { apns: object };
+    expect(refused).toMatchObject({ apns: { status: "error", reason: "key_invalid" } });
+    expect(refused.apns).not.toHaveProperty("transient");
+  });
+
+  test("APNs answering 429 took the provider token: ok", async () => {
+    const response = await handle(
+      deep(),
+      env,
+      providers({ status: 429, reason: "TooManyRequests" }).send,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, apns: { status: "ok" } });
   });
 
   test("FCM with a service account asks Google for a fresh access token each time, and says when it refuses", async () => {
@@ -121,13 +139,20 @@ describe("GET /health?deep=1", () => {
     );
     const response = await handle(deep(), withFcm, refused.send);
     expect(response.status).toBe(503);
-    expect(await response.json()).toMatchObject({
-      ok: false,
-      fcm: { status: "error", reason: "refused" },
-    });
+    const body = (await response.json()) as { fcm: object };
+    expect(body).toMatchObject({ ok: false, fcm: { status: "error", reason: "refused" } });
+    expect(body.fcm).not.toHaveProperty("transient");
     const broken = await handle(deep(), { ...env, FCM_SERVICE_ACCOUNT: "{" }, ok.send);
     expect(await broken.json()).toMatchObject({
       fcm: { status: "error", reason: "account_invalid" },
+    });
+    // Google's token endpoint busy or down may pass by itself.
+    const busy = providers(
+      { status: 400, reason: "BadDeviceToken" },
+      { status: 503, token: false },
+    );
+    expect(await (await handle(deep(), withFcm, busy.send)).json()).toMatchObject({
+      fcm: { status: "error", reason: "unreachable", transient: true },
     });
   });
 });

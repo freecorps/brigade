@@ -276,7 +276,7 @@ export type SlackDeskOptions = {
   randomBytes: RandomBytes;
   log: (message: string, fields: Record<string, unknown>) => void;
   committed: (version: number, changes: readonly RowChange[]) => void;
-  /** Brings the shard's alarm forward to `at` (a channel to archive). Never throws. */
+  /** Brings the shard's alarm forward to `at` (a channel to archive, an escalation's next level). Never throws. */
   wake?: (at: number) => void;
 };
 
@@ -610,7 +610,11 @@ export class SlackDesk {
         }
         if (!isActive(incident.status))
           return { ...refused("not_active"), incident: summary(incident) };
-        if (!escalation || escalation.status !== "running") {
+        // A run that paged once below its policy's severity escalates on request too (`escalation.now`).
+        if (
+          !escalation ||
+          (escalation.status !== "running" && escalation.status !== "paged_once")
+        ) {
           return { ...refused("not_escalating"), incident: summary(incident) };
         }
         // What the person saw: the step the request carries (a button or message that knew it), else the run's last
@@ -647,6 +651,9 @@ export class SlackDesk {
             conflict: "unchanged",
           });
         }
+        // A run that had paged once had no timer: its next level's is new, so the alarm must come for it.
+        const nextAt = store.get("incidents", incident.id)?.escalation?.nextAt;
+        if (nextAt != null) this.options.wake?.(nextAt);
         return done("escalated");
       }
     }

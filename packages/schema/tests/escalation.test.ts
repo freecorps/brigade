@@ -1719,22 +1719,13 @@ describe("escalating from a severity (a policy's minSeverity)", () => {
       actor: "sys_escalation",
       minSeverity: "sev2",
     });
-    // Nothing moves it on: no timeout, no early escalation, no escalating by hand, no stall fallback.
+    // Nothing moves it on by itself: no timeout, no early escalation, no stall fallback.
     const step = { step: 1 };
     expect(refused(store, "escalation.advance", step)).toMatchObject({ ok: false });
     expect(refused(store, "escalation.unreached", step)).toMatchObject({ ok: false });
     expect(refused(store, "escalation.fallback", { ...step, lost: null })).toMatchObject({
       ok: false,
     });
-    expect(
-      runMutation(
-        serverMutations,
-        "escalation.now",
-        { incidentId: INC, step: 1 },
-        store,
-        ctx("usr_caio", "responder", T + MINUTE),
-      ),
-    ).toMatchObject({ ok: false, error: { code: "not_found" } });
     expect(run(store).paged).toBe(1);
     // A lost page is still paged again once: it was all the run had.
     expect(refused(store, "escalation.repage", { step: 1, lost: LOST })).toMatchObject({
@@ -1809,6 +1800,101 @@ describe("escalating from a severity (a policy's minSeverity)", () => {
       ),
     ).toMatchObject({ ok: true });
     expect(run(store)).toMatchObject({ status: "running", nextAt: T + 6 * MINUTE });
+  });
+
+  test("a declarer alone on the first level does not end it: the next level reaching someone else is paged once", () => {
+    // Caio is on call for level 1 and declared it: before, level 1 counted as reached and nobody else was ever paged.
+    const store = withPolicy({ minSeverity: "sev2" });
+    setSeverity(store, "sev3");
+    expect(start(store, "usr_caio")).toMatchObject({
+      ok: true,
+      events: [{ data: { level: 2, userIds: ["usr_eva"], reason: "unreachable" } }],
+    });
+    expect(run(store)).toMatchObject({ status: "paged_once", paged: 1 });
+    // At or above the policy's severity the declarer still counts as reached, as before.
+    const full = withPolicy({ minSeverity: "sev2" });
+    start(full, "usr_caio");
+    expect(run(full).pages[0]).toMatchObject({ level: 1, userIds: ["usr_caio"] });
+    expect(run(full).status).toBe("running");
+  });
+
+  test("with no level reaching anyone but the declarer, everyone who can respond is paged and the run ends", () => {
+    const store = withPolicy({
+      minSeverity: "sev2",
+      levels: [level(LVL1, [{ kind: "schedule", id: SCH }])],
+    });
+    setSeverity(store, "sev3");
+    expect(start(store, "usr_caio")).toMatchObject({
+      ok: true,
+      events: [{ type: "escalation.paged", data: { level: null, reason: "unreachable" } }],
+    });
+    expect(run(store)).toMatchObject({ status: "exhausted", paged: 1 });
+    expect(timeline(store).some((entry) => entry.kind === "escalation_once")).toBe(false);
+  });
+
+  test("a raise up to it marks the severity change as escalating; one that stays below it, or after an ack, does not", () => {
+    const raise = (store: MutationStore, severity: string, now = T + MINUTE) =>
+      runMutation(
+        mutations,
+        "incident.setSeverity",
+        { id: INC, severity },
+        store,
+        ctx("usr_caio", "responder", now),
+      );
+    const sev3 = withPolicy({ minSeverity: "sev3" });
+    setSeverity(sev3, "sev4");
+    start(sev3);
+    expect(raise(sev3, "sev3")).toMatchObject({
+      ok: true,
+      events: [{ data: { from: "sev4", to: "sev3", escalates: true } }],
+    });
+    const sev2 = withPolicy({ minSeverity: "sev2" });
+    setSeverity(sev2, "sev4");
+    start(sev2);
+    const below = raise(sev2, "sev3");
+    expect(below).toMatchObject({ ok: true, events: [{ data: { from: "sev4", to: "sev3" } }] });
+    expect(below.ok && (below.events[0]!.data as object)).not.toHaveProperty("escalates");
+    // Past it from below in one step counts too; an acknowledged run escalates nothing.
+    expect(raise(sev2, "sev1")).toMatchObject({ events: [{ data: { escalates: true } }] });
+    const acked = withPolicy({ minSeverity: "sev2" });
+    setSeverity(acked, "sev3");
+    start(acked);
+    runMutation(mutations, "incident.ack", { id: INC }, acked, ctx("usr_caio", "responder"));
+    const late = raise(acked, "sev2");
+    expect(late.ok && (late.events[0]!.data as object)).not.toHaveProperty("escalates");
+  });
+
+  test("escalation.now on a run that paged once escalates from its next level as a full run", () => {
+    const store = withPolicy({ minSeverity: "sev2", repeat: 1 });
+    setSeverity(store, "sev3");
+    start(store);
+    const now = (role: Role, id: string, at = T + MINUTE) =>
+      runMutation(
+        serverMutations,
+        "escalation.now",
+        { incidentId: INC, step: run(store).paged },
+        store,
+        ctx(id, role, at),
+      );
+    // The same permission as any manual escalation.
+    expect(now("viewer", "usr_duda")).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    expect(now("responder", "usr_caio")).toMatchObject({
+      ok: true,
+      events: [{ type: "escalation.paged", data: { level: 2, reason: "manual", started: false } }],
+    });
+    expect(run(store)).toMatchObject({
+      status: "running",
+      endedAt: null,
+      nextAt: T + 11 * MINUTE,
+      paged: 2,
+    });
+    expect(run(store).once).toBeUndefined();
+    expect(store.get("escalation_timers", INC)).toEqual({ id: INC, at: T + 11 * MINUTE });
+    // From here on it times out and repeats like any run.
+    expect(advance(store, T + 11 * MINUTE)).toMatchObject({
+      ok: true,
+      events: [{ data: { level: 1, round: 1, reason: "timeout" } }],
+    });
   });
 
   test("owners and admins set it; left out of an update it stays; an unknown value is refused", () => {

@@ -356,7 +356,7 @@ How a page uses them is RFC 0006 "Who is paged".
   policy from before it reads as): every severity escalates, as before. Set with the policy's other fields by
   `escalation.createPolicy` / `escalation.updatePolicy` (`escalation:manage`; left out of an update, kept), shown in
   the policy's events, and in the dashboard's policy editor ("Escalate from"). A run that starts below it pages once
-  and stops (RFC 0006 "Who is paged", `paged_once`).
+  and stops (RFC 0006 "Who is paged", `paged_once`), until a raise up to it or a member escalating by hand.
 - **Deleting a policy a monitor names** is not refused: the monitor goes back to the default in the same transaction
   (`monitor.updated`, `reason: policy_deleted`), so a monitor never names a policy that is gone and a delete never
   needs the monitors edited first. Falling back is the safe side: the default pages (or the interim rule), never

@@ -328,7 +328,8 @@ answer naming `apns` proves the token and says whether APNs took the relay's pro
 token, without a push; a relay without the deep check falls back to `POST /send` with no body, `400 invalid_body`
 accepted), reads D1 once (`select 1`, 3 s), and reports to `WatchdogDO.proved()`, which pings `DEAD_MAN_URL`
 (in `waitUntil`, 5 s timeout) when the beat is the newest yet, took at most 2 minutes, the relay took the token and
-no deeper check (APNs, FCM, D1) failed. The external check
+no deeper check (APNs, FCM, D1) failed: a refused key or account at once, a transient failure (a timeout, a 5xx, a D1
+read) only on the 3rd proved beat in a row (`TRANSIENT_FAILURES_TO_DEGRADE`). The external check
 (any service or self-hosted checker that alerts on a missed URL ping; period 1 minute, grace about 5) pages the
 operators when the pings stop.
 

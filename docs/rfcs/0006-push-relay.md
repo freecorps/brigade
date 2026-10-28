@@ -224,20 +224,34 @@ when it starts (`escalatesAt`) **pages once and does not escalate**, which means
 
 - it pages the first level that reaches someone, as any run does: a level nobody on it can be reached at is skipped
   ("Couldn't page …"), and with no level reaching anyone everyone who can respond is paged and the run ends as
-  `exhausted`, as before, so a page below the threshold is never silently dropped;
+  `exhausted`, as before, so a page below the threshold is never silently dropped. Unlike a full run, the person who
+  caused the page (the declarer) does **not** count as reached on their own: a level that reaches only them is skipped
+  too, to the first level that reaches someone else, else everyone who can respond (and, when that reaches nobody on
+  any device, the owners and admins are emailed). Otherwise a declarer on call for level 1 would end the run with
+  nobody else ever paged;
 - then the run ends at once as `paged_once` (`once`: the policy's `minSeverity`), with an `escalation_once` timeline
   entry ("Not escalated further: this policy escalates from SEV2"): no timer, so **no later level at a timeout, no
   repeat, no page to everyone when nobody acknowledges**, no early escalation when every push of the level fails
-  (`escalation.unreached` is refused), no stall fallback and no `/inc escalate`;
+  (`escalation.unreached` is refused) and no stall fallback;
 - a page of it the Queue loses is still paged again once (`escalation.repage` takes a `paged_once` run), and its page
   reaching nobody on any device emails the owners and admins at once (RFC 0005 "Email"), since nothing else will page;
-- an ack or a resolve closes it like an ended run; a severity raised into SEV1 or SEV2 afterwards starts a new run,
-  which escalates fully if the new severity is at or above the threshold. A raise that stays below SEV2 pages nothing,
-  as before.
+- a responder who asks to escalate it (`escalation.now`: `/inc escalate` in Slack, RFC 0011; the same permission,
+  `incident:update`) is heard: the run pages its next level at once and goes on from there as a **full run** (no
+  longer `once`, its timer set: timeouts, repeats and the page to everyone after them), as the manual escalation of a
+  running run would;
+- an ack or a resolve closes it like an ended run. A severity raised afterwards **up to or past the policy's
+  `minSeverity`** (the run's `once`; SEV4 to SEV3 on a policy that escalates from SEV3, or anything into SEV1 or SEV2)
+  starts a new, full run: `incident.setSeverity` marks that `incident.severity_changed` `escalates: true`, which asks
+  for a page whatever the new severity, and the page starts the run on its event (de-duplicated by it, so a
+  redelivery or a replay pages nobody twice). A raise that stays below the threshold (SEV4 to SEV3 on a policy that
+  escalates from SEV2) pages nothing, as before. (A run never stays `running` below the threshold: it ends as
+  `paged_once` in the same transaction that started it.)
 
-Tests: `packages/schema/tests/escalation.test.ts` ("escalating from a severity"), `apps/api/test/escalation.test.ts`
-("escalating from a severity": below it level 1 once and the alarm fires nothing; SEV1 on the same policy and SEV4
-with it unset escalate fully), `apps/api/test/email.test.ts`.
+Tests: `packages/schema/tests/escalation.test.ts` ("escalating from a severity": a declarer alone on the first level,
+a raise up to it, `escalation.now` on a run that paged once), `apps/api/test/escalation.test.ts` ("escalating from a
+severity": below it level 1 once and the alarm fires nothing; SEV1 on the same policy and SEV4 with it unset escalate
+fully; SEV4 raised to SEV3 escalates fully on a SEV3 policy and pages nothing on a SEV2 one; a lost first page paged
+again once), `apps/api/test/slack.test.ts` ("escalating a run that paged once"), `apps/api/test/email.test.ts`.
 
 **Alerts that page again (decided).** Besides a declared incident, two things alert sources do page (RFC 0005 "Alert
 sources"). An alert that comes back more urgent raises its incident's severity as `sys_alerts`

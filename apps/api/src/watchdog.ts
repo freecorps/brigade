@@ -38,6 +38,11 @@ export const PING_TIMEOUT_MS = 5000;
  * flaps does not flood their inboxes; the rest are only logged.
  */
 export const OPERATOR_EMAIL_HOURLY_CAP = 6;
+/**
+ * A deeper check (APNs, FCM, D1) failing transiently on this many proved beats in a row degrades the status and stops
+ * the pings; fewer change nothing, so one slow answer does not page the operators.
+ */
+export const TRANSIENT_FAILURES_TO_DEGRADE = 3;
 
 /**
  * What the consumer found at the relay: `ok` when it took the send token (src/notify.ts), `unauthorized` when it
@@ -50,7 +55,13 @@ export type RelayHealth = "ok" | "unauthorized" | "unreachable" | "not_configure
  * relay without the deep check, or no relay to ask).
  */
 export type CheckHealth = "ok" | "error" | "not_configured" | "unknown";
-export type BeatChecks = { apns: CheckHealth; fcm: CheckHealth; d1: CheckHealth };
+/**
+ * What one beat's check found, as the consumer reports it: `transient` is a failure that may pass by itself (a
+ * provider or D1 not answering in time, a 5xx), which counts as `error` only after `TRANSIENT_FAILURES_TO_DEGRADE`
+ * beats in a row; `error` (a refused key or account) counts at once.
+ */
+export type BeatCheck = CheckHealth | "transient";
+export type BeatChecks = { apns: BeatCheck; fcm: BeatCheck; d1: BeatCheck };
 export type DegradedReason =
   | "no_beat"
   | "pipeline_stalled"
@@ -102,6 +113,9 @@ type Keys =
   | "apns"
   | "fcm"
   | "d1"
+  | "apns_failures"
+  | "fcm_failures"
+  | "d1_failures"
   | "status"
   | "reasons"
   | "last_ping_at"
@@ -153,7 +167,8 @@ export class WatchdogDO extends DurableObject<Env> {
    * A heartbeat came out of the Queue (RPC from the consumer), with what the consumer found at the relay and, from
    * its deeper checks, at APNs, FCM and D1 (`checks`; absent from an older consumer). Records it, and pings the
    * external check when the beat is the newest yet, came through within `MAX_PROOF_LATENCY_MS`, the relay took the
-   * token and none of the deeper checks failed (APNs, FCM, D1; `not_configured` and `unknown` are not failures). A redelivery, or a beat older than one already proved, changes nothing. The ping runs in
+   * token and none of the deeper checks failed (APNs, FCM, D1; `not_configured` and `unknown` are not failures, and a
+   * `transient` one only from the `TRANSIENT_FAILURES_TO_DEGRADE`th in a row). A redelivery, or a beat older than one already proved, changes nothing. The ping runs in
    * `waitUntil` (it keeps the object from being evicted, not the RPC from returning), so an external check that
    * hangs never holds up the consumer, and with it the pages in the same batch.
    */
@@ -166,18 +181,16 @@ export class WatchdogDO extends DurableObject<Env> {
     const beatAt = Date.parse(beatTime);
     const known = Number(this.get("proved_beat_at") ?? Number.NEGATIVE_INFINITY);
     if (!Number.isFinite(beatAt) || beatAt <= known) return this.health(now);
-    this.ctx.storage.transactionSync(() => {
+    const failing = this.ctx.storage.transactionSync(() => {
       this.set("proved_beat_at", String(beatAt));
       this.set("last_proved_at", String(now));
       this.set("relay", relay);
-      this.set("apns", checks?.apns ?? "unknown");
-      this.set("fcm", checks?.fcm ?? "unknown");
-      this.set("d1", checks?.d1 ?? "unknown");
+      for (const key of ["apns", "fcm", "d1"] as const) this.check(key, checks?.[key] ?? "unknown");
       if (relay === "ok") this.set("last_ok_at", String(now));
       this.settle(now);
+      return (["apns", "fcm", "d1"] as const).some((key) => this.get(key) === "error");
     });
     await this.armDrain(now);
-    const failing = checks && [checks.apns, checks.fcm, checks.d1].includes("error");
     const pages = relay === "ok" && !failing;
     if (pages && now - beatAt <= MAX_PROOF_LATENCY_MS) this.ctx.waitUntil(this.ping(now));
     else if (pages) log("heartbeat too late to ping", { latencyMs: now - beatAt });
@@ -237,6 +250,23 @@ export class WatchdogDO extends DurableObject<Env> {
         lastPingOk: pingOk === null ? null : pingOk === "1",
       },
     };
+  }
+
+  /**
+   * Records what a proved beat's check `key` found. A `transient` failure only counts until the
+   * `TRANSIENT_FAILURES_TO_DEGRADE`th in a row, which records `error`; before it the check keeps what it was, so the
+   * status does not change and the beat still pings. Anything else is recorded as it is and starts the count again.
+   */
+  private check(key: "apns" | "fcm" | "d1", found: BeatCheck): void {
+    const count: Keys = `${key}_failures`;
+    if (found !== "transient") {
+      this.set(count, "0");
+      this.set(key, found);
+      return;
+    }
+    const failures = Number(this.get(count) ?? 0) + 1;
+    this.set(count, String(failures));
+    if (failures >= TRANSIENT_FAILURES_TO_DEGRADE) this.set(key, "error");
   }
 
   /** Drains the outbox to the Queue; comes back when a failed send's backoff ends. */
@@ -341,8 +371,9 @@ export class WatchdogDO extends DurableObject<Env> {
  * - `pipeline_slow`: the last proof took longer than `MAX_PROOF_LATENCY_MS`, which pings nothing;
  * - `relay_unauthorized` / `relay_unreachable` / `relay_not_configured`: what the consumer found at the relay on the
  *   last proof;
- * - `apns_failing` / `fcm_failing` / `d1_failing`: the last proof's deeper checks (Q19): APNs refused the relay's
- *   provider token or did not answer, FCM gave no access token, or the D1 read failed.
+ * - `apns_failing` / `fcm_failing` / `d1_failing`: the deeper checks (Q19): APNs refused the relay's provider token,
+ *   FCM refused the service account, or (on `TRANSIENT_FAILURES_TO_DEGRADE` proofs in a row) a provider or the D1
+ *   read did not answer.
  * With no beat yet, or beats but none proved and none overdue, it is `unknown`.
  */
 export function pagingStatus(

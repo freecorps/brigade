@@ -38,8 +38,8 @@ import {
   isSystemEvent,
   STATUS_EVENT,
   WATCHDOG_NAME,
+  type BeatCheck,
   type BeatChecks,
-  type CheckHealth,
   type RelayHealth,
 } from "./watchdog.ts";
 import { WORKSPACE_ID } from "./workspace.ts";
@@ -356,7 +356,7 @@ export async function proveHeartbeat(
 async function relayHealth(
   env: Pick<NotifyEnv, "RELAY" | "RELAY_URL" | "RELAY_SEND_TOKEN">,
   send: Fetch,
-): Promise<{ relay: RelayHealth; apns: CheckHealth; fcm: CheckHealth }> {
+): Promise<{ relay: RelayHealth; apns: BeatCheck; fcm: BeatCheck }> {
   const unknown = { apns: "unknown", fcm: "unknown" } as const;
   if (!env.RELAY_SEND_TOKEN || (!env.RELAY && !env.RELAY_URL)) {
     return { relay: "not_configured", ...unknown };
@@ -378,8 +378,11 @@ async function relayHealth(
       return { relay: "unauthorized", ...unknown };
     }
     const body: unknown = await response.json().catch(() => null);
-    const provider = (key: string): CheckHealth | undefined => {
-      const status = Reflect.get(Object(Reflect.get(Object(body), key)), "status");
+    const provider = (key: string): BeatCheck | undefined => {
+      const check = Object(Reflect.get(Object(body), key));
+      const status = Reflect.get(check, "status");
+      // An error that may pass by itself (a timeout, a 5xx): the watchdog waits for a few in a row.
+      if (status === "error" && Reflect.get(check, "transient") === true) return "transient";
       return status === "ok" || status === "error" || status === "not_configured"
         ? status
         : undefined;
@@ -387,7 +390,9 @@ async function relayHealth(
     const apns = provider("apns");
     if (apns !== undefined) {
       const fcm = provider("fcm") ?? "unknown";
-      if (apns === "error" || fcm === "error") log("push provider check failed", { apns, fcm });
+      if ([apns, fcm].some((check) => check === "error" || check === "transient")) {
+        log("push provider check failed", { apns, fcm });
+      }
       return { relay: "ok", apns, fcm };
     }
   } catch (error) {
@@ -399,9 +404,10 @@ async function relayHealth(
 
 /**
  * The beat's one D1 read (Q19): `select 1`, within `D1_HEALTH_TIMEOUT_MS`. Nothing pages on it (the page path fails
- * open on D1); a failure only degrades the status and tells the operators.
+ * open on D1); a failure is `transient` (the watchdog degrades the status and tells the operators after a few in a
+ * row).
  */
-async function d1Health(db: D1Database | undefined): Promise<CheckHealth> {
+async function d1Health(db: D1Database | undefined): Promise<BeatCheck> {
   if (!db) return "not_configured";
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -414,7 +420,7 @@ async function d1Health(db: D1Database | undefined): Promise<CheckHealth> {
     return "ok";
   } catch (error) {
     log("D1 health read failed", { error: String(error) });
-    return "error";
+    return "transient";
   } finally {
     clearTimeout(timer);
   }

@@ -201,8 +201,9 @@ export type EscalationPage = {
 };
 
 /**
- * `paged_once`: the run started below its policy's `minSeverity`, paged its first level that reaches someone and
- * ended there (no timeout to a later level, no repeat, no page to everyone after it; RFC 0006 "Who is paged").
+ * `paged_once`: the run started below its policy's `minSeverity`, paged its first level that reaches someone besides
+ * whoever caused it and ended there (no timeout to a later level, no repeat, no page to everyone after it; RFC 0006
+ * "Who is paged"). A raise up to that severity, or a member escalating by hand, runs it in full again.
  */
 export type EscalationStatus = "running" | "acknowledged" | "resolved" | "exhausted" | "paged_once";
 

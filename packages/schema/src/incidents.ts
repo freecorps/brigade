@@ -43,9 +43,13 @@ export type IncidentStatusChanged = DomainEvent<
  * `reopening`: raised by the alerts' actor as a flapping alert reopens its incident (RFC 0005 "Alert sources"); the
  * reopen right after it pages, at this severity, so this one asks for no page of its own.
  */
+/**
+ * `escalates`: the raise reached the severity the incident's run did not escalate below (its policy's `minSeverity`,
+ * `once` on the run), so it asks for a page that starts a new, full run (RFC 0006 "Who is paged").
+ */
 export type IncidentSeverityChanged = DomainEvent<
   "incident.severity_changed",
-  { from: Severity; to: Severity; reopening?: true }
+  { from: Severity; to: Severity; reopening?: true; escalates?: true }
 >;
 /** Someone acknowledged the page: escalation stops (RFC 0003, "Escalation run"). */
 export type IncidentAcknowledged = DomainEvent<"incident.acknowledged", { by: string }>;
@@ -304,6 +308,20 @@ export const setIncidentStatus = defineMutation({
   },
 });
 
+/**
+ * Whether raising `incident` to `severity` reaches the policy's `minSeverity` its run started below (`once`): the run
+ * paged once and stopped there, and the raise starts a new, full run (RFC 0006 "Who is paged"). Only while the run is
+ * the incident's last word (`paged_once`, or `exhausted` after paging everyone; `running` never has `once` once its
+ * start committed): one acknowledged or resolved pages nothing.
+ */
+function raisesPastOnce(incident: IncidentRow, severity: Severity): boolean {
+  const run = incident.escalation;
+  if (run?.once === undefined) return false;
+  if (run.status === "acknowledged" || run.status === "resolved") return false;
+  const rank = (one: Severity) => SEVERITIES.indexOf(one);
+  return rank(severity) <= rank(run.once) && rank(incident.severity) > rank(run.once);
+}
+
 export const setIncidentSeverity = defineMutation({
   name: "incident.setSeverity",
   args: v.object({ id: incidentId, severity: v.picklist(SEVERITIES) }),
@@ -324,7 +342,11 @@ export const setIncidentSeverity = defineMutation({
     const event: IncidentSeverityChanged = {
       type: "incident.severity_changed",
       subject: args.id,
-      data: { from: incident.severity, to: args.severity },
+      data: {
+        from: incident.severity,
+        to: args.severity,
+        ...(raisesPastOnce(incident, args.severity) && { escalates: true }),
+      },
     };
     return ok(event);
   },

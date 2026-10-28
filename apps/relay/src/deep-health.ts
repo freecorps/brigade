@@ -18,16 +18,22 @@ import {
  *
  * - **APNs**: the relay's provider token (the same cached JWT a page uses) on a request for a device token that
  *   cannot exist (all zeros). APNs checks the provider token first: `400 BadDeviceToken` means it took the token
- *   (nothing is delivered: there is no such device), `403 InvalidProviderToken` / `ExpiredProviderToken` that the key
- *   was revoked or is wrong. A key that does not sign is an error too.
+ *   (nothing is delivered: there is no such device), and so does `429` (too many requests are counted after the token
+ *   is checked); `403 InvalidProviderToken` / `ExpiredProviderToken` that the key was revoked or is wrong. A key that
+ *   does not sign is an error too. Only `APNS_ENVIRONMENT`'s host is asked: the same key signs for both hosts, so a key
+ *   APNs takes on one it takes on the other.
  * - **FCM**: a fresh OAuth access token for the service account in `FCM_SERVICE_ACCOUNT` (the JWT grant the pages
  *   use, src/fcm.ts), never the pages' cached one. A relay without that secret serves iOS only: `not_configured`,
  *   which is not a failure.
+ *
+ * An error that may pass by itself (`transient`: the provider not answering in time, a 5xx, Google's token endpoint
+ * slow or busy) is told apart from one that will not (a refused key or account): the watchdog stops the external
+ * check only after a few transient ones in a row, and at once for the others.
  */
 export type ProviderCheck =
   | { status: "ok" }
   | { status: "not_configured" }
-  | { status: "error"; reason: string };
+  | { status: "error"; reason: string; transient?: true };
 
 export type DeepHealth = { ok: boolean; apns: ProviderCheck; fcm: ProviderCheck };
 
@@ -91,12 +97,18 @@ async function checkApns(
     const response = await send(request);
     const reason = await readReason(response);
     if (response.status === 400 && reason === "BadDeviceToken") return { status: "ok" };
+    // Rate limited: APNs checked the provider token before it counted the request.
+    if (response.status === 429) return { status: "ok" };
     if (reason === "ExpiredProviderToken" || reason === "InvalidProviderToken") {
       options.tokens.clear();
     }
-    return { status: "error", reason: reason ?? `status_${response.status}` };
+    return {
+      status: "error",
+      reason: reason ?? `status_${response.status}`,
+      ...(response.status >= 500 && { transient: true as const }),
+    };
   } catch {
-    return { status: "error", reason: "unreachable" };
+    return { status: "error", reason: "unreachable", transient: true };
   }
 }
 
@@ -120,8 +132,11 @@ async function checkFcm(
     );
     return { status: "ok" };
   } catch (error) {
-    if (error instanceof GoogleAuthError) return { status: "error", reason: error.kind };
-    return { status: "error", reason: "unreachable" };
+    // `unreachable`: Google's token endpoint did not answer in time, or answered 5xx or 429.
+    if (error instanceof GoogleAuthError && error.kind === "refused") {
+      return { status: "error", reason: "refused" };
+    }
+    return { status: "error", reason: "unreachable", transient: true };
   }
 }
 

@@ -242,7 +242,8 @@ export type DeviceOutcome =
 
 /**
  * Whether an event asks for a page (RFC 0006 "Who is paged"), from the event alone: a declared incident (any
- * severity; SEV1 and SEV2 at `page` urgency), a severity raised into SEV1 or SEV2, or an escalation level fired by
+ * severity; SEV1 and SEV2 at `page` urgency), a severity raised into SEV1 or SEV2 or up to the policy's `minSeverity`
+ * a run paged once below (`escalates`, set by `incident.setSeverity`), or an escalation level fired by
  * the shard's alarm (the level a run starts with is sent on the event that started it). Monitors open incidents with
  * `incident.declared` as `sys_monitors` (SEV2), so they page through the same rule. An incident reopened by the
  * alerts' actor pages too: its alert fired again soon after it resolved by itself, unacknowledged (RFC 0005 "Alert
@@ -269,14 +270,14 @@ export function asksForPage(event: BrigadeEvent): boolean {
     return (event.data as Partial<EscalationPaged["data"]> | null)?.started === false;
   }
   if (event.type !== "incident.severity_changed") return false;
-  const { from, to, reopening } = (event.data ?? {}) as Partial<IncidentSeverityChanged["data"]>;
-  return (
-    reopening !== true &&
-    to !== undefined &&
-    from !== undefined &&
-    PAGING_SEVERITIES.includes(to) &&
-    rank(to) < rank(from)
-  );
+  const { from, to, reopening, escalates } = (event.data ?? {}) as Partial<
+    IncidentSeverityChanged["data"]
+  >;
+  if (reopening === true || to === undefined || from === undefined || rank(to) >= rank(from)) {
+    return false;
+  }
+  // Into SEV1 or SEV2, or up to the severity the incident's run paged once below (`escalates`): a new, full run.
+  return PAGING_SEVERITIES.includes(to) || escalates === true;
 }
 
 /**

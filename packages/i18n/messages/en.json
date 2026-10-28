@@ -1490,7 +1490,7 @@
         "field=targets, form=label": "Who is paged",
         "field=default, form=label": "Use for every page (default policy)",
         "field=min_severity, form=label": "Escalate from",
-        "field=min_severity, form=hint": "Less severe incidents page the first level once and don't escalate.",
+        "field=min_severity, form=hint": "Less severe incidents page the first level once and don't escalate, unless their severity is raised to it or someone escalates by hand.",
         "field=add_target, form=label": "Add a schedule or a person",
         "field=name, form=invalid": "Enter a name.",
         "field=timeout, form=invalid": "Enter a whole number of minutes from 1 to 1440.",

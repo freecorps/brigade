@@ -1490,7 +1490,7 @@
         "field=targets, form=label": "Quem é chamado",
         "field=default, form=label": "Usar em toda chamada (política padrão)",
         "field=min_severity, form=label": "Escalar a partir de",
-        "field=min_severity, form=hint": "Incidentes menos graves chamam o primeiro nível uma vez e não escalam.",
+        "field=min_severity, form=hint": "Incidentes menos graves chamam o primeiro nível uma vez e não escalam, a menos que a gravidade suba até ela ou alguém escale manualmente.",
         "field=add_target, form=label": "Adicionar uma escala ou pessoa",
         "field=name, form=invalid": "Informe um nome.",
         "field=timeout, form=invalid": "Informe um número inteiro de minutos de 1 a 1440.",

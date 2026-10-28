@@ -4,6 +4,7 @@
 
 import type { Locale } from "@freecorps/brigade-i18n";
 import {
+  status_group_count,
   status_maintenance,
   status_subscribe,
   status_text,
@@ -95,11 +96,15 @@ const stamp = (at: number, locale: Locale) =>
  * data-local>` in the visitor's zone, in the page's language, the UTC text kept as its tooltip. Without it, or where
  * it fails, the page reads exactly as before, in UTC. It reads nothing but the page and sends nothing anywhere, so the
  * cached document is the same for everyone. Changing a character changes `LOCAL_TIMES_SCRIPT_HASH` (tested).
+ *
+ * It also lets a tap name an uptime day where there is no hover (phones): tapping a bar marks it `tip`, which shows its
+ * tooltip as hover does, and tapping anywhere else clears it. Without the script the bars still show and still have
+ * their one text alternative.
  */
-export const LOCAL_TIMES_SCRIPT = `document.querySelectorAll("time[data-local]").forEach(function(t){try{var f=new Intl.DateTimeFormat(document.documentElement.lang,${JSON.stringify(TIME_FORMAT)}),s=f.format(new Date(t.dateTime));if(s!==t.textContent){t.title=t.textContent;t.textContent=s}}catch(e){}})`;
+export const LOCAL_TIMES_SCRIPT = `document.querySelectorAll("time[data-local]").forEach(function(t){try{var f=new Intl.DateTimeFormat(document.documentElement.lang,${JSON.stringify(TIME_FORMAT)}),s=f.format(new Date(t.dateTime));if(s!==t.textContent){t.title=t.textContent;t.textContent=s}}catch(e){}});document.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest(".bars span");document.querySelectorAll(".bars .tip").forEach(function(o){if(o!==b)o.classList.remove("tip")});if(b)b.classList.toggle("tip")})`;
 
 /** `script-src` for the page: the SHA-256 of `LOCAL_TIMES_SCRIPT`, base64. */
-export const LOCAL_TIMES_SCRIPT_HASH = "sha256-NYl3lCSOTW1KfpEt8yxY2Nt8aWKg033ZBb3BoTwNLko=";
+export const LOCAL_TIMES_SCRIPT_HASH = "sha256-21GvQ+7+HiGN5xMADGAAaTLbQIAnWEq35JcW6PBQwmQ=";
 
 /**
  * A message with a time (or two) in it, as HTML: the message escaped, each time in its own `<time>`. The times go in as
@@ -184,8 +189,8 @@ function themeVars(theme: ThemeName): string {
 }
 
 const STYLE = `
-:root{${themeVars("light")};color-scheme:light dark}
-@media (prefers-color-scheme:dark){:root{${themeVars("dark")}}}
+:root{${themeVars("light")};--u-up:#2f9e5b;--u-degraded:#d99a06;--u-down:#d63c2f;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{${themeVars("dark")};--u-up:#3ccf86;--u-degraded:#f2b929;--u-down:#f05a4b}}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-tap-highlight-color:transparent}
@@ -200,7 +205,16 @@ p{margin:0}
 .list li{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.75rem 1rem;min-height:3rem}
 .list li+li{border-top:1px solid var(--border)}
 .name{min-width:0;overflow-wrap:anywhere}
-.group{font-size:.8125rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:1.25rem 0 .5rem}
+.group{background:var(--card);border:1px solid var(--border);border-radius:.75rem;margin-bottom:.75rem;overflow:hidden}
+.group>summary{display:flex;align-items:center;gap:.625rem;min-height:3rem;padding:.5rem 1rem;cursor:pointer;list-style:none;font-weight:600;-webkit-user-select:none;user-select:none}
+.group>summary::-webkit-details-marker{display:none}
+.group>summary::before{content:"";flex:none;width:.4375rem;height:.4375rem;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(-45deg);margin:0 .25rem 0 .125rem;transition:transform 200ms cubic-bezier(.23,1,.32,1)}
+.group[open]>summary::before{transform:rotate(45deg)}
+.group>summary .count{margin-left:auto;color:var(--muted);font-size:.8125rem;font-weight:400;font-variant-numeric:tabular-nums}
+.group>.list{border:0;border-top:1px solid var(--border);border-radius:0}
+:root{interpolate-size:allow-keywords}
+.group::details-content{height:0;overflow:clip;opacity:0;transition:height 260ms cubic-bezier(.23,1,.32,1),opacity 200ms ease-out,content-visibility 260ms allow-discrete}
+.group[open]::details-content{height:auto;opacity:1}
 .chip{display:inline-flex;align-items:center;gap:.375rem;flex:none;font-size:.8125rem;font-weight:600;padding:.125rem .5rem;border-radius:999px;white-space:nowrap}
 .incident{background:var(--card);border:1px solid var(--border);border-radius:.75rem;padding:1rem;margin-bottom:.75rem}
 .incident header{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.5rem}
@@ -212,17 +226,30 @@ p{margin:0}
 details.incident summary{cursor:pointer;list-style:none}
 details.incident summary::-webkit-details-marker{display:none}
 .empty{color:var(--muted)}
-.list li.with-bar{flex-wrap:wrap}
+.list li.with-bar{flex-wrap:wrap;padding-bottom:.875rem}
+.list .chip{background:none;color:var(--muted);font-weight:500;padding:0}
+.list .chip .dot{width:.5rem;height:.5rem}
+${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.list .c-${s} .dot{color:var(--c-${s}-fg)}`).join("")}
 .uptime{flex-basis:100%;margin-top:.25rem}
-.summary{color:var(--muted);font-size:.8125rem;margin:0 0 .375rem;font-variant-numeric:tabular-nums}
-.bars{display:flex;gap:1px;height:2rem;align-items:stretch}
-@media (min-width:40rem){.bars{gap:2px}}
-.bars span{flex:1;min-width:1px;border-radius:2px;background:var(--border)}
-.bars .u-up{background:var(--c-operational-fg)}
-.bars .u-degraded{background:var(--c-degraded-fg)}
-.bars .u-down{background:var(--c-major_outage-fg)}
+.bars{display:flex;gap:2px;height:2.25rem}
+.bars span{position:relative;flex:1;min-width:2px;border-radius:3px;background:var(--border);transform-origin:bottom;animation:rise 640ms cubic-bezier(.23,1,.32,1) backwards;animation-delay:calc(var(--i,0) * 6ms);transition:opacity 160ms ease-out,filter 160ms ease-out}
+@keyframes rise{from{transform:scaleY(.12);opacity:0}}
+.bars .u-up{background:var(--u-up)}
+.bars .u-degraded{background:var(--u-degraded)}
+.bars .u-down{background:var(--u-down)}
 .bars .u-none{background:var(--border)}
-.scale{display:flex;justify-content:space-between;gap:.5rem;color:var(--muted);font-size:.75rem;margin-top:.25rem;white-space:nowrap}
+.bars span::after{content:attr(data-tip);position:absolute;bottom:calc(100% + .5rem);left:50%;transform:translate(-50%,.25rem);opacity:0;pointer-events:none;z-index:1;white-space:nowrap;font-size:.75rem;font-weight:500;line-height:1.4;padding:.25rem .5rem;border-radius:.375rem;background:var(--fg);color:var(--bg);transition:opacity 120ms ease-out,transform 160ms cubic-bezier(.23,1,.32,1)}
+.bars span:nth-child(-n+15)::after{left:0;transform:translate(0,.25rem)}
+.bars span:nth-last-child(-n+15)::after{left:auto;right:0;transform:translate(0,.25rem)}
+@media (hover:hover) and (pointer:fine){.bars:hover span{opacity:.45}.bars span:hover{opacity:1;filter:brightness(1.12)}.bars span:hover::after{opacity:1;transform:translate(-50%,0)}.bars span:nth-child(-n+15):hover::after,.bars span:nth-last-child(-n+15):hover::after{transform:translate(0,0)}}
+.bars:has(.tip) span{opacity:.45}.bars span.tip{opacity:1}.bars span.tip::after{opacity:1;transform:translate(-50%,0)}.bars span.tip:nth-child(-n+15)::after,.bars span.tip:nth-last-child(-n+15)::after{transform:translate(0,0)}
+@media (max-width:39.99rem){.bars span:nth-child(-n+75)::after{left:0;transform:translate(0,.25rem)}.bars span.tip:nth-child(-n+75)::after{transform:translate(0,0)}}
+.scale{display:flex;justify-content:space-between;align-items:center;gap:.75rem;color:var(--muted);font-size:.75rem;margin-top:.375rem;white-space:nowrap;font-variant-numeric:tabular-nums}
+.scale::before,.scale::after{content:"";order:2;flex:1;height:1px;background:var(--border)}
+.scale::after{order:4}
+.scale .from{order:1}.scale .pct{order:3}.scale .to{order:5}
+.scale .short{display:none}
+@media (max-width:39.99rem){.bars span:nth-child(-n+60){display:none}.scale .long{display:none}.scale .short{display:inline}}
 .window{color:var(--muted);font-size:.875rem;margin-top:.25rem}
 .subscribe{background:var(--card);border:1px solid var(--border);border-radius:.75rem;padding:1rem;margin-top:2rem}
 .subscribe h2{margin:0 0 .25rem}
@@ -235,7 +262,8 @@ button:active{transform:scale(.97)}
 .trap{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}
 .actions{margin-top:1.5rem;display:flex;flex-wrap:wrap;align-items:center;gap:1rem}
 a{color:inherit}
-@media (prefers-reduced-motion:reduce){button{transition:none}}
+@media (prefers-reduced-motion:reduce){button{transition:none}.bars span{animation-name:fade}.group::details-content{transition-property:opacity,content-visibility}}
+@keyframes fade{from{opacity:0}}
 .hint{margin:-.5rem 0 .75rem}
 .follow{flex-basis:100%;min-width:0}
 .follow summary{display:flex;align-items:center;gap:.5rem;min-height:3rem;cursor:pointer;font-weight:600;font-size:.9375rem;list-style:none;-webkit-user-select:none;user-select:none}
@@ -338,13 +366,24 @@ function uptimeBar(locale: Locale, component: SnapshotComponent): string {
     `${component.name}: ${percent}`,
     ...bad.map((one) => describe(one.state, one.date, one.down)),
   ].join(". ");
+  // Each day rises in turn (its index sets the delay) and names itself on hover; the role="img" label above is what
+  // a screen reader hears, so the days stay out of the accessibility tree.
   const bars = uptime.days
     .map(
-      (one) =>
-        `<span class="u-${one.state}" title="${escape(describe(one.state, one.date, one.down))}"></span>`,
+      (one, index) =>
+        `<span class="u-${one.state}" style="--i:${index}" data-tip="${escape(describe(one.state, one.date, one.down))}"></span>`,
     )
     .join("");
-  return `<div class="uptime"><p class="summary" aria-hidden="true">${escape(percent)}</p><div class="bars" role="img" aria-label="${escape(label)}">${bars}</div><p class="scale" aria-hidden="true"><span>${escape(sayUptime(locale, "start"))}</span><span>${escape(sayUptime(locale, "end"))}</span></p></div>`;
+  const share =
+    uptime.percent === null
+      ? sayUptime(locale, "no_data")
+      : sayUptime(locale, "percent", {
+          percent: new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(
+            uptime.percent,
+          ),
+        });
+  // Phones show the last 30 days (the CSS hides the rest), so the scale's start says so.
+  return `<div class="uptime"><div class="bars" role="img" aria-label="${escape(label)}">${bars}</div><p class="scale" aria-hidden="true"><span class="from"><span class="long">${escape(sayUptime(locale, "start"))}</span><span class="short">${escape(sayUptime(locale, "start_short"))}</span></span><span class="pct">${escape(share)}</span><span class="to">${escape(sayUptime(locale, "end"))}</span></p></div>`;
 }
 
 function maintenanceWindow(locale: Locale, window: SnapshotMaintenance, active: boolean): string {
@@ -456,15 +495,18 @@ export function renderStatusPage(
       ? `<p class="empty">${say(locale, "components_empty")}</p>`
       : snapshot.groups
           .map((group) => {
-            const heading =
-              group.name === null ? "" : `<h3 class="group">${escape(group.name)}</h3>`;
             const rows = group.components
               .map(
                 (component) =>
                   `<li${component.uptime ? ' class="with-bar"' : ""}><span class="name">${escape(component.name)}</span>${componentChip(locale, component.status)}${uptimeBar(locale, component)}</li>`,
               )
               .join("");
-            return `${heading}<ul class="list">${rows}</ul>`;
+            if (group.name === null) return `<ul class="list">${rows}</ul>`;
+            // A named group is a card that folds (no script: a details element), open to start with.
+            const count = escape(
+              status_group_count({ count: group.components.length }, { locale }),
+            );
+            return `<details class="group" open><summary><span class="name">${escape(group.name)}</span><span class="count">${count}</span></summary><ul class="list">${rows}</ul></details>`;
           })
           .join("");
   const active =

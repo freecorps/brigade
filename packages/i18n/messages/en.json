@@ -3270,6 +3270,20 @@
       }
     }
   ],
+  "status_group_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} component",
+        "countPlural=*": "{countFormatted} components"
+      }
+    }
+  ],
   "status_uptime": [
     {
       "declarations": ["input part", "input percent", "input date", "input minutes"],
@@ -3282,6 +3296,8 @@
         "part=day_down": "{date}: down for {minutes} min",
         "part=day_none": "{date}: no data",
         "part=start": "90 days ago",
+        "part=start_short": "30 days ago",
+        "part=percent": "{percent}% uptime",
         "part=end": "Today",
         "part=*": "Uptime"
       }

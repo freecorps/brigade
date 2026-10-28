@@ -418,7 +418,9 @@ function WindowForm({
           <input
             type="checkbox"
             className="mt-0.5 size-5 shrink-0 accent-primary"
-            checked={outage}
+            // Only components can be down: with none chosen it can't be ticked, rather than being dropped on save.
+            checked={outage && chosen.length > 0}
+            disabled={chosen.length === 0}
             aria-describedby={outageHintId}
             onChange={(event) => setOutage(event.target.checked)}
           />

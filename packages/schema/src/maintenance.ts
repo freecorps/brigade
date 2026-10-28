@@ -161,15 +161,16 @@ export const updateMaintenance = defineMutation({
       current.startsAt === args.startsAt &&
       current.endsAt === args.endsAt &&
       current.componentIds.join() === args.componentIds.join() &&
-      (current.outage === true) === (args.outage === true)
+      (current.outage === true) === (args.outage ?? current.outage === true)
     ) {
       return fail("conflict", "The window is unchanged");
     }
     const row: MaintenanceRow = {
       ...current,
       ...args,
-      // Written either way: the store merges a patch, so leaving it out would keep a planned outage on.
-      outage: args.outage === true,
+      // Written either way (the store merges a patch). Left out by a client from before planned outages: kept as it
+      // was, so an old dashboard editing the window never turns an outage off; `false` turns it off.
+      outage: args.outage ?? current.outage === true,
       phase: maintenancePhase(args, ctx.now),
       updatedAt: ctx.now,
     };

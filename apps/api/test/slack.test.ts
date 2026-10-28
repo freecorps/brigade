@@ -1291,6 +1291,18 @@ describe("a channel per incident, and the timeline mirror", () => {
     expect(again.calls.map((call) => call.method)).not.toContain("conversations.create");
   });
 
+  test("a raise lowered again before Slack got to it still makes the channel it asked for", async () => {
+    const t = await team();
+    const teamId = await withChannels(t, { incidentChannels: "major" });
+    await deliver([await declare(t, teamId, "Slow search", "sev3")], slackApi().send);
+    await as(t, teamId, t.caio.email, { kind: "severity", severity: "sev2", number: 1 });
+    await as(t, teamId, t.caio.email, { kind: "severity", severity: "sev3", number: 1 });
+    const [raised] = await eventsOf(t, "incident.severity_changed");
+    const late = slackApi();
+    await deliver([raised!], late.send);
+    expect(late.calls.map((call) => call.method)).toContain("conversations.create");
+  });
+
   test("/inc in the incident's channel acts on it; updates are mirrored there, but not `!update` messages", async () => {
     const t = await team();
     const teamId = await withChannels(t);

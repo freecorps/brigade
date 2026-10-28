@@ -153,6 +153,13 @@ describe("maintenance", () => {
     const after = statusSnapshot(store, T + 2 * HOUR)!;
     expect(after.groups[0]!.components[0]!.status).toBe("maintenance");
     expect(after.maintenance![0]!.outage).toBeUndefined();
+    // A dashboard from before planned outages sends none: the outage is kept, never turned off by leaving it out.
+    run(store, "maintenance.update", { ...args, outage: true }, ctx("admin", T + 2 * HOUR));
+    const old: Record<string, unknown> = { ...args };
+    delete old.outage;
+    expect(
+      run(store, "maintenance.update", { ...old, title: "Renamed" }, ctx("admin", T + 2 * HOUR)),
+    ).toMatchObject({ ok: true, events: [{ data: { outage: true } }] });
   });
 
   test("upcoming windows are listed soonest first, with nothing internal", () => {

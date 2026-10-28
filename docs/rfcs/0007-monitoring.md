@@ -279,7 +279,8 @@ results (a new monitor is up on its first success).
   until then the workspace shard is the alert's home: the server-only mutation `monitor.report`, run as the system actor
   `sys_monitors` (RFC 0004 "Server-side writes"), records the result, and when the quorum turns down it fires one alert
   per monitor (`alerts` table, fingerprint `monitor:<id>`; no second one while it fires) and opens an incident through
-  `incident.declare` (the monitor's severity, SEV2 unless it sets one; "<name> is down"; or as a route that names it
+  `incident.declare` (the monitor's severity, SEV2 unless it sets one; "<name> is down", in English
+  until the workspace locale is built, then in it (RFC 0008, Q15); or as a route that names it
   says) in the same transaction, so there is never an alert without its
   incident (its `incident.declared` event comes before `alert.fired`). When the quorum turns up again the alert resolves; the incident is left for people, since incidents have no
   timeline yet. Pausing or deleting a monitor resolves its alert too. Every step is an event in the outbox
@@ -413,13 +414,24 @@ results (a new monitor is up on its first success).
   (`relay_not_configured`) on the last proof. `unknown` is before the first proof (a new deployment; local runs, where
   the cron only fires by hand). The watchdog itself unreachable is a 503, which the dashboard shows as "couldn't
   check". Each change of status or reasons on a beat or a proof is a `brigade.status_changed` event in the watchdog's
-  outbox and a log line (`paging pipeline degraded`); nothing consumes the event yet. `no_beat` never is: a beat or a
+  outbox and a log line (`paging pipeline degraded`); nothing consumes the event yet (an email to the operators is
+  decided, below). `no_beat` never is: a beat or a
   proof is what records a change, and no beat means neither runs, so only `GET /health/paging` and the external check
   see it.
 
+  **Decided (Q19), to build:**
+  - **A deep relay check.** The relay answers `GET /health?deep=1` by asking APNs and FCM for
+    a provider or access token, without sending a push, so a revoked or expired key shows up. The consumer's proof
+    of a heartbeat calls it, and a failure is a reason of its own on `GET /health/paging` and stops the ping, like
+    a refused send token.
+  - **One D1 read per beat.** The proof also makes one cheap D1 read, so a D1 that sign-in and heartbeat routing
+    depend on failing turns the status `degraded` and silences the external check.
+  - **Operators hear of it.** The instance's operators are listed in configuration (`OPERATOR_EMAILS`, a secret or
+    variable, comma-separated) and each `brigade.status_changed` is emailed to them through the email notifier
+    (RFC 0005 "Email"), off the paging path. `no_beat` still reaches only the external check.
+
   Not covered: each workspace shard's own alarm and outbox (the watchdog proves the shared code and the shared
-  Queue, not every shard's drain), APNs itself (the token check stops before it), and D1. See open question
-  Q19.
+  Queue, not every shard's drain), which waits on a registry of shards; see open question Q19.
 
 - Internal self-check: a DO alarm verifies every `ProbeDO` reported recently and alerts on stalled probes.
   Built so far: the workspace shard's alarm logs a stalled region and pushes its config again, and a monitor whose

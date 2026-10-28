@@ -12,6 +12,9 @@
 - Payload types: `incident.renamed` (`from`, `to`), a new event in the webhook catalog (version 1).
 - `declareIncident` takes `escalationPolicyId`: the policy that pages the incident, first in the policy order; one
   that does not exist is left out.
+- `listPostmortemRevisions` (`incident:read`): the last 20 revisions of an incident's postmortem, newest first
+  (type `PostmortemRevision`). `requestPostmortemDraft` may answer `403 ai_disabled`: an owner turned AI drafts off
+  for the workspace.
 
 ## 0.2.0 (unreleased)
 

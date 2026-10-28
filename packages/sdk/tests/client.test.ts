@@ -113,6 +113,7 @@ const CALLS: Record<keyof BrigadeClient, (client: BrigadeClient) => Promise<unkn
   createExport: (c) => c.createExport(WS, { scope: { kind: "incident", incidentId: INC } }),
   downloadExport: (c) => c.downloadExport(WS, EXP),
   requestPostmortemDraft: (c) => c.requestPostmortemDraft(WS, INC, { locale: "pt-BR" }),
+  listPostmortemRevisions: (c) => c.listPostmortemRevisions(WS, INC),
 };
 
 const VALUES: Record<string, string> = {

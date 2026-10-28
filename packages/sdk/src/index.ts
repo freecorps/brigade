@@ -25,6 +25,7 @@ export {
   type CustomField,
   type ExportCreated,
   type ExportFile,
+  type PostmortemRevision,
   type ExportScope,
   type Incident,
   type IncidentFilter,

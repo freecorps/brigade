@@ -96,6 +96,45 @@ describe("local times", () => {
     expect(html).toContain("27 de out. de 2026, 12:05 UTC</time>");
   });
 
+  test("a snapshot older than 48 hours says the page may be out of date", () => {
+    const fresh = renderStatusPage(snapshot(), { slug: "acme", now: T + 48 * HOUR });
+    expect(fresh).not.toContain("may be out of date");
+    const old = renderStatusPage(snapshot(), { slug: "acme", now: T + 48 * HOUR + 1 });
+    expect(old).toContain(
+      `This page may be out of date: it was last updated <time datetime="${new Date(T).toISOString()}" data-local>Oct 27, 2026, 12:05 PM UTC</time>.`,
+    );
+    const pt = renderStatusPage(snapshot({ locale: "pt-BR" }), { now: T + 72 * HOUR });
+    expect(pt).toContain("Esta página pode estar desatualizada");
+  });
+
+  test("a planned outage says so on the page and in the feeds", () => {
+    const planned = snapshot({
+      upcoming: [
+        {
+          title: "Database move",
+          body: "The API is off while we move.",
+          components: ["API"],
+          startsAt: T + 24 * HOUR,
+          endsAt: T + 26 * HOUR,
+          outage: true,
+        },
+      ],
+    });
+    const html = renderStatusPage(planned, { slug: "acme", now: T });
+    expect(html).toContain(
+      '<span class="chip c-major_outage"><span class="dot"></span>Planned outage</span>',
+    );
+    expect(html).toContain("The components it affects are down while it runs.");
+    const feed = JSON.parse(renderJsonFeed(planned, urls));
+    const entry = feed.items.find((item: { title: string }) => item.title === "Database move");
+    expect(entry.content_text).toContain(
+      "Planned outage: The components it affects are down while it runs.",
+    );
+    expect(renderAtomFeed(planned, urls)).toContain("Planned outage");
+    // Plain maintenance says nothing of the kind.
+    expect(renderStatusPage(snapshot(), { slug: "acme", now: T })).not.toContain("Planned outage");
+  });
+
   test("the page links its feeds", () => {
     const html = renderStatusPage(snapshot(), { slug: "acme" });
     expect(html).toContain(

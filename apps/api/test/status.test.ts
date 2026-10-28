@@ -305,7 +305,8 @@ describe("PUT /workspaces/:id/status-page", () => {
     expect(await owners(address)).toEqual([b.id]);
     // Saving the draft, or moving it to another slug, deletes nothing of the page that went public there.
     expect(
-      (await configure(a, a.ana, settings(address, { enabled: false, title: "Acme draft" }))).status,
+      (await configure(a, a.ana, settings(address, { enabled: false, title: "Acme draft" })))
+        .status,
     ).toBe(200);
     await a.push();
     const other = slug();
@@ -999,6 +1000,37 @@ describe("the snapshot", () => {
       expect(await response.text()).toContain("No status page here");
     }
     expect((await exports.default.fetch(`${ORIGIN}/status`)).status).toBe(404);
+  });
+
+  test("past 30 misses a minute an address is answered 429, while a real page still answers it", async () => {
+    const t = await team();
+    const address = slug();
+    await configure(t, t.ana, settings(address));
+    await t.push();
+    const from = { "cf-connecting-ip": "203.0.113.77" };
+    const get = (path: string) => exports.default.fetch(`${ORIGIN}${path}`, { headers: from });
+    const missing = slug();
+    for (let index = 0; index < 30; index++) {
+      const response = await get(
+        index % 2 === 0 ? `/status/${missing}-${index}` : `/status/${missing}`,
+      );
+      expect(response.status).toBe(404);
+    }
+    const limited = await get(`/status/${missing}-more`);
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("Retry-After")).toBe("60");
+    expect(limited.headers.get("Cache-Control")).toBe("no-store");
+    expect(await limited.text()).toContain("Too many requests");
+    // A cached 404 counts as a miss too, a feed's as well; a real page and its feed never do.
+    expect((await get(`/status/${missing}`)).status).toBe(429);
+    expect((await get(`/status/${missing}/feed.atom`)).status).toBe(429);
+    expect((await get(`/status/${address}`)).status).toBe(200);
+    expect((await get(`/status/${address}/feed.json`)).status).toBe(200);
+    // Another caller is not held back.
+    const other = await exports.default.fetch(`${ORIGIN}/status/${missing}`, {
+      headers: { "cf-connecting-ip": "203.0.113.78" },
+    });
+    expect(other.status).toBe(404);
   });
 
   test("the feeds come from the snapshot in KV, cached like the page", async () => {

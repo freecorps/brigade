@@ -441,5 +441,7 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
   `wrangler deploy` then deploys what was built and takes no `--env`.
 - The mobile app points at staging or production via build profile.
 - Self-hosted — one Cloudflare account, one `deploy` command, guided setup (Slack app manifest, relay registration).
-  To build (Q21, Q23): the setup script also runs `vp run setup:first-user` (built, "The first owner"; sign-up stays
-  closed), creates the `STATUS` KV namespace, and optionally custom domains for status pages (RFC 0012 "Addresses").
+  The setup steps (apps/api README "Self-host setup") create the `STATUS` KV namespace with the instance's other
+  resources and bind it at the top level of `apps/api/wrangler.jsonc` (decided, Q23), then run `vp run
+  setup:first-user` ("The first owner"; sign-up stays closed). To build: one wizard running them, and optionally
+  custom domains for status pages (RFC 0012 "Addresses").

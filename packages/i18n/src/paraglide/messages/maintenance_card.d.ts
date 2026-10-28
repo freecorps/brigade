@@ -44,6 +44,9 @@ export type Maintenance_CardInputs = {
 * | "not_set_up" | "Set up the status page first to plan maintenance on it." |
 * | "viewer" | "Owners, admins and responders can schedule maintenance." |
 * | "past_title" | "Completed" |
+* | "outage_label" | "Planned outage" |
+* | "outage_hint" | "The affected components show as down on the status page while it runs, not only under maintenance." |
+* | "outage_badge" | "Planned outage" |
 * | * | "Maintenance" |
 *
 * @param {Maintenance_CardInputs} inputs

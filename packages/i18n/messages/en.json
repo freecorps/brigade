@@ -2224,6 +2224,9 @@
         "part=feed_json": "JSON feed",
         "part=component_maintenance": "Under maintenance",
         "part=overall_maintenance": "Scheduled maintenance in progress",
+        "part=stale": "This page may be out of date: it was last updated {time}.",
+        "part=rate_limited_title": "Too many requests",
+        "part=rate_limited_body": "Too many addresses with no status page were asked for from your network. Try again in a minute.",
         "part=*": "Status"
       }
     }
@@ -3214,6 +3217,8 @@
         "part=upcoming_title": "Scheduled maintenance",
         "part=window_upcoming": "{time} to {until}",
         "part=window_active": "Until {until}",
+        "part=outage": "Planned outage",
+        "part=outage_hint": "The components it affects are down while it runs.",
         "part=*": "Maintenance"
       }
     }
@@ -3373,6 +3378,9 @@
         "part=not_set_up": "Set up the status page first to plan maintenance on it.",
         "part=viewer": "Owners, admins and responders can schedule maintenance.",
         "part=past_title": "Completed",
+        "part=outage_label": "Planned outage",
+        "part=outage_hint": "The affected components show as down on the status page while it runs, not only under maintenance.",
+        "part=outage_badge": "Planned outage",
         "part=*": "Maintenance"
       }
     }

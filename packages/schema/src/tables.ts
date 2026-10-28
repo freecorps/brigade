@@ -912,6 +912,8 @@ export type MaintenanceRow = {
   componentIds: string[];
   startsAt: number;
   endsAt: number;
+  /** A planned outage: its components are down while it runs, not only under maintenance. Absent on older rows: no. */
+  outage?: boolean;
   phase: MaintenancePhase;
   createdAt: number;
   createdBy: string;

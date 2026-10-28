@@ -41,6 +41,9 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "feed_json" | "JSON feed" |
 * | "component_maintenance" | "Under maintenance" |
 * | "overall_maintenance" | "Scheduled maintenance in progress" |
+* | "stale" | "This page may be out of date: it was last updated {time}." |
+* | "rate_limited_title" | "Too many requests" |
+* | "rate_limited_body" | "Too many addresses with no status page were asked for from your network. Try again in a minute." |
 * | * | "Status" |
 *
 * @param {Status_TextInputs} inputs
@@ -81,6 +84,9 @@ export const status_text = /** @type {((inputs: Status_TextInputs, options?: { l
 		if (i?.part === "feed_json") return /** @type {LocalizedString} */ (`Feed JSON`);
 		if (i?.part === "component_maintenance") return /** @type {LocalizedString} */ (`Em manutenção`);
 		if (i?.part === "overall_maintenance") return /** @type {LocalizedString} */ (`Manutenção programada em andamento`);
+		if (i?.part === "stale") return /** @type {LocalizedString} */ (`Esta página pode estar desatualizada: a última atualização foi em ${i?.time}.`);
+		if (i?.part === "rate_limited_title") return /** @type {LocalizedString} */ (`Muitas solicitações`);
+		if (i?.part === "rate_limited_body") return /** @type {LocalizedString} */ (`Sua rede pediu muitos endereços sem página de status. Tente de novo em um minuto.`);
 		return /** @type {LocalizedString} */ (`Status`)
 	}
 	{
@@ -115,6 +121,9 @@ export const status_text = /** @type {((inputs: Status_TextInputs, options?: { l
 		if (i?.part === "feed_json") return /** @type {LocalizedString} */ (`JSON feed`);
 		if (i?.part === "component_maintenance") return /** @type {LocalizedString} */ (`Under maintenance`);
 		if (i?.part === "overall_maintenance") return /** @type {LocalizedString} */ (`Scheduled maintenance in progress`);
+		if (i?.part === "stale") return /** @type {LocalizedString} */ (`This page may be out of date: it was last updated ${i?.time}.`);
+		if (i?.part === "rate_limited_title") return /** @type {LocalizedString} */ (`Too many requests`);
+		if (i?.part === "rate_limited_body") return /** @type {LocalizedString} */ (`Too many addresses with no status page were asked for from your network. Try again in a minute.`);
 		return /** @type {LocalizedString} */ (`Status`)
 	}
 });

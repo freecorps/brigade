@@ -44,6 +44,9 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "not_set_up" | "Set up the status page first to plan maintenance on it." |
 * | "viewer" | "Owners, admins and responders can schedule maintenance." |
 * | "past_title" | "Completed" |
+* | "outage_label" | "Planned outage" |
+* | "outage_hint" | "The affected components show as down on the status page while it runs, not only under maintenance." |
+* | "outage_badge" | "Planned outage" |
 * | * | "Maintenance" |
 *
 * @param {Maintenance_CardInputs} inputs
@@ -87,6 +90,9 @@ export const maintenance_card = /** @type {((inputs: Maintenance_CardInputs, opt
 		if (i?.part === "not_set_up") return /** @type {LocalizedString} */ (`Configure a página de status primeiro para programar manutenções nela.`);
 		if (i?.part === "viewer") return /** @type {LocalizedString} */ (`Owners, admins e responders podem programar manutenções.`);
 		if (i?.part === "past_title") return /** @type {LocalizedString} */ (`Concluídas`);
+		if (i?.part === "outage_label") return /** @type {LocalizedString} */ (`Indisponibilidade planejada`);
+		if (i?.part === "outage_hint") return /** @type {LocalizedString} */ (`Os componentes afetados aparecem fora do ar na página de status enquanto ela dura, não só em manutenção.`);
+		if (i?.part === "outage_badge") return /** @type {LocalizedString} */ (`Indisponibilidade planejada`);
 		return /** @type {LocalizedString} */ (`Manutenção`)
 	}
 	{
@@ -124,6 +130,9 @@ export const maintenance_card = /** @type {((inputs: Maintenance_CardInputs, opt
 		if (i?.part === "not_set_up") return /** @type {LocalizedString} */ (`Set up the status page first to plan maintenance on it.`);
 		if (i?.part === "viewer") return /** @type {LocalizedString} */ (`Owners, admins and responders can schedule maintenance.`);
 		if (i?.part === "past_title") return /** @type {LocalizedString} */ (`Completed`);
+		if (i?.part === "outage_label") return /** @type {LocalizedString} */ (`Planned outage`);
+		if (i?.part === "outage_hint") return /** @type {LocalizedString} */ (`The affected components show as down on the status page while it runs, not only under maintenance.`);
+		if (i?.part === "outage_badge") return /** @type {LocalizedString} */ (`Planned outage`);
 		return /** @type {LocalizedString} */ (`Maintenance`)
 	}
 });

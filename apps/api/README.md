@@ -390,6 +390,24 @@ Local secrets go in `apps/api/.dev.vars` (`.dev.vars.<env>` per environment), wh
 come from `secrets.required` in `wrangler.jsonc`, so `wrangler types` no longer reads `.dev.vars` and the committed
 types stay the same with or without one.
 
+## Self-host setup
+
+A new self-hosted instance is one Cloudflare account and the top-level (production) config of each `wrangler.jsonc`.
+Before its first deploy, from `apps/api`, create the resources the API binds and put their ids at the top level of
+`wrangler.jsonc` (the setup wizard will run these steps; until then they are by hand):
+
+```bash
+wrangler d1 create brigade-db                  # its id goes in d1_databases (DB); then apply migrations/ (--remote)
+wrangler queues create brigade-events
+wrangler queues create brigade-events-dlq
+wrangler kv namespace create brigade-status    # the status pages' snapshots: its id goes in kv_namespaces (STATUS)
+```
+
+The `STATUS` KV namespace is part of the setup (decided, Q23; RFC 0012 "The snapshot"): without it every status page
+answers 404 while the dashboard still sets them up. Give the top-level `STATUS` entry its `id`, or `wrangler deploy`
+provisions a namespace of its own. Then set the secrets ("Deploying dev" lists them), deploy the relay, the API and
+the dashboard, and create the first owner ("First owner").
+
 ## First owner
 
 A new instance has sign-up closed, so its first owner comes from a one-time, server-side path (RFC 0002 "The first
@@ -504,12 +522,15 @@ Bot tokens are sealed with AES-256-GCM under `SLACK_TOKEN_KEY` (optional secret,
 
 ## Status page
 
-RFC 0012. `PUT /workspaces/:id/status-page` claims the slug in D1 (`migrations/0008_status_slug.sql`) and sets the
-page up in the shard (`src/status-page.ts`); components and published updates are sync mutations. Every change to the
+RFC 0012. `PUT /workspaces/:id/status-page` claims the slug in D1 (`migrations/0008_status_slug.sql`) when the page
+is public (a draft's slug is kept on the page alone until it first goes public) and sets the page up in the shard
+(`src/status-page.ts`); components and published updates are sync mutations. Every change to the
 page marks its snapshot dirty in the same transaction, and the shard's alarm pushes the sanitized JSON to the `STATUS`
 KV namespace (`status:<slug>`), retrying with backoff. `GET /status/:slug` (`src/status-route.ts`, forwarded unchanged
 by the web Worker) renders it as HTML (`src/status-html.ts`) from KV behind the edge cache; it needs no session and
-never reaches a shard.
+never reaches a shard. An address with no page counts against the caller in `STATUS_MISS_LIMIT` (Workers Rate
+Limiting, 30 a minute per address, namespaces 4181-4183): past it the answer is a 429. A page that exists is never
+counted. A snapshot older than 48 hours says the page may be out of date.
 
 `STATUS` is bound at the top level without an `id`, for local runs and the tests, and in `dev` to `brigade-status-dev`.
 `staging` has no binding yet: its pages answer 404 while the dashboard still sets them up. To turn it on for an

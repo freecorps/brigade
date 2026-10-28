@@ -60,6 +60,12 @@ const sayUptime = (
     { locale },
   );
 
+/**
+ * A snapshot older than this is shown with "this page may be out of date": a public page is rebuilt at least once a
+ * UTC day (`STATUS_REFRESH_MS`), so two days without one means its pushes are failing.
+ */
+export const STATUS_STALE_MS = 48 * 60 * 60 * 1000;
+
 /** How a time reads: the date, the time and its zone's short name. The page's script uses it with the visitor's zone. */
 const TIME_FORMAT = {
   year: "numeric",
@@ -252,6 +258,7 @@ a{color:inherit}
 .choose .buttons{display:flex;flex-wrap:wrap;gap:.75rem;margin-top:1rem}
 button.secondary{color:var(--fg);background:transparent;border:1px solid var(--border)}
 .notice{margin-top:1rem;font-weight:600}
+.stale{margin-top:.75rem;padding:.75rem 1.25rem;border-radius:.75rem;font-size:.9375rem;overflow-wrap:anywhere}
 .feeds{display:flex;flex-wrap:wrap;gap:1rem}
 footer{margin-top:2.5rem;color:var(--muted);font-size:.875rem;display:flex;flex-wrap:wrap;justify-content:space-between;gap:.5rem}
 ${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.c-${s}{background:var(--c-${s}-bg);color:var(--c-${s}-fg)}`).join("")}
@@ -348,7 +355,14 @@ function maintenanceWindow(locale: Locale, window: SnapshotMaintenance, active: 
   const range = active
     ? sayWindowAt(locale, "window_active", { until: window.endsAt })
     : sayWindowAt(locale, "window_upcoming", { time: window.startsAt, until: window.endsAt });
-  return `<article class="incident"><header><h3>${escape(window.title)}</h3>${active ? componentChip(locale, "maintenance") : ""}</header><p class="window">${range}</p>${affects}<p class="body">${escape(window.body)}</p></article>`;
+  // A planned outage says so whether it runs or is still to come: its components are down while it runs.
+  const chip = window.outage
+    ? `<span class="chip c-major_outage"><span class="dot"></span>${sayWindow(locale, "outage")}</span>`
+    : active
+      ? componentChip(locale, "maintenance")
+      : "";
+  const hint = window.outage ? `<p class="meta">${sayWindow(locale, "outage_hint")}</p>` : "";
+  return `<article class="incident"><header><h3>${escape(window.title)}</h3>${chip}</header><p class="window">${range}</p>${affects}${hint}<p class="body">${escape(window.body)}</p></article>`;
 }
 
 /** What the page's form offers to follow, from its snapshot: each group with its key and its components'. */
@@ -429,9 +443,14 @@ function feedLinks(locale: Locale, slug: string | undefined): string {
  */
 export function renderStatusPage(
   snapshot: StatusSnapshot,
-  options: { slug?: string; subscribe?: boolean } = {},
+  options: { slug?: string; subscribe?: boolean; now?: number } = {},
 ): string {
   const { locale } = snapshot;
+  // Rebuilt at least daily, so a snapshot this old means the shard or KV is stuck (decided, Q23): say so up top.
+  const stale =
+    (options.now ?? Date.now()) - snapshot.generatedAt > STATUS_STALE_MS
+      ? `<p class="stale c-degraded" role="note">${sayAt(locale, "stale", snapshot.generatedAt)}</p>`
+      : "";
   const groups =
     snapshot.groups.length === 0
       ? `<p class="empty">${say(locale, "components_empty")}</p>`
@@ -477,6 +496,7 @@ export function renderStatusPage(
       : "";
   const body = `<h1>${escape(snapshot.title)}</h1>
 ${banner}
+${stale}
 ${inProgress}
 ${active}
 <section aria-labelledby="components"><h2 id="components">${say(locale, "components_title")}</h2>${groups}</section>
@@ -597,7 +617,10 @@ function manageChoice(
 }
 
 /** No page at this address (or not public), or the snapshot could not be read. */
-export function renderStatusMessage(kind: "not_found" | "unavailable", locale: Locale): string {
+export function renderStatusMessage(
+  kind: "not_found" | "unavailable" | "rate_limited",
+  locale: Locale,
+): string {
   const title = say(locale, `${kind}_title`);
   return document(
     locale,

@@ -130,6 +130,31 @@ describe("maintenance", () => {
     expect(statusSnapshot(store, T)!.groups[0]!.components[0]!.status).toBe("degraded");
   });
 
+  test("a planned outage takes its components down while it runs, and can be turned back into maintenance", () => {
+    const { store, api } = ready();
+    const args = window({ componentIds: [api], outage: true });
+    expect(run(store, "maintenance.schedule", args)).toMatchObject({
+      ok: true,
+      events: [{ type: "maintenance.scheduled", data: { outage: true } }],
+    });
+    // Upcoming: the window says what it is; the component is still up.
+    const before = statusSnapshot(store, T)!;
+    expect(before.upcoming).toMatchObject([{ outage: true }]);
+    expect(before.groups[0]!.components[0]!.status).toBe("operational");
+    run(store, "maintenance.advance", { id: args.id }, ctx("admin", T + HOUR));
+    const during = statusSnapshot(store, T + 2 * HOUR)!;
+    expect(during.groups[0]!.components[0]!.status).toBe("major_outage");
+    // Planned work, not an incident: the banner's status stays the team's and the incidents'.
+    expect(during.status).toBe("operational");
+    expect(during.maintenance).toMatchObject([{ outage: true, components: ["API"] }]);
+    expect(
+      run(store, "maintenance.update", { ...args, outage: false }, ctx("admin", T + 2 * HOUR)),
+    ).toMatchObject({ ok: true, events: [{ data: { outage: false } }] });
+    const after = statusSnapshot(store, T + 2 * HOUR)!;
+    expect(after.groups[0]!.components[0]!.status).toBe("maintenance");
+    expect(after.maintenance![0]!.outage).toBeUndefined();
+  });
+
   test("upcoming windows are listed soonest first, with nothing internal", () => {
     const { store } = ready();
     run(store, "maintenance.schedule", window({ startsAt: T + 5 * HOUR, endsAt: T + 6 * HOUR }));

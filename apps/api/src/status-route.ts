@@ -121,8 +121,13 @@ async function serveFromSnapshot(
   if (request.method !== "GET" && request.method !== "HEAD") {
     return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
   }
-  const head = (response: Response) =>
+  const answer = (response: Response) =>
     request.method === "HEAD" ? new Response(null, response) : response;
+  // Only an address with no page counts against the caller (decided, Q23): a real page's hits never do.
+  const head = async (response: Response) =>
+    answer(
+      response.status === 404 && !(await missAllowed(request, env)) ? rateLimited() : response,
+    );
   if (!STATUS_SLUG.test(slug)) return head(notFound());
   const key = new Request(cacheKey);
   const cache = typeof caches === "undefined" ? undefined : caches.default;
@@ -163,6 +168,33 @@ async function serveFromSnapshot(
 }
 
 const notFound = () => page(renderStatusMessage("not_found", "en"), 404, STATUS_MISSING_MAX_AGE_S);
+
+/** Past the misses a caller may make: never cached, so the next minute's answer is the real one. */
+function rateLimited(): Response {
+  const response = page(renderStatusMessage("rate_limited", "en"), 429);
+  response.headers.set("Retry-After", "60");
+  return response;
+}
+
+/**
+ * Whether the caller may get one more "no page here" (`STATUS_MISS_LIMIT`, per address a minute, RFC 0012 "Caching and
+ * abuse"): a flood of made-up addresses from one place is bounded, while every page that exists is served to anyone.
+ * Without the binding or a caller address, or if the limiter fails, the miss is answered as before.
+ */
+async function missAllowed(request: Request, env: Env): Promise<boolean> {
+  const limiter = env.STATUS_MISS_LIMIT as RateLimit | undefined;
+  // Cloudflare always names the caller; a request without it (a local run) has nobody to count against.
+  const address = request.headers.get("cf-connecting-ip");
+  if (!limiter || !address) return true;
+  try {
+    return (await limiter.limit({ key: address })).success;
+  } catch (error) {
+    console.error(
+      JSON.stringify({ message: "the status miss limit failed", error: String(error) }),
+    );
+    return true;
+  }
+}
 const unavailable = () => page(renderStatusMessage("unavailable", "en"), 503);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

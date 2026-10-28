@@ -238,7 +238,7 @@ private ones need the bot invited.
   text: `&`, `<` and `>` are escaped for Slack's mrkdwn, so a title cannot mention `@channel` or forge a link.
   The language is the connection's (RFC 0008: shared channels use the workspace's locale; until workspaces have one,
   it is set on the card and defaults to the connecting member's). Decided (Q22), to build: once the workspace locale
-  exists (Q15), channel messages follow it.
+  exists (Q15, built separately), channel messages follow it. A channel made on a raise uses the same language.
 - **Idempotent per event.** The shard keeps a Slack ledger: events handled (`slack_events`), each job of an event
   (`slack_jobs`, with attempts and the earliest retry; "Jobs" below) and each incident's message (`slack_messages`:
   channel, `ts`). A redelivered event that is done
@@ -278,19 +278,19 @@ again, until nothing is left (at most 8 per delivery; the rest come with the ret
 the incident's timeline (`notification.failSlack`, once per job), so a failed invite does not stop the message. The
 incident's claim covers every job, so two events of one incident never create a channel or post at once.
 
-| Event                              | Jobs                                                                                                                                                                              |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `incident.declared`                | create the channel (when asked for), look up, invite, post in it, in the main                                                                                                     |
-| `incident.acknowledged`            | update both messages, mirror                                                                                                                                                      |
-| `incident.status_changed`          | update both messages, mirror; a closed incident's channel comes due                                                                                                               |
-| `incident.severity_changed`        | update both messages, mirror; raised to SEV1 or SEV2 with incident channels set to `major` and none yet: create the channel, look up, invite, post in it (decided, Q22; to build) |
-| `incident.update_posted`           | mirror (not an update that came from a Slack message)                                                                                                                             |
-| `incident.update_edited`           | rewrite the mirrored message (`chat.update`), if the mirror posted one                                                                                                            |
-| `incident.update_deleted`          | delete the mirrored message (`chat.delete`), if the mirror posted one                                                                                                             |
-| `incident.role_assigned`           | look up and invite the new holder, mirror                                                                                                                                         |
-| `escalation.paged`                 | look up and invite whoever was paged                                                                                                                                              |
-| `slack.archive_due`                | archive the channel, if the incident is still closed                                                                                                                              |
-| `slack.disconnected`, `.connected` | give back the token let go of (`auth.revoke`)                                                                                                                                     |
+| Event                              | Jobs                                                                                                                                               |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `incident.declared`                | create the channel (when asked for), look up, invite, post in it, in the main                                                                      |
+| `incident.acknowledged`            | update both messages, mirror                                                                                                                       |
+| `incident.status_changed`          | update both messages, mirror; a closed incident's channel comes due                                                                                |
+| `incident.severity_changed`        | update both messages, mirror; raised to SEV1 or SEV2 with incident channels on and none yet: create the channel, look up, invite, post in it (Q22) |
+| `incident.update_posted`           | mirror (not an update that came from a Slack message)                                                                                              |
+| `incident.update_edited`           | rewrite the mirrored message (`chat.update`), if the mirror posted one                                                                             |
+| `incident.update_deleted`          | delete the mirrored message (`chat.delete`), if the mirror posted one                                                                              |
+| `incident.role_assigned`           | look up and invite the new holder, mirror                                                                                                          |
+| `escalation.paged`                 | look up and invite whoever was paged                                                                                                               |
+| `slack.archive_due`                | archive the channel, if the incident is still closed                                                                                               |
+| `slack.disconnected`, `.connected` | give back the token let go of (`auth.revoke`)                                                                                                      |
 
 **Budget.** Slack's calls run under the side-connection limiter (src/side-connections.ts) with their own share:
 Slack holds at most `SLACK_CONNECTIONS` (2) of the 3 side slots, so it never takes every slot from the webhooks, and
@@ -305,8 +305,12 @@ only, by the severity at declaration); `privateChannels` makes them private (`gr
 how long after the incident closes its channel is archived (0: at once; the card offers 0, 1, 24 and 168 hours), or
 null to keep it. A workspace without a main channel can still have incident channels.
 
-- **Created** on `incident.declared` with `conversations.create` (and, decided in Q22 and to build, on a severity
-  raised to SEV1 or SEV2 after declaring, when the workspace's setting is `major` and the incident has no channel yet), named `inc-<number>-<title as a slug>` (lowercase
+- **Created** on `incident.declared` with `conversations.create`, and on `incident.severity_changed` that raised an
+  active incident to SEV1 or SEV2 after declaring (decided, Q22) when the setting asks for a channel at that severity
+  (`major`, or `all` for one that has none: declared before Slack was connected, or whose channel was given up on)
+  and the incident has no channel yet, archived or not. So it happens once: a raise, a lowering and a raise again
+  find the channel there. Only the event that made the channel invites to it and posts the incident's message in
+  it; the main channel's message then links it, and the severity line is mirrored there. Named `inc-<number>-<title as a slug>` (lowercase
   letters, digits and hyphens, accents dropped, at most 80 characters), with `-2` to `-4` when the name is taken. A
   renamed incident keeps its channel's name (renaming a channel others may have linked to is not worth the surprise);
   its messages show the new title. The
@@ -407,6 +411,5 @@ the steps.
 ## Not in this slice
 
 - App Home and link unfurls.
-- A channel for an incident whose severity is raised to SEV1 or SEV2 after it was declared (decided, Q22; to build).
 - Distribution beyond one app per instance (Slack Marketplace, Enterprise Grid org installs).
 - A test on a real Slack workspace: every Slack call here is tested against a fake Web API only (owner's call).

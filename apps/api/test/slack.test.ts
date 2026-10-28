@@ -1264,7 +1264,9 @@ describe("a channel per incident, and the timeline mirror", () => {
     expect(after.calls[3]?.body.channel).toBe("C0INC00001");
     // The main channel's message now links the new channel; the severity line goes in it.
     expect(after.calls[4]?.body.channel).toBe("C0CHAN0001");
-    expect(JSON.stringify(after.calls[4]?.body.blocks)).toContain("Incident channel: <#C0INC00001>");
+    expect(JSON.stringify(after.calls[4]?.body.blocks)).toContain(
+      "Incident channel: <#C0INC00001>",
+    );
     expect(after.calls[5]?.body.channel).toBe("C0INC00001");
 
     await as(t, teamId, t.caio.email, { kind: "severity", severity: "sev3", number: 1 });

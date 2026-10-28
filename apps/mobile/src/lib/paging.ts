@@ -187,20 +187,30 @@ export function pagingCycle(deps: PagingDeps): PagingCycle {
   };
 }
 
-/** Whether the app is asking for notification permission now; `ask` wraps each request. */
+/**
+ * How long after the app's own permission request ends a return to the foreground is still taken as the return from
+ * it: on Android its answer and the app's resume come milliseconds apart.
+ */
+export const PERMISSION_RETURN_MS = 1_000;
+
+/** Whether the app is asking for notification permission now, or just did; `ask` wraps each request. */
 export type PermissionAsks = {
   ask: <T>(request: () => Promise<T>) => Promise<T>;
+  /** A request is open. */
   asking: () => boolean;
+  /** A request is open, or one ended less than `PERMISSION_RETURN_MS` ago. */
+  recent: () => boolean;
 };
 
 /**
  * The app's own permission requests. On Android every request (granted already or not) shows the system's
  * permission screen over the app, if only for a moment, so the app goes to the background and comes back: taken as
  * the member coming back, every registration asked for the next one, every `MIN_TRY_GAP_MS`, for as long as the app
- * was open.
+ * was open. `now` is the time in ms.
  */
-export function permissionAsks(): PermissionAsks {
+export function permissionAsks(now: () => number = Date.now): PermissionAsks {
   let open = 0;
+  let endedAt = -Infinity;
   return {
     ask: async (request) => {
       open += 1;
@@ -208,9 +218,11 @@ export function permissionAsks(): PermissionAsks {
         return await request();
       } finally {
         open -= 1;
+        endedAt = now();
       }
     },
     asking: () => open > 0,
+    recent: () => open > 0 || now() - endedAt < PERMISSION_RETURN_MS,
   };
 }
 
@@ -226,24 +238,32 @@ export type PagingNudges = {
 
 /**
  * Nudges `cycle` when the app comes back to the foreground, unless it left only for its own permission request
- * (`asks`); when the push token listener hears a token that is not the one fetched last (`tokens`); and on every new
- * VoIP token. `initial` is AppState's state when the listeners are added (null while React Native does not know it).
+ * (`asks`) and comes back as it ends; when the push token listener hears a token that is not the one fetched last
+ * (`tokens`); and on every new VoIP token. `initial` is AppState's state when the listeners are added (null while
+ * React Native does not know it); `os` is the platform.
+ *
+ * Left for a request, the app may still be left by the member: on iOS a system alert only makes the app `inactive`,
+ * so `background` is always the member leaving; on Android the permission screen itself sends the app to the
+ * background, so a return counts as the member's once the request ended more than `PERMISSION_RETURN_MS` before it
+ * (they left from the permission screen and it was answered or dismissed while they were away).
  */
 export function pagingNudges(
   cycle: Pick<PagingCycle, "nudge">,
   tokens: KnownTokens,
-  asks: Pick<PermissionAsks, "asking">,
+  asks: Pick<PermissionAsks, "asking" | "recent">,
   initial: string | null | undefined,
+  os: string | undefined,
 ): PagingNudges {
   /** Why the app is out of the foreground: the member left (or it started there), or it asked for permission. */
   let away: "member" | "asked" | undefined = initial === "active" ? undefined : "member";
   return {
     appState: (state) => {
       if (state !== "active") {
-        away ??= asks.asking() ? "asked" : "member";
+        if (os === "ios" && state === "background") away = "member";
+        else away ??= asks.asking() ? "asked" : "member";
         return;
       }
-      const back = away === "member";
+      const back = away === "member" || (away === "asked" && !asks.recent());
       away = undefined;
       if (back) cycle.nudge();
     },
@@ -259,10 +279,17 @@ export function pagingNudges(
 export type KnownTokens = ReturnType<typeof knownTokens>;
 
 /**
+ * The longest a token event waits for a fetch still out before it is compared with the token known: a fetch that
+ * never answers (no APNs) must not hold back every token event after it.
+ */
+export const TOKEN_FETCH_WAIT_MS = 5_000;
+
+/**
  * Which push tokens the app already knows, so only a new one asks for a registration. Fetching the token
  * (`getDevicePushTokenAsync`) also fires expo-notifications' token listener with it, on iOS and Android alike: taken
  * as new, every registration asked for the next one, about once a second, for as long as the app was open. The event
- * can come before the fetch's answer does, so a token heard while a fetch is out is compared once it is back.
+ * can come before the fetch's answer does, so a token heard while a fetch is out is compared once it is back, or
+ * `TOKEN_FETCH_WAIT_MS` after it started.
  */
 export function knownTokens() {
   let known: string | undefined;
@@ -274,8 +301,15 @@ export function knownTokens() {
         known = value;
         return value;
       });
-      const before = fetching;
-      fetching = Promise.allSettled([before, token]);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const late = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, TOKEN_FETCH_WAIT_MS);
+      });
+      const back = token.then(
+        () => clearTimeout(timer),
+        () => clearTimeout(timer),
+      );
+      fetching = Promise.all([fetching, Promise.race([back, late])]);
       return token;
     },
     /** A token the listener reported: true when it is not the one known (a new one, worth registering). */

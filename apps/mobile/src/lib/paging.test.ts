@@ -11,6 +11,9 @@ import {
   pagingNudges,
   MIN_TRY_GAP_MS,
   pagingCycle,
+  permissionAsks,
+  PERMISSION_RETURN_MS,
+  TOKEN_FETCH_WAIT_MS,
   retryDelay,
   RETRY_JITTER,
   type PagingDeps,
@@ -389,7 +392,13 @@ test("fetching the push token to register does not ask for another registration 
     now: Date.now,
     random: () => 0.5,
   });
-  const nudges = pagingNudges(cycle, tokens, { asking: () => false }, "active");
+  const nudges = pagingNudges(
+    cycle,
+    tokens,
+    { asking: () => false, recent: () => false },
+    "active",
+    "android",
+  );
   listeners.push((value) => nudges.pushToken({ data: value }));
   await vi.advanceTimersByTimeAsync(60_000);
   // At once, 5 s later, then 30 s later: three tries in the first minute, not one a second.
@@ -423,4 +432,59 @@ test("a token the listener hears before the fetch that fired it answered is not 
   // A fetch that fails leaves the token known as it was.
   await tokens.fetch(() => Promise.reject(new Error("no FCM"))).catch(() => {});
   expect(await tokens.changed("d".repeat(64))).toBe(false);
+});
+
+test("a token fetch that never answers holds token events back only for a while", async () => {
+  vi.useFakeTimers();
+  const tokens = knownTokens();
+  // No APNs: the fetch never answers.
+  void tokens.fetch(() => new Promise<string>(() => {}));
+  let heard: boolean | undefined;
+  void tokens.changed("c".repeat(64)).then((changed) => (heard = changed));
+  await vi.advanceTimersByTimeAsync(TOKEN_FETCH_WAIT_MS - 1);
+  expect(heard).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(heard).toBe(true);
+  // A later fetch is not held back by the stuck one.
+  await tokens.fetch(async () => "d".repeat(64));
+  let later: boolean | undefined;
+  void tokens.changed("d".repeat(64)).then((changed) => (later = changed));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(later).toBe(false);
+  vi.useRealTimers();
+});
+
+test("a return to the foreground is the member's unless it is the end of the app's own permission request", () => {
+  let nudges = 0;
+  const cycle = { nudge: () => (nudges += 1) };
+  let now = 0;
+  const asks = permissionAsks(() => now);
+  let answer!: () => void;
+  const asked = asks.ask(() => new Promise<void>((resolve) => (answer = resolve)));
+  const tokens = knownTokens();
+
+  // Android: the permission screen sends the app to the background and it comes back as the request ends.
+  const droid = pagingNudges(cycle, tokens, asks, "active", "android");
+  droid.appState("background");
+  // iOS: the alert makes the app inactive, and Home sends it to the background: the member left.
+  const ios = pagingNudges(cycle, tokens, asks, "active", "ios");
+  ios.appState("inactive");
+  ios.appState("background");
+  answer();
+  return asked.then(() => {
+    // The request ended a moment ago.
+    now += 10;
+    droid.appState("active");
+    expect(nudges).toBe(0);
+    ios.appState("active");
+    expect(nudges).toBe(1);
+    // Android: the member left from the permission screen, and comes back long after it was answered.
+    void asks.ask(async () => {});
+    droid.appState("background");
+    return Promise.resolve().then(() => {
+      now += PERMISSION_RETURN_MS;
+      droid.appState("active");
+      expect(nudges).toBe(2);
+    });
+  });
 });

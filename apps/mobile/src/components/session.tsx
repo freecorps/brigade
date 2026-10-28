@@ -155,7 +155,13 @@ function usePaging(
     // APNs or FCM token likewise, in every workspace, or the others page a dead one. Only a new one: the listener also
     // hears the token each registration fetches. Critical Alerts or notifications turned on or off happen in Settings,
     // so coming back to the foreground registers them; not coming back from the app's own permission request.
-    const nudges = pagingNudges(made, pushTokens, permissions, AppState.currentState);
+    const nudges = pagingNudges(
+      made,
+      pushTokens,
+      permissions,
+      AppState.currentState,
+      process.env.EXPO_OS,
+    );
     const foreground = AppState.addEventListener("change", nudges.appState);
     const voipToken = BrigadeCall?.addListener("onVoipToken", nudges.voipToken);
     const pushToken = Notifications.addPushTokenListener(nudges.pushToken);

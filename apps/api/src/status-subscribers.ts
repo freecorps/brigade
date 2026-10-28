@@ -277,7 +277,8 @@ export function readFollows(stored: string | null): string[] | null {
  * also RFC 8058's one-click from a mail client). Always an HTML page, never cached. A GET only shows a button, so a
  * mail scanner opening links confirms or unsubscribes nobody. Subscribing needs the public
  * page; the links work from their signed token alone (it names the workspace), so a link keeps working after the page
- * moved to another address or stopped being public.
+ * moved to another address or stopped being public. With `owner` (a custom hostname, src/status-pages.ts) only that
+ * workspace's page and links answer: another's are the 404 page.
  */
 export async function serveSubscription(
   request: Request,
@@ -285,6 +286,7 @@ export async function serveSubscription(
   ctx: Pick<ExecutionContext, "waitUntil">,
   slug: string,
   action: SubscriptionAction,
+  owner?: string,
 ): Promise<Response> {
   const allowed = action === "subscribe" ? ["POST"] : ["GET", "POST"];
   if (!allowed.includes(request.method)) {
@@ -292,16 +294,19 @@ export async function serveSubscription(
   }
   if (!STATUS_SLUG.test(slug)) return page(404, { kind: "not_found" }, undefined, slug);
   if (action === "subscribe") {
-    const facts = await readPage(env, slug);
+    const facts = await readPage(env, slug, owner);
     if (facts === "unavailable") return page(503, { kind: "unavailable" }, undefined, slug);
     if (!facts) return page(404, { kind: "not_found" }, undefined, slug);
-    return subscribe(request, env, ctx, slug, facts);
+    return subscribe(request, env, ctx, slug, facts, owner);
   }
   const now = Date.now();
   const token = new URL(request.url).searchParams.get("t");
   const kind: LinkKind = action === "confirm" ? "c" : "m";
   const claims = await verifyLink(env.BETTER_AUTH_SECRET, token, kind, now);
   if (!claims) return page(400, { kind: "expired" }, undefined, slug);
+  if (owner !== undefined && claims.workspaceId !== owner) {
+    return page(404, { kind: "not_found" }, undefined, slug);
+  }
   const facts = await linkFacts(env, slug, claims.workspaceId);
   try {
     if (action === "confirm") {
@@ -393,12 +398,20 @@ async function follow(
   return page(200, manageView(token, { ...row, follows: stored }, facts, true), facts, slug);
 }
 
-/** The page's title and language from its snapshot (no shard, no D1); null when there is no public page. */
-async function readPage(env: Env, slug: string): Promise<PageFacts | null | "unavailable"> {
+/**
+ * The page's title and language from its snapshot (no shard, no D1); null when there is no public page, or when
+ * `owner` is given and did not push it.
+ */
+async function readPage(
+  env: Env,
+  slug: string,
+  owner?: string,
+): Promise<PageFacts | null | "unavailable"> {
   if (!env.STATUS) return null;
   try {
     const stored = await env.STATUS.get(statusKey(slug), { type: "json", cacheTtl: 30 });
     if (stored === null) return null;
+    if (owner !== undefined && Object(stored).workspaceId !== owner) return null;
     if (!isSnapshot(stored)) return "unavailable";
     return { title: stored.title, locale: stored.locale, groups: followGroups(stored) };
   } catch (error) {
@@ -440,6 +453,7 @@ async function subscribe(
   ctx: Pick<ExecutionContext, "waitUntil">,
   slug: string,
   facts: PageFacts,
+  owner?: string,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   const own = new URL(request.url).origin;
@@ -455,14 +469,14 @@ async function subscribe(
   if (!email) return page(400, { kind: "invalid" }, facts, slug);
   if (!(await allowed(env, request, slug))) return page(429, { kind: "limited" }, facts, slug);
   const follows = chosenFollows(form, facts.groups);
-  if (!trap) ctx.waitUntil(requestSubscription(env, slug, email, follows, own, Date.now()));
+  if (!trap) ctx.waitUntil(requestSubscription(env, slug, email, follows, own, Date.now(), owner));
   return page(200, { kind: "check", email }, facts, slug);
 }
 
 /**
  * The subscribe's work, after the answer: the row in D1, then the shard's event for a confirmation that should go out.
  * A shard that refuses or cannot be reached gives the confirmation back (`undoRequest`), so asking again sends it.
- * Never throws.
+ * With `expected` (a custom hostname), a slug another workspace holds by now records nothing. Never throws.
  */
 async function requestSubscription(
   env: Env,
@@ -471,12 +485,14 @@ async function requestSubscription(
   follows: string[] | null,
   origin: string,
   now: number,
+  expected?: string,
 ): Promise<void> {
   try {
     const owner = await env.DB.prepare("select workspace_id from status_slug where slug = ?")
       .bind(slug)
       .first<{ workspace_id: string }>();
     if (!owner) return;
+    if (expected !== undefined && owner.workspace_id !== expected) return;
     const asked = await recordSubscriber(env.DB, owner.workspace_id, email, origin, now, follows);
     if (!asked) return;
     let result: { ok: true } | { ok: false; code: string };

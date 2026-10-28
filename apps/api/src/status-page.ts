@@ -269,7 +269,10 @@ export class StatusPublisher {
         if ((dirty !== undefined || repush || stale) && page) {
           // Built and read in one turn: a change landing during the write marks a newer version, pushed next.
           const snapshot = statusSnapshot(shard.store, now);
-          if (snapshot) await kv.put(statusKey(page.slug), JSON.stringify(snapshot));
+          // With the workspace, which a custom hostname checks before serving it (RFC 0012 "Custom domains").
+          if (snapshot) {
+            await kv.put(statusKey(page.slug), JSON.stringify({ ...snapshot, workspaceId }));
+          }
           // A draft that never went public under its slug published nothing there; another page may use it now.
           else if (page.claimed !== false) await kv.delete(statusKey(page.slug));
           if (handle.abandoned) return;

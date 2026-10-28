@@ -119,12 +119,10 @@ describe("custom domain card", () => {
     expect(button(active, "Check again")).toBeUndefined();
   });
 
-  test("a failed domain says Cloudflare's reason; removing asks first", async () => {
-    const { container, calls } = panel({
-      domain: row({ state: "failed", error: "custom hostname does not CNAME to this zone" }),
-    });
+  test("a failed domain says Cloudflare's reason in the dashboard's words; removing asks first", async () => {
+    const { container, calls } = panel({ domain: row({ state: "failed", error: "moved" }) });
     expect(container.textContent).toContain("Failed");
-    expect(container.textContent).toContain("does not CNAME to this zone");
+    expect(container.textContent).toContain("no longer points at this Brigade instance");
     act(() => button(container, "Remove domain")!.click());
     expect(container.textContent).toContain(`Remove ${NAME}?`);
     expect(calls).toEqual([]);
@@ -144,6 +142,50 @@ describe("custom domain card", () => {
     const pt = panel({ domain: row() }).container;
     expect(pt.textContent).toContain("Domínio próprio");
     expect(pt.textContent).toContain("Registros DNS a criar");
+    act(() => root?.unmount());
+    const reason = panel({ domain: row({ error: "dns" }) }).container;
+    expect(reason.textContent).toContain("A Cloudflare ainda não encontra os registros DNS");
+  });
+
+  test("each refusal and each of Cloudflare's reasons has words of its own, in both languages", async () => {
+    for (const locale of ["en", "pt-BR"] as const) {
+      await setI18nLocale(locale);
+      const shown = new Set<string>();
+      for (const error of [
+        "dns",
+        "caa",
+        "timed_out",
+        "expired",
+        "moved",
+        "blocked",
+        "deleted",
+        "other",
+      ] as const) {
+        const { container } = panel({ domain: row({ state: "failed", error }) });
+        shown.add(container.textContent ?? "");
+        act(() => root?.unmount());
+      }
+      expect(shown.size, locale).toBe(8);
+      for (const error of ["unavailable", "in_progress", "apex", "cloudflare_failed"] as const) {
+        const { container } = panel({
+          onAdd: async () => ({ ok: false, error }),
+        });
+        const input = container.querySelector("input")!;
+        act(() => type(input, "status.acme.example"));
+        await act(async () =>
+          button(container, locale === "en" ? "Add domain" : "Adicionar")!.click(),
+        );
+        expect(container.textContent, `${locale} ${error}`).not.toContain(
+          "Couldn't save. Try again.",
+        );
+        expect(container.textContent, `${locale} ${error}`).not.toContain(
+          "Não foi possível salvar. Tente de novo.",
+        );
+        shown.add(container.textContent ?? "");
+        act(() => root?.unmount());
+      }
+      expect(shown.size, locale).toBe(12);
+    }
   });
 });
 

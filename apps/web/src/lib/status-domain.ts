@@ -12,24 +12,30 @@ export type DomainError =
   | "not_configured"
   | "invalid_hostname"
   | "own_domain"
+  | "apex"
   | "forbidden"
   | "rate_limited"
   | "not_found"
   | "domain_exists"
   | "hostname_taken"
+  | "in_progress"
   | "cloudflare_failed"
+  | "unavailable"
   | "failed";
 
 const KNOWN: DomainError[] = [
   "not_configured",
   "invalid_hostname",
   "own_domain",
+  "apex",
   "forbidden",
   "rate_limited",
   "not_found",
   "domain_exists",
   "hostname_taken",
+  "in_progress",
   "cloudflare_failed",
+  "unavailable",
 ];
 
 /** `GET …/status-page/domain`: null when it cannot be read (the section stays hidden). */

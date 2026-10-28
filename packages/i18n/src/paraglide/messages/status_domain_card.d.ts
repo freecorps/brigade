@@ -15,7 +15,7 @@ export type Status_Domain_CardInputs = {
 * | "none" | "The status page has no domain of its own." |
 * | "viewer" | "Owners and admins can add or remove the domain." |
 * | "hostname_label" | "Domain" |
-* | "hostname_hint" | "A subdomain you control. Point a CNAME at {name}." |
+* | "hostname_hint" | "A subdomain you control, such as status.example.com. Point a CNAME at {name}." |
 * | "add" | "Add domain" |
 * | "adding" | "Adding…" |
 * | "state_pending" | "Pending" |
@@ -44,6 +44,17 @@ export type Status_Domain_CardInputs = {
 * | "error_rate_limited" | "Too many changes in a minute. Try again shortly." |
 * | "error_not_found" | "The domain is no longer on the status page." |
 * | "error_cloudflare_failed" | "Cloudflare didn't answer. Try again in a minute." |
+* | "error_apex" | "Use a subdomain, such as status.example.com: a CNAME can't point the domain itself here." |
+* | "error_in_progress" | "That domain is still being set up or cleaned up. Try again in a few minutes." |
+* | "error_unavailable" | "Brigade couldn't save the domain right now. Try again in a minute." |
+* | "reason_dns" | "Cloudflare can't see the DNS records yet. Check they match the ones below; new records can take a while to show." |
+* | "reason_caa" | "A CAA record on the domain doesn't allow Cloudflare's certificate authorities. Allow them, then check again." |
+* | "reason_timed_out" | "Cloudflare stopped waiting for the records. Check them, then remove the domain and add it again." |
+* | "reason_expired" | "The domain's certificate expired. Check the records are still in place, then check again." |
+* | "reason_moved" | "The domain no longer points at this Brigade instance. Put the CNAME back, then check again." |
+* | "reason_blocked" | "Cloudflare blocked this domain. Remove it, or use another one." |
+* | "reason_deleted" | "Cloudflare no longer has this domain. Remove it and add it again." |
+* | "reason_other" | "Cloudflare couldn't verify the domain. Check the records, then check again." |
 * | "error_failed" | "Couldn't save. Try again." |
 * | * | "Custom domain" |
 *

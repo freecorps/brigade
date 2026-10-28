@@ -172,7 +172,7 @@ function Domain({ domain, manage, onCheck, onRemove }: PanelProps & { domain: St
       </div>
       <p className="max-w-prose text-sm text-muted-foreground">{say(`explain_${domain.state}`)}</p>
       {domain.error && domain.state !== "active" ? (
-        <p className="text-sm [overflow-wrap:anywhere]">{domain.error}</p>
+        <p className="max-w-prose text-sm">{say(`reason_${domain.error}`)}</p>
       ) : null}
       {domain.state !== "active" && domain.records.length > 0 ? (
         <section aria-labelledby={`${titleId}-records`} className="flex min-w-0 flex-col gap-2">

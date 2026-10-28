@@ -327,7 +327,7 @@ describe("PUT /workspaces/:id/status-page", () => {
 });
 
 describe("the snapshot", () => {
-  test("is pushed to KV, without anything internal, and served at /status/:slug", async () => {
+  test("is pushed to KV, without anything internal but whose it is, and served at /status/:slug", async () => {
     const t = await team();
     const address = slug();
     await configure(t, t.ana, settings(address));
@@ -365,7 +365,11 @@ describe("the snapshot", () => {
       groups: [{ name: null, components: [{ name: "API", status: "partial_outage" }] }],
       active: [{ title: "Slow <API> responses" }],
     });
-    const text = JSON.stringify(stored);
+    // The workspace it is, which a custom hostname checks (RFC 0012 "Custom domains") and nothing renders; else
+    // nothing internal.
+    const { workspaceId, ...shown } = stored as { workspaceId?: string };
+    expect(workspaceId).toBe(t.id);
+    const text = JSON.stringify(shown);
     for (const internal of ["db-7 OOM", t.caio.id, t.ana.id, t.id, incident, component]) {
       expect(text).not.toContain(internal);
     }
@@ -378,11 +382,16 @@ describe("the snapshot", () => {
     const html = await response.text();
     expect(html).toContain("Slow &lt;API&gt; responses");
     expect(html).not.toContain("<API>");
+    expect(html).not.toContain(t.id);
     expect(html).toContain("Some systems are down");
     // One script, the local times', allowed by its hash; nothing else may run.
     expect(html.match(/<script[\s>]/g) ?? []).toHaveLength(1);
     expect(response.headers.get("Content-Security-Policy")).toMatch(/script-src 'sha256-[^']+'/);
     expect(html).toContain('href="/status/' + address + '/feed.atom"');
+    for (const format of ["atom", "json"]) {
+      const feed = await exports.default.fetch(`${ORIGIN}/status/${address}/feed.${format}`);
+      expect(await feed.text(), format).not.toContain(t.id);
+    }
     const head = await exports.default.fetch(`${ORIGIN}/status/${address}`, { method: "HEAD" });
     expect(head.status).toBe(200);
     expect(await head.text()).toBe("");

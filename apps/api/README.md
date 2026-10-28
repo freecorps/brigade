@@ -477,6 +477,8 @@ In order, from `apps/api` unless noted:
    turns on `workers_dev`.
 5. **Slack**, later: integrations/slack/README.md, then add the `SLACK` binding to apps/web's `dev` environment and
    deploy the web Worker again.
+   Custom domains for status pages, optional and later ("Custom domains" below): after the API, from
+   `apps/status-edge`, `vp run build:dev`, then `wrangler deploy` (`brigade-status-edge-dev`), then its route.
 6. **Exports and AI drafts** (RFC 0013), optional (done for `dev`: `brigade-exports-dev` with its lifecycle rule, and
    both bindings): without them the dashboard hides exporting and "Draft with AI", and
    their routes answer 503. Paging needs neither. From `apps/api`:
@@ -568,18 +570,24 @@ deploy that includes it, since the subscribe, manage and notification queries re
 ## Custom domains
 
 RFC 0012 "Custom domains". Optional: a status page served at a workspace's own domain through Cloudflare for SaaS
-custom hostnames (`src/status-domain.ts`, the client in `src/status-domain-cf.ts`). Off until all of these exist; the
-setup wizard will do the same steps. Nothing here runs on its own, and Brigade never creates these resources:
+custom hostnames. The API keeps the domains (`src/status-domain.ts`, the client in `src/status-domain-cf.ts`, the
+alarm's re-checks in `src/status-domain-check.ts`) and renders the page for the edge (`src/status-pages.ts`, the
+`StatusPages` entrypoint); a separate Worker, `brigade-status-edge` ([apps/status-edge](../status-edge/README.md)),
+takes the custom hostnames' traffic. The API Worker's own `fetch` never serves a custom hostname. Off until all of
+these exist; the setup wizard will do the same steps. Nothing here runs on its own, and Brigade never creates these
+resources:
 
-1. **A zone for Cloudflare for SaaS** on the instance's account (it may be the dashboard's zone), with Cloudflare for
-   SaaS enabled on it.
+1. **A zone of its own for Cloudflare for SaaS** on the instance's account, with Cloudflare for SaaS enabled. Never
+   the dashboard's zone or the operator's main zone: step 3 routes every hostname on it (`*/*`) to the edge Worker,
+   so any other site on that zone would answer with "No status page here". A spare domain bought for it is enough.
 2. **A fallback origin**: a proxied DNS record on that zone, for example `status-origin.example.net` (`AAAA 100::`,
    proxied), set as the zone's fallback origin under Custom Hostnames. Owners point their CNAME at it.
-3. **A Workers route** `*/*` on that zone to the API Worker (`brigade-api`), so a custom hostname reaches it. Keep the
-   dashboard's own route on its hostname: the more specific route wins. The API serves only the status page on any
-   host that is not `DASHBOARD_URL`'s.
+3. **The edge Worker and its route**: deploy the API first, then `apps/status-edge` (its `STATUS` binding takes the
+   API's namespace id), then add a Workers route `*/*` on the SaaS zone to `brigade-status-edge` (dashboard: the
+   zone's Workers Routes; per environment, `brigade-status-edge-dev` on dev's zone). The route is not in
+   `wrangler.jsonc`, so no zone or hostname is in the repository; `wrangler deploy` leaves it alone.
 4. **An API token** scoped to "SSL and Certificates: Edit" on that zone alone (custom hostnames need nothing more).
-5. **The settings**, each with `wrangler secret put <NAME>` (add `--env` for dev or staging):
+5. **The settings**, each with `wrangler secret put <NAME>` on the API (add `--env` for dev or staging):
 
    | Secret                    | What                                                        |
    | ------------------------- | ----------------------------------------------------------- |
@@ -588,12 +596,20 @@ setup wizard will do the same steps. Nothing here runs on its own, and Brigade n
    | `CF_SAAS_FALLBACK_ORIGIN` | The fallback origin's hostname (step 2), shown to owners    |
    | `DASHBOARD_URL`           | Already set for email links; its hostname is never a page's |
 
-6. **D1**: apply `migrations/0014_status_custom_host.sql` (which workspace holds each hostname).
+6. **D1**: apply `migrations/0015_status_custom_host.sql` (which workspace holds each hostname).
 
-Owners and admins then add a domain on the dashboard's Custom domain card, create the records it shows, and press
-"Check again" until it is active. Changes are rate-limited per workspace (`STATUS_DOMAIN_LIMIT`, 10 a minute,
-namespaces 4191-4193). Each active hostname has a `host:<hostname>` key in the `STATUS` KV namespace, written by the
-queue consumer.
+Owners and admins then add a domain on the dashboard's Custom domain card and create the records it shows; the shard
+checks again on its own (pending: from a minute, backing off to hourly, for 7 days; active: daily), and "Check again"
+asks at once. Changes and checks are rate-limited per workspace (`STATUS_DOMAIN_LIMIT`, 10 a minute, namespaces
+4191-4193). Each active hostname has a `host:<hostname>` key (`{ workspaceId, slug }`) in the `STATUS` KV namespace,
+written by the queue consumer and read only by the edge Worker.
+
+A claim the API could not clean up (Cloudflare refused to delete a hostname, or could not say whether it had one) is
+kept in `status_custom_host` and logged ("the claim is kept"): the same workspace adopts the hostname on its next add
+after 2 minutes; to free the name for another workspace, delete the hostname under Custom Hostnames, then the row.
+
+**Turning it off** means removing the `*/*` route (or the edge Worker) as well as the three secrets: with the
+secrets gone the dashboard hides the card, but the route would keep answering every hostname on the zone.
 
 ## Webhooks
 

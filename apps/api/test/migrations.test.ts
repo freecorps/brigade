@@ -40,7 +40,7 @@ test("every Brigade table is there, with the indexes the actor lookup uses", asy
     // migrations/0010_status_confirmation_caps.sql.
     "status_confirmation_page_domain",
     "status_confirmation_send",
-    // migrations/0014_status_custom_host.sql (RFC 0012 "Custom domains").
+    // migrations/0015_status_custom_host.sql (RFC 0012 "Custom domains").
     "status_custom_host",
     // migrations/0008_status_slug.sql (RFC 0012).
     "status_slug",

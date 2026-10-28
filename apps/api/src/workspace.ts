@@ -60,6 +60,8 @@ import {
 } from "./members.ts";
 import { ESCALATION_RETRY_MS, Escalations } from "./escalation.ts";
 import type { StatusDomainView } from "./status-domain.ts";
+import { CF_CALL_MS, saasConfig, type SaasEnv } from "./status-domain-cf.ts";
+import { DomainChecker } from "./status-domain-check.ts";
 import {
   Invitations,
   type InvitationEmailPlan,
@@ -306,6 +308,8 @@ export class WorkspaceDO extends DurableObject<Env> {
   private readonly invitations: Invitations;
   private readonly status: StatusPublisher;
   private readonly statusMail: StatusMailer;
+  /** The status page's own domain, re-checked at Cloudflare from the alarm (src/status-domain-check.ts). */
+  private readonly domains: DomainChecker;
   /** The next reminder of follow-ups due (`nextReminder`), or undefined when it must be read again. */
   private reminderAt: { at: number | null } | undefined;
 
@@ -439,6 +443,15 @@ export class WorkspaceDO extends DurableObject<Env> {
       committed: (version, changes) => this.broadcast(version, changes, undefined),
       wake: (at) => this.wake(at, "status page push"),
     });
+    // The status page's own domain (RFC 0012 "Custom domains"): asked about again until Cloudflare settles it.
+    this.domains = new DomainChecker({
+      shard: this.shard,
+      sql: ctx.storage.sql,
+      config: () => saasConfig(env as Env & SaasEnv),
+      limiter: () => env.STATUS_DOMAIN_LIMIT as RateLimit | undefined,
+      check: (args) => this.serverMutation("statusDomain.check", args),
+      log: (message, fields) => this.log(message, fields),
+    });
     // The status page's emails (RFC 0012 "Email subscriptions"): its ledger; the addresses are in D1.
     this.statusMail = new StatusMailer({
       shard: this.shard,
@@ -449,6 +462,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     // Likewise a snapshot still to push (a failed push, a restart before the alarm ran), and a maintenance window that
     // starts or ends.
     this.armStatus();
+    this.armDomain();
     this.armMaintenance();
     this.armReminders();
     // Events left in the outbox (an alarm that failed to arm, a restart) arm the drain again whenever the object
@@ -769,6 +783,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     });
     if (!result.ok) return { ok: false, code: result.error.code };
     this.broadcast(result.version, changes, undefined);
+    this.armDomain();
     return { ok: true };
   }
 
@@ -2007,6 +2022,16 @@ export class WorkspaceDO extends DurableObject<Env> {
         late,
       ]).finally(() => clearTimeout(timer));
       if (outcome === "late") this.status.late(Date.now());
+      // The page's own domain, due its check at Cloudflare: one call with its own deadline, never when an escalation
+      // level falls due before it could end (the alarm comes back for it).
+      try {
+        const level = this.escalations.nextAt();
+        if (level === null || level - Date.now() > CF_CALL_MS + 1000) {
+          await this.domains.run(workspace, Date.now());
+        }
+      } catch (error) {
+        this.log("checking the status domain failed", { error });
+      }
     }
     const before = this.backlog();
     // The periodic reconcile (RFC 0006 "Who is paged"): a due one becomes a due repair, run just below.
@@ -2062,6 +2087,14 @@ export class WorkspaceDO extends DurableObject<Env> {
       statusAt = this.status.nextAt(Date.now());
     } catch (error) {
       this.log("reading the status page push failed", { error });
+    }
+    let domainAt: number | null = null;
+    try {
+      const at = this.domains.nextAt(Date.now());
+      // One that could not run (held back by an escalation, or a check under way) is tried a tick later, not in a loop.
+      domainAt = at === null ? null : Math.max(at, Date.now() + (at <= now ? MONITOR_TICK_MS : 0));
+    } catch (error) {
+      this.log("reading the status domain check failed", { error });
     }
     // Never before now plus a beat: a redrive that could not run is tried again then, not in a loop.
     let expiryAt: number | null = now + MONITOR_TICK_MS;
@@ -2132,7 +2165,10 @@ export class WorkspaceDO extends DurableObject<Env> {
         earliest(repair, earliest(armed, earliest(maintenanceAt, earliest(reminderAt, rerouteAt)))),
       ),
       earliest(
-        earliest(this.drainPaused ? null : this.drain.nextWake(Date.now()), statusAt),
+        earliest(
+          earliest(this.drainPaused ? null : this.drain.nextWake(Date.now()), statusAt),
+          domainAt,
+        ),
         earliest(
           earliest(webhookAt, archiveAt),
           earliest(expiryAt, earliest(tokenAt, earliest(replayAt, earliest(releaseAt, periodic)))),
@@ -2272,6 +2308,16 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (at !== null) this.wake(at, "maintenance window");
     } catch (error) {
       this.log("arming the maintenance window failed", { error: String(error) });
+    }
+  }
+
+  /** Brings the alarm forward for the status page domain's next check at Cloudflare. Never throws. */
+  private armDomain(): void {
+    try {
+      const at = this.domains.nextAt(Date.now());
+      if (at !== null) this.wake(at, "status domain check");
+    } catch (error) {
+      this.log("arming the status domain check failed", { error: String(error) });
     }
   }
 

@@ -42,7 +42,7 @@ import { receiptWorkspace } from "./receipts.ts";
 import { beginSlackInstall, listSlackChannels } from "./slack-bridge.ts";
 import type { FeedFormat } from "./status-feed.ts";
 import { configureStatusPage, serveStatusFeed, serveStatusPage } from "./status-route.ts";
-import { customHostRequest, statusDomainRoute } from "./status-domain.ts";
+import { statusDomainRoute } from "./status-domain.ts";
 import {
   serveSubscribers,
   serveSubscription,
@@ -75,6 +75,7 @@ import {
 
 export { ProbeDO } from "./probe.ts";
 export { SlackBridge } from "./slack-bridge.ts";
+export { StatusPages } from "./status-pages.ts";
 export { WatchdogDO } from "./watchdog.ts";
 export { WorkspaceDO } from "./workspace.ts";
 
@@ -155,12 +156,7 @@ const REFUSED_ROUTES = new Set(["/expo-authorization-proxy"]);
 const REFUSED_PREFIXES = ["/reset-password/"];
 
 export default {
-  async fetch(original, env, ctx): Promise<Response> {
-    // A status page's own domain (RFC 0012 "Custom domains") reaches only that page's routes, rewritten to them;
-    // nothing changes for the dashboard's hostname or an instance without custom domains.
-    const custom = await customHostRequest(original, env);
-    if (custom instanceof Response) return custom;
-    const request = custom ?? original;
+  async fetch(request, env, ctx): Promise<Response> {
     const { pathname } = new URL(request.url);
     // One Better Auth instance per request (its cookies depend on the request's protocol), made only once the
     // request needs it, so other routes skip its initialisation. test/auth.test.ts checks that a later request

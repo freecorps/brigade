@@ -30,12 +30,17 @@ import {
   type WireRow,
 } from "@freecorps/brigade-sync/protocol";
 
-/** The tables the public status page's snapshot is built from (`statusSnapshot`, packages/schema). */
+/**
+ * The tables the public status page's snapshot is built from (`statusSnapshot`, packages/schema), and the page's own
+ * domain: adding one pushes the page again, so its snapshot names the workspace a custom hostname checks for (RFC
+ * 0012 "Custom domains") even when it was last pushed before that field existed.
+ */
 const STATUS_TABLES: ReadonlySet<string> = new Set([
   "status_page",
   "status_components",
   "status_incidents",
   "status_maintenance",
+  "status_domain",
 ]);
 
 /**

@@ -18,6 +18,7 @@
         "@freecorps/brigade-push": "workspace:*",
         "@freecorps/brigade-schema": "workspace:*",
         "@freecorps/brigade-slack": "workspace:*",
+        "@freecorps/brigade-status-edge": "workspace:*",
         "@freecorps/brigade-sync": "workspace:*",
         "@freecorps/brigade-ui": "workspace:*",
         "better-auth": "1.7.13",
@@ -80,6 +81,21 @@
       "version": "0.0.0",
       "dependencies": {
         "@freecorps/brigade-push": "workspace:*",
+      },
+      "devDependencies": {
+        "@cloudflare/vite-plugin": "^1.65.0",
+        "@types/node": "^26.6.5",
+        "typescript": "^7.0.2",
+        "vite-plus": "catalog:",
+        "wrangler": "^4.152.0",
+      },
+    },
+    "apps/status-edge": {
+      "name": "@freecorps/brigade-status-edge",
+      "version": "0.0.0",
+      "dependencies": {
+        "@freecorps/brigade-i18n": "workspace:*",
+        "@freecorps/brigade-schema": "workspace:*",
       },
       "devDependencies": {
         "@cloudflare/vite-plugin": "^1.65.0",
@@ -618,6 +634,8 @@
     "@freecorps/brigade-sdk": ["@freecorps/brigade-sdk@workspace:packages/sdk"],
 
     "@freecorps/brigade-slack": ["@freecorps/brigade-slack@workspace:integrations/slack"],
+
+    "@freecorps/brigade-status-edge": ["@freecorps/brigade-status-edge@workspace:apps/status-edge"],
 
     "@freecorps/brigade-sync": ["@freecorps/brigade-sync@workspace:packages/sync"],
 

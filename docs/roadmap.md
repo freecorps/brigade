@@ -498,9 +498,12 @@ Validate the risky assumptions before writing product code. Each spike produces 
     (`STATUS_MISS_LIMIT`, 30 a minute, then 429); a draft's slug claimed only when the page first goes public;
     maintenance that marks its components down (planned outage), on the page, in the feeds and on the dashboard.
   - Done (Q23): custom domains through Cloudflare for SaaS custom hostnames: owners and admins add one on the
-    dashboard's Custom domain card, see the DNS records and whether Cloudflare verified it, and remove it; the API
-    serves the page at a verified hostname, looked up in KV and kept in step by events; tested against a fake of
-    Cloudflare's API.
+    dashboard's Custom domain card, see the DNS records and whether Cloudflare verified it (its reason in their
+    language), and remove it; the shard re-checks pending domains with backoff and active ones daily. A Worker of its
+    own, `brigade-status-edge` (`apps/status-edge`), holds the SaaS zone's `*/*` route, looks the hostname up in KV
+    and serves the page through the API's `StatusPages` entrypoint, never another workspace's; the API Worker's own
+    routes are untouched. Claims, concurrent adds, creates that land after a timeout and failed rollbacks leave
+    nothing orphaned at Cloudflare; tested against a fake of Cloudflare's API.
   - Left: setting up Cloudflare for SaaS on a deployed environment (owner's call, apps/api README "Custom domains").
 - [ ] Outbound webhooks; OpenAPI reference; `packages/sdk` published
   - Done: outbound webhooks (RFC 0005 "Outbound webhooks"): owners and admins register up to 20 endpoints per

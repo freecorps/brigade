@@ -9,7 +9,8 @@ scheduled maintenance (their sections below). The third: the components' order, 
 times on the page and its feeds. What is left is at the end ("Not yet"). The code:
 `packages/schema/src/status.ts`, `maintenance.ts` and `uptime.ts`, `apps/api/src/status-page.ts` (the shard's push),
 `status-route.ts`, `status-html.ts` and `status-feed.ts` (the routes, the page and its feeds), `status-subscribers.ts` (subscribing),
-`status-mail.ts` and `notify-status.ts` (the emails), `status-domain.ts` and `status-domain-cf.ts` (custom domains), and the dashboard's Status page and Scheduled maintenance cards
+`status-mail.ts` and `notify-status.ts` (the emails), `status-domain.ts`, `status-domain-cf.ts`, `status-domain-check.ts` and
+`status-pages.ts` with `apps/status-edge` (custom domains), and the dashboard's Status page and Scheduled maintenance cards
 and the incident page's Status page panel.
 
 ## Shape
@@ -170,44 +171,73 @@ custom hostnames: the owner points a CNAME at the instance's fallback origin and
   Certificates: Edit" on the SaaS zone alone), `CF_ZONE_ID` (that zone), `CF_SAAS_FALLBACK_ORIGIN` (the fallback
   origin's hostname, what owners point their CNAME at) and `DASHBOARD_URL`. Without all four the dashboard hides the
   section and the routes answer `503 not_configured`; nothing else changes.
+- **A Worker of its own serves it.** `brigade-status-edge` (`apps/status-edge`) holds the SaaS zone's `*/*` route and
+  nothing else does; the API Worker's `fetch` never looks at the host, reads no hostname lookup and has no public
+  route for it, so alerts, heartbeats, sync and sign-in answer exactly as without custom domains whatever is set
+  (tested with every setting set and `DASHBOARD_URL` on another host). The edge reads `host:<hostname>` from the
+  API's `STATUS` namespace (read only; KV's cache 30 s): a miss is a static 404 counted against the caller like any
+  status page miss (`STATUS_MISS_LIMIT`, the API's namespace, so both count together), `/favicon.ico` and
+  `/robots.txt` a 404 that never counts, a KV failure the 503 page. A hit calls the API's `StatusPages` entrypoint
+  (modelled on `SlackBridge`, one way only: api deploys first, then the edge) with the visitor's own Request, so the
+  subscribe form's Origin check holds. It answers only that page: `/` is the page, `/status/<its slug>` and its feeds
+  and subscription routes are themselves, anything else (another page, the API, sign-in) is the 404 page, counted as
+  a miss. Rendering and caching are `/status/<slug>`'s own; feed and email links stay on `DASHBOARD_URL`.
+- **Never another workspace's page.** The lookup is `{ workspaceId, slug }`, and the entrypoint serves the snapshot
+  under the slug only while that workspace pushed it (the snapshot's `workspaceId`), with a cache key of its own per
+  workspace; subscribing and the links check the same (and subscribing the slug's holder in D1). A slug that changed
+  hands before the lookup caught up is the 404 page (tested).
 - **One per page** (`status_domain`, one synced row: hostname, Cloudflare's id, `pending`, `active` or `failed`, the
-  DNS records to create, Cloudflare's reason, when it was last checked). Owners and admins (`status:manage`) add,
-  check and remove it from the dashboard's Custom domain card; everyone reads it.
+  DNS records to create, Cloudflare's reason as a code, when it was last checked). Owners and admins
+  (`status:manage`) add, check and remove it from the dashboard's Custom domain card; everyone reads it.
 - **D1 first, then Cloudflare, then the shard**, as for a slug: `PUT /workspaces/:id/status-page/domain`
   `{ hostname }` checks the session and the role in D1 (an outsider never reaches Cloudflare or a shard), the
   hostname, and Workers Rate Limiting per workspace (`STATUS_DOMAIN_LIMIT`, 10 a minute: each change calls
-  Cloudflare's API). It claims the hostname in D1 (`status_custom_host`, migration 0014, unique across the instance;
-  another workspace's is `409 hostname_taken`), creates the custom hostname (`POST /zones/:zone/custom_hostnames`,
-  certificate validated over HTTP once the CNAME points here; Cloudflare's own duplicate is `hostname_taken` too) and
-  runs the server-only `statusDomain.add` with its event `status_domain.added`. A refusal after the claim deletes
-  Cloudflare's hostname and releases the claim, so nothing is left behind (tested).
-- **What a hostname may be**: lowercase letters, digits and hyphens in two or more labels, an internationalized name
-  as punycode, at most 253 characters, no scheme, port or path, and no IP address in any spelling (`1.2.3`, `0x7f.1`,
-  `[::1]`). Never the instance's own domain, anything under it, or a parent of the dashboard's hostname: the own domain
-  is the dashboard's hostname without its first label (or itself when it has two), since a page must never answer for
-  the dashboard's origin.
+  Cloudflare's API). It claims the hostname in D1 (`status_custom_host`, migration 0015, unique across the instance)
+  only when its insert wrote the row, stamped with the add's time: another workspace's is `409 hostname_taken`, and
+  another add of the same workspace under way is `409 in_progress`, so a losing concurrent add never releases the
+  winner's claim (tested). A claim of the workspace's own with no domain behind it for `CLAIM_STALE_MS` (2 minutes,
+  past an add's longest run) is left over and taken over. Then it creates the custom hostname (`POST
+  /zones/:zone/custom_hostnames`, certificate validated over HTTP once the CNAME points here) and runs the
+  server-only `statusDomain.add` with its event `status_domain.added`.
+- **Nothing left at Cloudflare.** A create that fails for any reason, or that Cloudflare calls a duplicate (1406), is
+  followed by `GET …/custom_hostnames?hostname=`: a hostname this zone already has under the claimed name is adopted
+  (a create that landed after our timeout, or one an earlier rollback could not delete; tested); none, and the claim
+  is released (`hostname_taken` after a 1406, else `cloudflare_failed`); the lookup failing keeps the claim and logs
+  it. A shard that refuses after the create deletes Cloudflare's hostname, then releases the claim (tested); a delete
+  Cloudflare refuses keeps the claim, logged, so no other workspace takes a name with a hostname of ours under it.
+  The workspace's next add after `CLAIM_STALE_MS` finds and adopts it.
+- **What a hostname may be**: lowercase letters, digits and hyphens in three or more labels, an internationalized
+  name as punycode, at most 253 characters, no scheme, port or path, and no IP address in any spelling (`1.2.3`,
+  `0x7f.1`, `[::1]`). A two-label name (`example.com`) is refused (`apex`): a CNAME cannot sit at a zone's apex
+  without CNAME flattening, so a page takes a subdomain (an apex under a two-label suffix, `example.com.br`, cannot be
+  told apart without a public suffix list and needs flattening at the owner's DNS provider). Never the instance's
+  own domain, anything under it, or a parent of the dashboard's hostname, nor the fallback origin, its domain or
+  anything under it: an own domain is the hostname without its first label (or itself when it has two).
 - **Verification**: the card shows the records Cloudflare asked for (the CNAME, and its ownership TXT record) with the
   state, and "Check again" (`POST …/domain/check`) asks Cloudflare (`GET …/custom_hostnames/:id`) and runs
   `statusDomain.check` (event `status_domain.checked`, with the state it moved from). Active means the hostname and its
-  certificate are; failed means Cloudflare gave up (blocked, moved, deleted, a validation that timed out), shown with
-  its reason; anything else is pending.
+  certificate are; failed means Cloudflare gave up (blocked, moved, deleted, a validation that timed out); anything
+  else is pending. Cloudflare's reason is kept as a code (`dns`, `caa`, `timed_out`, `expired`, `moved`, `blocked`,
+  `deleted`, `other`) the card words in English and Portuguese, never Cloudflare's own English.
+- **Checked again on its own.** The shard's alarm asks Cloudflare again (`statusDomain.check` as `ACCOUNT_ACTOR`, its
+  event through the outbox, within `STATUS_DOMAIN_LIMIT`): a pending domain after as long as it has been pending (1
+  minute to 1 hour), for 7 days; an active one daily, so a change at Cloudflare reaches the dashboard and the lookup;
+  a failed one not at all. A failed call backs off from 1 minute, doubling to 1 hour. The call (5 s deadline) runs
+  after the outbox and the status push, and never when an escalation level falls due before it could end.
 - **Removing** (`DELETE …/domain`) deletes the hostname at Cloudflare first (one it no longer has counts as deleted),
-  then runs `statusDomain.remove` (`status_domain.removed`) and releases D1. If Cloudflare refuses, nothing changes,
-  so a domain the dashboard no longer shows never keeps serving.
-- **The public lookup** is a KV key per hostname (`host:<hostname>` = the slug, in `STATUS`), kept in step by the
-  queue consumer on `status_domain.added`, `.checked`, `.removed` and `status_page.configured`. It reads the shard's
-  domain and page as they are now, never the event's copy, so events handled late or twice leave the latest state:
-  the key exists only while the domain is active, the hostname is this workspace's in D1 and the page is public under
-  a slug it holds. A hostname another workspace holds by then is left to that workspace's events (tested).
-- **Serving.** Custom hostnames reach the API Worker through a Workers route on the SaaS zone (the dashboard keeps its
-  own, more specific route). A request whose host is not the dashboard's, when custom domains are on, reaches only
-  that page: `/` is the page, `/status/<its slug>/…` its feeds and subscription routes, and anything else (another
-  page, the API, sign-in) is the 404 page, counted as a miss. A hostname with no lookup is the same 404. The page,
-  its caches and its headers are the ones of `/status/<slug>`; feed and email links stay on `DASHBOARD_URL`.
-- **Setup** (apps/api README "Custom domains", not run by Brigade): a zone for Cloudflare for SaaS, a fallback origin
-  on it (a proxied hostname such as `status-origin.example.net`), a Workers route `*/*` on that zone to the API
-  Worker, the token with "SSL and Certificates: Edit" on the zone, then the three settings as secrets. The setup
-  wizard will take the same steps.
+  then runs `statusDomain.remove` (`status_domain.removed`) and releases the claims stamped before it began. If
+  Cloudflare refuses, nothing changes, so a domain the dashboard no longer shows never keeps serving.
+- **The public lookup** is a KV key per hostname (`host:<hostname>` = `{ workspaceId, slug }`, in `STATUS`), kept in
+  step by the queue consumer on `status_domain.added`, `.checked`, `.removed` and `status_page.configured`. It reads
+  the shard's domain and page as they are now, never the event's copy, so events handled late or twice leave the
+  latest state: the key exists only while the domain is active, the hostname is this workspace's in D1 and the page
+  is public under a slug it holds. A hostname another workspace holds by then is left to that workspace's events
+  (tested).
+- **Setup** (apps/api README "Custom domains", not run by Brigade): a zone of its own for Cloudflare for SaaS (never
+  the dashboard's or the operator's main zone, since its `*/*` route takes every hostname on it), a fallback origin on
+  it, the edge Worker with the `*/*` route on that zone, the token with "SSL and Certificates: Edit" on the zone, then
+  the three settings as secrets. Turning the feature off removes the route too. The setup wizard will take the same
+  steps.
 
 ## The snapshot
 
@@ -215,8 +245,9 @@ custom hostnames: the owner points a CNAME at the instance's fallback origin and
 built, the overall status, the groups with each component's name, derived status and uptime bar, the open incidents
 (most impact first) and the history, each incident with its public title, status, impact, the names of its components
 and its updates (newest first), and the maintenance windows under way and upcoming. It holds no ids, no members and
-nothing internal (tested: the snapshot never contains the internal title, any member, workspace, incident, component,
-monitor or maintenance id). Version 2 added uptime, maintenance and the `maintenance` component status; the reader
+nothing internal (tested: the snapshot never contains the internal title, any member, incident, component, monitor or
+maintenance id). The one exception is the workspace that pushed it (`workspaceId`, added by the shard's push and never
+rendered: tested on the page and both feeds), which a custom domain checks before serving ("Custom domains"). Version 2 added uptime, maintenance and the `maintenance` component status; the reader
 renders 1 and 2 and refuses anything else, including a 1 carrying the new fields. A page with no uptime bar and no
 maintenance window under way or upcoming is still written as a 1, so a Worker rolled back to a reader of 1 keeps
 serving it; only a page using what 2 added needs the newer reader. Incidents and windows also say when what the

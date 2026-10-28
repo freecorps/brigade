@@ -2,7 +2,11 @@
 // made by the API with the operator's scoped token (`CF_SAAS_TOKEN`, "SSL and Certificates: Edit" on `CF_ZONE_ID`).
 // Nothing else in Brigade talks to Cloudflare's REST API; every call has its own deadline.
 
-import type { StatusDomainRecord, StatusDomainState } from "@freecorps/brigade-schema";
+import type {
+  StatusDomainError,
+  StatusDomainRecord,
+  StatusDomainState,
+} from "@freecorps/brigade-schema";
 
 const API = "https://api.cloudflare.com/client/v4";
 /** One call to Cloudflare's API waits at most this long. */
@@ -43,7 +47,7 @@ export type SaasHostname = {
   id: string;
   state: StatusDomainState;
   records: StatusDomainRecord[];
-  error: string | null;
+  error: StatusDomainError | null;
 };
 
 export type SaasResult<T> =
@@ -59,14 +63,35 @@ type Raw = {
   verification_errors?: unknown;
 };
 
-const FAILED = new Set([
-  "moved",
-  "deleted",
-  "blocked",
-  "pending_blocked",
-  "test_blocked",
-  "test_failed",
-]);
+/** Cloudflare's statuses of a hostname it gave up on, and the reason each is shown with. */
+const FAILED: Record<string, StatusDomainError> = {
+  moved: "moved",
+  deleted: "deleted",
+  blocked: "blocked",
+  pending_blocked: "blocked",
+  test_blocked: "blocked",
+  test_failed: "other",
+};
+
+/**
+ * Cloudflare's reason, as a code the dashboard words in each language: its status or the certificate's first, then
+ * the words of its first error (a CAA record, the DNS records), else `other`. Null when it gave none.
+ */
+export function domainError(
+  status: string,
+  ssl: string,
+  errors: string[],
+): StatusDomainError | null {
+  const failed = FAILED[status];
+  if (failed) return failed;
+  if (ssl.endsWith("_timed_out")) return "timed_out";
+  if (ssl === "expired") return "expired";
+  const [first] = errors;
+  if (first === undefined) return null;
+  if (/\bcaa\b/i.test(first)) return "caa";
+  if (/cname|dns|\b(a|aaaa|txt) record|ownership|resolve|nxdomain|http/i.test(first)) return "dns";
+  return "other";
+}
 
 /** Cloudflare's answer, read: active once the hostname and its certificate are, failed when it gave up, else pending. */
 export function readHostname(raw: Raw, target: string): SaasHostname | undefined {
@@ -86,7 +111,7 @@ export function readHostname(raw: Raw, target: string): SaasHostname | undefined
   const state: StatusDomainState =
     status === "active" && ssl === "active"
       ? "active"
-      : FAILED.has(status) || ssl.endsWith("_timed_out") || ssl === "expired"
+      : status in FAILED || ssl.endsWith("_timed_out") || ssl === "expired"
         ? "failed"
         : "pending";
   const records: StatusDomainRecord[] = [{ type: "CNAME", name: raw.hostname, value: target }];
@@ -98,7 +123,7 @@ export function readHostname(raw: Raw, target: string): SaasHostname | undefined
     id: raw.id,
     state,
     records,
-    error: state === "active" ? null : (errors[0]?.slice(0, 300) ?? null),
+    error: state === "active" ? null : domainError(status, ssl, errors),
   };
 }
 
@@ -121,9 +146,30 @@ export class SaasClient {
     return this.call("GET", `/${encodeURIComponent(id)}`);
   }
 
+  /**
+   * The custom hostname this zone has for `hostname`, or null when it has none (`GET …/custom_hostnames?hostname=`):
+   * after a create that failed or timed out (it may have landed anyway) or that Cloudflare called a duplicate (1406),
+   * whether the hostname is in this zone already.
+   */
+  async find(hostname: string): Promise<SaasResult<SaasHostname | null>> {
+    const listed = await this.call<unknown[]>(
+      "GET",
+      `?hostname=${encodeURIComponent(hostname)}`,
+      undefined,
+      "list",
+    );
+    if (!listed.ok) return listed;
+    for (const raw of listed.value) {
+      if (Object(raw).hostname !== hostname) continue;
+      const read = readHostname(Object(raw) as Raw, this.config.target);
+      if (read) return { ok: true, value: read };
+    }
+    return { ok: true, value: null };
+  }
+
   /** Deletes it; one Cloudflare no longer has counts as deleted. */
   async remove(id: string): Promise<SaasResult<null>> {
-    const result = await this.call("DELETE", `/${encodeURIComponent(id)}`, undefined, true);
+    const result = await this.call("DELETE", `/${encodeURIComponent(id)}`, undefined, "bare");
     if (result.ok || result.code === "not_found") return { ok: true, value: null };
     return result;
   }
@@ -132,7 +178,7 @@ export class SaasClient {
     method: string,
     path: string,
     body?: unknown,
-    bare = false,
+    shape: "one" | "list" | "bare" = "one",
   ): Promise<SaasResult<T>> {
     const url = `${API}/zones/${encodeURIComponent(this.config.zoneId)}/custom_hostnames${path}`;
     let response: Response;
@@ -170,7 +216,12 @@ export class SaasClient {
       }
       return { ok: false, code: "failed", message };
     }
-    if (bare) return { ok: true, value: null as T };
+    if (shape === "bare") return { ok: true, value: null as T };
+    if (shape === "list") {
+      if (!Array.isArray(parsed.result))
+        return { ok: false, code: "failed", message: "unreadable answer" };
+      return { ok: true, value: parsed.result as T };
+    }
     const read = readHostname(Object(parsed.result) as Raw, this.config.target);
     if (!read) return { ok: false, code: "failed", message: "unreadable answer" };
     return { ok: true, value: read as T };

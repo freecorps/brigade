@@ -881,6 +881,21 @@ export type StatusPageRow = {
 
 /** Where a status page's own domain stands at Cloudflare: waiting for its DNS records, serving, or given up on. */
 export type StatusDomainState = "pending" | "active" | "failed";
+/**
+ * Why Cloudflare has not verified the domain, as a code the dashboard words in each language (never Cloudflare's own
+ * English): the DNS records are not in place (`dns`), a CAA record forbids the certificate (`caa`), validation ran out
+ * of time (`timed_out`), the certificate expired (`expired`), the hostname no longer points here (`moved`), Cloudflare
+ * blocked it (`blocked`), Cloudflare no longer has it (`deleted`), or another reason (`other`).
+ */
+export type StatusDomainError =
+  | "dns"
+  | "caa"
+  | "timed_out"
+  | "expired"
+  | "moved"
+  | "blocked"
+  | "deleted"
+  | "other";
 /** A DNS record the owner must create for the domain, as Cloudflare asked for it. */
 export type StatusDomainRecord = { type: "CNAME" | "TXT"; name: string; value: string };
 
@@ -893,8 +908,8 @@ export type StatusDomainRow = {
   cloudflareId: string;
   state: StatusDomainState;
   records: StatusDomainRecord[];
-  /** Cloudflare's reason, when it is not active and said one. */
-  error: string | null;
+  /** Cloudflare's reason, when it is not active and gave one. */
+  error: StatusDomainError | null;
   /** When Cloudflare was last asked. */
   checkedAt: number;
   createdAt: number;

@@ -6,12 +6,27 @@
 import { defineMutation, fail, ok, type DomainEvent } from "./mutation.ts";
 import { defineQuery } from "./query.ts";
 import { STATUS_PAGE_ID } from "./status.ts";
-import type { StatusDomainRecord, StatusDomainRow, StatusDomainState } from "./tables.ts";
+import type {
+  StatusDomainError,
+  StatusDomainRecord,
+  StatusDomainRow,
+  StatusDomainState,
+} from "./tables.ts";
 import { v } from "./validate.ts";
 
 /** The one domain row of a workspace. */
 export const STATUS_DOMAIN_ID = "status_domain";
 export const STATUS_DOMAIN_STATES = ["pending", "active", "failed"] as const;
+export const STATUS_DOMAIN_ERRORS = [
+  "dns",
+  "caa",
+  "timed_out",
+  "expired",
+  "moved",
+  "blocked",
+  "deleted",
+  "other",
+] as const satisfies readonly StatusDomainError[];
 /** At most this many DNS records are kept for the dashboard (a CNAME and Cloudflare's TXT records). */
 export const STATUS_DOMAIN_RECORDS_MAX = 5;
 const HOSTNAME_MAX = 253;
@@ -47,7 +62,7 @@ const recordArgs = v.object({
 const checkedArgs = {
   state: v.picklist(STATUS_DOMAIN_STATES),
   records: v.array(recordArgs, { max: STATUS_DOMAIN_RECORDS_MAX }),
-  error: v.nullable(v.string({ min: 1, max: 300 })),
+  error: v.nullable(v.picklist(STATUS_DOMAIN_ERRORS)),
 };
 
 /**

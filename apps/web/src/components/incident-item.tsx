@@ -28,7 +28,7 @@ const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 /** The row's columns from `md`: number, title, severity, status. The incidents card names them with the same grid. */
 export const INCIDENT_COLUMNS =
-  "md:grid-cols-[--spacing(20)_minmax(0,1fr)_--spacing(40)_--spacing(40)]";
+  "md:grid-cols-[--spacing(20)_minmax(0,1fr)_--spacing(38)_--spacing(38)]";
 
 /** A badge whose value the shard has not confirmed yet: a dashed outline marks which field is pending. */
 const UNSAVED = "rounded-sm outline-1 outline-offset-2 outline-current outline-dashed";
@@ -123,9 +123,10 @@ export function IncidentItem({
         )}
       </h3>
       {/* Phones: both menus on one line, and -mb-2 trims the space under the 44px triggers without shrinking
-          them. From md the wrapper dissolves and each menu takes its own column, centred on the row. */}
+          them. From md the wrapper dissolves and each menu fills its own column, badge at the start and chevron at
+          the end, so the chevrons line up down the list whatever each badge's width. */}
       <div className="col-span-2 -mb-2 -ml-1.5 flex flex-wrap items-center gap-1 max-[374px]:-ml-1 md:contents">
-        <div className="relative z-10 md:col-start-3 md:row-span-2 md:row-start-1 md:self-center">
+        <div className="relative z-10 md:col-start-3 md:row-span-2 md:row-start-1 md:self-center md:[&>button]:w-full md:[&>button]:justify-between">
           <SeverityMenu
             severity={row.severity}
             pending={pending.severity}
@@ -133,7 +134,7 @@ export function IncidentItem({
             onChange={(next) => onSeverity(row, next)}
           />
         </div>
-        <div className="relative z-10 md:col-start-4 md:row-span-2 md:row-start-1 md:self-center">
+        <div className="relative z-10 md:col-start-4 md:row-span-2 md:row-start-1 md:self-center md:[&>button]:w-full md:[&>button]:justify-between">
           <StatusMenu
             status={row.status}
             pending={pending.status}
@@ -321,7 +322,7 @@ export function IncidentItemSkeleton() {
   return (
     <li
       aria-hidden
-      className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 px-4 py-3 sm:px-6 md:grid-cols-[--spacing(20)_minmax(0,1fr)_--spacing(40)_--spacing(40)] md:items-start"
+      className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 px-4 py-3 sm:px-6 md:grid-cols-[--spacing(20)_minmax(0,1fr)_--spacing(38)_--spacing(38)] md:items-start"
     >
       <span className="my-0.5 block h-4 w-12 rounded-sm bg-muted md:row-span-2" />
       <span className="my-0.5 block h-3 w-24 justify-self-end rounded-sm bg-muted md:col-start-2 md:row-start-2 md:justify-self-start" />

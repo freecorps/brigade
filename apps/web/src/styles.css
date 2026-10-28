@@ -35,11 +35,44 @@
   --brigade-inset: inset 0 1px 2px rgb(0 0 0 / 0.35);
 }
 
+/*
+ * The bklit charts (src/components/charts, from the shadcn registry) read their colours from these. Each is one of
+ * Brigade's own tokens, so a chart sits on its card like the rest of the dashboard and follows the theme: the series
+ * take the --chart-N palette packages/ui already tests, text and lines take the card's ink and edges.
+ */
+:root {
+  --chart-line-primary: var(--chart-1);
+  --chart-line-secondary: var(--chart-2);
+  --chart-background: var(--card);
+  --chart-foreground: var(--foreground);
+  --chart-foreground-muted: var(--muted-foreground);
+  --chart-label: var(--muted-foreground);
+  --chart-grid: var(--border);
+  --chart-crosshair: var(--muted-foreground);
+  --chart-brush-border: var(--border);
+  --chart-tooltip-background: var(--popover);
+  --chart-tooltip-foreground: var(--popover-foreground);
+  --chart-tooltip-muted: var(--muted-foreground);
+  --chart-marker-background: var(--popover);
+  --chart-marker-border: var(--border);
+  --chart-marker-foreground: var(--popover-foreground);
+  --chart-marker-badge-background: var(--foreground);
+  --chart-marker-badge-foreground: var(--background);
+  --chart-indicator-color: var(--foreground);
+  --chart-indicator-secondary-color: var(--card);
+  --chart-segment-background: color-mix(in oklab, var(--muted-foreground) 8%, transparent);
+  --chart-segment-line: color-mix(in oklab, var(--muted-foreground) 35%, transparent);
+}
+
 @theme inline {
   --shadow-raised: var(--brigade-raised);
   --shadow-raised-primary: var(--brigade-raised-primary);
   --shadow-raised-destructive: var(--brigade-raised-destructive);
   --shadow-inset: var(--brigade-inset);
+  --color-chart-label: var(--chart-label);
+  --color-chart-tooltip-background: var(--chart-tooltip-background);
+  --color-chart-tooltip-foreground: var(--chart-tooltip-foreground);
+  --color-chart-tooltip-muted: var(--chart-tooltip-muted);
 }
 
 /*

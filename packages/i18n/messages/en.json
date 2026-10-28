@@ -64,6 +64,37 @@
   "language_name_en": "English",
   "language_name_pt_br": "Português (Brasil)",
   "overview_title": "Overview",
+  "overview_pulse": [
+    {
+      "declarations": ["input part", "input count", "input total", "input share"],
+      "selectors": ["part"],
+      "match": {
+        "part=incidents_label": "Active incidents",
+        "part=incidents_clear": "All clear",
+        "part=incidents_link": "Open incidents",
+        "part=monitors_label": "Monitors",
+        "part=monitors_up": "{count} of {total} up",
+        "part=monitors_none": "No monitors yet",
+        "part=monitors_link": "Open monitors",
+        "part=follow_label": "Open follow-ups",
+        "part=follow_overdue": "Overdue: {count}",
+        "part=follow_none": "Nothing overdue",
+        "part=follow_link": "Open follow-ups",
+        "part=glance_title": "Monitors",
+        "part=glance_description": "Each monitor's recent checks, every region on one line.",
+        "part=glance_all": "All monitors",
+        "part=recent_up": "{share} up in recent checks",
+        "part=regions": "Regions: {count}",
+        "part=regions_down": "{count} of {total} regions down",
+        "part=no_history": "No checks yet",
+        "part=alerts_title": "Alerts, last 24 hours",
+        "part=alerts_description": "Alerts that started firing in each hour, from every alert source.",
+        "part=alerts_total": "Total: {count}",
+        "part=alerts_row": "Alerts",
+        "part=*": "Brigade"
+      }
+    }
+  ],
   "overview_cover": [
     {
       "declarations": ["input part", "input name", "input from", "input to"],

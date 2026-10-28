@@ -64,6 +64,22 @@
   "language_name_en": "English",
   "language_name_pt_br": "Português (Brasil)",
   "overview_title": "Visão geral",
+  "overview_cover": [
+    {
+      "declarations": ["input part", "input name", "input from", "input to"],
+      "selectors": ["part"],
+      "match": {
+        "part=now_title": "Plantão agora",
+        "part=all_schedules": "Todas as escalas",
+        "part=cover_title": "As próximas 24 horas",
+        "part=cover_description": "Quem cada escala aciona, a partir de agora. Um trecho hachurado não tem ninguém de plantão.",
+        "part=now": "Agora",
+        "part=segment": "{name}, de {from} a {to}",
+        "part=set_up": "Configurar o plantão",
+        "part=*": "Brigade"
+      }
+    }
+  ],
   "nav": [
     {
       "declarations": ["input part"],

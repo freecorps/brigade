@@ -34,7 +34,7 @@ import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Segmented } from "@/components/ui/segmented";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter, CardHeader, CardList } from "@/components/ui/card";
+import { Card, CARD_X, CardContent, CardFooter, CardHeader, CardList } from "@/components/ui/card";
 import { Empty } from "@/components/ui/empty";
 import { Field } from "@/components/ui/field";
 import {
@@ -154,7 +154,7 @@ export function FollowUpsCard({ incident }: { incident: IncidentRow }) {
         <CardList>
           {rows.map((row) =>
             editing === row.id ? (
-              <li key={row.id} className="px-4 py-3 sm:px-6">
+              <li key={row.id} className={cn(CARD_X, "py-3")}>
                 <FollowUpForm
                   initial={draftOf(row)}
                   members={owners}

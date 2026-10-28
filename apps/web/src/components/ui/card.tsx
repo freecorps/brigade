@@ -63,7 +63,7 @@ function CardHeader({
   as?: "h2" | "h3";
   className?: string;
   /** Extra props for the heading (a `tabIndex` so focus can land on it). */
-  titleProps?: React.ComponentProps<"h2">;
+  titleProps?: Omit<React.ComponentProps<"h2">, "id">;
   children?: React.ReactNode;
 }) {
   return (
@@ -75,8 +75,8 @@ function CardHeader({
             <Icon aria-hidden className="size-4 shrink-0 self-center text-muted-foreground" />
           ) : null}
           <Heading
-            id={id}
             {...titleProps}
+            id={id}
             className={cn(
               "min-w-0 text-base font-semibold text-card-foreground outline-none [overflow-wrap:anywhere]",
               titleProps?.className,

@@ -29,7 +29,7 @@ import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardList } from "@/components/ui/card";
+import { Card, CARD_ROW, CARD_X, CardContent, CardHeader, CardList } from "@/components/ui/card";
 import { Empty } from "@/components/ui/empty";
 import { Field, FormError } from "@/components/ui/field";
 import { formatAge } from "@/lib/incidents";
@@ -255,7 +255,7 @@ export function WebhooksPanel({
         <CardList>
           {rows.map((row) =>
             editing === row.id ? (
-              <li key={row.id} className="px-4 py-4 sm:px-6">
+              <li key={row.id} className={cn(CARD_X, "py-4")}>
                 <EndpointEditor
                   row={row}
                   locale={locale}
@@ -342,7 +342,7 @@ function EndpointItem({
   const nameId = useId();
   const state = webhookState(row);
   return (
-    <li className="flex flex-col gap-2 px-4 py-3 sm:px-6">
+    <li className={cn(CARD_ROW, "flex flex-col gap-2")}>
       <div className="flex min-w-0 items-start gap-3">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">

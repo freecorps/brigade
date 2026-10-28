@@ -1,15 +1,17 @@
 import { m } from "@freecorps/brigade-i18n";
-import { createRootRoute, Outlet, useRouterState } from "@tanstack/react-router";
+import { createRootRoute, Outlet, useMatches, useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
+import { PlainFrame } from "@/components/app-shell";
 import { usePreferences } from "@/components/preferences";
-import { SiteHeader } from "@/components/site-header";
 
 export const Route = createRootRoute({ component: RootLayout });
 
 function RootLayout() {
   // Read only to re-render on a locale change, which rewords the skip link.
   usePreferences();
-  const main = useRef<HTMLElement>(null);
+  // Dashboard sections frame themselves (RequireWorkspace: the app shell once there is a workspace, the plain header
+  // until then); every other page gets the plain header here.
+  const dashboard = useMatches({ select: (matches) => matches.some((m) => m.staticData.section) });
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const shown = useRef(pathname);
   // Whether the user has done anything yet: a redirect on first load (signed out at `/` → `/sign-in`) changes the
@@ -31,7 +33,11 @@ function RootLayout() {
     // (screen readers read on from there, with the new tab title), not on the link or button that left the last one.
     if (shown.current === pathname) return;
     shown.current = pathname;
-    if (acted.current) main.current?.focus({ preventScroll: true });
+    const main = document.getElementById("main");
+    // On wide screens the dashboard's sheet scrolls, not the window: a new screen starts at its top. A link to a
+    // part of the page (`/on-call#schedule-…`) is left to the router, which scrolls to it.
+    if (!window.location.hash) main?.scrollTo({ top: 0 });
+    if (acted.current) main?.focus({ preventScroll: true });
   }, [pathname]);
   return (
     <>
@@ -41,13 +47,16 @@ function RootLayout() {
       >
         {m.skip_to_content()}
       </a>
-      <SiteHeader />
       {/* Not keyed on the locale: a remount would drop live state (refused-change notices, the declare
           text, changes in flight). Every message is worded at render, and a locale change re-renders every
           `usePreferences` reader and what it renders; each route component reads it for that reason. */}
-      <main ref={main} id="main" tabIndex={-1} className="outline-none">
+      {dashboard ? (
         <Outlet />
-      </main>
+      ) : (
+        <PlainFrame>
+          <Outlet />
+        </PlainFrame>
+      )}
     </>
   );
 }

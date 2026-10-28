@@ -12,6 +12,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { AppShell, PlainFrame } from "@/components/app-shell";
 import { AuthPage } from "@/components/auth-page";
 import { usePreferences } from "@/components/preferences";
 import { Button } from "@/components/ui/button";
@@ -23,14 +24,33 @@ import { syncClient } from "@/sync-client";
 
 /**
  * What the dashboard needs before it renders: a session (else the sign-in page), an active workspace (else the
- * create-workspace form) and the user's role in it. Then it opens the workspace's shard as that member.
+ * create-workspace form) and the user's role in it. Then it opens the workspace's shard as that member, inside the
+ * app shell (its sidebar and top bar); until there is a workspace to show, the plain header frames the page.
  */
 export function RequireWorkspace({ children }: { children: ReactNode }) {
   const session = authClient.useSession();
-  if (session.isPending) return <Loading />;
-  if (session.error) return <Unavailable retry={() => void session.refetch()} />;
+  if (session.isPending) {
+    return (
+      <PlainFrame>
+        <Loading />
+      </PlainFrame>
+    );
+  }
+  if (session.error) {
+    return (
+      <PlainFrame>
+        <Unavailable retry={() => void session.refetch()} />
+      </PlainFrame>
+    );
+  }
   if (!session.data) return <Navigate to="/sign-in" replace />;
-  if (!session.data.session.activeOrganizationId) return <CreateWorkspace />;
+  if (!session.data.session.activeOrganizationId) {
+    return (
+      <PlainFrame>
+        <CreateWorkspace />
+      </PlainFrame>
+    );
+  }
   return <ActiveWorkspace userId={session.data.user.id}>{children}</ActiveWorkspace>;
 }
 
@@ -61,17 +81,24 @@ function ActiveWorkspace({ userId, children }: { userId: string; children: React
     !member.data ||
     (member.data.organizationId !== undefined && member.data.organizationId !== workspace.data.id)
   ) {
+    // The shell without the shard's parts (counts, the time zone): the frame stays put through a switch.
     if (workspace.error || member.error) {
       return (
-        <Unavailable
-          retry={() => {
-            void workspace.refetch();
-            void member.refetch();
-          }}
-        />
+        <AppShell live={false}>
+          <Unavailable
+            retry={() => {
+              void workspace.refetch();
+              void member.refetch();
+            }}
+          />
+        </AppShell>
       );
     }
-    return <Loading />;
+    return (
+      <AppShell live={false}>
+        <Loading />
+      </AppShell>
+    );
   }
 
   // Brigade gives every member one of its roles; anything else reads nothing, like the shard would answer.
@@ -86,7 +113,7 @@ function ActiveWorkspace({ userId, children }: { userId: string; children: React
         userId={userId}
         role={role}
       >
-        {children}
+        <AppShell live>{children}</AppShell>
       </MemberProvider>
     </SyncProvider>
   );

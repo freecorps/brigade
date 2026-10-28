@@ -3,13 +3,19 @@
 The Brigade web dashboard: a React SPA (TanStack Router, Tailwind v4, shadcn/ui on Base UI) served by a small
 Worker with static assets. See [RFC 0002](../../docs/rfcs/0002-architecture.md) for the runtime map.
 
-Routes: `/sign-up` (an account and its first workspace), `/sign-in`, and `/`, the dashboard, for signed-in
-members only: `components/session.tsx` sends everyone else to `/sign-in`, asks a user without a workspace to
-create one, and opens the workspace's shard as the member (their role is the optimistic actor's). The header shows
-the workspace and an account menu with Sign out. Better Auth's client (`src/lib/auth.ts`) talks to `/api/auth/*`
-on the same origin. The dashboard has the incidents card, a stack check (the API Worker and a
-`WorkspaceDO` round trip) and the severity and status legend. The header's environment badge and the overview's
-wording follow the build (`src/lib/build-environment.ts`): "Local" under `vp dev`, "Dev" or "Staging" for
+Routes: `/sign-up` (an account and its first workspace), `/sign-in`, and the dashboard, for signed-in members
+only: `components/session.tsx` sends everyone else to `/sign-in`, asks a user without a workspace to create one,
+and opens the workspace's shard as the member (their role is the optimistic actor's). Better Auth's client
+(`src/lib/auth.ts`) talks to `/api/auth/*` on the same origin.
+
+The dashboard is one section per job, in the app shell (`components/app-shell.tsx`): a sidebar with the workspace
+switcher, the sections and the account menu, and the page on an inset sheet with a top bar that names it. A route
+joins it with `staticData: { section }`; `src/lib/navigation.ts` lists the sections. Respond: the overview (`/`:
+paging and account notices, open incidents and follow-ups), Incidents, Follow-ups, On call, Monitors, Services.
+Configure: Escalation, Alerts, Integrations (Slack, webhooks, API tokens), Status page, Members. At the foot:
+Workspace settings (incident types and fields, email, language, exports, the stack check and the severity and status
+legend) and Your account (email, phones, calls). On phones the sidebar opens as a sheet from the top bar's menu.
+The top bar's environment badge follows the build (`src/lib/build-environment.ts`): "Local" under `vp dev`, "Dev" or "Staging" for
 `build:dev` / `build:staging`, and no badge in production.
 
 ## Run it

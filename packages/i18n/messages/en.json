@@ -64,6 +64,34 @@
   "language_name_en": "English",
   "language_name_pt_br": "Português (Brasil)",
   "overview_title": "Overview",
+  "nav": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=label": "Dashboard",
+        "part=respond": "Respond",
+        "part=configure": "Configure",
+        "part=overview": "Overview",
+        "part=incidents": "Incidents",
+        "part=follow_ups": "Follow-ups",
+        "part=on_call": "On call",
+        "part=monitors": "Monitors",
+        "part=services": "Services",
+        "part=escalation": "Escalation",
+        "part=alerts": "Alerts",
+        "part=integrations": "Integrations",
+        "part=status_page": "Status page",
+        "part=members": "Members",
+        "part=settings": "Workspace settings",
+        "part=account": "Your account",
+        "part=open": "Open menu",
+        "part=close": "Close menu",
+        "part=menu": "Menu",
+        "part=*": "Brigade"
+      }
+    }
+  ],
   "stack_ok": "Everything is running",
   "stack_api_down": "The API Worker is not responding",
   "stack_do_down": "The Durable Object did not answer",

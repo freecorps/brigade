@@ -130,7 +130,7 @@ relay's bearer token):
   the app shows as its own message (sign out on a phone no longer used) and does not retry on a timer.
   `device.unregister` removes one's own device; `device.expire` (server only) drops one APNs said is gone, only if
   its token is still the one the push went to (a device registered again with a new token meanwhile is kept).
-- **Your phones (dashboard).** The overview's "Your phones" card lists the signed-in member's own devices in the
+- **Your phones (dashboard).** The "Your phones" card (on the dashboard's Your account page, `/account`) lists the signed-in member's own devices in the
   workspace from the synced `member_devices` summaries (no token or key): platform, the iOS build's APNs environment
   (Android has one, so it shows none), the end of its id, when it was registered, when Brigade last heard from it
   (its latest registration, one that changed nothing included, or receipt) and whether it rings as a call, newest

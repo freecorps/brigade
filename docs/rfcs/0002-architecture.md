@@ -248,8 +248,8 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     the setup script creates the first user: by default an owner account with a generated email and password,
     printed to the console once and never stored by the script, or, with a flag, the email (and name) the operator
     gives. "Require a verified email before sign-in" is an instance setting, off by default; on an instance with
-    email it closes the "learns the address was free" gap above. How someone invited joins a closed instance is
-    still open (Q21).
+    email it closes the "learns the address was free" gap above. With sign-up closed, a pending invitation still
+    lets the invited address create its account when accepting it.
   - **Ending a session (built):** every way a Better Auth session ends deletes its row through
     `databaseHooks.session.delete` (sign-out, `revoke-session`, `revoke-sessions`, `revoke-other-sessions`, a
     password reset, an expired session found): the API Worker asks the shard of every workspace the user belongs to

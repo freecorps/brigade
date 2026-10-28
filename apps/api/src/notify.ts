@@ -16,10 +16,15 @@ import { notifyReminder } from "./notify-reminder.ts";
 import { notifyRotation } from "./notify-rotation.ts";
 import { asksForInvitation, notifyInvitation } from "./notify-invite.ts";
 import { notifySlack, type SlackNotifyEnv } from "./notify-slack.ts";
-import { notifyStatus, type StatusNotifyEnv } from "./notify-status.ts";
+import { notifyStatus, STATUS_EMAIL_BUDGET_MS, type StatusNotifyEnv } from "./notify-status.ts";
 import { asksForStatusHost, notifyStatusHost } from "./status-domain.ts";
 import type { SaasEnv } from "./status-domain-cf.ts";
-import { notifyWebhookDisabled, notifyWebhooks, type WebhookNotifyEnv } from "./notify-webhooks.ts";
+import {
+  notifyWebhookDisabled,
+  notifyWebhooks,
+  WEBHOOK_TIMEOUT_MS,
+  type WebhookNotifyEnv,
+} from "./notify-webhooks.ts";
 import type { BrigadeEvent } from "./outbox.ts";
 import {
   asksForPage,
@@ -73,6 +78,19 @@ export const SLACK_BUDGET_MS = 3000;
  * whatever is due (src/webhooks.ts `redrive`).
  */
 export const WEBHOOK_BUDGET_MS = 3000;
+/**
+ * The consumer's own time limits, in one place: `CONSUMER_TIMING` in production. Tests of a side notifier that never
+ * answers pass shorter ones in the same proportions (the budget under the webhook timeout), so they prove the same
+ * order of events without waiting seconds of real time for each.
+ */
+export type ConsumerTiming = {
+  slackBudgetMs: number;
+  webhookBudgetMs: number;
+  /** One webhook delivery's own bound (src/notify-webhooks.ts). */
+  webhookTimeoutMs: number;
+  /** Status page emails, all of one event's (src/notify-status.ts). */
+  statusEmailBudgetMs: number;
+};
 /** How long the relay gets per send. */
 export const RELAY_TIMEOUT_MS = 10_000;
 /** How long the relay's token check gets when the dead-man switch's heartbeat comes through. */
@@ -133,6 +151,13 @@ function relayPost(
   return undefined;
 }
 
+export const CONSUMER_TIMING: ConsumerTiming = {
+  slackBudgetMs: SLACK_BUDGET_MS,
+  webhookBudgetMs: WEBHOOK_BUDGET_MS,
+  webhookTimeoutMs: WEBHOOK_TIMEOUT_MS,
+  statusEmailBudgetMs: STATUS_EMAIL_BUDGET_MS,
+};
+
 /**
  * The queue handler: one message per event; each is acked or retried on its own, all of a batch's at once, so a
  * page never waits for an email in the same batch. Never throws. `mail` is the email sender (`emailSender`, none
@@ -144,6 +169,7 @@ export async function consumeEvents(
   send: Fetch = (request) => fetch(request),
   mail: EmailSender | undefined = emailSender(env),
   waitUntil?: (promise: Promise<unknown>) => void,
+  timing: ConsumerTiming = CONSUMER_TIMING,
 ): Promise<void> {
   const seen = new Set<string>();
   // Slack and webhooks share a few of the invocation's six connections, so a page's relay request never waits for
@@ -196,6 +222,7 @@ export async function consumeEvents(
               event,
               name === "slack" ? retryDelay(message.attempts) : undefined,
               waitUntil,
+              name === "slack" ? timing.slackBudgetMs : timing.webhookBudgetMs,
             ).then((seconds) => {
               // Past the Queue's retries, give it up rather than send a page event to the dead-letter queue.
               if (seconds === undefined || message.attempts <= QUEUE_MAX_RETRIES) return seconds;
@@ -208,7 +235,14 @@ export async function consumeEvents(
           : Promise.resolve(undefined);
       const slack = side("slack", asksForSlack(event), () => notifySlack(event, env, slackSend));
       const webhooks = side("webhooks", asksForWebhooks(event), async () => {
-        await notifyWebhooks(event, env, send, slots, Date.now() + WEBHOOK_BUDGET_MS);
+        await notifyWebhooks(
+          event,
+          env,
+          send,
+          slots,
+          Date.now() + timing.webhookBudgetMs,
+          timing.webhookTimeoutMs,
+        );
         return undefined;
       });
       const sides = Promise.all([slack, webhooks]);
@@ -220,7 +254,15 @@ export async function consumeEvents(
             : webhookEmail
               ? await notifyWebhookDisabled(event, message.attempts, env, mail)
               : statusEmail
-                ? await notifyStatus(event, message.attempts, env, mail, slots, waitUntil)
+                ? await notifyStatus(
+                    event,
+                    message.attempts,
+                    env,
+                    mail,
+                    slots,
+                    waitUntil,
+                    timing.statusEmailBudgetMs,
+                  )
                 : asksForStatusHost(event)
                   ? await notifyStatusHost(event, env)
                   : reminder
@@ -271,20 +313,18 @@ async function withinBudget(
   event: BrigadeEvent,
   late: number | undefined,
   waitUntil: ((promise: Promise<unknown>) => void) | undefined,
+  budgetMs: number,
 ): Promise<number | undefined> {
   waitUntil?.(work);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const overrun = new Promise<number | undefined>((resolve) => {
-    timer = setTimeout(
-      () => {
-        log(`${name} notifier overran its budget`, {
-          event: event.id,
-          ...(late === undefined ? {} : { retryIn: late }),
-        });
-        resolve(late);
-      },
-      name === "slack" ? SLACK_BUDGET_MS : WEBHOOK_BUDGET_MS,
-    );
+    timer = setTimeout(() => {
+      log(`${name} notifier overran its budget`, {
+        event: event.id,
+        ...(late === undefined ? {} : { retryIn: late }),
+      });
+      resolve(late);
+    }, budgetMs);
   });
   try {
     return await Promise.race([work, overrun]);

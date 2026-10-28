@@ -56,6 +56,7 @@ export async function notifyWebhooks(
   send: Fetch,
   slots: SideConnections = new SideConnections(),
   deadline?: number,
+  timeoutMs = WEBHOOK_TIMEOUT_MS,
 ): Promise<void> {
   if (!asksForWebhooks(event) || !isTokenKey(env.WEBHOOK_SECRET_KEY)) return;
   const key = env.WEBHOOK_SECRET_KEY;
@@ -67,7 +68,10 @@ export async function notifyWebhooks(
     plan.sends.map(async (one) => {
       let outcome: WebhookOutcome;
       try {
-        outcome = await slots.run(() => deliver(original, body, one, key, send), deadline);
+        outcome = await slots.run(
+          () => deliver(original, body, one, key, send, timeoutMs),
+          deadline,
+        );
       } catch (error) {
         if (!(error instanceof NotStarted)) throw error;
         log("webhook delivery put off: no free connection", {
@@ -88,6 +92,7 @@ export async function deliver(
   target: WebhookSend,
   key: string,
   send: Fetch,
+  timeoutMs = WEBHOOK_TIMEOUT_MS,
 ): Promise<WebhookOutcome> {
   const at = Date.now();
   const failed = (
@@ -136,7 +141,7 @@ export async function deliver(
     });
     return failed("secret");
   }
-  const signal = AbortSignal.timeout(WEBHOOK_TIMEOUT_MS);
+  const signal = AbortSignal.timeout(timeoutMs);
   const started = Date.now();
   let response: Response;
   // The timeout ends the wait even if a fetch ignored the signal: the delivery is bounded either way.

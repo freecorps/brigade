@@ -22,7 +22,6 @@ import {
   MAX_PROOF_LATENCY_MS,
   OPERATOR_EMAIL_HOURLY_CAP,
   pagingStatus,
-  PING_TIMEOUT_MS,
   pingUrl,
   STATUS_EVENT,
   SYSTEM_WORKSPACE,
@@ -443,6 +442,11 @@ describe("the heartbeat, end to end", () => {
           init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)),
         ),
     );
+    // The real 5 s would be waited out in full below; the order of events is the same with a shorter one.
+    const timeout = 500;
+    await runInDurableObject(stub, (instance: WatchdogDO) => {
+      Reflect.set(instance, "pingTimeoutMs", timeout);
+    });
     const [heartbeat] = await heartbeats();
     const started = Date.now();
     const health = await stub.proved(heartbeat!.time, "ok");
@@ -451,10 +455,10 @@ describe("the heartbeat, end to end", () => {
     expect(pings()).toEqual([PING_URL]);
     // Recorded as failed once the timeout gives up on it.
     await vi.waitFor(async () => expect((await stub.health()).external.lastPingOk).toBe(false), {
-      timeout: PING_TIMEOUT_MS + 2000,
-      interval: 200,
+      timeout: timeout + 2000,
+      interval: 50,
     });
-  }, 15_000);
+  });
 
   test("an older heartbeat after a newer one changes nothing", async () => {
     const { stub, heartbeats } = watchdog();

@@ -200,6 +200,23 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
   // A pending draft past its time was lost: it reads as failed.
   const lost = row?.draft?.status === "pending" && !running;
 
+  const history =
+    row && row.revision > 0 ? (
+      <RevisionHistory
+        workspaceId={member.workspaceId}
+        incidentId={incident.id}
+        current={row.revision}
+        layout={layout}
+        who={who}
+        canRestore={editable && confirmed && !running}
+        onRestore={(revision) => {
+          setConflict(null);
+          setRefused(null);
+          open(revision);
+        }}
+      />
+    ) : null;
+
   return (
     <Card aria-labelledby="postmortem-title">
       <div className="flex flex-col gap-1 px-4 sm:px-6">
@@ -286,10 +303,14 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
             key={`${editing.base.revision}:${editing.base.updatedAt}:${keysOf(editing.layout)}:${editing.restoring ?? ""}`}
           />
         ) : blank ? (
-          <p className="text-muted-foreground">
-            {postmortemText("empty")}
-            {editable ? null : ` ${postmortemText("read_only")}`}
-          </p>
+          <>
+            <p className="text-muted-foreground">
+              {postmortemText("empty")}
+              {editable ? null : ` ${postmortemText("read_only")}`}
+            </p>
+            {/* Emptied after it was written: the history is how its text comes back. */}
+            {history}
+          </>
         ) : row ? (
           <>
             <dl className="flex flex-col gap-4">
@@ -316,21 +337,7 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
                 name: personName(row.updatedBy, who),
               })}
             </p>
-            {row.revision > 0 ? (
-              <RevisionHistory
-                workspaceId={member.workspaceId}
-                incidentId={incident.id}
-                current={row.revision}
-                layout={layout}
-                who={who}
-                canRestore={editable && confirmed && !running}
-                onRestore={(revision) => {
-                  setConflict(null);
-                  setRefused(null);
-                  open(revision);
-                }}
-              />
-            ) : null}
+            {history}
           </>
         ) : null}
       </CardContent>

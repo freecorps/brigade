@@ -139,7 +139,9 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   section empty or still its starter text, `isUnwrittenPostmortem`; e.g. the row a failed draft made) follows its
   incident's new type's template when `incident.setType` changes it (`followNewType`, in the same mutation), and its
   `updatedAt` moves, so an editor opened on the old sections is refused (`conflict`) and offered the new ones; not
-  while an AI draft is being written. One with text keeps its sections. Before the row exists, the editor follows the template the
+  while an AI draft is being written. One with text keeps its sections, and so does one saved before and emptied
+  since (`revision > 0`): its kept revisions hold text under the old sections, which a restore would otherwise drop.
+  An emptied postmortem still shows its revision history, so that text can be restored from the dashboard. Before the row exists, the editor follows the template the
   incident would take now; if it changed while someone was writing the first version, the save is refused
   (`conflict`) and the editor keeps the text and offers to load the new sections, as for a teammate's save.
 - **Starter text** fills a new postmortem's editor only: a save that changes nothing but the starter text is not
@@ -195,7 +197,8 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   (hidden characters, the cap). A draft still pending after 2 minutes (`AI_DRAFT_STALE_MS`: the Worker was stopped
   before it could write a failure) reads as failed and may be asked for again; its late result is refused.
 - **Turned off per workspace (decided, Q24).** Owners turn AI drafts off (and on) for their workspace with
-  `workspace.setAiDrafts` (`workspace:manage` and the owner role; event `workspace.ai_drafts_changed`, kept on the
+  `workspace.setAiDrafts` (`workspace:manage` and the owner role, so also an API token an owner made with that scope,
+  as for `monitor.setCap`; event `workspace.ai_drafts_changed`, kept on the
   `workspace` row as `aiDrafts`, absent meaning on), from the Incident settings card's "Postmortem templates" part,
   shown to owners and admins on a server with the binding (admins see it, unchangeable). Off, "Draft with AI" is
   hidden, `postmortem.requestDraft` refuses (`forbidden`), and the route answers 403 `ai_disabled` before the

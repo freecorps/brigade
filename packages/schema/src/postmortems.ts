@@ -154,6 +154,8 @@ export function isUnwrittenPostmortem(row: Pick<PostmortemRow, "sections" | "lay
 /**
  * Lays a postmortem nobody wrote in yet out again on the template of incidents of type `typeId` (decided, Q24), as
  * `incident.setType` changes it. Not while an AI draft is being written: the model was given the sections it had.
+ * Not once anything was saved in it either (`revision > 0`), even if it was emptied since: its kept revisions hold
+ * text under the old sections, which a restore would drop.
  * Its `updatedAt` moves, so an editor opened on the old sections is refused (`conflict`) and offered the new ones.
  */
 export function followNewType(
@@ -163,7 +165,7 @@ export function followNewType(
   now: number,
 ): void {
   const row = store.get("postmortems", incidentId);
-  if (!row || !isUnwrittenPostmortem(row) || draftRunning(row, now)) return;
+  if (!row || row.revision > 0 || !isUnwrittenPostmortem(row) || draftRunning(row, now)) return;
   const template = templateFor((id) => store.get("postmortem_templates", id), typeId);
   if (JSON.stringify(template ?? null) === JSON.stringify(row.layout ?? null)) return;
   store.update("postmortems", row.id, {

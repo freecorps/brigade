@@ -319,6 +319,18 @@ describe("a postmortem takes its template", () => {
       layout: fallback,
       sections: { summary: "Down.", followUps: "" },
     });
+    // Emptied again, it still keeps its sections: its kept revisions hold "Down." under them.
+    const kept = store.get("postmortems", INC)!;
+    expect(
+      save(
+        store,
+        { summary: "", followUps: "" },
+        { baseRevision: kept.revision, baseUpdatedAt: kept.updatedAt },
+      ),
+    ).toMatchObject({ ok: true });
+    // (No type: the built-in sections, which it would follow if it had never been saved.)
+    run(store, "incident.setType", { id: INC, typeId: null });
+    expect(store.get("postmortems", INC)).toMatchObject({ layout: fallback });
   });
 
   test("a section and the whole document have caps", () => {

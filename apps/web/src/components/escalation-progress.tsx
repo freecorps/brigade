@@ -1,5 +1,5 @@
 import { formatDateTime, formatRelativeTime, m, type Locale } from "@freecorps/brigade-i18n";
-import { formatAge, personName, type People } from "@freecorps/brigade-i18n/incident";
+import { formatAge, personName, severityName, type People } from "@freecorps/brigade-i18n/incident";
 import type {
   Escalation,
   EscalationPage,
@@ -57,6 +57,12 @@ export function statusText(status: RunStatus, who: People, now: number, locale: 
         part: "resolved",
         time: formatAge(status.at, now, locale),
         level: "",
+      });
+    case "once":
+      return m.escalation_progress({
+        part: "once",
+        time: "",
+        level: severityName(status.minSeverity),
       });
     case "fallback": {
       const cause =
@@ -139,18 +145,23 @@ export function EscalationProgress({
             <span className="min-w-0">{statusText(status, who, now, locale)}</span>
           </p>
           <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
-            {/* Which policy, and why this one: the alert route, a service of the incident or the monitor that
+            {/* Which policy, and why this one: picked when declared, the alert route, a service of the incident or the monitor that
                 opened it names it, or the default. */}
-            {run.route
-              ? escalationText("policy_route", { name: run.policyName, who: run.route.name })
-              : run.service
-                ? escalationText("policy_service", { name: run.policyName, who: run.service.name })
-                : run.monitor
-                  ? escalationText("policy_monitor", {
+            {run.picked
+              ? escalationText("policy_picked", { name: run.policyName })
+              : run.route
+                ? escalationText("policy_route", { name: run.policyName, who: run.route.name })
+                : run.service
+                  ? escalationText("policy_service", {
                       name: run.policyName,
-                      who: run.monitor.name,
+                      who: run.service.name,
                     })
-                  : escalationText("policy_default", { name: run.policyName })}
+                  : run.monitor
+                    ? escalationText("policy_monitor", {
+                        name: run.policyName,
+                        who: run.monitor.name,
+                      })
+                    : escalationText("policy_default", { name: run.policyName })}
           </p>
         </div>
         {next && run.nextAt !== null ? (

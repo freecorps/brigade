@@ -6,12 +6,13 @@
 // A level is resolved when it fires: schedules to whoever is on call at that instant. A level nobody on it can be
 // reached at is skipped at once; when no level is left, when every level and repeat went unacknowledged, or when a
 // level keeps failing to fire, the run falls back to the interim rule (everyone who can respond) and ends.
-// `incident.ack` and resolving stop a run, and close one that ended (incidents.ts).
+// `incident.ack` and resolving stop a run, and close one that ended (incidents.ts). A run that starts below its
+// policy's `minSeverity` pages its first level that reaches someone and ends there (`paged_once`).
 
 import type { Actor } from "./mutation.ts";
 import { isActive } from "./lifecycle.ts";
 import { defineMutation, fail, ok, type DomainEvent, type MutationStore } from "./mutation.ts";
-import { incidentPolicy } from "./policies.ts";
+import { escalatesAt, incidentPolicy } from "./policies.ts";
 import { onCallAt } from "./schedules.ts";
 import type {
   Escalation,
@@ -134,7 +135,8 @@ export function resolveLevel(
 
 /**
  * Pages the first level from `index` on (in `round`) that reaches someone, skipping the ones that reach nobody;
- * when none is left, everyone who can respond (`level: null`) and the run ends. Writes the run, its timer, the
+ * when none is left, everyone who can respond (`level: null`) and the run ends. A run that pages once (`once`) skips a
+ * level that reaches only `aware` too: they know, and no later level would ever page anyone else. Writes the run, its timer, the
  * timeline entry and the event; the caller writes nothing else to the run.
  */
 function fire(
@@ -155,7 +157,11 @@ function fire(
   for (let index = from.index; index < run.levels.length; index++) {
     const resolved = resolveLevel(store, run.levels[index], ctx.now, aware);
     missed.push(...resolved.missed);
-    if (resolved.userIds.length > 0) {
+    // A run that pages once must reach someone besides whoever caused it: nothing later would page anyone else.
+    const reaches = run.once
+      ? resolved.userIds.some((userId) => userId !== aware)
+      : resolved.userIds.length > 0;
+    if (reaches) {
       // Levels skipped after an undelivered one still say why the run left that level early.
       const reason =
         index > from.index && from.reason !== "undelivered" ? "unreachable" : from.reason;
@@ -293,6 +299,14 @@ function setTimer(store: MutationStore, incidentId: string, at: number): void {
  * paged"). `causedBy` (who caused that event) counts as reached without a push. `not_found` with no policy (the
  * interim rule pages instead); `conflict` while a run is under way, or for an incident already acknowledged or no
  * longer active.
+ *
+ * Below the policy's `minSeverity` the run does not escalate (Q18 decided): it pages the first level that reaches
+ * someone other than `causedBy` (skipping a level nobody else on it can be reached at, or everyone who can respond
+ * when no level reaches anyone), and then ends as `paged_once`, with an `escalation_once` timeline entry. So no timer:
+ * no later level at a timeout, no repeat, no page to everyone when nobody acknowledges, and no early escalation when
+ * its pushes all fail (the owners and admins are emailed instead, RFC 0005 "Email"). A severity raised up to the
+ * policy's afterwards (`escalates` on `incident.severity_changed`), or a member's `escalation.now`, starts it again in
+ * full.
  */
 export const startEscalation = defineMutation({
   name: "escalation.start",
@@ -311,13 +325,16 @@ export const startEscalation = defineMutation({
     if (incident.escalation?.status === "running") return fail("conflict", "Already escalating");
     const chosen = incidentPolicy(store, incident.id);
     if (!chosen) return fail("not_found", "No escalation policy");
-    const { policy, monitor, route, service } = chosen;
+    const { policy, monitor, route, service, picked } = chosen;
+    const once = escalatesAt(policy, incident.severity) ? undefined : policy.minSeverity!;
     const run: Escalation = {
       policyId: policy.id,
       policyName: policy.name,
       monitor,
       ...(route && { route }),
       ...(service && { service }),
+      ...(picked && { picked }),
+      ...(once && { once }),
       levels: policy.levels,
       repeat: policy.repeat,
       eventId: args.eventId,
@@ -329,9 +346,31 @@ export const startEscalation = defineMutation({
       paged: 0,
       pages: [],
     };
-    return ok(
-      ...fire(store, incident, run, { index: 0, round: 0, reason: "started" }, ctx, args.causedBy),
+    const events = fire(
+      store,
+      incident,
+      run,
+      { index: 0, round: 0, reason: "started" },
+      ctx,
+      args.causedBy,
     );
+    const after = store.get("incidents", incident.id)!;
+    if (once && after.escalation?.status === "running") {
+      // A level paged: the run ends on it. (Everyone who can respond already ended it as `exhausted`.)
+      store.update("incidents", incident.id, {
+        escalation: { ...after.escalation, status: "paged_once", nextAt: null, endedAt: ctx.now },
+      });
+      if (store.get("escalation_timers", incident.id)) {
+        store.delete("escalation_timers", incident.id);
+      }
+      appendTimeline(
+        store,
+        store.get("incidents", incident.id)!,
+        { kind: "escalation_once", minSeverity: once },
+        ctx,
+      );
+    }
+    return ok(...events);
   },
 });
 
@@ -456,8 +495,10 @@ export const unreachedEscalation = defineMutation({
  * acknowledged, and the run ends), with `reason: "manual"`. `step` is the run's page count the person saw: a run
  * that moved past it since (another member escalated, or the level timed out) is `conflict`, never escalated past a
  * level nobody saw. Slack sends the step its button or message carried; a typed command knows none, so Slack sends the
- * run's own unless its last page moved a level too recently to have been seen (`SLACK_ESCALATE_WINDOW_MS`). `not_found`
- * without a run under way; `conflict` for an incident acknowledged or no longer active.
+ * run's own unless its last page moved a level too recently to have been seen (`SLACK_ESCALATE_WINDOW_MS`). A run that
+ * paged once below its policy's severity (`paged_once`) escalates too: someone asked, so it runs again from its next
+ * level as a full run (no longer `once`: timeouts, repeats and the fallback to everyone). `not_found` without a run
+ * under way or paged once; `conflict` for an incident acknowledged or no longer active.
  */
 export const escalateNow = defineMutation({
   name: "escalation.now",
@@ -472,10 +513,16 @@ export const escalateNow = defineMutation({
     if (!isActive(incident.status) || incident.acknowledgedAt != null) {
       return fail("conflict", "Incident is not waiting for a page");
     }
-    const run = incident.escalation;
-    if (!run || run.status !== "running") return fail("not_found", "No escalation under way");
-    const last = run.pages[run.pages.length - 1];
-    if (run.paged !== args.step || !last) return fail("conflict", "The run moved on");
+    const current = incident.escalation;
+    // A run that paged once below its policy's severity escalates when someone asks: from its next level, in full.
+    const once = current?.status === "paged_once";
+    if (!current || (current.status !== "running" && !once)) {
+      return fail("not_found", "No escalation under way");
+    }
+    const last = current.pages[current.pages.length - 1];
+    if (current.paged !== args.step || !last) return fail("conflict", "The run moved on");
+    const run: Escalation = once ? { ...current, status: "running", endedAt: null } : current;
+    if (once) delete run.once;
     const index = last.level ?? run.levels.length;
     if (index < run.levels.length) {
       return ok(
@@ -590,7 +637,9 @@ export const repageEscalation = defineMutation({
     const incident = store.get("incidents", args.incidentId);
     const run = incident?.escalation;
     const last = run?.pages[run.pages.length - 1];
-    if (!incident || !run || run.status !== "running" || !last || last.level === null) {
+    // A run that paged once (below its policy's severity) is paged again too: its one page was all it had.
+    const live = run?.status === "running" || run?.status === "paged_once";
+    if (!incident || !run || !live || !last || last.level === null) {
       return fail("not_found", "No escalation under way");
     }
     if (run.paged !== args.step) return fail("conflict", "The run moved on");

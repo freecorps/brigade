@@ -108,6 +108,9 @@
   "paging_reason_relay_unauthorized": "O relay de push recusou o token de envio do Brigade, então nenhum acionamento consegue sair.",
   "paging_reason_relay_unreachable": "O relay de push não está respondendo.",
   "paging_reason_relay_not_configured": "Nenhum relay de push está configurado, então todo acionamento é registrado como falho.",
+  "paging_reason_apns_failing": "O serviço de push da Apple recusou a chave do relay, ou não está respondendo, então iPhones não podem ser acionados.",
+  "paging_reason_fcm_failing": "O Firebase Cloud Messaging não deu um token de acesso ao relay.",
+  "paging_reason_d1_failing": "O banco de dados (D1) não respondeu a uma leitura simples.",
   "paging_last_ok": "Última autoverificação que passou: {time}",
   "mobile_overview_description": "A legenda de severidade e status, a partir dos tokens e do catálogo compartilhados.",
   "dates_title": "Datas e horários",
@@ -134,6 +137,8 @@
   "declare_title_label": "Título",
   "declare_title_placeholder": "O que está acontecendo?",
   "declare_severity_label": "Severidade",
+  "declare_policy_label": "Política de escalonamento",
+  "declare_policy_usual": "A de sempre (tipo, serviço ou padrão)",
   "incident_change_saving": "Salvando…",
   "incident_change_queued": "Aguardando envio",
   "incident_declared": "Declarado {time}",
@@ -889,6 +894,7 @@
         "kind=paged_again_auto": "A chamada se perdeu, então o Brigade chamou de novo",
         "kind=page_nobody_else": "Ninguém mais foi chamado: só quem declarou pode responder",
         "kind=escalation_exhausted": "Ninguém confirmou depois de todos os níveis, então todos que podem responder foram chamados",
+        "kind=escalation_once": "Sem escalonamento: esta política só escala a partir de {a}",
         "kind=escalated_everyone_stalled": "Um nível de escalonamento continuou falhando, então todos que podem responder foram chamados",
         "kind=escalated_manual": "{actor} escalou, então o nível {a} foi chamado na hora: {b}",
         "kind=escalated_everyone_manual": "{actor} escalou depois do último nível, então todos que podem responder foram chamados",
@@ -1403,6 +1409,7 @@
         "text=policy_monitor": "Política: {name}, definida no monitor {who}",
         "text=policy_route": "Política: {name}, definida na rota de alertas {who}",
         "text=policy_service": "Política: {name}, definida no serviço {who}",
+        "text=policy_picked": "Política: {name}, escolhida ao declarar o incidente",
         "text=early": "Chamado na hora: ninguém no nível {level} pôde ser alcançado",
         "text=*": "Escalonamento"
       }
@@ -1482,12 +1489,30 @@
         "field=repeat, form=label": "Repetir os níveis",
         "field=targets, form=label": "Quem é chamado",
         "field=default, form=label": "Usar em toda chamada (política padrão)",
+        "field=min_severity, form=label": "Escalar a partir de",
+        "field=min_severity, form=hint": "Incidentes menos graves chamam o primeiro nível uma vez e não escalam, a menos que a gravidade suba até ela ou alguém escale manualmente.",
         "field=add_target, form=label": "Adicionar uma escala ou pessoa",
         "field=name, form=invalid": "Informe um nome.",
         "field=timeout, form=invalid": "Informe um número inteiro de minutos de 1 a 1440.",
         "field=targets, form=invalid": "Adicione pelo menos uma escala ou pessoa.",
         "field=*, form=invalid": "Confira este campo.",
         "field=*, form=*": "Campo"
+      }
+    }
+  ],
+  "escalation_min_severity": [
+    {
+      "declarations": ["input choice"],
+      "selectors": ["choice"],
+      "match": {
+        "choice=every": "Todas as severidades",
+        "choice=sev1": "Só SEV1",
+        "choice=sev2": "SEV2 e SEV1",
+        "choice=sev3": "SEV3, SEV2 e SEV1",
+        "choice=summary_sev1": "Escala só para SEV1",
+        "choice=summary_sev2": "Escala para SEV2 e SEV1",
+        "choice=summary_sev3": "Escala para SEV3, SEV2 e SEV1",
+        "choice=*": "Todas as severidades"
       }
     }
   ],
@@ -1498,6 +1523,7 @@
       "match": {
         "part=running": "Escalonando",
         "part=resolved": "Parado: resolvido {time}",
+        "part=once": "Chamado uma vez, sem escalonamento: esta política só escala a partir de {level}",
         "part=next_level": "Nível {level} às {time}",
         "part=next_repeat": "Nível 1 de novo às {time}",
         "part=next_end": "Todos que podem responder às {time}",
@@ -1585,7 +1611,7 @@
         "part=nobody_subject": "Ninguém pôde ser chamado para {incident}: {title}",
         "part=nobody_intro": "Ninguém pôde ser chamado para {incident} em {workspace}. O Brigade tentou todos que podia e a chamada não chegou ao celular de ninguém, e ninguém confirmou o incidente.",
         "part=nobody_timeline": "A linha do tempo do incidente mostra por que cada chamada falhou.",
-        "part=nobody_footer": "Você está recebendo este email porque é proprietário de {workspace}.",
+        "part=nobody_footer": "Você está recebendo este email porque é proprietário ou administrador de {workspace}.",
         "part=fact_incident": "Incidente: {incident}",
         "part=fact_title": "Título: {title}",
         "part=open": "Abrir o incidente",
@@ -2659,6 +2685,23 @@
       }
     }
   ],
+  "email_operator_status": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=subject_degraded": "A autoverificação de acionamentos do Brigade está degradada",
+        "part=subject_ok": "A autoverificação de acionamentos do Brigade voltou ao normal",
+        "part=subject_unknown": "A autoverificação de acionamentos do Brigade mudou",
+        "part=intro_degraded": "A autoverificação de acionamentos desta instância do Brigade encontrou um problema. Os acionamentos podem atrasar ou não sair até que seja corrigido:",
+        "part=intro_ok": "A autoverificação de acionamentos desta instância do Brigade voltou a passar: um sinal passou pela fila de eventos e pelo relay de push.",
+        "part=intro_unknown": "A autoverificação de acionamentos desta instância do Brigade ainda não tem resultado.",
+        "part=how": "Os logs do Worker têm os detalhes (procure por \"paging pipeline\"). GET /health/paging mostra o estado como os membros o veem.",
+        "part=footer": "Você recebe este email porque seu endereço está em OPERATOR_EMAILS nesta instância do Brigade.",
+        "part=*": "A autoverificação de acionamentos do Brigade mudou"
+      }
+    }
+  ],
   "email_webhook_disabled": [
     {
       "declarations": ["input part", "input workspace", "input webhook", "input failures"],
@@ -3503,7 +3546,7 @@
         "part=missed_workspace_off": "Seu workspace desativou estes emails para todos.",
         "part=reminders": "Lembretes de ações",
         "part=reminders_hint": "Toda manhã às 9:00 no seu fuso horário, a lista das suas ações de acompanhamento abertas com prazo no dia ou atrasadas. No máximo um email por dia.",
-        "part=owners_note": "Proprietários sempre recebem o email quando um acionamento não chegou a ninguém, seja qual for a escolha aqui: é o último recurso quando o acionamento falha.",
+        "part=owners_note": "Proprietários e administradores sempre recebem o email quando um acionamento não chegou a ninguém, seja qual for a escolha aqui: é o último recurso quando o acionamento falha.",
         "part=saving": "Salvando…",
         "part=saved": "Salvo",
         "part=failed": "Não foi possível salvar sua escolha. Tente de novo.",
@@ -3524,8 +3567,8 @@
         "part=description": "Quem o Brigade avisa por email quando um acionamento não chega. Os dois vêm ativados.",
         "part=unpaged": "Avisar o membro que um acionamento não chegou",
         "part=unpaged_hint": "Envia email a um membro quando um acionamento SEV1 ou SEV2 não chegou ao celular dele, uma vez por incidente. Cada membro também pode desativar isso para si.",
-        "part=nobody": "Avisar os proprietários quando um acionamento não chegou a ninguém",
-        "part=nobody_hint": "Envia email aos proprietários quando um acionamento não chegou a ninguém e nada mais vai acionar. É o último recurso quando o acionamento falha, então os membros não podem desativá-lo para si.",
+        "part=nobody": "Avisar proprietários e administradores quando um acionamento não chegou a ninguém",
+        "part=nobody_hint": "Envia email aos proprietários e administradores quando um acionamento não chegou a ninguém e nada mais vai acionar. É o último recurso quando o acionamento falha, então os membros não podem desativá-lo para si.",
         "part=nobody_off": "Enquanto isto estiver desativado, ninguém fica sabendo de um acionamento que não chegou a ninguém até abrir o Brigade.",
         "part=saving": "Salvando…",
         "part=saved": "Salvo",

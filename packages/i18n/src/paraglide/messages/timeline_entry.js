@@ -52,6 +52,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "paged_again_auto" | "The page was lost, so Brigade paged it again" |
 * | "page_nobody_else" | "Nobody else was paged: only the person who declared it can respond" |
 * | "escalation_exhausted" | "Nobody acknowledged after every level, so everyone who can respond was paged" |
+* | "escalation_once" | "Not escalated further: this policy escalates from {a}" |
 * | "escalated_everyone_stalled" | "An escalation level kept failing to fire, so everyone who can respond was paged" |
 * | "escalated_manual" | "{actor} escalated, so level {a} was paged now: {b}" |
 * | "escalated_everyone_manual" | "{actor} escalated past the last level, so everyone who can respond was paged" |
@@ -137,6 +138,7 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "paged_again_auto") return /** @type {LocalizedString} */ (`A chamada se perdeu, então o Brigade chamou de novo`);
 		if (i?.kind === "page_nobody_else") return /** @type {LocalizedString} */ (`Ninguém mais foi chamado: só quem declarou pode responder`);
 		if (i?.kind === "escalation_exhausted") return /** @type {LocalizedString} */ (`Ninguém confirmou depois de todos os níveis, então todos que podem responder foram chamados`);
+		if (i?.kind === "escalation_once") return /** @type {LocalizedString} */ (`Sem escalonamento: esta política só escala a partir de ${i?.a}`);
 		if (i?.kind === "escalated_everyone_stalled") return /** @type {LocalizedString} */ (`Um nível de escalonamento continuou falhando, então todos que podem responder foram chamados`);
 		if (i?.kind === "escalated_manual") return /** @type {LocalizedString} */ (`${i?.actor} escalou, então o nível ${i?.a} foi chamado na hora: ${i?.b}`);
 		if (i?.kind === "escalated_everyone_manual") return /** @type {LocalizedString} */ (`${i?.actor} escalou depois do último nível, então todos que podem responder foram chamados`);
@@ -216,6 +218,7 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "paged_again_auto") return /** @type {LocalizedString} */ (`The page was lost, so Brigade paged it again`);
 		if (i?.kind === "page_nobody_else") return /** @type {LocalizedString} */ (`Nobody else was paged: only the person who declared it can respond`);
 		if (i?.kind === "escalation_exhausted") return /** @type {LocalizedString} */ (`Nobody acknowledged after every level, so everyone who can respond was paged`);
+		if (i?.kind === "escalation_once") return /** @type {LocalizedString} */ (`Not escalated further: this policy escalates from ${i?.a}`);
 		if (i?.kind === "escalated_everyone_stalled") return /** @type {LocalizedString} */ (`An escalation level kept failing to fire, so everyone who can respond was paged`);
 		if (i?.kind === "escalated_manual") return /** @type {LocalizedString} */ (`${i?.actor} escalated, so level ${i?.a} was paged now: ${i?.b}`);
 		if (i?.kind === "escalated_everyone_manual") return /** @type {LocalizedString} */ (`${i?.actor} escalated past the last level, so everyone who can respond was paged`);

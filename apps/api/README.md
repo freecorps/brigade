@@ -330,9 +330,13 @@ rate-limit counters past every window once an hour (minute 23).
 RFC 0007 "Watching the watcher" (`src/watchdog.ts`). A Cron Trigger (`* * * * *`, `scheduled`) asks the one
 `WatchdogDO` for a beat: a `brigade.heartbeat` event in its own `outbox`, drained by its alarm through the same
 `OutboxDrain` to `brigade-events`. The consumer sends the watchdog's events (`workspaceId` `_system`) to
-`proveHeartbeat` instead of a shard: it proves the relay takes the send token (`POST /send` with the token and no
-body: `400 invalid_body` is accepted, `401` refused) and reports to `WatchdogDO.proved()`, which pings `DEAD_MAN_URL`
-(in `waitUntil`, 5 s timeout) when the beat is the newest yet, took at most 2 minutes and the relay took the token. The external check
+`proveHeartbeat` instead of a shard: it asks the relay's `GET /health?deep=1` with the send token (`401` refused; an
+answer naming `apns` proves the token and says whether APNs took the relay's provider token and FCM gave it an access
+token, without a push; a relay without the deep check falls back to `POST /send` with no body, `400 invalid_body`
+accepted), reads D1 once (`select 1`, 3 s), and reports to `WatchdogDO.proved()`, which pings `DEAD_MAN_URL`
+(in `waitUntil`, 5 s timeout) when the beat is the newest yet, took at most 2 minutes, the relay took the token and
+no deeper check (APNs, FCM, D1) failed: a refused key or account at once, a transient failure (a timeout, a 5xx, a D1
+read) only on the 3rd proved beat in a row (`TRANSIENT_FAILURES_TO_DEGRADE`). The external check
 (any service or self-hosted checker that alerts on a missed URL ping; period 1 minute, grace about 5) pages the
 operators when the pings stop.
 
@@ -340,9 +344,11 @@ operators when the pings stop.
 lastBeatAt, lastProvedAt, lastOkAt }` to a member; never `external` (operators read the logs).
 `degraded` after 3 minutes with no beat (`no_beat`), with the newest proved beat older than 3 minutes
 (`pipeline_stalled`), with the last proof over 2 minutes late (`pipeline_slow`), or with the relay
-`relay_unauthorized`, `relay_unreachable` or `relay_not_configured` on the last proof; `unknown` before the first
-proof. The dashboard shows a notice while it is not `ok`. Changes of status or reasons write `brigade.status_changed`
-and log `paging pipeline degraded`.
+`relay_unauthorized`, `relay_unreachable` or `relay_not_configured` on the last proof, or with `apns_failing`,
+`fcm_failing` or `d1_failing` from its deeper checks; `unknown` before the first proof. The dashboard shows a notice
+while it is not `ok`. Changes of status or reasons write `brigade.status_changed` and log `paging pipeline degraded`;
+the consumer emails each to `OPERATOR_EMAILS` (comma-separated, at most 10 addresses, in English), at most 6 changes
+an hour, once each, never retried and never in a page's way (`src/notify-operators.ts`).
 
 `DEAD_MAN_URL` is an optional secret (`wrangler secret put DEAD_MAN_URL --env dev`; `https:` only, `http:` on
 loopback). Locally the cron never fires on its own, and `secrets.required` keeps optional secrets out of `.dev.vars`,
@@ -430,6 +436,7 @@ In order, from `apps/api` unless noted:
    | `SLACK_TOKEN_KEY`    | Optional until Slack: seals bot tokens ("Slack" below)                                                                                                                                                                                                                                                                                                                        |
    | `WEBHOOK_SECRET_KEY` | Optional: seals webhook signing secrets ("Webhooks" below, `openssl rand 32 \| base64 \| tr '+/' '-_' \| tr -d =`); without it webhooks are off                                                                                                                                                                                                                               |
    | `DEAD_MAN_URL`       | Optional: the external dead-man check's ping URL ("Dead-man switch" above)                                                                                                                                                                                                                                                                                                    |
+   | `OPERATOR_EMAILS`    | Optional: the instance operators' addresses, comma-separated, emailed when the paging self-check changes status ("Dead-man switch" above); needs `EMAIL_FROM`                                                                                                                                                                                                                 |
    | `MAX_MONITORS`       | Optional: the most monitors any workspace may have on this instance, 1 to 10000 (default 100); owners can set a lower cap for their workspace (RFC 0007 "Limits"). Not secret, but set like the others: no environment has `vars`                                                                                                                                             |
    | `API_TOKEN_KEY`      | Optional: the HMAC key API tokens are hashed under ("API tokens" below, `openssl rand 32 \| base64 \| tr '+/' '-_' \| tr -d =`); without it they are hashed with SHA-256 alone. Setting it later keeps every token: one minted without it is found by its SHA-256 once and its row moved to the keyed digest. Changing or removing it invalidates every token hashed under it |
 

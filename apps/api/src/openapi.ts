@@ -777,7 +777,9 @@ const LISTED: readonly Operation[] = [
       "Runs `incident.declare` as the member (responders and up), as declaring in the app does: numbered, on the " +
       "timeline, `incident.declared` through the outbox, and paged by the escalation policy exactly as a declare " +
       "from the dashboard is. The severity defaults to the type's, else `sev3`; a type or service that does not " +
-      "exist is left out, as in the app.",
+      "exist is left out, as in the app. `escalationPolicyId` picks the policy that pages it, first in the order " +
+      '(RFC 0006 "Who is paged"); one that does not exist, or is deleted before the page, falls back to the ' +
+      "usual order.",
     auth: "session",
     bearer: "incident:declare",
     parameters: [workspaceId, idempotencyKey],
@@ -1743,6 +1745,9 @@ const SCHEMAS: Record<string, JsonSchema> = {
             "relay_unauthorized",
             "relay_unreachable",
             "relay_not_configured",
+            "apns_failing",
+            "fcm_failing",
+            "d1_failing",
           ],
         },
       },

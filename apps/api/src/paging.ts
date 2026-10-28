@@ -242,7 +242,8 @@ export type DeviceOutcome =
 
 /**
  * Whether an event asks for a page (RFC 0006 "Who is paged"), from the event alone: a declared incident (any
- * severity; SEV1 and SEV2 at `page` urgency), a severity raised into SEV1 or SEV2, or an escalation level fired by
+ * severity; SEV1 and SEV2 at `page` urgency), a severity raised into SEV1 or SEV2 or up to the policy's `minSeverity`
+ * a run paged once below (`escalates`, set by `incident.setSeverity`), or an escalation level fired by
  * the shard's alarm (the level a run starts with is sent on the event that started it). Monitors open incidents with
  * `incident.declared` as `sys_monitors` (SEV2), so they page through the same rule. An incident reopened by the
  * alerts' actor pages too: its alert fired again soon after it resolved by itself, unacknowledged (RFC 0005 "Alert
@@ -269,14 +270,14 @@ export function asksForPage(event: BrigadeEvent): boolean {
     return (event.data as Partial<EscalationPaged["data"]> | null)?.started === false;
   }
   if (event.type !== "incident.severity_changed") return false;
-  const { from, to, reopening } = (event.data ?? {}) as Partial<IncidentSeverityChanged["data"]>;
-  return (
-    reopening !== true &&
-    to !== undefined &&
-    from !== undefined &&
-    PAGING_SEVERITIES.includes(to) &&
-    rank(to) < rank(from)
-  );
+  const { from, to, reopening, escalates } = (event.data ?? {}) as Partial<
+    IncidentSeverityChanged["data"]
+  >;
+  if (reopening === true || to === undefined || from === undefined || rank(to) >= rank(from)) {
+    return false;
+  }
+  // Into SEV1 or SEV2, or up to the severity the incident's run paged once below (`escalates`): a new, full run.
+  return PAGING_SEVERITIES.includes(to) || escalates === true;
 }
 
 /**
@@ -379,14 +380,14 @@ type Recipients = { targets: PageTarget[]; noDevices: string[]; skipped: Skipped
 /**
  * Whether an `escalation.paged` event belongs to the incident's run as it is now: any page of the run under way, or
  * of the run that ended on paging everyone (a level's event still being retried when a later level ended the run
- * still pages). One from a run since stopped or closed (acknowledged or resolved, an ended run included, then
+ * still pages), or of a run that paged once below its policy's severity (`paged_once`). One from a run since stopped or closed (acknowledged or resolved, an ended run included, then
  * reopened) or replaced pages nobody.
  */
 function current(event: BrigadeEvent, incident: IncidentRow): boolean {
   const data = event.data as Partial<EscalationPaged["data"]> | null;
   const run = incident.escalation;
   if (!run || data?.run !== run.eventId) return false;
-  return run.status === "running" || run.status === "exhausted";
+  return run.status === "running" || run.status === "exhausted" || run.status === "paged_once";
 }
 
 /**
@@ -1601,7 +1602,12 @@ export class Pager {
    */
   private lastPage(event: BrigadeEvent, run: Escalation): number | undefined {
     const last = run.pages[run.pages.length - 1];
-    if (!last || (run.status !== "running" && run.status !== "exhausted")) return undefined;
+    if (
+      !last ||
+      (run.status !== "running" && run.status !== "exhausted" && run.status !== "paged_once")
+    ) {
+      return undefined;
+    }
     // A run ends only on everyone who can respond, and runs on only after a level.
     if ((run.status === "exhausted") !== (last.level === null)) return undefined;
     if (event.type === "escalation.paged") {

@@ -13,6 +13,9 @@ export const DEGRADED_REASONS = [
   "relay_unauthorized",
   "relay_unreachable",
   "relay_not_configured",
+  "apns_failing",
+  "fcm_failing",
+  "d1_failing",
 ] as const;
 export type DegradedReason = (typeof DEGRADED_REASONS)[number];
 

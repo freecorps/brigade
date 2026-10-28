@@ -10,6 +10,8 @@
   an admin). `409 conflict`: the update was removed.
 - `postIncidentUpdate` answers the update's `entryId` (type `UpdatePosted`), what the two above take.
 - Payload types: `incident.renamed` (`from`, `to`), a new event in the webhook catalog (version 1).
+- `declareIncident` takes `escalationPolicyId`: the policy that pages the incident, first in the policy order; one
+  that does not exist is left out.
 
 ## 0.2.0 (unreleased)
 

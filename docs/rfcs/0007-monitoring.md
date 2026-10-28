@@ -385,13 +385,32 @@ results (a new monitor is up on its first success).
      beat: a `brigade.heartbeat` event written to the watchdog's own outbox, and its alarm armed.
   2. The alarm drains it with the same `OutboxDrain` as the shards to the `brigade-events` Queue.
   3. The Queue consumer routes the watchdog's events (`workspaceId` `_system`, which no workspace can have) away from
-     the shards: for a heartbeat it proves the relay takes its send token (`POST /send` with the bearer token and no
-     body, 5 s timeout: `400 invalid_body` means the token was accepted, before any APNs call or log; `401` is
-     `unauthorized`; anything else `unreachable`; the relay's `/health` checks no token) and reports back to the
-     watchdog (`proved`).
+     the shards: for a heartbeat it asks the relay's **deep health check** (decided, Q19): `GET /health?deep=1` with
+     the bearer send token (5 s timeout). The deep check is only for the send token's holder (`401` otherwise, so its
+     detail is never public; the plain `/health` stays `{ ok: true }`). It proves the token, and asks each push provider
+     whether it would take a page without sending one: APNs gets the relay's cached provider token on a request for a
+     device that cannot exist (all zeros), so `400 BadDeviceToken` means it took the token, and so does `429 TooManyRequests` (that
+     device token rate-limited; `429 TooManyProviderTokenUpdates` is the provider token refreshed too often, which
+     pages would hit too, so an error), while `403 InvalidProviderToken` / `ExpiredProviderToken` means
+     the key is revoked or wrong. Only the host of the relay's `APNS_ENVIRONMENT` is asked: one key signs for both
+     hosts, so a key one takes the other takes too. FCM is asked for an OAuth access
+     token for `FCM_SERVICE_ACCOUNT`, a fresh one each time (each provider gets 3 s, inside the consumer's 5 s) (`not_configured` without it: a relay serving iOS only). A relay from
+     before the deep check answers its plain `/health` there; then the consumer falls back to proving the token as
+     before (`POST /send` with no body: `400 invalid_body` means accepted, before any APNs call or log), and the
+     providers are `unknown`. Beside it the consumer makes **one cheap D1 read** (`select 1`, 3 s). It reports all of
+     it back to the watchdog (`proved`).
   4. The watchdog pings `DEAD_MAN_URL` (one `GET`, 5 s timeout) only when that beat is newer than any proved before,
-     came back within 2 minutes and the relay took the token. Anything else is silence. The ping runs in the object's
-     `waitUntil`, so a check that hangs never holds up the consumer and the pages in its batch.
+     came back within 2 minutes, the relay took the token, and none of the deeper checks failed: a revoked APNs key,
+     an FCM account Google refuses, or a D1 that does not answer stops the pings, so the operators hear of it (a
+     provider `not_configured` or `unknown` does not). A failure that will not pass by itself (APNs refusing the
+     provider token, a key that will not sign, Google refusing the account) counts on its first beat. One that may (the
+     relay marks it `transient`: a provider timing out or answering 5xx, Google's token endpoint slow or busy; and any
+     failed D1 read) counts only on the **3rd proved beat in a row** it fails (`TRANSIENT_FAILURES_TO_DEGRADE`, a count
+     per check in the watchdog's storage): before that the beat still pings and the status does not change, so one
+     slow answer does not page the operators. A check that passes starts its count again, so a provider failing two beats in three never degrades (accepted:
+     the pages themselves are retried, and a lasting outage fails three in a row). Anything else is silence.
+     The ping runs in the object's `waitUntil`, so a check that hangs never holds up the consumer and the pages in its
+     batch.
 
   So a stop anywhere (the cron, Durable Objects, alarms, the drain, the Queue, the consumer, the relay) stops the
   pings within a minute or two. The operator's check sets its own period (1 minute) and grace (we suggest 5 minutes)
@@ -411,27 +430,22 @@ results (a new monitor is up on its first success).
   stopped coming through, or come through late from a backed-up Queue); the last proof took over 2 minutes
   (`pipeline_slow`, which is also why it pinged nothing, so the dashboard and the external check agree); or the relay
   refused the token (`relay_unauthorized`), did not answer (`relay_unreachable`) or is not configured
-  (`relay_not_configured`) on the last proof. `unknown` is before the first proof (a new deployment; local runs, where
+  (`relay_not_configured`) on the last proof; or its deeper checks failed as above (at once, or on the 3rd beat in a
+  row): APNs (`apns_failing`), FCM (`fcm_failing`) or the D1 read (`d1_failing`). `unknown` is before the first proof (a new deployment; local runs, where
   the cron only fires by hand). The watchdog itself unreachable is a 503, which the dashboard shows as "couldn't
   check". Each change of status or reasons on a beat or a proof is a `brigade.status_changed` event in the watchdog's
-  outbox and a log line (`paging pipeline degraded`); nothing consumes the event yet (an email to the operators is
-  decided, below). `no_beat` never is: a beat or a
-  proof is what records a change, and no beat means neither runs, so only `GET /health/paging` and the external check
-  see it.
-
-  **Decided (Q19), to build:**
-  - **A deep relay check.** The relay answers `GET /health?deep=1` by asking APNs and FCM for
-    a provider or access token, without sending a push, so a revoked or expired key shows up. The consumer's proof
-    of a heartbeat calls it, and a failure is a reason of its own on `GET /health/paging` and stops the ping, like
-    a refused send token.
-  - **One D1 read per beat.** The proof also makes one cheap D1 read, so a D1 that sign-in and heartbeat routing
-    depend on failing turns the status `degraded` and silences the external check.
-  - **Operators hear of it.** The instance's operators are listed in configuration (`OPERATOR_EMAILS`, a secret or
-    variable, comma-separated) and each `brigade.status_changed` is emailed to them through the email notifier
-    (RFC 0005 "Email"), off the paging path. `no_beat` still reaches only the external check.
+  outbox and a log line (`paging pipeline degraded`). The consumer emails it to the instance's operators (decided,
+  Q19): `OPERATOR_EMAILS`, comma-separated, at most 10 addresses, through the email notifier's sender, in English (no
+  operator has a locale; the strings are in `packages/i18n` with `pt-BR` too). At most `OPERATOR_EMAIL_HOURLY_CAP` (6)
+  changes an hour are emailed, each once (the watchdog claims it, so a redelivery sends nothing); a failed send is
+  logged, never retried, and never holds up the pages in its batch. `no_beat` never is: a beat or a proof is what
+  records a change, and no beat means neither runs, so only `GET /health/paging` and the external check see it.
+  Tests: `apps/relay/test/deep-health.test.ts`, `apps/api/test/watchdog.test.ts` ("a relay with the deep check: …",
+  "a transient deep-check failure …", "OPERATOR_EMAILS are emailed …").
 
   Not covered: each workspace shard's own alarm and outbox (the watchdog proves the shared code and the shared
-  Queue, not every shard's drain), which waits on a registry of shards; see open question Q19.
+  Queue, not every shard's drain), which waits on a registry of shards, and whether APNs delivers (the deep check
+  stops at the provider token). See open question Q19.
 
 - Internal self-check: a DO alarm verifies every `ProbeDO` reported recently and alerts on stalled probes.
   Built so far: the workspace shard's alarm logs a stalled region and pushes its config again, and a monitor whose

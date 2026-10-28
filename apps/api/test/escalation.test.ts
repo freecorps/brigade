@@ -150,6 +150,7 @@ async function withPolicy(
     { targets: [{ kind: "member", id: eva.id }] },
   ],
   repeat = 0,
+  extra: Record<string, unknown> = {},
 ) {
   await ws.run(
     ana,
@@ -185,6 +186,7 @@ async function withPolicy(
       })),
       repeat,
       isDefault: true,
+      ...extra,
     },
     false,
   );
@@ -430,6 +432,135 @@ describe("paging through the default policy", () => {
       status: "running",
       pages: [expect.objectContaining({ level: 1, userIds: [caio.id] })],
     });
+  });
+});
+
+describe("escalating from a severity", () => {
+  test("below the policy's severity, level 1 is paged once and no later level, repeat or fallback ever fires", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws, undefined, 2, { minSeverity: "sev2" });
+    const { event, incident } = await ws.declare(MONITOR_ACTOR, "sev3");
+    const { tokens, send } = relay();
+    await deliver(event, send);
+    expect(await pagedMembers(ws, tokens)).toEqual([caio.id]);
+    expect(await ws.escalation(incident)).toMatchObject({
+      status: "paged_once",
+      once: "sev2",
+      nextAt: null,
+    });
+    expect(
+      await ws.withShard((shard) => shard.store.get("escalation_timers", incident)),
+    ).toBeUndefined();
+    expect((await ws.timeline(incident)).at(-1)).toMatchObject({
+      kind: "escalation_once",
+      minSeverity: "sev2",
+    });
+    // The alarm, however late, fires nothing for it.
+    await runDurableObjectAlarm(ws.stub);
+    expect(await ws.levels(incident)).toHaveLength(1);
+  });
+
+  test("a SEV1 on the same policy escalates fully, and with it unset a SEV4 does too", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws, undefined, 0, { minSeverity: "sev2" });
+    const { event, incident } = await ws.declare(MONITOR_ACTOR, "sev1");
+    await deliver(event, relay().send);
+    expect(await ws.escalation(incident)).toMatchObject({ status: "running" });
+    await ws.due(incident);
+    expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
+    expect((await ws.levels(incident)).map((one) => one.level)).toEqual([1, 2]);
+
+    const unset = await workspace();
+    for (const member of [caio, eva]) await unset.device(member);
+    await withPolicy(unset);
+    const low = await unset.declare(MONITOR_ACTOR, "sev4");
+    await deliver(low.event, relay().send);
+    expect(await unset.escalation(low.incident)).toMatchObject({ status: "running" });
+    await unset.due(low.incident);
+    expect(await runDurableObjectAlarm(unset.stub)).toBe(true);
+    expect((await unset.levels(low.incident)).map((one) => one.level)).toEqual([1, 2]);
+  });
+
+  /** The incident's `incident.severity_changed` event after Bia raised it to `severity`. */
+  const raise = async (ws: Workspace, incident: string, severity: string) => {
+    await ws.run(bia, "incident.setSeverity", { id: incident, severity }, false);
+    return (await ws.events(incident))
+      .filter((e) => e.type === "incident.severity_changed")
+      .at(-1)!;
+  };
+
+  test("a SEV4 raised to SEV3 on a policy escalating from SEV3 starts a full run, once", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws, undefined, 0, { minSeverity: "sev3" });
+    const { event, incident } = await ws.declare(MONITOR_ACTOR, "sev4");
+    await deliver(event, relay().send);
+    expect(await ws.escalation(incident)).toMatchObject({ status: "paged_once", once: "sev3" });
+    const raised = await raise(ws, incident, "sev3");
+    const { tokens, send } = relay();
+    await deliver(raised, send);
+    expect(await pagedMembers(ws, tokens)).toEqual([caio.id]);
+    const run = (await ws.escalation(incident))!;
+    expect(run).toMatchObject({ status: "running", eventId: raised.id, paged: 1 });
+    expect(run.once).toBeUndefined();
+    // Redelivered: no new run and nobody paged twice.
+    const again = relay();
+    await deliver(raised, again.send);
+    expect(again.tokens).toEqual([]);
+    expect(await ws.escalation(incident)).toMatchObject({ eventId: raised.id, paged: 1 });
+    // Level 2 fires at its timeout, as in any full run.
+    await ws.due(incident);
+    expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
+    expect((await ws.levels(incident)).map((one) => one.level)).toEqual([1, 1, 2]);
+  });
+
+  test("a SEV4 raised to SEV3 on a policy escalating from SEV2 pages nothing and stays paged once", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws, undefined, 0, { minSeverity: "sev2" });
+    const { event, incident } = await ws.declare(MONITOR_ACTOR, "sev4");
+    await deliver(event, relay().send);
+    const raised = await raise(ws, incident, "sev3");
+    const { tokens, send } = relay();
+    await deliver(raised, send);
+    expect(tokens).toEqual([]);
+    expect(await ws.escalation(incident)).toMatchObject({
+      status: "paged_once",
+      eventId: event.id,
+      paged: 1,
+    });
+    expect(await ws.levels(incident)).toHaveLength(1);
+  });
+
+  test("a lost first page of a run that pages once is paged again once, and the run still pages once", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws, undefined, 2, { minSeverity: "sev2" });
+    const { event, incident } = await ws.declare(MONITOR_ACTOR, "sev3");
+    // The shard never planned it: the Queue gave up on it, and the dead-letter consumer records it.
+    await deadLetter(event);
+    expect(await ws.escalation(incident)).toMatchObject({
+      status: "paged_once",
+      eventId: event.id,
+      paged: 2,
+    });
+    const paged = (await ws.events(incident)).filter((e) => e.type === "escalation.paged");
+    const repaged = paged.filter((e) => (e.data as { lost?: string }).lost !== undefined);
+    expect(repaged).toHaveLength(1);
+    expect(repaged[0]!.data).toMatchObject({ level: 1, userIds: [caio.id], lost: event.id });
+    const { tokens, send } = relay();
+    await deliver(repaged[0]!, send);
+    expect(await pagedMembers(ws, tokens)).toEqual([caio.id]);
+    expect(await ws.escalation(incident)).toMatchObject({ status: "paged_once", paged: 2 });
+    // Never a third time: the page again lost too, or the first dead-lettered again, is only recorded.
+    await deadLetter(repaged[0]!);
+    await deadLetter(event);
+    expect(await ws.levels(incident)).toHaveLength(2);
+    expect(await ws.escalation(incident)).toMatchObject({ status: "paged_once", paged: 2 });
+    await runDurableObjectAlarm(ws.stub);
+    expect(await ws.levels(incident)).toHaveLength(2);
   });
 });
 

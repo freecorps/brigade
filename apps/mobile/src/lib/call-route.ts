@@ -7,6 +7,8 @@
 //   `Calls.ring`) and `CallCenter.known(_:)` in modules/brigade-call/ios.
 // - `voipPushPlan`: `CallCenter.pushRegistry(_:didReceiveIncomingPushWith:…)` in modules/brigade-call/ios.
 // - `ANSWERED_CALL_MAX_MS`: `Calls.ANSWERED_MAX_MS` (Android) and `CallCenter.answeredMaxLength` (iOS).
+// - `unansweredEndReason`, `postsPageOnEnd`: `CallCenter.provider(_:perform: CXEndCallAction)` in
+//   modules/brigade-call/ios.
 
 export const CALL_CHANNEL = "brigade_calls";
 export const PAGE_CHANNEL = "brigade_pages";
@@ -68,10 +70,21 @@ export const SYSTEM_END_MS = 2_000;
 
 /**
  * The reason for an unanswered call's end on iOS, where CallKit reports a person's decline and the system ending
- * the call the same way. `msSinceRinging` is undefined if CallKit never confirmed the call.
+ * the call the same way. `msSinceRinging` is undefined if CallKit has not confirmed the call yet: nobody could have
+ * seen it, so that end is the system's too (`failed`).
  */
 export function unansweredEndReason(msSinceRinging: number | undefined): CallEndReason {
-  return msSinceRinging !== undefined && msSinceRinging < SYSTEM_END_MS ? "failed" : "declined";
+  return msSinceRinging === undefined || msSinceRinging < SYSTEM_END_MS ? "failed" : "declined";
+}
+
+/**
+ * Whether an unanswered call that ended for `reason` posts the time-sensitive page notification at once (iOS, Q14
+ * decided). Only `failed`: the system ended the call before anyone could see it, so the page is shown now rather
+ * than waiting for the instance's repeat, which may be minutes away or never come (the run moved on). A person who
+ * declined saw it; a missed call rang its full minute and the instance escalates on its own timeout.
+ */
+export function postsPageOnEnd(reason: CallEndReason): boolean {
+  return reason === "failed";
 }
 
 /**

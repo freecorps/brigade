@@ -62,6 +62,8 @@ export const declareRequest = v.object({
   severity: v.omittable(v.picklist(SEVERITIES)),
   typeId: v.omittable(v.id("typ")),
   serviceIds: v.omittable(serviceIds),
+  // RFC 0006 "Who is paged": first in the policy order; one that does not exist is left out, as a deleted type is.
+  escalationPolicyId: v.omittable(v.id("esc")),
 });
 export type DeclareRequest = Sent<Infer<typeof declareRequest>>;
 

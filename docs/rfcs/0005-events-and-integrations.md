@@ -295,13 +295,16 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
     `over_limit`), for a SEV1 or SEV2 incident, once per incident and member: "Brigade tried to page you about
     SEV1 · INC-142 in Acme, but the page didn't reach your phone: …". A member without a phone also reads how to get
     pages on it.
-  - **The owners, when nobody could be paged** (`nobody_paged`, Q18): the page settled having reached nobody on any
-    device and nothing else will page on its own: there is no escalation run (the interim rule was the page), or the
-    page was the last of a run that ended (everyone who can respond). A level that missed everyone is not it: the
-    next level fires. Neither is a dead-lettered page (paged again on its own event), a stalled level (everyone is
-    paged after it) or a page only its declarer could answer. Owners come from D1, so one who never opened Brigade
-    is told too; at most 50. Once per page. **Decided (Q18), to build:** it goes to the owners and the admins, with
-    no exception for whoever declared the incident.
+  - **The owners and admins, when nobody could be paged** (`nobody_paged`, Q18 decided): the page settled having
+    reached nobody on any device and nothing else will page on its own: there is no escalation run (the interim rule
+    was the page), the page was the last of a run that ended (everyone who can respond), or it was the one page of a
+    run below its policy's severity (`paged_once`, RFC 0006 "Who is paged"). A level that missed everyone is not it:
+    the next level fires. Neither is a dead-lettered page (paged again on its own event), a stalled level (everyone
+    is paged after it) or a page only its declarer could answer. Owners and admins come from D1 (verified addresses
+    only, the same caps), so one who never opened Brigade is told too; at most 50. Whoever declared the incident is
+    not left out: an owner or admin who declared it is told like the others. Once per page. Tests:
+    `apps/api/test/email.test.ts` ("a page that reached nobody emails the owners and the admins, …", "a run below its
+    policy's severity escalates no further, …").
   - Neither once the incident is acknowledged or no longer active, or when the workspace turned it off. The
     member's email neither when they turned it off themselves (below).
 - **Workspace settings.** `workspace.setEmail` (`workspace:manage`: owners and admins) sets both on or off; both are

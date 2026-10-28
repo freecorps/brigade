@@ -248,15 +248,18 @@ test("incident numbers in the URL", () => {
   }
 });
 
-test("pages one run could not send for the same reason are one line, with the names behind it", async () => {
+test("more than five pages one run could not send for the same reason are one line, with the names behind it", async () => {
   const failed = (n: number, userId: string | null, reason = "no_devices", at = 5) =>
     entry({ id: `${ID}:${n}`, kind: "page_failed", actor: "sys_notifier", userId, reason, at });
-  const update = entry({ id: `${ID}:9`, kind: "update", body: "On it" });
+  const update = entry({ id: `${ID}:20`, kind: "update", body: "On it" });
   const entries = [
     update,
-    failed(8, "usr_me"),
-    failed(7, "usr_bia"),
-    failed(6, "usr_gone"),
+    failed(13, "usr_me"),
+    failed(12, "usr_bia"),
+    failed(11, "usr_gone"),
+    failed(10, "usr_g1"),
+    failed(9, "usr_g2"),
+    failed(8, "usr_g3"),
     // Another reason, a later run, nobody and a dead letter each stand alone.
     failed(5, "usr_cai", "undelivered"),
     failed(4, "usr_dan", "no_devices", 1),
@@ -266,27 +269,24 @@ test("pages one run could not send for the same reason are one line, with the na
   const items = timelineItems(entries);
   expect(
     items.map((item) => (item.kind === "entry" ? item.entry.id : item.entries.length)),
-  ).toEqual([`${ID}:9`, 3, `${ID}:5`, `${ID}:4`, `${ID}:3`, `${ID}:2`]);
+  ).toEqual([`${ID}:20`, 6, `${ID}:5`, `${ID}:4`, `${ID}:3`, `${ID}:2`]);
   const group = items[1] as Extract<TimelineItem, { kind: "pages_failed" }>;
-  expect(group).toMatchObject({ key: `${ID}:8`, at: 5, reason: "no_devices" });
-  expect(itemText(group, who)).toBe("Couldn't page 3 people: no registered device");
+  expect(group).toMatchObject({ key: `${ID}:13`, at: 5, reason: "no_devices" });
+  expect(itemText(group, who)).toBe("Couldn't page 6 people: no registered device");
   // Alphabetical in the reader's language, not the timeline's order.
   expect(pagesFailedNames(group, who, "en").map(({ name }) => name)).toEqual([
-    "A teammate",
+    ...Array(4).fill("A teammate"),
     "Bia Lima",
     "You",
-  ]);
-  expect(pagesFailedNames(group, who, "en").map(({ id }) => id)).toEqual([
-    `${ID}:6`,
-    `${ID}:7`,
-    `${ID}:8`,
   ]);
   expect(itemText(items[0]!, who)).toBe(entryText(update, who));
   await setLocale("pt-BR");
   expect(
     itemText({ ...group, entries: Array(21).fill(group.entries[0]) as typeof group.entries }, who),
   ).toBe("Não foi possível chamar 21 pessoas: nenhum aparelho registrado");
-  // One failure is never grouped.
+  // Five or fewer (Q18): one line each, so a small team reads every name. One failure is never grouped.
+  const five = [5, 4, 3, 2, 1].map((n) => failed(n, `usr_${n}`));
+  expect(timelineItems(five)).toEqual(five.map((one) => ({ kind: "entry", entry: one })));
   expect(timelineItems([failed(1, "usr_bia")])).toEqual([
     { kind: "entry", entry: failed(1, "usr_bia") },
   ]);
@@ -311,10 +311,16 @@ test("a failed page paged again reads who it went to; a line offers its failures
   const failed = (n: number, userId: string | null, reason: string) =>
     entry({ id: `${ID}:${n}`, kind: "page_failed", actor: "sys_notifier", userId, reason, at: 5 });
   const rows = [failed(2, "usr_bia", "undelivered"), failed(3, "usr_me", "undelivered")];
-  const [group] = timelineItems(rows);
-  expect(pageAgainEntries(group!, rows)).toEqual([`${ID}:2`, `${ID}:3`]);
+  const group: TimelineItem = {
+    kind: "pages_failed",
+    key: rows[0]!.id,
+    at: 5,
+    reason: "undelivered",
+    entries: rows as Extract<TimelineItem, { kind: "pages_failed" }>["entries"],
+  };
+  expect(pageAgainEntries(group, rows)).toEqual([`${ID}:2`, `${ID}:3`]);
   // One already paged again is left out; a failure paging again cannot change offers nothing.
-  expect(pageAgainEntries(group!, [...rows, again({ id: `${ID}:4` })])).toEqual([`${ID}:3`]);
+  expect(pageAgainEntries(group, [...rows, again({ id: `${ID}:4` })])).toEqual([`${ID}:3`]);
   const nobody = failed(5, null, "nobody_on_call");
   expect(pageAgainEntries({ kind: "entry", entry: nobody }, [nobody])).toEqual([]);
   const lost = failed(6, null, "dead_lettered");

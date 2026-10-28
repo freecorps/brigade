@@ -3,6 +3,7 @@ import { severityLabels } from "@freecorps/brigade-i18n/labels";
 import {
   INCIDENT_TITLE_MAX,
   SEVERITIES,
+  type EscalationPolicyRow,
   type IncidentTypeRow,
   type Severity,
 } from "@freecorps/brigade-schema";
@@ -28,22 +29,27 @@ const WIDE = "(min-width: 48rem)";
 
 /**
  * Title, the incident type (once the workspace has types: picking one takes its default severity) and severity,
- * then Declare. Below `md` it starts as one "Declare incident" button that opens the form in
+ * then Declare; under them, once the workspace has escalation policies, the policy that pages it (first in the
+ * order, RFC 0006 "Who is paged"; left on "Usual", the type's, a service's or the default). Below `md` it starts as one "Declare incident" button that opens the form in
  * place, and closes again after a declare or Cancel. It works in every connection state: a declare made offline
  * waits in the client and is sent on reconnect.
  */
 export function DeclareForm({
   types,
+  policies = [],
   onDeclare,
 }: {
   /** The workspace's incident types (`incidentTypes.all`), read by the card so its own list subscribes first. */
   types: readonly IncidentTypeRow[];
+  /** The workspace's escalation policies (`escalationPolicies.all`). */
+  policies?: readonly EscalationPolicyRow[];
   /** Resolves with the notice the outcome left, if it was refused. */
   onDeclare: (args: {
     id: string;
     title: string;
     severity: Severity;
     typeId?: string;
+    escalationPolicyId?: string;
   }) => Promise<Notice | undefined>;
 }) {
   const client = useSyncClient();
@@ -55,6 +61,8 @@ export function DeclareForm({
   const [typeId, setTypeId] = useState("");
   const typed = types.length > 0;
   const typeSelectId = useId();
+  const [policyId, setPolicyId] = useState("");
+  const policySelectId = useId();
   /** Why the title was refused locally, and on which submit (a repeat re-mounts the alert so it is read again). */
   const [invalid, setInvalid] = useState<{ empty: boolean; attempt: number } | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -93,10 +101,16 @@ export function DeclareForm({
     setSeverity("sev3");
     setOwnSeverity("sev3");
     setTypeId("");
+    setPolicyId("");
     close();
-    // A type deleted meanwhile is left out by the shard: the declare still goes through.
+    // A type or policy deleted meanwhile is left out by the shard: the declare still goes through.
     const type = types.find((one) => one.id === typeId);
-    void onDeclare(type ? { ...checked.args, typeId: type.id } : checked.args).then((notice) => {
+    const policy = policies.find((one) => one.id === policyId);
+    void onDeclare({
+      ...checked.args,
+      ...(type && { typeId: type.id }),
+      ...(policy && { escalationPolicyId: policy.id }),
+    }).then((notice) => {
       // The shard found the title invalid after all: give the text back (opening the form again on a phone),
       // unless something new was typed. Not for a clock refusal: the title was fine, and the notice says why.
       if (titleRefused(notice)) {
@@ -254,6 +268,29 @@ export function DeclareForm({
             );
           })}
         </div>
+        {policies.length > 0 ? (
+          <div className="mt-3 flex min-w-0 flex-col gap-1.5 md:col-span-full md:row-start-4 md:mt-1.5 md:flex-row md:items-center md:gap-3">
+            <label
+              htmlFor={policySelectId}
+              className="shrink-0 text-xs font-medium text-muted-foreground"
+            >
+              {m.declare_policy_label()}
+            </label>
+            <select
+              id={policySelectId}
+              value={policyId}
+              onChange={(event) => setPolicyId(event.target.value)}
+              className="h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring md:max-w-xs"
+            >
+              <option value="">{m.declare_policy_usual()}</option>
+              {policies.map((one) => (
+                <option key={one.id} value={one.id}>
+                  {one.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
         <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2 md:contents">
           <Button
             type="submit"

@@ -357,8 +357,8 @@ On an Android phone (needs FCM, or the debug broadcast over USB):
   audio session (Cloudflare Realtime) with server-side TTS and STT; until then, is "the incident read on the phone,
   press 1" enough for App Review to accept PushKit and CallKit? Ship the alert push alone until the bot exists?
 - **A call the system ends at once.** On the Simulator, CallKit ended a call it had accepted within a second; it is
-  now `failed`, so a repeat rings. Whether it should also post the fallback notification is Q14 in
-  `docs/open-questions.md`; a device shows which real cases look like that.
+  now `failed`, so a repeat rings, and it posts the time-sensitive fallback notification at once (Q14, decided; RFC
+  0010). A device still shows which real cases look like that.
 - **Over the lock screen.** On Android, the React Native app is shown over the keyguard while the call lasts, with
   Back disabled; a native in-call activity would expose less. Decide before release.
 - **Native tests in CI.** The decisions are tested in TypeScript and the native copies checked by text; a native

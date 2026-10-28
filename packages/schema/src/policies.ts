@@ -8,6 +8,7 @@ import { idTime } from "./id.ts";
 import { ID_CLOCK_SKEW_MS } from "./incidents.ts";
 import { dropPolicyFromMonitors } from "./monitors.ts";
 import { dropPolicyFromRoutes, incidentRoute } from "./alert-sources.ts";
+import { SEVERITIES, type Severity } from "./lifecycle.ts";
 import {
   defineMutation,
   fail,
@@ -40,6 +41,8 @@ type PolicySummary = {
   levels: number;
   repeat: number;
   isDefault: boolean;
+  /** From which severity it escalates; null: every severity. */
+  minSeverity: Severity | null;
 };
 export type EscalationPolicyCreated = DomainEvent<"escalation_policy.created", PolicySummary>;
 /**
@@ -65,7 +68,20 @@ const summary = (row: EscalationPolicyRow): PolicySummary => ({
   levels: row.levels.length,
   repeat: row.repeat,
   isDefault: row.isDefault,
+  minSeverity: row.minSeverity ?? null,
 });
+
+/**
+ * Whether a run of `policy` for an incident at `severity` escalates (RFC 0006 "Who is paged"): at or above the policy's
+ * `minSeverity`, or always when it has none. Below it the run pages its first level that reaches someone, once.
+ */
+export function escalatesAt(
+  policy: Pick<EscalationPolicyRow, "minSeverity">,
+  severity: Severity,
+): boolean {
+  const min = policy.minSeverity;
+  return min == null || SEVERITIES.indexOf(severity) <= SEVERITIES.indexOf(min);
+}
 
 const updated = (
   row: EscalationPolicyRow,
@@ -89,11 +105,11 @@ export function defaultPolicy(store: MutationStore): EscalationPolicyRow | undef
 
 /**
  * The policy a run on `incidentId` follows (RFC 0003 "Escalation policies", "Incident types", "Service catalog", RFC
- * 0006 "Who is paged"): the policy of the alert route an alert source opened the incident through when it names one
+ * 0006 "Who is paged"): the policy whoever declared it picked (`picked`), else the policy of the alert route an alert source opened the incident through when it names one
  * (`route` says which, by its name then), else the policy of the incident's type, else the policy of the first of its
  * services, in the order they were picked, that names one (`service`, by its name now), else the policy of the monitor
  * that opened the incident (`monitor`, by its name now), otherwise the default; undefined with none (the interim rule
- * pages). A route, type, service or monitor deleted since, or a policy gone, falls through to the next.
+ * pages). A picked policy, route, type, service or monitor deleted since, or a policy gone, falls through to the next.
  */
 export function incidentPolicy(
   store: MutationStore,
@@ -104,14 +120,18 @@ export function incidentPolicy(
       monitor: { id: string; name: string } | null;
       route?: { id: string; name: string } | null;
       service?: { id: string; name: string } | null;
+      picked?: boolean;
     }
   | undefined {
+  const incident = store.get("incidents", incidentId);
+  const pickedId = incident?.escalationPolicyId;
+  const picked = pickedId ? store.get("escalation_policies", pickedId) : undefined;
+  if (picked) return { policy: picked, monitor: null, picked: true };
   const opened = incidentRoute(store, incidentId);
   const routed = opened?.policyId ? store.get("escalation_policies", opened.policyId) : undefined;
   if (opened && routed) {
     return { policy: routed, monitor: null, route: { id: opened.routeId, name: opened.routeName } };
   }
-  const incident = store.get("incidents", incidentId);
   const typeId = incident?.typeId;
   const type = typeId ? store.get("incident_types", typeId) : undefined;
   const typed = type?.escalationPolicyId
@@ -168,6 +188,8 @@ const policyFields = {
   levels: v.array(levelArgs, { min: 1, max: MAX_POLICY_LEVELS }),
   repeat: v.integer({ min: 0, max: MAX_POLICY_REPEAT }),
   isDefault: v.boolean(),
+  // Left out (clients from before it): every severity on create, unchanged on update.
+  minSeverity: v.omittable(v.nullable(v.picklist(SEVERITIES))),
 };
 
 const toLevels = (levels: readonly EscalationLevel[]): EscalationLevel[] =>
@@ -256,6 +278,7 @@ export const createPolicy = defineMutation({
       levels,
       repeat: args.repeat,
       isDefault: args.isDefault,
+      ...(args.minSeverity != null && { minSeverity: args.minSeverity }),
       createdAt: ctx.now,
       createdBy: ctx.actor.id,
       updatedAt: ctx.now,
@@ -271,7 +294,8 @@ export const createPolicy = defineMutation({
 });
 
 /**
- * Replaces the policy's name, levels, repeat and whether it is the default, at once. A run under way keeps the
+ * Replaces the policy's name, levels, repeat, whether it is the default and from which severity it escalates
+ * (`minSeverity`, kept when left out), at once. A run under way keeps the
  * levels it started with (RFC 0003 "Escalation run"); the next run reads these.
  */
 export const updatePolicy = defineMutation({
@@ -286,9 +310,12 @@ export const updatePolicy = defineMutation({
     if (issues.length) {
       return fail("invalid_args", "Invalid arguments for escalation.updatePolicy", issues);
     }
+    const minSeverity =
+      args.minSeverity === undefined ? (policy.minSeverity ?? null) : args.minSeverity;
     if (
       policy.name === args.name &&
       policy.repeat === args.repeat &&
+      (policy.minSeverity ?? null) === minSeverity &&
       policy.isDefault === args.isDefault &&
       JSON.stringify(policy.levels) === JSON.stringify(levels)
     ) {
@@ -299,6 +326,7 @@ export const updatePolicy = defineMutation({
       levels,
       repeat: args.repeat,
       isDefault: args.isDefault,
+      minSeverity,
       updatedAt: ctx.now,
     });
     return ok(updated(row, "edited"), ...(row.isDefault ? unseatDefault(store, row.id, ctx) : []));

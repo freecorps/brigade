@@ -108,6 +108,9 @@
   "paging_reason_relay_unauthorized": "The push relay refused Brigade's send token, so no page can go out.",
   "paging_reason_relay_unreachable": "The push relay isn't answering.",
   "paging_reason_relay_not_configured": "No push relay is set up, so every page is recorded as failed.",
+  "paging_reason_apns_failing": "Apple's push service refused the relay's key, or isn't answering, so iPhones can't be paged.",
+  "paging_reason_fcm_failing": "Firebase Cloud Messaging gave the relay no access token.",
+  "paging_reason_d1_failing": "The database (D1) didn't answer a simple read.",
   "paging_last_ok": "Last self-check that got through: {time}",
   "mobile_overview_description": "The severity and status legend, drawn from the shared tokens and catalog.",
   "dates_title": "Dates and times",
@@ -134,6 +137,8 @@
   "declare_title_label": "Title",
   "declare_title_placeholder": "What's happening?",
   "declare_severity_label": "Severity",
+  "declare_policy_label": "Escalation policy",
+  "declare_policy_usual": "Usual (type, service or default)",
   "incident_change_saving": "Saving…",
   "incident_change_queued": "Waiting to send",
   "incident_declared": "Declared {time}",
@@ -889,6 +894,7 @@
         "kind=paged_again_auto": "The page was lost, so Brigade paged it again",
         "kind=page_nobody_else": "Nobody else was paged: only the person who declared it can respond",
         "kind=escalation_exhausted": "Nobody acknowledged after every level, so everyone who can respond was paged",
+        "kind=escalation_once": "Not escalated further: this policy escalates from {a}",
         "kind=escalated_everyone_stalled": "An escalation level kept failing to fire, so everyone who can respond was paged",
         "kind=escalated_manual": "{actor} escalated, so level {a} was paged now: {b}",
         "kind=escalated_everyone_manual": "{actor} escalated past the last level, so everyone who can respond was paged",
@@ -1403,6 +1409,7 @@
         "text=policy_monitor": "Policy: {name}, set on the monitor {who}",
         "text=policy_route": "Policy: {name}, set on the alert route {who}",
         "text=policy_service": "Policy: {name}, set on the service {who}",
+        "text=policy_picked": "Policy: {name}, picked when the incident was declared",
         "text=early": "Paged now: nobody on level {level} could be reached",
         "text=*": "Escalation"
       }
@@ -1482,12 +1489,30 @@
         "field=repeat, form=label": "Repeat the levels",
         "field=targets, form=label": "Who is paged",
         "field=default, form=label": "Use for every page (default policy)",
+        "field=min_severity, form=label": "Escalate from",
+        "field=min_severity, form=hint": "Less severe incidents page the first level once and don't escalate, unless their severity is raised to it or someone escalates by hand.",
         "field=add_target, form=label": "Add a schedule or a person",
         "field=name, form=invalid": "Enter a name.",
         "field=timeout, form=invalid": "Enter a whole number of minutes from 1 to 1440.",
         "field=targets, form=invalid": "Add at least one schedule or person.",
         "field=*, form=invalid": "Check this field.",
         "field=*, form=*": "Field"
+      }
+    }
+  ],
+  "escalation_min_severity": [
+    {
+      "declarations": ["input choice"],
+      "selectors": ["choice"],
+      "match": {
+        "choice=every": "Every severity",
+        "choice=sev1": "SEV1 only",
+        "choice=sev2": "SEV2 and SEV1",
+        "choice=sev3": "SEV3, SEV2 and SEV1",
+        "choice=summary_sev1": "Escalates for SEV1 only",
+        "choice=summary_sev2": "Escalates for SEV2 and SEV1",
+        "choice=summary_sev3": "Escalates for SEV3, SEV2 and SEV1",
+        "choice=*": "Every severity"
       }
     }
   ],
@@ -1498,6 +1523,7 @@
       "match": {
         "part=running": "Escalating",
         "part=resolved": "Stopped: resolved {time}",
+        "part=once": "Paged once, not escalated: this policy escalates from {level}",
         "part=next_level": "Level {level} at {time}",
         "part=next_repeat": "Level 1 again at {time}",
         "part=next_end": "Everyone who can respond at {time}",
@@ -1585,7 +1611,7 @@
         "part=nobody_subject": "Nobody could be paged for {incident}: {title}",
         "part=nobody_intro": "Nobody could be paged for {incident} in {workspace}. Brigade tried everyone it could and the page reached no one's phone, and nobody has acknowledged the incident.",
         "part=nobody_timeline": "The incident's timeline says why each page failed.",
-        "part=nobody_footer": "You're getting this email because you're an owner of {workspace}.",
+        "part=nobody_footer": "You're getting this email because you're an owner or admin of {workspace}.",
         "part=fact_incident": "Incident: {incident}",
         "part=fact_title": "Title: {title}",
         "part=open": "Open the incident",
@@ -2659,6 +2685,23 @@
       }
     }
   ],
+  "email_operator_status": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=subject_degraded": "Brigade's paging self-check is degraded",
+        "part=subject_ok": "Brigade's paging self-check is back to normal",
+        "part=subject_unknown": "Brigade's paging self-check changed",
+        "part=intro_degraded": "The paging self-check of this Brigade instance found a problem. Pages may be late or may not go out until it's fixed:",
+        "part=intro_ok": "The paging self-check of this Brigade instance is passing again: a heartbeat went through the event queue and the push relay.",
+        "part=intro_unknown": "The paging self-check of this Brigade instance has no result yet.",
+        "part=how": "The Worker's logs have the details (search for \"paging pipeline\"). GET /health/paging shows the state as members see it.",
+        "part=footer": "You get this email because your address is in OPERATOR_EMAILS for this Brigade instance.",
+        "part=*": "Brigade's paging self-check changed"
+      }
+    }
+  ],
   "email_webhook_disabled": [
     {
       "declarations": ["input part", "input workspace", "input webhook", "input failures"],
@@ -3503,7 +3546,7 @@
         "part=missed_workspace_off": "Your workspace has turned these emails off for everyone.",
         "part=reminders": "Follow-up reminders",
         "part=reminders_hint": "Each morning at 9:00 in your time zone, a list of your open follow-ups due that day or overdue. At most one email a day.",
-        "part=owners_note": "Owners always get the email when a page reached nobody, whatever they choose here: it's the fallback when paging fails.",
+        "part=owners_note": "Owners and admins always get the email when a page reached nobody, whatever they choose here: it's the fallback when paging fails.",
         "part=saving": "Saving…",
         "part=saved": "Saved",
         "part=failed": "Couldn't save your choice. Try again.",
@@ -3524,8 +3567,8 @@
         "part=description": "Who Brigade emails when a page doesn't get through. Both are on by default.",
         "part=unpaged": "Tell members a page missed them",
         "part=unpaged_hint": "Email a member when a SEV1 or SEV2 page didn't reach their phone, once per incident. Each member can also turn this off for themselves.",
-        "part=nobody": "Tell owners when a page reached nobody",
-        "part=nobody_hint": "Email the owners when a page reached nobody and nothing else will page. It's the fallback when paging fails, so members can't turn it off for themselves.",
+        "part=nobody": "Tell owners and admins when a page reached nobody",
+        "part=nobody_hint": "Email the owners and admins when a page reached nobody and nothing else will page. It's the fallback when paging fails, so members can't turn it off for themselves.",
         "part=nobody_off": "While this is off, nobody hears of a page that reached nobody until they open Brigade.",
         "part=saving": "Saving…",
         "part=saved": "Saved",

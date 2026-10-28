@@ -32,7 +32,16 @@ import { SideConnections, SLACK_CONNECTIONS } from "./side-connections.ts";
 import { asksForSlack } from "./slack.ts";
 import { asksForStatusEmail } from "./status-mail.ts";
 import { asksForWebhookEmail, asksForWebhooks } from "./webhooks.ts";
-import { HEARTBEAT_EVENT, isSystemEvent, WATCHDOG_NAME, type RelayHealth } from "./watchdog.ts";
+import { notifyOperators, type OperatorEnv } from "./notify-operators.ts";
+import {
+  HEARTBEAT_EVENT,
+  isSystemEvent,
+  STATUS_EVENT,
+  WATCHDOG_NAME,
+  type BeatCheck,
+  type BeatChecks,
+  type RelayHealth,
+} from "./watchdog.ts";
 import { WORKSPACE_ID } from "./workspace.ts";
 
 /**
@@ -65,10 +74,13 @@ export const WEBHOOK_BUDGET_MS = 3000;
 export const RELAY_TIMEOUT_MS = 10_000;
 /** How long the relay's token check gets when the dead-man switch's heartbeat comes through. */
 export const RELAY_HEALTH_TIMEOUT_MS = 5000;
+/** How long the beat's one D1 read gets. */
+export const D1_HEALTH_TIMEOUT_MS = 3000;
 
 /** Optional: an instance without a relay still runs, and every page it would send is recorded as failed. */
 export type NotifyEnv = EmailEnv &
   EmailNotifyEnv &
+  OperatorEnv &
   SlackNotifyEnv &
   StatusNotifyEnv &
   WebhookNotifyEnv & {
@@ -94,6 +106,8 @@ export type Fetch = (request: Request) => Promise<Response>;
 
 /** The URL of a relay call through the `RELAY` binding: the host is never resolved, only the path matters. */
 export const RELAY_BINDING_SEND_URL = "https://relay.internal/send";
+/** The relay's deep health check (RFC 0007 "Watching the watcher"), through the binding or `RELAY_URL`. */
+export const RELAY_DEEP_HEALTH_PATH = "/health?deep=1";
 
 /**
  * Posts to the relay's `POST /send`: through the `RELAY` binding when bound, otherwise to `RELAY_URL` through `send`
@@ -135,7 +149,8 @@ export async function consumeEvents(
     batch.messages.map(async (message) => {
       // The dead-man switch's own events (src/watchdog.ts): never a shard's, never a page.
       if (isSystemEvent(message.body)) {
-        await proveHeartbeat(message.body, env, send);
+        if (message.body.type === STATUS_EVENT) await notifyOperators(message.body, env, mail);
+        else await proveHeartbeat(message.body, env, send);
         return message.ack();
       }
       const event = parseEvent(message.body);
@@ -307,12 +322,13 @@ export async function consumeDeadLetters(
 /**
  * A `brigade.heartbeat` came through the outbox and the Queue: checks the relay is up and takes the send token, and
  * tells the watchdog, which pings the external check. Never throws, and the message is acked either way: a lost heartbeat is a minute of
- * silence, and the next one is already on its way. Other system events (`brigade.status_changed`) have no notifier
- * yet.
+ * silence, and the next one is already on its way. With it go the beat's deeper checks (Q19): the push providers,
+ * through the relay's `GET /health?deep=1`, and one cheap D1 read, side by side. `brigade.status_changed` goes to the
+ * operators' email instead (src/notify-operators.ts).
  */
 export async function proveHeartbeat(
   event: BrigadeEvent,
-  env: Pick<NotifyEnv, "WATCHDOG" | "RELAY" | "RELAY_URL" | "RELAY_SEND_TOKEN">,
+  env: Pick<NotifyEnv, "WATCHDOG" | "RELAY" | "RELAY_URL" | "RELAY_SEND_TOKEN" | "DB">,
   send: Fetch,
 ): Promise<void> {
   if (event.type !== HEARTBEAT_EVENT) return;
@@ -320,21 +336,102 @@ export async function proveHeartbeat(
     log("heartbeat dropped: no watchdog binding", { event: event.id });
     return;
   }
-  const relay = await relayHealth(env, send);
+  const [relay, d1] = await Promise.all([relayHealth(env, send), d1Health(env.DB)]);
+  const checks: BeatChecks = { apns: relay.apns, fcm: relay.fcm, d1 };
   try {
-    await env.WATCHDOG.getByName(WATCHDOG_NAME).proved(event.time, relay);
+    await env.WATCHDOG.getByName(WATCHDOG_NAME).proved(event.time, relay.relay, undefined, checks);
   } catch (error) {
     log("heartbeat could not be recorded", { event: event.id, error: String(error) });
   }
 }
 
 /**
- * Whether a page could get past this Worker right now: `POST /send` with the send token and an empty body. The relay
- * checks the token before it reads the body (apps/relay src/index.ts), so `400 invalid_body` means it took the token
- * without calling APNs or logging anything, `401` that it refused it (a rotated or mistyped `RELAY_SEND_TOKEN`), and
- * anything else that it is not answering as a relay. Its `/health` would say nothing about the token.
+ * Whether a page could get past this Worker right now, and on to the push providers: `GET /health?deep=1` with the
+ * send token (apps/relay src/deep-health.ts). `401` is a refused token (a rotated or mistyped `RELAY_SEND_TOKEN`); an
+ * answer naming `apns` means the relay took the token, and says whether APNs took the relay's provider token and FCM
+ * gave it an access token, without a push to anyone. Anything else is a relay not answering as one. A relay from
+ * before the deep check answers its plain `/health` there (no `apns`): then the token is proved as before
+ * (`relayTokenHealth`), and the providers are `unknown`.
  */
 async function relayHealth(
+  env: Pick<NotifyEnv, "RELAY" | "RELAY_URL" | "RELAY_SEND_TOKEN">,
+  send: Fetch,
+): Promise<{ relay: RelayHealth; apns: BeatCheck; fcm: BeatCheck }> {
+  const unknown = { apns: "unknown", fcm: "unknown" } as const;
+  if (!env.RELAY_SEND_TOKEN || (!env.RELAY && !env.RELAY_URL)) {
+    return { relay: "not_configured", ...unknown };
+  }
+  const init: RequestInit = {
+    method: "GET",
+    headers: { Authorization: `Bearer ${env.RELAY_SEND_TOKEN}` },
+    signal: AbortSignal.timeout(RELAY_HEALTH_TIMEOUT_MS),
+  };
+  try {
+    const response = env.RELAY
+      ? await env.RELAY.fetch(
+          new Request(new URL(RELAY_DEEP_HEALTH_PATH, RELAY_BINDING_SEND_URL), init),
+        )
+      : await send(new Request(new URL(RELAY_DEEP_HEALTH_PATH, env.RELAY_URL), init));
+    if (response.status === 401) {
+      await response.body?.cancel();
+      log("relay refused the send token", { status: 401 });
+      return { relay: "unauthorized", ...unknown };
+    }
+    const body: unknown = await response.json().catch(() => null);
+    const provider = (key: string): BeatCheck | undefined => {
+      const check = Object(Reflect.get(Object(body), key));
+      const status = Reflect.get(check, "status");
+      // An error that may pass by itself (a timeout, a 5xx): the watchdog waits for a few in a row.
+      if (status === "error" && Reflect.get(check, "transient") === true) return "transient";
+      return status === "ok" || status === "error" || status === "not_configured"
+        ? status
+        : undefined;
+    };
+    const apns = provider("apns");
+    if (apns !== undefined) {
+      const fcm = provider("fcm") ?? "unknown";
+      if ([apns, fcm].some((check) => check === "error" || check === "transient")) {
+        log("push provider check failed", { apns, fcm });
+      }
+      return { relay: "ok", apns, fcm };
+    }
+  } catch (error) {
+    log("relay deep health unreachable", { error: String(error) });
+    return { relay: "unreachable", ...unknown };
+  }
+  return { relay: await relayTokenHealth(env, send), ...unknown };
+}
+
+/**
+ * The beat's one D1 read (Q19): `select 1`, within `D1_HEALTH_TIMEOUT_MS`. Nothing pages on it (the page path fails
+ * open on D1); a failure is `transient` (the watchdog degrades the status and tells the operators after a few in a
+ * row).
+ */
+async function d1Health(db: D1Database | undefined): Promise<BeatCheck> {
+  if (!db) return "not_configured";
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      db.prepare("select 1").first(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("D1 timed out")), D1_HEALTH_TIMEOUT_MS);
+      }),
+    ]);
+    return "ok";
+  } catch (error) {
+    log("D1 health read failed", { error: String(error) });
+    return "transient";
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * For a relay without the deep check: `POST /send` with the send token and an empty body. The relay checks the token
+ * before it reads the body (apps/relay src/index.ts), so `400 invalid_body` means it took the token without calling
+ * APNs or logging anything, `401` that it refused it, and anything else that it is not answering as a relay.
+ */
+async function relayTokenHealth(
   env: Pick<NotifyEnv, "RELAY" | "RELAY_URL" | "RELAY_SEND_TOKEN">,
   send: Fetch,
 ): Promise<RelayHealth> {

@@ -16,6 +16,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "repeat" | "label" | "Repeat the levels" |
 * | "targets" | "label" | "Who is paged" |
 * | "default" | "label" | "Use for every page (default policy)" |
+* | "min_severity" | "label" | "Escalate from" |
+* | "min_severity" | "hint" | "Less severe incidents page the first level once and don't escalate, unless their severity is raised to it or someone escalates by hand." |
 * | "add_target" | "label" | "Add a schedule or a person" |
 * | "name" | "invalid" | "Enter a name." |
 * | "timeout" | "invalid" | "Enter a whole number of minutes from 1 to 1440." |
@@ -36,6 +38,8 @@ export const escalation_field = /** @type {((inputs: Escalation_FieldInputs, opt
 		if (i?.field === "repeat" && i?.form === "label") return /** @type {LocalizedString} */ (`Repetir os níveis`);
 		if (i?.field === "targets" && i?.form === "label") return /** @type {LocalizedString} */ (`Quem é chamado`);
 		if (i?.field === "default" && i?.form === "label") return /** @type {LocalizedString} */ (`Usar em toda chamada (política padrão)`);
+		if (i?.field === "min_severity" && i?.form === "label") return /** @type {LocalizedString} */ (`Escalar a partir de`);
+		if (i?.field === "min_severity" && i?.form === "hint") return /** @type {LocalizedString} */ (`Incidentes menos graves chamam o primeiro nível uma vez e não escalam, a menos que a gravidade suba até ela ou alguém escale manualmente.`);
 		if (i?.field === "add_target" && i?.form === "label") return /** @type {LocalizedString} */ (`Adicionar uma escala ou pessoa`);
 		if (i?.field === "name" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Informe um nome.`);
 		if (i?.field === "timeout" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Informe um número inteiro de minutos de 1 a 1440.`);
@@ -50,6 +54,8 @@ export const escalation_field = /** @type {((inputs: Escalation_FieldInputs, opt
 		if (i?.field === "repeat" && i?.form === "label") return /** @type {LocalizedString} */ (`Repeat the levels`);
 		if (i?.field === "targets" && i?.form === "label") return /** @type {LocalizedString} */ (`Who is paged`);
 		if (i?.field === "default" && i?.form === "label") return /** @type {LocalizedString} */ (`Use for every page (default policy)`);
+		if (i?.field === "min_severity" && i?.form === "label") return /** @type {LocalizedString} */ (`Escalate from`);
+		if (i?.field === "min_severity" && i?.form === "hint") return /** @type {LocalizedString} */ (`Less severe incidents page the first level once and don't escalate, unless their severity is raised to it or someone escalates by hand.`);
 		if (i?.field === "add_target" && i?.form === "label") return /** @type {LocalizedString} */ (`Add a schedule or a person`);
 		if (i?.field === "name" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Enter a name.`);
 		if (i?.field === "timeout" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Enter a whole number of minutes from 1 to 1440.`);

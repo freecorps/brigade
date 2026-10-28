@@ -11,6 +11,7 @@ import {
   SYSTEM_END_MS,
   unansweredEndReason,
   PAGE_CHANNEL,
+  postsPageOnEnd,
   REPEAT_SUPPRESSING_END_REASONS,
   voipPushPlan,
   type RingConditions,
@@ -193,14 +194,32 @@ describe("knownCall: a repeat of an ended page", () => {
     expect(unansweredEndReason(SYSTEM_END_MS - 1)).toBe("failed");
     expect(unansweredEndReason(SYSTEM_END_MS)).toBe("declined");
     expect(unansweredEndReason(15_000)).toBe("declined");
-    expect(unansweredEndReason(undefined)).toBe("declined");
+    // Ended before CallKit confirmed it: nobody saw it.
+    expect(unansweredEndReason(undefined)).toBe("failed");
     expect(knownCall(false, { reason: unansweredEndReason(60), atMs: 0 }, 1_000)).toBe("new");
     const swift = native("ios/CallCenter.swift");
     expect(swift).toContain(`static let systemEnd: TimeInterval = ${SYSTEM_END_MS / 1000}`);
     expect(swift).toMatch(
-      /call\.answered\s+\? "hung_up"\s+: call\.ringingSince\.map \{ Date\(\)\.timeIntervalSince\(\$0\) < Self\.systemEnd \} == true \? "failed" : "declined"/,
+      /call\.answered\s+\? "hung_up"\s+: call\.ringingSince\.map \{ Date\(\)\.timeIntervalSince\(\$0\) < Self\.systemEnd \} \?\? true \? "failed" : "declined"/,
     );
     expect(swift).toContain("self.calls[call.id]?.ringingSince = Date()");
+  });
+
+  test("a call the system ends at once posts the page notification now; any other end does not", () => {
+    expect(postsPageOnEnd(unansweredEndReason(60))).toBe(true);
+    expect(postsPageOnEnd(unansweredEndReason(SYSTEM_END_MS - 1))).toBe(true);
+    for (const reason of ["declined", "hung_up", "timed_out", "missed"] as const) {
+      expect(postsPageOnEnd(reason)).toBe(false);
+    }
+    expect(postsPageOnEnd(unansweredEndReason(undefined))).toBe(true);
+    const swift = native("ios/CallCenter.swift");
+    expect(swift).toContain(
+      'static func postsPageOnEnd(_ reason: String) -> Bool { reason == "failed" }',
+    );
+    // In the end action, after the reason is decided, on the call it removed.
+    expect(swift).toMatch(
+      /emit\?\("onEnd", \["id": action\.callUUID[^\n]*\n\s*action\.fulfill\(\)\n(\s*\/\/[^\n]*\n)*\s*if Self\.postsPageOnEnd\(reason\) \{ notifyPage\(call\) \}/,
+    );
   });
 
   test("CallRoute.kt and CallCenter.swift use the same reasons, memory and branches", () => {

@@ -18,6 +18,9 @@ const REASONS: Record<DegradedReason, () => string> = {
   relay_unauthorized: m.paging_reason_relay_unauthorized,
   relay_unreachable: m.paging_reason_relay_unreachable,
   relay_not_configured: m.paging_reason_relay_not_configured,
+  apns_failing: m.paging_reason_apns_failing,
+  fcm_failing: m.paging_reason_fcm_failing,
+  d1_failing: m.paging_reason_d1_failing,
 };
 
 /**

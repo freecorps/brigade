@@ -52,6 +52,7 @@ export type Timeline_EntryInputs = {
 * | "paged_again_auto" | "The page was lost, so Brigade paged it again" |
 * | "page_nobody_else" | "Nobody else was paged: only the person who declared it can respond" |
 * | "escalation_exhausted" | "Nobody acknowledged after every level, so everyone who can respond was paged" |
+* | "escalation_once" | "Not escalated further: this policy escalates from {a}" |
 * | "escalated_everyone_stalled" | "An escalation level kept failing to fire, so everyone who can respond was paged" |
 * | "escalated_manual" | "{actor} escalated, so level {a} was paged now: {b}" |
 * | "escalated_everyone_manual" | "{actor} escalated past the last level, so everyone who can respond was paged" |

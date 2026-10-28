@@ -43,9 +43,13 @@ export type IncidentStatusChanged = DomainEvent<
  * `reopening`: raised by the alerts' actor as a flapping alert reopens its incident (RFC 0005 "Alert sources"); the
  * reopen right after it pages, at this severity, so this one asks for no page of its own.
  */
+/**
+ * `escalates`: the raise reached the severity the incident's run did not escalate below (its policy's `minSeverity`,
+ * `once` on the run), so it asks for a page that starts a new, full run (RFC 0006 "Who is paged").
+ */
 export type IncidentSeverityChanged = DomainEvent<
   "incident.severity_changed",
-  { from: Severity; to: Severity; reopening?: true }
+  { from: Severity; to: Severity; reopening?: true; escalates?: true }
 >;
 /** Someone acknowledged the page: escalation stops (RFC 0003, "Escalation run"). */
 export type IncidentAcknowledged = DomainEvent<"incident.acknowledged", { by: string }>;
@@ -102,8 +106,9 @@ export function formatIncidentNumber(number: number | null): string | null {
  * Stops the incident's escalation run, if one is under way (RFC 0003 "Escalation run"): `acknowledged` by
  * `incident.ack`, `resolved` when the incident leaves the active statuses. In the same transaction as the change, so
  * no level fires after it, whichever route ran the mutation. The timer is server-only; clients only see the run stop.
- * A run that ended on paging everyone (`exhausted`) is closed the same way, keeping when it ended: its pages still
- * send while it is the incident's last word, and must not once the incident is reopened.
+ * A run that ended on paging everyone (`exhausted`) or on its one page below its policy's severity (`paged_once`) is
+ * closed the same way, keeping when it ended: its pages still send while it is the incident's last word, and must not
+ * once the incident is reopened.
  */
 function stopEscalation(
   store: MutationStore,
@@ -113,7 +118,7 @@ function stopEscalation(
 ): void {
   const run = incident.escalation;
   if (!run) return;
-  if (run.status === "exhausted") {
+  if (run.status === "exhausted" || run.status === "paged_once") {
     store.update("incidents", incident.id, { escalation: { ...run, status } });
     return;
   }
@@ -194,6 +199,8 @@ export const declareIncident = defineMutation({
     // RFC 0003 "Incident types", "Service catalog". Left out by clients from before them.
     typeId: v.optional(v.id("typ")),
     serviceIds: v.optional(v.array(v.id("svc"), { max: MAX_INCIDENT_SERVICES, unique: true })),
+    // RFC 0006 "Who is paged": a policy picked by hand, first in the order. Left out: none.
+    escalationPolicyId: v.optional(v.id("esc")),
   }),
   permission: "incident:declare",
   apply(store, args, ctx) {
@@ -205,10 +212,13 @@ export const declareIncident = defineMutation({
       ]);
     }
     if (store.get("incidents", args.id)) return fail("conflict", "Incident already exists");
-    // A type or a service deleted while the declare waited (offline, queued) is left out rather than refused:
+    // A type, a service or a policy deleted while the declare waited (offline, queued) is left out rather than refused:
     // declaring must not fail on the catalog.
     const type = args.typeId ? store.get("incident_types", args.typeId) : undefined;
     const serviceIds = (args.serviceIds ?? []).filter((id: string) => store.get("services", id));
+    const policy = args.escalationPolicyId
+      ? store.get("escalation_policies", args.escalationPolicyId)
+      : undefined;
     const row: IncidentRow = {
       id: args.id,
       number: ctx.server ? allocateIncidentNumber(store) : null,
@@ -223,6 +233,7 @@ export const declareIncident = defineMutation({
       timelineSeq: 0,
       ...(type && { typeId: type.id }),
       ...(serviceIds.length > 0 && { serviceIds }),
+      ...(policy && { escalationPolicyId: policy.id }),
       updatedAt: ctx.now,
     };
     store.insert("incidents", row);
@@ -297,6 +308,20 @@ export const setIncidentStatus = defineMutation({
   },
 });
 
+/**
+ * Whether raising `incident` to `severity` reaches the policy's `minSeverity` its run started below (`once`): the run
+ * paged once and stopped there, and the raise starts a new, full run (RFC 0006 "Who is paged"). Only while the run is
+ * the incident's last word (`paged_once`, or `exhausted` after paging everyone; `running` never has `once` once its
+ * start committed): one acknowledged or resolved pages nothing.
+ */
+function raisesPastOnce(incident: IncidentRow, severity: Severity): boolean {
+  const run = incident.escalation;
+  if (run?.once === undefined) return false;
+  if (run.status === "acknowledged" || run.status === "resolved") return false;
+  const rank = (one: Severity) => SEVERITIES.indexOf(one);
+  return rank(severity) <= rank(run.once) && rank(incident.severity) > rank(run.once);
+}
+
 export const setIncidentSeverity = defineMutation({
   name: "incident.setSeverity",
   args: v.object({ id: incidentId, severity: v.picklist(SEVERITIES) }),
@@ -317,7 +342,11 @@ export const setIncidentSeverity = defineMutation({
     const event: IncidentSeverityChanged = {
       type: "incident.severity_changed",
       subject: args.id,
-      data: { from: incident.severity, to: args.severity },
+      data: {
+        from: incident.severity,
+        to: args.severity,
+        ...(raisesPastOnce(incident, args.severity) && { escalates: true }),
+      },
     };
     return ok(event);
   },

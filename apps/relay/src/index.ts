@@ -17,6 +17,7 @@ import {
   parseServiceAccount,
   type ServiceAccount,
 } from "./fcm.ts";
+import { deepHealth } from "./deep-health.ts";
 
 /**
  * Spike S1 relay (RFC 0006): `POST /send` takes a device token and an already encrypted envelope and forwards
@@ -81,7 +82,25 @@ export async function handle(
   env: RelayEnv,
   send: (request: Request) => Promise<Response>,
 ): Promise<Response> {
-  const { pathname } = new URL(request.url);
+  const { pathname, searchParams } = new URL(request.url);
+  if (pathname === "/health" && searchParams.get("deep") === "1") {
+    // Says which provider fails, so only the send token's holder (the instance's watchdog) may ask.
+    if (!(await authorized(request, env.RELAY_SEND_TOKEN))) {
+      return json({ error: "unauthorized" }, 401, { "WWW-Authenticate": "Bearer" });
+    }
+    const health = await deepHealth(
+      {
+        credentials: { key: env.APNS_KEY, keyId: env.APNS_KEY_ID, teamId: env.APNS_TEAM_ID },
+        environment: env.APNS_ENVIRONMENT === "production" ? "production" : "sandbox",
+        topic: env.APNS_TOPIC,
+        tokens,
+        fcmServiceAccount: env.FCM_SERVICE_ACCOUNT,
+      },
+      send,
+    );
+    if (!health.ok) console.error(JSON.stringify({ message: "deep health failed", ...health }));
+    return json(health, health.ok ? 200 : 503);
+  }
   if (pathname === "/health") return json({ ok: true });
   if (pathname !== "/send") return json({ error: "not_found" }, 404);
   if (request.method !== "POST")

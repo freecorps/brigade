@@ -28,7 +28,7 @@ export const EMAIL_RETRY_FIRST_SECONDS = 30;
 export const EMAIL_RETRY_MAX_SECONDS = 300;
 /** How long the D1 read of the recipients may take. */
 export const RECIPIENTS_TIMEOUT_MS = 5000;
-/** The most owners one email goes to. */
+/** The most owners and admins one email goes to. */
 export const MAX_OWNER_RECIPIENTS = 50;
 
 export type EmailNotifyEnv = {
@@ -177,7 +177,7 @@ export type Recipient = {
  * The recipients' addresses, names and locales from D1, for members of the workspace whose address is verified
  * only: a member removed since the page is not emailed about it, nor one who never proved their address (nothing is
  * recorded for them: there is no email to retry). D1 is the authority for addresses (the shard keeps none) and for who the owners
- * are (the shard's list has only those who opened Brigade).
+ * and admins are (the shard's list has only those who opened Brigade). `owners` means owners and admins (Q18 decided).
  */
 export async function lookUp(
   db: D1Database | undefined,
@@ -193,7 +193,7 @@ export async function lookUp(
   const query =
     "owners" in to
       ? db
-          .prepare(`${select} and m.role = 'owner' order by m.createdAt limit ?`)
+          .prepare(`${select} and m.role in ('owner', 'admin') order by m.createdAt limit ?`)
           .bind(workspaceId, MAX_OWNER_RECIPIENTS)
       : db
           .prepare(`${select} and m.userId in (${to.userIds.map(() => "?").join(", ")})`)

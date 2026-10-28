@@ -1558,8 +1558,11 @@ describe("a channel per incident, and the timeline mirror", () => {
 });
 
 describe("what must happen once: escalations, messages, retried events, the claim", () => {
-  /** Connected without a main channel, Ana and Caio synced with phones, a default policy paging Ana then Caio. */
-  async function escalating(t: Team) {
+  /**
+   * Connected without a main channel, Ana and Caio synced with phones, a default policy paging Ana then Caio. With
+   * `below`, the policy escalates from SEV2 and the incident is a SEV3, so its run pages once.
+   */
+  async function escalating(t: Team, below = false) {
     const teamId = await connect(t, newTeam(), null);
     await phone(t, "a".repeat(64));
     const caio: Actor = { kind: "user", id: t.caio.id, role: "responder" };
@@ -1589,13 +1592,14 @@ describe("what must happen once: escalations, messages, retried events, the clai
         })),
         repeat: 1,
         isDefault: true,
+        ...(below && { minSeverity: "sev2" }),
       },
       owner(t),
     );
     const incidentId = newId("inc", Date.now(), random);
     await t.run(
       "incident.declare",
-      { id: incidentId, title: "Checkout down", severity: "sev1" },
+      { id: incidentId, title: "Checkout down", severity: below ? "sev3" : "sev1" },
       MONITOR_ACTOR,
     );
     const declared = (await eventsOf(t, "incident.declared"))[0]!;
@@ -1702,6 +1706,26 @@ describe("what must happen once: escalations, messages, retried events, the clai
     await pagedAgo(t, incidentId, SLACK_ESCALATE_WINDOW_MS + 1000);
     expect(await escalate(t, teamId, t.caio.email)).toMatchObject({ ok: true });
     expect(await run(t, incidentId)).toMatchObject({ paged: 4 });
+  });
+
+  test("escalating a run that paged once below its policy's severity runs it in full from the next level", async () => {
+    const t = await team();
+    const { teamId, incidentId } = await escalating(t, true);
+    expect(await run(t, incidentId)).toMatchObject({ status: "paged_once", paged: 1 });
+    expect(await escalate(t, teamId, t.caio.email)).toMatchObject({ ok: true, did: "escalated" });
+    const after = await run(t, incidentId);
+    expect(after).toMatchObject({ status: "running", paged: 2, endedAt: null });
+    expect(after.once).toBeUndefined();
+    expect((await eventsOf(t, "escalation.paged")).map((e) => e.data)).toEqual([
+      expect.objectContaining({ level: 1, reason: "started" }),
+      expect.objectContaining({ level: 2, reason: "manual" }),
+    ]);
+    // Its next level has a timer now, and the alarm comes for it.
+    await vi.waitFor(async () => {
+      const alarm = await t.withShard((_shard, state) => state.storage.getAlarm());
+      expect(alarm).not.toBeNull();
+      expect(alarm!).toBeLessThanOrEqual(after.nextAt!);
+    });
   });
 
   test("one Slack message is one update, whoever posts it and however often", async () => {

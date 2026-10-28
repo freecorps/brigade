@@ -23,7 +23,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "nobody_subject" | "Nobody could be paged for {incident}: {title}" |
 * | "nobody_intro" | "Nobody could be paged for {incident} in {workspace}. Brigade tried everyone it could and the page reached no one's phone, and nobody has acknowledged the inc..." |
 * | "nobody_timeline" | "The incident's timeline says why each page failed." |
-* | "nobody_footer" | "You're getting this email because you're an owner of {workspace}." |
+* | "nobody_footer" | "You're getting this email because you're an owner or admin of {workspace}." |
 * | "fact_incident" | "Incident: {incident}" |
 * | "fact_title" | "Title: {title}" |
 * | "open" | "Open the incident" |
@@ -49,7 +49,7 @@ export const email_text = /** @type {((inputs: Email_TextInputs, options?: { loc
 		if (i?.part === "nobody_subject") return /** @type {LocalizedString} */ (`Ninguém pôde ser chamado para ${i?.incident}: ${i?.title}`);
 		if (i?.part === "nobody_intro") return /** @type {LocalizedString} */ (`Ninguém pôde ser chamado para ${i?.incident} em ${i?.workspace}. O Brigade tentou todos que podia e a chamada não chegou ao celular de ninguém, e ninguém confirmou o incidente.`);
 		if (i?.part === "nobody_timeline") return /** @type {LocalizedString} */ (`A linha do tempo do incidente mostra por que cada chamada falhou.`);
-		if (i?.part === "nobody_footer") return /** @type {LocalizedString} */ (`Você está recebendo este email porque é proprietário de ${i?.workspace}.`);
+		if (i?.part === "nobody_footer") return /** @type {LocalizedString} */ (`Você está recebendo este email porque é proprietário ou administrador de ${i?.workspace}.`);
 		if (i?.part === "fact_incident") return /** @type {LocalizedString} */ (`Incidente: ${i?.incident}`);
 		if (i?.part === "fact_title") return /** @type {LocalizedString} */ (`Título: ${i?.title}`);
 		if (i?.part === "open") return /** @type {LocalizedString} */ (`Abrir o incidente`);
@@ -69,7 +69,7 @@ export const email_text = /** @type {((inputs: Email_TextInputs, options?: { loc
 		if (i?.part === "nobody_subject") return /** @type {LocalizedString} */ (`Nobody could be paged for ${i?.incident}: ${i?.title}`);
 		if (i?.part === "nobody_intro") return /** @type {LocalizedString} */ (`Nobody could be paged for ${i?.incident} in ${i?.workspace}. Brigade tried everyone it could and the page reached no one's phone, and nobody has acknowledged the incident.`);
 		if (i?.part === "nobody_timeline") return /** @type {LocalizedString} */ (`The incident's timeline says why each page failed.`);
-		if (i?.part === "nobody_footer") return /** @type {LocalizedString} */ (`You're getting this email because you're an owner of ${i?.workspace}.`);
+		if (i?.part === "nobody_footer") return /** @type {LocalizedString} */ (`You're getting this email because you're an owner or admin of ${i?.workspace}.`);
 		if (i?.part === "fact_incident") return /** @type {LocalizedString} */ (`Incident: ${i?.incident}`);
 		if (i?.part === "fact_title") return /** @type {LocalizedString} */ (`Title: ${i?.title}`);
 		if (i?.part === "open") return /** @type {LocalizedString} */ (`Open the incident`);

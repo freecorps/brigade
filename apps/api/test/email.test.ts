@@ -88,13 +88,13 @@ describe("what the emails say", () => {
     expect(en.subject).toBe("Nobody could be paged for SEV2 · INC-142: Checkout is down");
     expect(en.text).toContain("Nobody could be paged for SEV2 · INC-142 in Acme.");
     expect(en.text).toContain("The incident's timeline says why each page failed.");
-    expect(en.text).toContain("because you're an owner of Acme");
+    expect(en.text).toContain("because you're an owner or admin of Acme");
     // No DASHBOARD_URL, no link.
     expect(en.text).not.toContain("Open the incident");
     expect(en.html).not.toContain("<a ");
     const pt = renderEmail({ about: "nobody_paged" }, context, to, "pt-BR");
     expect(pt.subject).toBe("Ninguém pôde ser chamado para SEV2 · INC-142: Checkout is down");
-    expect(pt.text).toContain("porque é proprietário de Acme");
+    expect(pt.text).toContain("porque é proprietário ou administrador de Acme");
   });
 
   test("nothing a member typed becomes markup: titles, workspace names and names are escaped", () => {
@@ -512,6 +512,85 @@ describe("who is emailed when paging fails", () => {
       retried: [],
     });
     expect(mail.sent).toHaveLength(4);
+  });
+
+  test("a page that reached nobody emails the owners and the admins, the owner who declared it too, verified only", async () => {
+    const ws = await workspace();
+    // Two admins in D1 only (never opened Brigade, so never paged): one verified, one not.
+    const now = new Date().toISOString();
+    const admins = [`usr_adam_${ws.id}`, `usr_alba_${ws.id}`];
+    for (const [i, userId] of admins.entries()) {
+      await env.DB.prepare(
+        `insert into "user" (id, name, email, "emailVerified", "createdAt", "updatedAt") values (?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(
+          userId,
+          `admin${i}`,
+          `admin${i}-${ws.id.toLowerCase()}@example.com`,
+          i === 0 ? 1 : 0,
+          now,
+          now,
+        )
+        .run();
+      await env.DB.prepare(
+        `insert into member (id, "organizationId", "userId", role, "createdAt") values (?, ?, ?, 'admin', ?)`,
+      )
+        .bind(newId("mem", Date.now(), random), ws.id, userId, now)
+        .run();
+    }
+    // Ana (an owner) declares by hand; Bia, the only other one who can respond, has no phone.
+    const { event } = await ws.declare(ws.people.ana, "sev2");
+    await deliver([event], undefined);
+    const failures = await ws.failures();
+    expect(failures.map((e) => (e.data as { userId: string }).userId)).toEqual([ws.people.bia.id]);
+    const mail = recorder();
+    await deliver(failures, mail.sender);
+    const nobody = mail.sent.filter((one) => one.subject.startsWith("Nobody"));
+    expect(nobody.map((one) => one.to.email).sort()).toEqual(
+      [
+        ws.address(ws.people.ana),
+        ws.address(ws.people.olga),
+        `admin0-${ws.id.toLowerCase()}@example.com`,
+      ].sort(),
+    );
+    expect(nobody[0]!.text).toContain("because you're an owner or admin of Acme");
+  });
+
+  test("a run below its policy's severity escalates no further, so its one page reaching nobody emails the owners and admins", async () => {
+    // Level 1 is Ana, whose push the relay refuses; level 2 (Bia) would fire at the timeout for a SEV1 or SEV2, but
+    // this SEV3 is below the policy's SEV2: nothing else will page, so the owners and admins are told at once.
+    const ws = await workspace();
+    await ws.device(ws.people.ana);
+    await ws.run(ws.people.ana, "escalation.createPolicy", {
+      id: newId("esc", Date.now(), random),
+      name: "Checkout",
+      levels: [ws.people.ana, ws.people.bia].map((member) => ({
+        id: newId("lvl", Date.now(), random),
+        targets: [{ kind: "member", id: member.id }],
+        timeoutMinutes: 5,
+      })),
+      repeat: 0,
+      isDefault: true,
+      minSeverity: "sev2",
+    });
+    const { event, incident } = await ws.declare(MONITOR_ACTOR, "sev3");
+    const refusing: Fetch = async (request) => {
+      await request.body?.cancel();
+      return Response.json({ error: "invalid_body" }, { status: 400 });
+    };
+    await deliver([event], undefined, { relay: refusing });
+    expect(
+      await ws.withShard((shard) => shard.store.get("incidents", incident)?.escalation?.status),
+    ).toBe("paged_once");
+    const failures = await ws.failures();
+    const mail = recorder();
+    await deliver(failures, mail.sender);
+    expect(
+      mail.sent
+        .filter((one) => one.subject.startsWith("Nobody"))
+        .map((one) => one.to.email)
+        .sort(),
+    ).toEqual([ws.address(ws.people.ana), ws.address(ws.people.olga)].sort());
   });
 
   test("a level that missed everyone emails no owner while the run goes on; the run's last page that reached nobody does", async () => {

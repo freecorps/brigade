@@ -358,7 +358,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       randomBytes,
       log: (message, fields) => this.log(message, fields),
       committed: (version, changes) => this.broadcast(version, changes, undefined),
-      wake: (at) => this.wake(at, "slack archive"),
+      wake: (at) => this.wake(at, "slack"),
     });
     this.webhooks = new WebhookDesk({
       storage: ctx.storage,

@@ -25,7 +25,7 @@ export type Email_TextInputs = {
 * | "nobody_subject" | "Nobody could be paged for {incident}: {title}" |
 * | "nobody_intro" | "Nobody could be paged for {incident} in {workspace}. Brigade tried everyone it could and the page reached no one's phone, and nobody has acknowledged the inc..." |
 * | "nobody_timeline" | "The incident's timeline says why each page failed." |
-* | "nobody_footer" | "You're getting this email because you're an owner of {workspace}." |
+* | "nobody_footer" | "You're getting this email because you're an owner or admin of {workspace}." |
 * | "fact_incident" | "Incident: {incident}" |
 * | "fact_title" | "Title: {title}" |
 * | "open" | "Open the incident" |

@@ -362,6 +362,7 @@ function declare(ctx: WriteContext, body: DeclareRequest): RestResult {
     ...(body.severity !== undefined && { severity: body.severity }),
     ...(body.typeId !== undefined && { typeId: body.typeId }),
     ...(body.serviceIds !== undefined && { serviceIds: body.serviceIds }),
+    ...(body.escalationPolicyId !== undefined && { escalationPolicyId: body.escalationPolicyId }),
   };
   const result = run(ctx, "incident.declare", args, parts);
   if (!result.ok) return failure(result);

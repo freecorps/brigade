@@ -79,6 +79,8 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
   /// An unanswered call ended sooner than this after it rang was ended by the system, not a person: `failed`, so a
   /// repeat rings. Mirrors `SYSTEM_END_MS` and `unansweredEndReason` (src/lib/call-route.ts).
   static let systemEnd: TimeInterval = 2
+  /// Ends that post the time-sensitive page notification at once. Mirrors `postsPageOnEnd`.
+  static func postsPageOnEnd(_ reason: String) -> Bool { reason == "failed" }
 
   /// Mirrors `knownCall` in apps/mobile/src/lib/call-route.ts.
   static func known(active: Bool, ended: EndedCall?, now: Date) -> KnownCall {
@@ -385,12 +387,16 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
     let reason =
       call.answered
       ? "hung_up"
-      : call.ringingSince.map { Date().timeIntervalSince($0) < Self.systemEnd } == true ? "failed" : "declined"
+      : call.ringingSince.map { Date().timeIntervalSince($0) < Self.systemEnd } ?? true ? "failed" : "declined"
     rememberEnded(action.callUUID, reason: reason)
     stopSpeaking()
     log.info("call ended: \(reason, privacy: .public)")
     emit?("onEnd", ["id": action.callUUID.uuidString.lowercased(), "reason": reason])
     action.fulfill()
+    // The system ended it before anyone could see it (or before CallKit even confirmed it): the page shows now, not
+    // at the repeat (Q14). If CallKit then refuses the report too, `report` posts the same notification again under
+    // the same identifier, which replaces it. Mirrors `postsPageOnEnd` in apps/mobile/src/lib/call-route.ts.
+    if Self.postsPageOnEnd(reason) { notifyPage(call) }
   }
 
   /// The keypad in CallKit's in-call UI, on the lock screen too: 1 acknowledges (RFC 0010).

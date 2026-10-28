@@ -67,10 +67,16 @@ export function RingCenter({
 
   // Calculate center area size based on scaled baseInnerRadius
   // Leave some padding so text doesn't touch the inner ring
-  const centerSize = baseInnerRadius * 2 - 16;
+  const centerSize = Math.max(0, baseInnerRadius * 2 - 16);
 
   // If custom render function is provided, use it
-  if (children && hoveredData) {
+  // A custom render gets the hovered ring, or the whole chart as one datum while nothing is hovered.
+  if (children) {
+    const shown = hoveredData ?? {
+      label: displayLabel,
+      value: totalValue,
+      maxValue: data.reduce((sum, ring) => sum + ring.maxValue, 0),
+    };
     return (
       <div
         className={cn(chartCenterContainerClassName, "flex items-center justify-center", className)}
@@ -80,7 +86,7 @@ export function RingCenter({
           value: displayValue,
           label: displayLabel,
           isHovered: hoveredIndex !== null,
-          data: hoveredData,
+          data: shown,
         })}
       </div>
     );

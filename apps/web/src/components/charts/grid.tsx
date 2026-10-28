@@ -2,7 +2,7 @@
 
 import { GridColumns, GridRows } from "@visx/grid";
 import { motion } from "motion/react";
-import { useId } from "react";
+import { useSvgId } from "./svg-id";
 import { chartCssVars, useChartStable, useYScale } from "./chart-context";
 import { useGridShimmer } from "./use-grid-shimmer";
 import { isLoadingChromePhase, isLoadingGridChromePhase } from "./y-domain-utils";
@@ -150,7 +150,7 @@ export function Grid({
           return filtered.length > 0 ? filtered : undefined;
         })()
       : undefined;
-  const uniqueId = useId();
+  const uniqueId = useSvgId();
 
   // Horizontal fade mask (for grid rows - fades left/right)
   const hMaskId = `grid-rows-fade-${uniqueId}`;

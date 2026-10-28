@@ -65,6 +65,8 @@ interface BarSquaresInnerProps extends BarSquaresProps {
 }
 
 interface SquareColumnProps {
+  /** The series it belongs to: part of its gradient and pattern ids, so two series never share one. */
+  seriesKey: string;
   x: number;
   baselineY: number;
   barLengthPx: number;
@@ -140,6 +142,7 @@ function SquareColumn({
   gradientStops,
   patternPreset,
   index,
+  seriesKey,
   isFaded,
   fadedOpacity,
   animate,
@@ -161,9 +164,9 @@ function SquareColumn({
 
   const rx = squareSize * squareRadius;
   const columnTop = baselineY - layout.columnHeight;
-  const gradientId = `bar-squares-gradient-${index}-${revealEpoch}`;
+  const gradientId = `bar-squares-gradient-${seriesKey}-${index}-${revealEpoch}`;
   const patternFill = isPatternFill(fill);
-  const patternId = `bar-squares-pattern-${index}-${revealEpoch}`;
+  const patternId = `bar-squares-pattern-${seriesKey}-${index}-${revealEpoch}`;
 
   const effectiveFill = useMemo(() => {
     if (useGradient) {
@@ -363,6 +366,7 @@ const BarSquaresInner = memo(function BarSquaresInner({
             index={i}
             isFaded={isFaded}
             key={`bar-squares-${dataKey}-${categoryValue}`}
+            seriesKey={dataKey.replace(/[^a-zA-Z0-9_-]/g, "")}
             patternPreset={patternPreset}
             revealEpoch={revealEpoch}
             squareFit={squareFit}

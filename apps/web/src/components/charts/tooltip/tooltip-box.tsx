@@ -259,8 +259,9 @@ function TooltipBoxInner({
 
   const flipKey = replayOnFlip ? flip.key : 0;
 
-  const finalLeft = animate ? (leftOverride ?? animatedLeft) : staticPosition.left;
-  const finalTop = animate ? (topOverride ?? animatedTop) : staticPosition.top;
+  // A caller's placement wins whether or not the box springs.
+  const finalLeft = leftOverride ?? (animate ? animatedLeft : staticPosition.left);
+  const finalTop = topOverride ?? (animate ? animatedTop : staticPosition.top);
   const isFlipped = flippedOverride ?? shouldFlipX;
   const transformOrigin = isFlipped ? "right top" : "left top";
 
@@ -280,16 +281,17 @@ function TooltipBoxInner({
   };
 
   if (!entrance) {
+    // Placed like the animated box: the springs (or a caller's override) while animating, the measured spot otherwise.
     return createPortal(
-      <div
+      <motion.div
         className={cn("pointer-events-none absolute z-50", className)}
         ref={tooltipRef}
-        style={{ left: staticPosition.left, top: staticPosition.top }}
+        style={{ left: finalLeft, top: finalTop }}
       >
         <div className={panelClassName} style={panelStyleResolved}>
           <div className={TOOLTIP_PANEL_INNER_CLASS_NAME}>{children}</div>
         </div>
-      </div>,
+      </motion.div>,
       container,
     );
   }

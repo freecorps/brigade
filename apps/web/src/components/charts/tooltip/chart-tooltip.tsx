@@ -331,13 +331,12 @@ const ChartTooltipInner = memo(function ChartTooltipInner({
     // Default: generate rows from registered lines, then `<Band>` ranges.
     // With nearest-point hover (jittered scatter) a row may hold only some
     // series — skip the rest.
-    const rowLines = nearestPointHover
-      ? lines.filter((line) => typeof tooltipData.point[line.dataKey] === "number")
-      : lines;
+    // A series with no number at this point is left out (never read as a zero), as the dots are.
+    const rowLines = lines.filter((line) => typeof tooltipData.point[line.dataKey] === "number");
     const rows: TooltipRow[] = rowLines.map((line) => ({
       color: line.stroke,
       label: line.dataKey,
-      value: (tooltipData.point[line.dataKey] as number) ?? 0,
+      value: tooltipData.point[line.dataKey] as number,
     }));
     for (const band of tooltipBands) {
       const value = formatBandRange(tooltipData.point, band.upperKey, band.lowerKey);
@@ -469,24 +468,31 @@ const ChartTooltipInner = memo(function ChartTooltipInner({
                     y={activePoint.y}
                   />
                 )
-              : lines.map((line, index) => (
-                  <TooltipDot
-                    color={resolveDotColor(line, index)}
-                    cornerRadiusFraction={dotVariant === "ring" ? dotRadiusFraction : undefined}
-                    haloBlur={dotHaloBlur}
-                    haloOpacity={dotHaloOpacity}
-                    haloScale={dotHaloScale}
-                    key={line.dataKey}
-                    size={resolvedDotSize}
-                    springConfig={springConfig}
-                    strokeColor={chartCssVars.background}
-                    strokeWidth={dotStrokeWidth}
-                    variant={dotVariant}
-                    visible={visible}
-                    x={tooltipData?.xPositions?.[line.dataKey] ?? x}
-                    y={tooltipData?.yPositions[line.dataKey] ?? 0}
-                  />
-                ))}
+              : lines.map((line, index) => {
+                  // A series with no value at this point gets no dot, as bands below do.
+                  const y = tooltipData?.yPositions[line.dataKey];
+                  if (y == null) {
+                    return null;
+                  }
+                  return (
+                    <TooltipDot
+                      color={resolveDotColor(line, index)}
+                      cornerRadiusFraction={dotVariant === "ring" ? dotRadiusFraction : undefined}
+                      haloBlur={dotHaloBlur}
+                      haloOpacity={dotHaloOpacity}
+                      haloScale={dotHaloScale}
+                      key={line.dataKey}
+                      size={resolvedDotSize}
+                      springConfig={springConfig}
+                      strokeColor={chartCssVars.background}
+                      strokeWidth={dotStrokeWidth}
+                      variant={dotVariant}
+                      visible={visible}
+                      x={tooltipData?.xPositions?.[line.dataKey] ?? x}
+                      y={y}
+                    />
+                  );
+                })}
             {bandDots.map((dot) => {
               const y = tooltipData?.yPositions[dot.key];
               if (y == null) {

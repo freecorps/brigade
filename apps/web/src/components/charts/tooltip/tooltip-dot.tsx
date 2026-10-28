@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, useSpring, useTransform } from "motion/react";
-import { useId } from "react";
+import { useSvgId } from "../svg-id";
 import { type SpringConfig, useChartConfig } from "../chart-config-context";
 import { chartCssVars } from "../chart-context";
 
@@ -120,7 +120,7 @@ export function TooltipDot({
   const effectiveSpring = springConfig ?? tooltipSpring;
   const animatedX = useSpring(x, effectiveSpring);
   const animatedY = useSpring(y, effectiveSpring);
-  const haloFilterId = `tooltip-dot-halo-${useId()}`;
+  const haloFilterId = `tooltip-dot-halo-${useSvgId()}`;
 
   const isRing = variant === "ring";
 

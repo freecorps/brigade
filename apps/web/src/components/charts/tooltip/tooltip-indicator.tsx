@@ -1,7 +1,8 @@
 "use client";
 
 import { motion, useSpring } from "motion/react";
-import { useEffect, useId } from "react";
+import { useEffect } from "react";
+import { useSvgId } from "../svg-id";
 import { type SpringConfig, useChartConfig } from "../chart-config-context";
 import { chartCssVars } from "../chart-context";
 import {
@@ -123,7 +124,7 @@ function TooltipIndicatorInner({
 }: TooltipIndicatorProps) {
   // Per-instance id: a shared id makes every chart on the page resolve
   // `url(#…)` to the first chart's gradient (and its colours).
-  const generatedId = useId();
+  const generatedId = useSvgId();
   const gradientId = gradientIdProp ?? `tooltip-indicator-gradient-${generatedId}`;
   const { tooltipSpring } = useChartConfig();
   const effectiveSpring = springConfig ?? tooltipSpring;

@@ -3,7 +3,13 @@
 import { arc as arcGenerator } from "@visx/shape";
 import { type MotionValue, motion, useTransform } from "motion/react";
 import { memo, useCallback } from "react";
-import { getRingHitRadii, ringCssVars, useRingHover, useRingStable } from "./ring-context";
+import {
+  getRingHitRadii,
+  ringCssVars,
+  ringProgress,
+  useRingHover,
+  useRingStable,
+} from "./ring-context";
 import { useEnterComplete } from "./use-enter-complete";
 import { useMountProgress } from "./use-mount-progress";
 
@@ -101,7 +107,7 @@ export const Ring = memo(function Ring({
   const progressComplete = useEnterComplete(progressMount);
 
   const ringData = data[index];
-  const progress = ringData ? ringData.value / ringData.maxValue : 0;
+  const progress = ringData ? ringProgress(ringData) : 0;
   const arcRange = endAngle - startAngle;
 
   const animatedProgressPath = useTransform(progressMount, (v) => {

@@ -93,7 +93,7 @@ export function PulseStrip() {
                     )
                     .join(" · ")
           }
-          tone={bySeverity[0]!.count > 0 ? "text-destructive" : undefined}
+          tone={incidents.rows.length > 0 ? "text-destructive" : undefined}
           rings={bySeverity.map((part) => ({
             label: severityLabels[part.severity](),
             value: part.count,
@@ -324,21 +324,23 @@ function GlanceRow({ row }: { row: MonitorRow }) {
         </div>
       </div>
       {/* The shape of the recent latencies; the row's figure says the latest in words. */}
-      <div aria-hidden className="h-9 min-w-0 max-md:hidden">
+      <div className="h-9 min-w-0 max-md:hidden">
         {series.length > 1 ? (
-          <AreaSparkline
-            data={series}
-            dataKey="latency"
-            height={36}
-            color={
-              STATE_COLORS[
-                badge === "up" || badge === "down" || badge === "unknown" ? badge : "pending"
-              ]
-            }
-            fillOpacity={0.18}
-            strokeWidth={1.5}
-            interactive={false}
-          />
+          <div aria-hidden className="h-full">
+            <AreaSparkline
+              data={series}
+              dataKey="latency"
+              height={36}
+              color={
+                STATE_COLORS[
+                  badge === "up" || badge === "down" || badge === "unknown" ? badge : "pending"
+                ]
+              }
+              fillOpacity={0.18}
+              strokeWidth={1.5}
+              interactive={false}
+            />
+          </div>
         ) : (
           <span className="flex h-full items-center text-xs text-muted-foreground">
             {say("no_history")}

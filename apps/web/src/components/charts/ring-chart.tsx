@@ -22,6 +22,7 @@ import {
   type RingData,
   RingProvider,
   ringCssVars,
+  ringProgress,
 } from "./ring-context";
 
 function generateRingArcPath(
@@ -178,7 +179,8 @@ const RingChartCore = memo(function RingChartCore({
     baseInnerRadiusProp + (ringCount - 1) * (strokeWidthProp + ringGapProp) + strokeWidthProp;
 
   // Scale factor to fit within available space
-  const scale = Math.min(1, availableRadius / designOuterRadius);
+  const scale =
+    designOuterRadius > 0 ? Math.min(1, Math.max(0, availableRadius) / designOuterRadius) : 0;
 
   // Apply scaling to all dimensions
   const strokeWidth = strokeWidthProp * scale;
@@ -218,7 +220,7 @@ const RingChartCore = memo(function RingChartCore({
     return data.map((ringData, index) => {
       const { innerRadius, outerRadius } = getRingRadii(index);
       const cornerRadius = (outerRadius - innerRadius) / 2;
-      const progress = ringData.value / ringData.maxValue;
+      const progress = ringProgress(ringData);
       const progressEndAngle = startAngle + arcRange * progress;
       return {
         bgPath: generateRingArcPath(innerRadius, outerRadius, startAngle, endAngle, cornerRadius),

@@ -284,7 +284,6 @@ const ChartCore = memo(function ChartCore({
     }
     return buildYScalesForLines({
       lines,
-      data,
       innerHeight,
       resolveDomain: (dataKeys) =>
         resolveBarValueDomain(collectBarValueExtents(data, dataKeys, stacked)),

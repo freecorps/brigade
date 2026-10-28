@@ -41,8 +41,6 @@ export function buildYScalesForLines({
   resolveDomain,
 }: {
   lines: LineConfig[];
-  /** Passed by callers; domain is resolved via `resolveDomain`. */
-  data?: Record<string, unknown>[];
   innerHeight: number;
   resolveDomain: (dataKeys: string[]) => [number, number];
 }): Record<string, YScale> {

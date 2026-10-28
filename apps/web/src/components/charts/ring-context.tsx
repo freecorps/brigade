@@ -27,6 +27,12 @@ export const defaultRingColors = [
   ringCssVars.ring5,
 ];
 
+/** A ring's filled share, 0 to 1: a zero or negative maximum fills nothing, a value past it fills the ring once. */
+export function ringProgress(ring: Pick<RingData, "value" | "maxValue">): number {
+  if (!(ring.maxValue > 0) || !Number.isFinite(ring.value)) return 0;
+  return Math.min(1, Math.max(0, ring.value / ring.maxValue));
+}
+
 export interface RingData {
   /** Display label for the ring */
   label: string;

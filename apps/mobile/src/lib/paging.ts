@@ -187,6 +187,53 @@ export function pagingCycle(deps: PagingDeps): PagingCycle {
   };
 }
 
+/** How many registrations the phone's device disappearing from the shard starts within `REMOVAL_WINDOW_MS`. */
+export const REMOVAL_TRIES = 3;
+
+/** The window `REMOVAL_TRIES` counts in. */
+export const REMOVAL_WINDOW_MS = 60 * 60_000;
+
+/**
+ * What to do when the open workspace's synced device summaries (`member_devices`) change. `again`: the phone's own
+ * device was there and is gone while the app holds it registered (evicted as `replaced`, removed from the dashboard,
+ * dropped by the server), so it registers again now (a nudge, so never within `MIN_TRY_GAP_MS` of the last try):
+ * while the member is signed in on this phone that is the only way it gets their pages. `gave_up`: it went
+ * `REMOVAL_TRIES` times within `REMOVAL_WINDOW_MS`, so something keeps removing it (another of the member's phones
+ * evicting it over the limit, say); the app stops chasing it and says the phone is not paged, until the member
+ * comes back to the app or taps Try again.
+ */
+export type RemovalVerdict = "again" | "gave_up" | undefined;
+
+/**
+ * Watches for the phone's device leaving the shard (RFC 0006 "Device registration"). `see` takes whether its row is
+ * in the synced summaries (undefined while they load) and whether the last registration said it is on; only a row
+ * seen while registered and then gone counts, so a registration answered before its row arrived is not a removal.
+ */
+export function removalWatch(now: () => number) {
+  let seen = false;
+  let tries: number[] = [];
+  return {
+    see(present: boolean | undefined, registered: boolean): RemovalVerdict {
+      if (!registered) {
+        seen = false;
+        return undefined;
+      }
+      if (present === undefined) return undefined;
+      if (present) {
+        seen = true;
+        return undefined;
+      }
+      if (!seen) return undefined;
+      seen = false;
+      const at = now();
+      tries = tries.filter((tried) => at - tried < REMOVAL_WINDOW_MS);
+      if (tries.length >= REMOVAL_TRIES) return "gave_up";
+      tries.push(at);
+      return "again";
+    },
+  };
+}
+
 /**
  * How long after the app's own permission request ends a return to the foreground is still taken as the return from
  * it: on Android its answer and the app's resume come milliseconds apart.

@@ -28,6 +28,11 @@ type Events = {
   onEnd(event: { id: string; reason: CallEndReason }): void;
   /** iOS: 1 pressed on CallKit's keypad. */
   onAcknowledgeKey(event: { id: string }): void;
+  /**
+   * Android: a hardware key released in the app while a call is answered (`keyCode`: Android's `KeyEvent` code);
+   * src/lib/call-session.ts decides which acknowledge.
+   */
+  onKey(event: { id: string; keyCode: number }): void;
   onSpoken(): void;
   /** iOS: PushKit gave a new token or withdrew it; the device is registered again. */
   onVoipToken(): void;

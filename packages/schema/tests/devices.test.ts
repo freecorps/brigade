@@ -275,6 +275,19 @@ describe("device.unregister and device.expire", () => {
     expect(store.get("devices", id)).toBeUndefined();
   });
 
+  test("a client's optimistic run takes only the member's own phone off their list", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const mine = deviceId();
+    const theirs = deviceId();
+    run(store, ana, "device.register", args(mine));
+    run(store, bia, "device.register", args(theirs, { pushToken: "c".repeat(64) }));
+    expect(run(store, ana, "device.unregister", { id: mine }, false)).toMatchObject({ ok: true });
+    expect(store.get("member_devices", mine)).toBeUndefined();
+    // The server answers for another member's phone (`not_found`); the client leaves their summary alone.
+    run(store, ana, "device.unregister", { id: theirs }, false);
+    expect(store.get("member_devices", theirs)).toMatchObject({ userId: "usr_bia" });
+  });
+
   test("device.expire is server-only and records why", () => {
     const store = createMemoryStore<BrigadeTables>();
     const id = deviceId();

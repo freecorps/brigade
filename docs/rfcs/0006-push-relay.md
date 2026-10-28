@@ -130,6 +130,23 @@ relay's bearer token):
   the app shows as its own message (sign out on a phone no longer used) and does not retry on a timer.
   `device.unregister` removes one's own device; `device.expire` (server only) drops one APNs said is gone, only if
   its token is still the one the push went to (a device registered again with a new token meanwhile is kept).
+- **Your phones (dashboard).** The overview's "Your phones" card lists the signed-in member's own devices in the
+  workspace from the synced `member_devices` summaries (no token or key): platform, the iOS build's APNs environment
+  (Android has one, so it shows none), the end of its id, when it was registered, when Brigade last heard from it
+  (its latest registration or receipt) and whether it rings as a call. Each can be removed after a confirmation
+  with `device.unregister`, whose optimistic run drops the member's own summary so the list updates at once. Owners
+  and admins see only their own there as well: every member already sees each colleague's phones in "Why wasn't I
+  paged?" (below), and `device.unregister` only ever removes one's own, so no role is given a way to drop anyone
+  else's (removing the member from the workspace does that, RFC 0003 "Members").
+- **The app notices it was removed (decided).** The app watches the open workspace's synced `member_devices` for
+  its own device id. When the row it saw while registered disappears (evicted as `replaced`, removed from the
+  dashboard, dropped by the server for any other reason), it stops saying the phone is paged and registers again at
+  once, through the same cycle as every other trigger, so never within `MIN_TRY_GAP_MS` of the last try
+  (`removalWatch`, apps/mobile src/lib/paging.ts). It chases a removal at most `REMOVAL_TRIES` (3) times an hour:
+  past that something keeps removing it (another of the member's phones over the limit, say), so the phone says it
+  is not paged (failed, with Try again) until the member comes back to the app or asks. A phone removed from the
+  dashboard on purpose registers again too, while its member is signed in on it: that is the only way the phone
+  gets their pages, and a member who wants it to stop signs out on it (which the card's confirmation says).
 - **Server-only.** Devices live in the workspace shard's `devices` table, which is never synced: no member sees
   another's tokens or key, and the `device.*` events carry neither.
 - **The app** registers the phone on the signed-in member's workspace each time a session opens it (sign-in, or a

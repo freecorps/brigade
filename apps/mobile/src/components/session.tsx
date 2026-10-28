@@ -1,5 +1,5 @@
 import { DEVICE_HEADER, newId, type Role } from "@freecorps/brigade-schema";
-import { SyncProvider } from "@freecorps/brigade-sync/react";
+import { SyncProvider, useQuery } from "@freecorps/brigade-sync/react";
 import { getRandomBytes } from "expo-crypto";
 import { useNetworkState } from "expo-network";
 import * as Notifications from "expo-notifications";
@@ -20,7 +20,7 @@ import { useUserLocale } from "@/hooks/use-user-locale";
 import { authClient, forgetSession, server } from "@/lib/auth-client";
 import { registerEverywhere, unregisterPhone, type Paging, type Registrations } from "@/lib/device";
 import { drainer, type Drainable } from "@/lib/drain";
-import { pagingCycle, pagingNudges } from "@/lib/paging";
+import { pagingCycle, pagingNudges, removalWatch, type RemovalVerdict } from "@/lib/paging";
 import { dropQueues, openQueue } from "@/lib/pending";
 import { pendingFiles } from "@/lib/pending-files";
 import {
@@ -132,7 +132,12 @@ function usePaging(
   enabled: boolean,
   online: boolean,
   register: ((proceed: () => boolean) => Promise<Registrations>) | null,
-): { paging: Registrations; retry: () => Promise<void>; stop: () => Promise<void> } {
+): {
+  paging: Registrations;
+  retry: () => Promise<void>;
+  stop: () => Promise<void>;
+  removed: (workspaceId: string, verdict: Exclude<RemovalVerdict, undefined>) => void;
+} {
   const [paging, setPaging] = useState<Registrations>({});
   const cycle = useRef<ReturnType<typeof pagingCycle> | null>(null);
   useEffect(() => {
@@ -182,7 +187,18 @@ function usePaging(
   }, [online]);
   const retry = useCallback(() => cycle.current?.retry() ?? Promise.resolve(), []);
   const stop = useCallback(() => cycle.current?.stop() ?? Promise.resolve(), []);
-  return { paging, retry, stop };
+  // The shard dropped the phone's device: not "on" any more, and registered again unless it keeps being dropped.
+  const removed = useCallback(
+    (workspaceId: string, verdict: Exclude<RemovalVerdict, undefined>) => {
+      setPaging((current) => ({
+        ...current,
+        [workspaceId]: verdict === "again" ? "pending" : "failed",
+      }));
+      if (verdict === "again") cycle.current?.nudge();
+    },
+    [],
+  );
+  return { paging, retry, stop, removed };
 }
 
 /**
@@ -485,6 +501,7 @@ function ActiveWorkspace({
     paging: registrations,
     retry: retryPaging,
     stop: stopPaging,
+    removed,
   } = usePaging(register !== null, online, register);
   const paging = registrations[workspaceId] ?? "pending";
   const pagedWorkspaces = useMemo(
@@ -575,7 +592,48 @@ function ActiveWorkspace({
   return (
     <SyncProvider client={sync.client} shard={sync.shard}>
       <WidgetSnapshot userId={userId} workspaceId={workspaceId} workspaceName={workspaceName!} />
+      <RemovalWatch
+        key={`${userId}:${workspaceId}`}
+        registered={paging === "on"}
+        onRemoved={(verdict) => removed(workspaceId, verdict)}
+      />
       <SessionContext value={value}>{children(true)}</SessionContext>
     </SyncProvider>
   );
+}
+
+/**
+ * Registers the phone again when the open workspace's shard drops its device while the app holds it registered
+ * (evicted as `replaced`, removed from the dashboard): from the synced `member_devices` summaries, so the account
+ * section does not say "Paged on this phone" until the next launch (src/lib/paging.ts `removalWatch`).
+ */
+function RemovalWatch({
+  registered,
+  onRemoved,
+}: {
+  registered: boolean;
+  onRemoved: (verdict: Exclude<RemovalVerdict, undefined>) => void;
+}) {
+  const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    void phoneDeviceId().then((id) => {
+      if (live) setDeviceId(id);
+    });
+    return () => {
+      live = false;
+    };
+  }, [registered]);
+  const devices = useQuery("devices.all", {});
+  const [watch] = useState(() => removalWatch(Date.now));
+  const latest = useLatest(onRemoved);
+  const present =
+    deviceId === undefined || devices.status !== "ready"
+      ? undefined
+      : devices.rows.some((row) => row.id === deviceId);
+  useEffect(() => {
+    const verdict = watch.see(present, registered);
+    if (verdict) latest.current(verdict);
+  }, [watch, present, registered, latest]);
+  return null;
 }

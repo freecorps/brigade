@@ -217,6 +217,10 @@ Validate the risky assumptions before writing product code. Each spike produces 
     on the locked screen, and its delivery receipt was recorded. On the way it surfaced two registration bugs, now
     fixed: a member's newest phone locked out by the 10-device limit (#109) and the app re-registering every few
     seconds (#109, #110).
+  - Done since: the dashboard's "Your phones" card lists a member's own phones (platform, build, registered, last
+    heard from, calls) and removes one after a confirmation (`device.unregister`); the app registers again at once
+    when the server drops its device while it holds it registered, at most 3 times an hour (RFC 0006 "Device
+    registration").
   - Left: the Acknowledge action from a cold background launch, and on Android at all; Android pages tried on a real
     phone (dev has its Firebase project and the relay's `FCM_SERVICE_ACCOUNT`; production needs its own first); OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the
     session's active one); creating an account or workspace from the app; a tablet layout beyond a readable width.
@@ -376,8 +380,10 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Tried on the Android emulator against `dev` (2026-10-28): with "SEV1 pages only", a SEV1 rang full screen on the
     locked emulator, answering showed the call screen, and "1 Acknowledge" acknowledged the incident. The screen then
     says only "The call ended." rather than that it was acknowledged, and a hardware keyboard's 1 does nothing.
-  - Left: a per-phone choice of calls; Android calls tried on a real phone; saying "Acknowledged" after the button
-    acknowledges.
+  - Done since: the call screen says "Acknowledged. The call ended." after an acknowledged call, and on Android a
+    hardware keyboard's 1 acknowledges like the button (RFC 0010).
+  - Left: a per-phone choice of calls; Android calls tried on a real phone; the hardware keyboard's 1 tried on the
+    emulator.
 - [ ] Mobile: on-call view, "I'm on call" widget, critical/time-sensitive notification setup
   - Done: the on-call screen (shifts, overrides, who each schedule has now, covering a shift); pages are
     time-sensitive. The iOS "I'm on call" widget (home screen small, lock screen rectangular and inline): on call

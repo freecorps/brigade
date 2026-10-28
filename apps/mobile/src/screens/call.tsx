@@ -7,24 +7,12 @@ import { ThemedText } from "@/components/themed-text";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
 import { callSession } from "@/lib/call";
-import type { AckState } from "@/lib/call-session";
+import { callStatus } from "@/lib/call-session";
 
-function ackText(ack: AckState): string | null {
-  switch (ack.kind) {
-    case "sending":
-      return m.call_acknowledging();
-    case "acknowledged":
-      return m.call_acknowledged();
-    case "failed":
-      return m.call_ack_failed({ reason: ack.reason });
-    case "unavailable":
-      return m.call_no_incident();
-    case "idle":
-      return null;
-  }
-}
-
-/** The answered call (spike S6): the incident being read aloud, Acknowledge (or 1 on the keypad) and Hang up. */
+/**
+ * The answered call (spike S6): the incident being read aloud, Acknowledge (or 1 on CallKit's keypad, or on a hardware
+ * keyboard on Android) and Hang up.
+ */
 export function CallScreen() {
   const colors = useTheme();
   const padding = useScreenPadding();
@@ -49,7 +37,7 @@ export function CallScreen() {
 
   const { call, ack, ended } = state;
   const canAck = !ended && (ack.kind === "idle" || ack.kind === "failed");
-  const status = ended ? m.call_ended() : (ackText(ack) ?? m.call_speaking());
+  const status = callStatus(state);
 
   return (
     <ScrollView

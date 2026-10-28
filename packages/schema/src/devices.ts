@@ -292,7 +292,11 @@ export const touchDevice = defineMutation({
   },
 });
 
-/** Stops paging one of the actor's devices (signing out, turning paging off). Another member's is `not_found`. */
+/**
+ * Stops paging one of the actor's devices (signing out, removing it from the dashboard's "Your phones"). Another
+ * member's is `not_found`. A client's optimistic run drops the synced summary of its own device, so the phone leaves
+ * the member's list at once.
+ */
 export const unregisterDevice = defineMutation({
   name: "device.unregister",
   args: v.object({ id: v.id("dev") }),
@@ -303,6 +307,9 @@ export const unregisterDevice = defineMutation({
       // Another member's device is indistinguishable from none: ids are not a way to probe.
       if (!current || current.userId !== ctx.actor.id) return fail("not_found", "Device not found");
       forgetDevice(store, args.id);
+    } else {
+      const summary = store.get("member_devices", args.id);
+      if (summary?.userId === ctx.actor.id) store.delete("member_devices", args.id);
     }
     const event: DeviceUnregistered = {
       type: "device.unregistered",

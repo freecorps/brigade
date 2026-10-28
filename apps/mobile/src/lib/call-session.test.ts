@@ -1,7 +1,13 @@
 import { setLocale } from "@freecorps/brigade-i18n";
 import type { MutationOutcome } from "@freecorps/brigade-sync";
 import { afterEach, describe, expect, test } from "vite-plus/test";
-import { callScript, CallSession, speechLanguage, type ActiveCall } from "./call-session";
+import {
+  callScript,
+  CallSession,
+  callStatus,
+  speechLanguage,
+  type ActiveCall,
+} from "./call-session";
 
 afterEach(() => setLocale("en"));
 
@@ -133,6 +139,51 @@ describe("CallSession", () => {
     await Promise.resolve();
     expect(acks).toEqual([CALL.incident]);
     expect(spoken[0]).toEqual([callScript(CALL, "en"), "en-US"]);
+  });
+
+  test("once acknowledged and over, the screen says it was acknowledged, not only that the call ended", async () => {
+    const { session, release } = setup();
+    session.answered(CALL);
+    expect(callStatus(session.state!)).toBe("Reading the incident aloud");
+    release();
+    await session.acknowledge();
+    session.spoken();
+    session.ended(CALL.id);
+    expect(callStatus(session.state!)).toBe("Acknowledged. The call ended.");
+    void setLocale("pt-BR");
+    expect(callStatus(session.state!)).toBe("Confirmado. A chamada terminou.");
+  });
+
+  test("a call that ended without an acknowledgement says only that it ended", () => {
+    const { session } = setup();
+    session.answered(CALL);
+    session.ended(CALL.id);
+    expect(callStatus(session.state!)).toBe("The call ended.");
+  });
+
+  test("1 on an Android hardware keyboard acknowledges like the button; other keys and an ended call do not", async () => {
+    const { session, acks, release } = setup();
+    release();
+    session.answered(CALL);
+    // KEYCODE_2, KEYCODE_ENTER.
+    session.keyPressed(CALL.id, 9);
+    session.keyPressed(CALL.id, 66);
+    expect(acks).toEqual([]);
+    // KEYCODE_1, then the numeric keypad's KEYCODE_NUMPAD_1 while the first is in flight.
+    session.keyPressed(CALL.id, 8);
+    session.keyPressed(CALL.id, 145);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(acks).toEqual([CALL.incident]);
+    expect(session.state?.ack).toEqual({ kind: "acknowledged" });
+
+    const other = setup();
+    other.release();
+    other.session.answered(CALL);
+    other.session.ended(CALL.id);
+    other.session.keyPressed(CALL.id, 8);
+    await Promise.resolve();
+    expect(other.acks).toEqual([]);
   });
 
   test("speaks in Portuguese for a pt-BR user", () => {

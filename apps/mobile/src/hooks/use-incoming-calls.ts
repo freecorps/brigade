@@ -5,7 +5,8 @@ import { callSession } from "@/lib/call";
 
 /**
  * Mounted once at the root: an answered call opens the call screen, 1 on CallKit's keypad acknowledges even when
- * the screen is not in front (a locked iPhone), and the platform's end of a call reaches the session.
+ * the screen is not in front (a locked iPhone), so does 1 on a hardware keyboard on Android while the app is in front,
+ * and the platform's end of a call reaches the session.
  */
 export function useIncomingCalls(): void {
   const router = useRouter();
@@ -27,6 +28,7 @@ export function useIncomingCalls(): void {
         open();
       }),
       module.addListener("onAcknowledgeKey", ({ id }) => void callSession.acknowledge(id)),
+      module.addListener("onKey", ({ id, keyCode }) => callSession.keyPressed(id, keyCode)),
       module.addListener("onEnd", ({ id }) => callSession.ended(id)),
       module.addListener("onSpoken", () => callSession.spoken()),
     ];

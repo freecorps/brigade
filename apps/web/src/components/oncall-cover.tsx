@@ -8,14 +8,7 @@ import { useMemo } from "react";
 import { useNow } from "@/components/incidents-card";
 import { usePreferences } from "@/components/preferences";
 import { initials } from "@/components/site-header";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CARD_X, CardContent, CardFooter, CardHeader, CardList } from "@/components/ui/card";
 import { FormError } from "@/components/ui/field";
 import {
   COVER_LANES,
@@ -123,22 +116,14 @@ export function OnCallNowCard() {
   const zone = useMemo(browserTimeZone, []);
   const shown = lanes.slice(0, COVER_LANES);
   return (
-    <Card
-      aria-labelledby="oncall-now-title"
-      // Its rows run to the card's edges and its foot, like the incidents beside it.
-      className={cn("gap-4", shown.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
-    >
-      <CardHeader className="sm:has-data-[slot=card-action]:grid-cols-[minmax(0,1fr)_auto]">
-        <CardTitle id="oncall-now-title">
-          {m.overview_cover({ part: "now_title", name: "", from: "", to: "" })}
-        </CardTitle>
-        {lanes.length > 0 ? (
-          <CardAction className="max-sm:-mt-2">
-            <AllSchedules />
-          </CardAction>
-        ) : null}
-      </CardHeader>
-      <CardContent>
+    <Card aria-labelledby="oncall-now-title">
+      <CardHeader
+        id="oncall-now-title"
+        title={m.overview_cover({ part: "now_title", name: "", from: "", to: "" })}
+        action={lanes.length > 0 ? <AllSchedules /> : null}
+      />
+      {/* Hidden while it holds nothing, so the rows sit one gap under the header. */}
+      <CardContent className="empty:hidden">
         {status === "loading" ? <Loading /> : null}
         {status === "error" ? <FormError>{queryErrorReason(error)}</FormError> : null}
         {status === "ready" && lanes.length === 0 ? (
@@ -152,48 +137,49 @@ export function OnCallNowCard() {
             </Link>
           </div>
         ) : null}
-        {shown.length > 0 ? (
-          <ul className="-mx-4 divide-y border-t sm:-mx-6">
-            {shown.map(({ row, current }) => {
-              const name = current?.userId ? memberLabel(members, current.userId) : null;
-              return (
-                <li key={row.id} className="flex min-w-0 items-center gap-3 px-4 py-3 sm:px-6">
-                  {current?.userId && name ? (
-                    <Avatar userId={current.userId} name={name} className="size-8" />
-                  ) : (
-                    <span
-                      aria-hidden
-                      className="size-8 shrink-0 rounded-full border border-dashed border-destructive"
-                    />
-                  )}
-                  <div className="flex min-w-0 flex-1 flex-col">
-                    <span
-                      className={cn(
-                        "truncate text-sm font-medium",
-                        name ? undefined : "text-destructive",
-                      )}
-                    >
-                      {name ?? m.oncall_nobody()}
-                    </span>
-                    <span className="truncate text-xs text-muted-foreground">{row.name}</span>
-                  </div>
-                  {/* No handoff in the weeks ahead (one person, or nobody, for good): no "until". */}
-                  {current && current.end < now + UPCOMING_MS ? (
-                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                      {m.oncall_until({ time: clockTime(current.end, now, zone, locale) })}
-                    </span>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        ) : null}
-        {lanes.length > shown.length ? (
-          <p className="-mx-4 border-t px-4 py-3 text-sm text-muted-foreground sm:-mx-6 sm:px-6">
-            {m.oncall_more({ count: lanes.length - shown.length })}
-          </p>
-        ) : null}
       </CardContent>
+      {/* Its rows run to the card's edges and its foot, like the incidents beside it. */}
+      {shown.length > 0 ? (
+        <CardList>
+          {shown.map(({ row, current }) => {
+            const name = current?.userId ? memberLabel(members, current.userId) : null;
+            return (
+              <li key={row.id} className={cn("flex min-w-0 items-center gap-3 py-3", CARD_X)}>
+                {current?.userId && name ? (
+                  <Avatar userId={current.userId} name={name} className="size-8" />
+                ) : (
+                  <span
+                    aria-hidden
+                    className="size-8 shrink-0 rounded-full border border-dashed border-destructive"
+                  />
+                )}
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span
+                    className={cn(
+                      "truncate text-sm font-medium",
+                      name ? undefined : "text-destructive",
+                    )}
+                  >
+                    {name ?? m.oncall_nobody()}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">{row.name}</span>
+                </div>
+                {/* No handoff in the weeks ahead (one person, or nobody, for good): no "until". */}
+                {current && current.end < now + UPCOMING_MS ? (
+                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                    {m.oncall_until({ time: clockTime(current.end, now, zone, locale) })}
+                  </span>
+                ) : null}
+              </li>
+            );
+          })}
+        </CardList>
+      ) : null}
+      {lanes.length > shown.length ? (
+        <CardFooter className="text-sm text-muted-foreground">
+          <p>{m.oncall_more({ count: lanes.length - shown.length })}</p>
+        </CardFooter>
+      ) : null}
     </Card>
   );
 }
@@ -212,18 +198,13 @@ export function CoverStrip() {
   const shown = lanes.slice(0, COVER_LANES);
   const time = (instant: number) => clockTime(instant, now, zone, locale);
   return (
-    <Card aria-labelledby="cover-title" className="gap-4">
-      <CardHeader className="sm:has-data-[slot=card-action]:grid-cols-[minmax(0,1fr)_auto]">
-        <CardTitle id="cover-title">
-          {m.overview_cover({ part: "cover_title", name: "", from: "", to: "" })}
-        </CardTitle>
-        <CardDescription>
-          {m.overview_cover({ part: "cover_description", name: "", from: "", to: "" })}
-        </CardDescription>
-        <CardAction className="max-sm:-mt-1">
-          <AllSchedules />
-        </CardAction>
-      </CardHeader>
+    <Card aria-labelledby="cover-title">
+      <CardHeader
+        id="cover-title"
+        title={m.overview_cover({ part: "cover_title", name: "", from: "", to: "" })}
+        description={m.overview_cover({ part: "cover_description", name: "", from: "", to: "" })}
+        action={<AllSchedules />}
+      />
       <CardContent>
         {/* Label column, then the window. On phones the label sits over its lane, which takes the full width. */}
         <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-[minmax(0,9rem)_minmax(0,1fr)]">

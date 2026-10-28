@@ -9,7 +9,7 @@ import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Empty } from "@/components/ui/empty";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { FormError } from "@/components/ui/field";
 import { authClient } from "@/lib/auth";
 import {
@@ -214,35 +214,41 @@ export function MembersList({
     }
   };
 
+  const withActions = visible.some((member) => {
+    const choices = memberChoices(
+      { id: userId, role },
+      { id: member.userId, role: member.role },
+      owners,
+    );
+    return choices.remove || choices.leave;
+  });
   return (
     <Card
       ref={cardRef}
       aria-labelledby="members-title"
-      className={cn(sorted.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
+      className={cn(sorted.length > 0 && "pb-0 sm:pb-0")}
     >
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <div className="flex items-center justify-between gap-4">
-          <CardTitle id="members-title" ref={titleRef} tabIndex={-1} className="outline-none">
-            {m.members_part({ part: "title", name: "" })}
-          </CardTitle>
-          {invite && !invite.opened ? (
-            <Button ref={inviteRef} variant="outline" onClick={invite.open} className="shrink-0">
+      <CardHeader
+        id="members-title"
+        title={m.members_part({ part: "title", name: "" })}
+        titleProps={{ ref: titleRef, tabIndex: -1 }}
+        count={
+          reload && members.length === 0 ? null : loading ? (
+            <span aria-hidden className="block h-4 w-20 rounded-sm bg-muted" />
+          ) : (
+            m.members_count({ count: members.length })
+          )
+        }
+        description={m.members_part({ part: manage ? "description" : "read_only", name: "" })}
+        action={
+          invite && !invite.opened ? (
+            <Button ref={inviteRef} variant="outline" onClick={invite.open}>
               <UserPlusIcon aria-hidden />
               {m.invite_part({ part: "open", email: "", date: "", name: "" })}
             </Button>
-          ) : null}
-        </div>
-        <CardDescription className="flex flex-wrap gap-x-2">
-          {reload && members.length === 0 ? null : loading ? (
-            <span aria-hidden className="my-0.5 block h-4 w-24 rounded-sm bg-muted" />
-          ) : (
-            <span className="tabular-nums">{m.members_count({ count: members.length })}</span>
-          )}
-        </CardDescription>
-        <p className="max-w-prose text-sm text-muted-foreground">
-          {m.members_part({ part: manage ? "description" : "read_only", name: "" })}
-        </p>
-      </div>
+          ) : null
+        }
+      />
       <CardContent className="flex flex-col gap-4">
         {invite?.form}
         {sorted.length > 0 ? (
@@ -254,6 +260,7 @@ export function MembersList({
                   member={member}
                   self={member.userId === userId}
                   onlyOwner={member.userId === userId && member.role === "owner" && owners <= 1}
+                  actions={withActions}
                   choices={memberChoices(
                     { id: userId, role },
                     { id: member.userId, role: member.role },
@@ -340,6 +347,7 @@ function MemberItem({
   member,
   self,
   onlyOwner,
+  actions,
   choices,
   busy,
   locked,
@@ -352,6 +360,8 @@ function MemberItem({
   self: boolean;
   /** The signed-in member is the workspace's only owner: say why they cannot leave or step down. */
   onlyOwner: boolean;
+  /** Some row in the list has a Remove or Leave: every row keeps its slot, so the roles line up. */
+  actions: boolean;
   choices: { roles: Role[]; remove: boolean; leave: boolean };
   busy: boolean;
   /** A change is running somewhere in the list: controls stay focusable but do nothing. */
@@ -440,17 +450,19 @@ function MemberItem({
               </select>
             </>
           ) : (
-            <div className="flex sm:w-40">
+            // Right-aligned in the role column: a badge ends where the role menus of the rows around it end.
+            <div className="flex sm:w-40 sm:justify-end">
               <Badge variant="outline" className="shrink-0">
                 {m.member_role({ role: member.role ?? "*" })}
               </Badge>
             </div>
           )}
-          {/* A fixed slot from `sm` up, so every row's role lines up whichever button (or none) follows; on
-              phones Leave takes its own line, Remove sits beside the role. */}
+          {/* A fixed slot from `sm` up while any row has a button, so every row's role lines up whichever button (or
+              none) follows; on phones Leave takes its own line, Remove sits beside the role. */}
           <div
             className={cn(
-              "sm:flex sm:min-w-44 sm:basis-auto sm:justify-end",
+              actions && "sm:flex",
+              "sm:min-w-44 sm:basis-auto sm:justify-end",
               !removable ? "hidden" : choices.leave ? "flex basis-full" : "ml-auto flex sm:ml-0",
             )}
           >

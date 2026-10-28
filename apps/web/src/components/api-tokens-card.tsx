@@ -18,7 +18,8 @@ import { formatAge } from "@/lib/incidents";
 import { people, personName } from "@/lib/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardList } from "@/components/ui/card";
+import { Empty } from "@/components/ui/empty";
 import { Field, FormError } from "@/components/ui/field";
 import {
   checkTokenDraft,
@@ -95,15 +96,12 @@ function TokensManageOnly() {
 
 function Header({ action }: { action?: ReactNode }) {
   return (
-    <div className="flex flex-col gap-1 px-4 sm:px-6">
-      <div className="flex min-h-6 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <CardTitle id="api-tokens-title" className="truncate">
-          {tokenText("title")}
-        </CardTitle>
-        {action}
-      </div>
-      <p className="max-w-prose text-sm text-muted-foreground">{tokenText("description")}</p>
-    </div>
+    <CardHeader
+      id="api-tokens-title"
+      title={tokenText("title")}
+      description={tokenText("description")}
+      action={action}
+    />
   );
 }
 
@@ -145,6 +143,9 @@ export function ApiTokensPanel({
       Number(apiTokenState(a, now, isMember) !== "active") -
       Number(apiTokenState(b, now, isMember) !== "active"),
   );
+  // The list runs to the card's edges below the content; the content shows only when it has something in it.
+  const listed = !loading && !failed && ordered.length > 0;
+  const content = shown || adding || (!loading && (failed || !listed));
   return (
     <Card aria-labelledby="api-tokens-title">
       <Header
@@ -157,49 +158,50 @@ export function ApiTokensPanel({
           ) : null
         }
       />
-      <CardContent className="flex flex-col gap-4">
-        {shown ? <TokenOnce shown={shown} onDismiss={() => setShown(null)} /> : null}
-        {adding ? (
-          <TokenForm
-            role={role}
-            onCancel={() => setAdding(false)}
-            onSubmit={async (draft) => {
-              const result = await onCreate(draft);
-              if (!result.ok) return result.part;
-              setAdding(false);
-              setShown({ token: result.token, name: result.name || draft.name.trim() });
-              return null;
-            }}
-          />
-        ) : null}
-        {loading ? null : failed ? (
-          <div className="flex flex-col items-start gap-2">
-            <FormError>{tokenText("load_failed")}</FormError>
-            <Button variant="outline" onClick={onRetry}>
-              <RotateCwIcon aria-hidden />
-              {tokenText("retry")}
-            </Button>
-          </div>
-        ) : ordered.length ? (
-          <ul className="-mx-4 divide-y border-t sm:-mx-6">
-            {ordered.map((row) => (
-              <TokenItem
-                key={row.id}
-                row={row}
-                state={apiTokenState(row, now, isMember)}
-                by={personName(row.createdBy, who, "object")}
-                locale={locale}
-                now={now}
-                onRevoke={onRevoke}
-              />
-            ))}
-          </ul>
-        ) : !adding ? (
-          <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-            {tokenText("empty")}
-          </p>
-        ) : null}
-      </CardContent>
+      {content ? (
+        <CardContent className="flex flex-col gap-4">
+          {shown ? <TokenOnce shown={shown} onDismiss={() => setShown(null)} /> : null}
+          {adding ? (
+            <TokenForm
+              role={role}
+              onCancel={() => setAdding(false)}
+              onSubmit={async (draft) => {
+                const result = await onCreate(draft);
+                if (!result.ok) return result.part;
+                setAdding(false);
+                setShown({ token: result.token, name: result.name || draft.name.trim() });
+                return null;
+              }}
+            />
+          ) : null}
+          {loading ? null : failed ? (
+            <div className="flex flex-col items-start gap-2">
+              <FormError>{tokenText("load_failed")}</FormError>
+              <Button variant="outline" onClick={onRetry}>
+                <RotateCwIcon aria-hidden />
+                {tokenText("retry")}
+              </Button>
+            </div>
+          ) : !listed && !adding ? (
+            <Empty>{tokenText("empty")}</Empty>
+          ) : null}
+        </CardContent>
+      ) : null}
+      {listed ? (
+        <CardList>
+          {ordered.map((row) => (
+            <TokenItem
+              key={row.id}
+              row={row}
+              state={apiTokenState(row, now, isMember)}
+              by={personName(row.createdBy, who, "object")}
+              locale={locale}
+              now={now}
+              onRevoke={onRevoke}
+            />
+          ))}
+        </CardList>
+      ) : null}
     </Card>
   );
 }

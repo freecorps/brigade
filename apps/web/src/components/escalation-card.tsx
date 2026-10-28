@@ -24,7 +24,8 @@ import { CONFIRM_DESTRUCTIVE } from "@/components/monitor-form";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CARD_X, CardContent, CardHeader, CardList } from "@/components/ui/card";
+import { Empty } from "@/components/ui/empty";
 import { Field, FormError } from "@/components/ui/field";
 import {
   canAddLevel,
@@ -109,16 +110,19 @@ export function EscalationCard() {
     currentDefault: rows.find((row) => row.isDefault) ?? null,
   };
   return (
-    <Card
-      aria-labelledby="escalation-title"
-      className={cn(rows.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
-    >
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <div className="flex min-h-6 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <CardTitle id="escalation-title" className="truncate">
-            {escalationText("title")}
-          </CardTitle>
-          {manage && !adding ? (
+    <Card aria-labelledby="escalation-title">
+      <CardHeader
+        id="escalation-title"
+        title={escalationText("title")}
+        count={
+          loading ? (
+            <span aria-hidden className="block h-4 w-24 rounded-sm bg-muted" />
+          ) : rows.length > 0 ? (
+            m.escalation_count({ kind: "policies", count: rows.length })
+          ) : null
+        }
+        action={
+          manage && !adding ? (
             <Button
               ref={addRef}
               variant="outline"
@@ -132,20 +136,11 @@ export function EscalationCard() {
               <PlusIcon aria-hidden />
               {m.escalation_action({ action: "add_policy" })}
             </Button>
-          ) : null}
-        </div>
-        {loading || rows.length > 0 ? (
-          <div className="flex h-6 items-center text-sm text-muted-foreground tabular-nums">
-            {loading ? (
-              <span aria-hidden className="block h-4 w-24 rounded-sm bg-muted" />
-            ) : (
-              <span>{m.escalation_count({ kind: "policies", count: rows.length })}</span>
-            )}
-          </div>
-        ) : null}
-      </div>
+          ) : null
+        }
+      />
 
-      <CardContent className="flex flex-col gap-5">
+      <CardContent className="flex flex-col gap-5 empty:hidden">
         {status === "ready" && rows.length > 0 ? (
           hasDefault ? (
             <p className="text-sm text-muted-foreground">{escalationText("default_note")}</p>
@@ -194,70 +189,69 @@ export function EscalationCard() {
           <FormError>{queryErrorReason(policies.error?.code)}</FormError>
         ) : null}
 
-        {rows.length > 0 ? (
-          <ul aria-labelledby="escalation-title" className="-mx-4 divide-y border-t sm:-mx-6">
-            {rows.map((row) => (
-              <li
-                key={row.id}
-                data-policy={row.id}
-                className="flex flex-col gap-4 px-4 py-4 sm:px-6"
-              >
-                {editing === row.id ? (
-                  <PolicyForm
-                    initial={draftFromPolicy(row)}
-                    editing={row}
-                    {...formProps}
-                    onCancel={() => {
-                      setEditing(null);
-                      focusRow(row.id);
-                    }}
-                    onDelete={() => {
-                      setRefused(null);
-                      void remove({ id: row.id }).then(report(row.name));
-                      setEditing(null);
-                      requestAnimationFrame(() => addRef.current?.focus());
-                    }}
-                    onSubmit={(draft) => {
-                      const checked = checkPolicy(row.id, draft);
-                      if (!checked.ok) return checked;
-                      setRefused(null);
-                      void update(checked.args).then(report(checked.args.name));
-                      setEditing(null);
-                      focusRow(row.id);
-                      return checked;
-                    }}
-                  />
-                ) : (
-                  <PolicyItem
-                    row={row}
-                    schedules={schedules.rows}
-                    overrides={overrides.rows}
-                    members={members.rows}
-                    now={now}
-                    manage={manage}
-                    onEdit={() => {
-                      setRefused(null);
-                      setAdding(false);
-                      setEditing(row.id);
-                    }}
-                  />
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : loading ? (
-          <div aria-hidden className="-mx-4 divide-y border-t sm:-mx-6">
-            <div className="flex flex-col gap-3 px-4 py-4 sm:px-6">
-              <span className="block h-5 w-40 rounded-sm bg-muted" />
-              <span className="block h-12 w-full max-w-md rounded-sm bg-muted" />
-            </div>
-          </div>
-        ) : status === "ready" && !adding ? (
-          <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-            {escalationText("empty")}
-          </p>
+        {status === "ready" && rows.length === 0 && !adding ? (
+          <Empty>{escalationText("empty")}</Empty>
         ) : null}
       </CardContent>
+      {rows.length > 0 ? (
+        <CardList aria-labelledby="escalation-title">
+          {rows.map((row) => (
+            <li
+              key={row.id}
+              data-policy={row.id}
+              className={cn(CARD_X, "flex flex-col gap-4 py-4")}
+            >
+              {editing === row.id ? (
+                <PolicyForm
+                  initial={draftFromPolicy(row)}
+                  editing={row}
+                  {...formProps}
+                  onCancel={() => {
+                    setEditing(null);
+                    focusRow(row.id);
+                  }}
+                  onDelete={() => {
+                    setRefused(null);
+                    void remove({ id: row.id }).then(report(row.name));
+                    setEditing(null);
+                    requestAnimationFrame(() => addRef.current?.focus());
+                  }}
+                  onSubmit={(draft) => {
+                    const checked = checkPolicy(row.id, draft);
+                    if (!checked.ok) return checked;
+                    setRefused(null);
+                    void update(checked.args).then(report(checked.args.name));
+                    setEditing(null);
+                    focusRow(row.id);
+                    return checked;
+                  }}
+                />
+              ) : (
+                <PolicyItem
+                  row={row}
+                  schedules={schedules.rows}
+                  overrides={overrides.rows}
+                  members={members.rows}
+                  now={now}
+                  manage={manage}
+                  onEdit={() => {
+                    setRefused(null);
+                    setAdding(false);
+                    setEditing(row.id);
+                  }}
+                />
+              )}
+            </li>
+          ))}
+        </CardList>
+      ) : loading ? (
+        <CardList aria-hidden>
+          <li className={cn(CARD_X, "flex flex-col gap-3 py-4")}>
+            <span className="block h-5 w-40 rounded-sm bg-muted" />
+            <span className="block h-12 w-full max-w-md rounded-sm bg-muted" />
+          </li>
+        </CardList>
+      ) : null}
     </Card>
   );
 }

@@ -42,7 +42,8 @@ import { useMember } from "@/components/session";
 import { TimeZonePicker } from "@/components/time-zone-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CARD_X, CardContent, CardHeader, CardList } from "@/components/ui/card";
+import { Empty } from "@/components/ui/empty";
 import { Field, FormError } from "@/components/ui/field";
 import { queryErrorReason } from "@/lib/incidents";
 import {
@@ -164,17 +165,21 @@ export function OnCallCard() {
   const choices = rotationChoices(members.rows);
   const usedZones = rows.map((row) => row.timeZone);
   return (
-    <Card
-      id="oncall"
-      aria-labelledby="oncall-title"
-      className={cn(status === "ready" && rows.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
-    >
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <div className="flex min-h-6 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <CardTitle id="oncall-title" className="truncate">
-            {m.oncall_title()}
-          </CardTitle>
-          {manage && !adding ? (
+    <Card id="oncall" aria-labelledby="oncall-title">
+      <CardHeader
+        id="oncall-title"
+        title={m.oncall_title()}
+        // The empty state says "no schedules" already; the count is for when there are some.
+        count={
+          loading ? (
+            <span aria-hidden className="inline-block h-4 w-24 rounded-sm bg-muted align-middle" />
+          ) : status === "ready" && rows.length > 0 ? (
+            m.oncall_schedules_count({ count: rows.length })
+          ) : undefined
+        }
+        description={m.oncall_not_paging()}
+        action={
+          manage && !adding ? (
             <Button
               ref={addRef}
               variant="outline"
@@ -188,23 +193,12 @@ export function OnCallCard() {
               <PlusIcon aria-hidden />
               {m.oncall_action({ action: "add_schedule" })}
             </Button>
-          ) : null}
-        </div>
-        {/* The empty state says "no schedules" already; the count is for when there are some. */}
-        {loading || (status === "ready" && rows.length > 0) ? (
-          <div className="flex h-6 items-center text-sm text-muted-foreground tabular-nums">
-            {loading ? (
-              <span aria-hidden className="block h-4 w-24 rounded-sm bg-muted" />
-            ) : (
-              <span>{m.oncall_schedules_count({ count: rows.length })}</span>
-            )}
-          </div>
-        ) : null}
-        {/* With the title and the count, like every card's description, not a block of the content below. */}
-        <p className="max-w-prose text-sm text-muted-foreground">{m.oncall_not_paging()}</p>
-      </div>
+          ) : null
+        }
+      />
 
-      <CardContent className="flex flex-col gap-5">
+      {/* Hidden while it holds nothing, so the list sits one gap under the header. */}
+      <CardContent className="flex flex-col gap-5 empty:hidden">
         {adding ? (
           <ScheduleForm
             initial={emptySchedule(now)}
@@ -246,114 +240,114 @@ export function OnCallCard() {
           <FormError>{queryErrorReason((schedules.error ?? overrides.error)?.code)}</FormError>
         ) : null}
 
-        {status === "ready" && rows.length > 0 ? (
-          <ul aria-labelledby="oncall-title" className="-mx-4 divide-y border-t sm:-mx-6">
-            {rows.map((row) => (
-              <li
-                key={row.id}
-                id={scheduleAnchor(row.id)}
-                data-schedule={row.id}
-                className="flex scroll-mt-4 flex-col gap-4 px-4 py-4 sm:px-6"
-              >
-                {editing === row.id ? (
-                  <ScheduleForm
-                    initial={draftFromSchedule(row)}
-                    // Only a loaded list can say someone is gone.
-                    loaded={members.status === "ready"}
-                    editing={row}
-                    members={members.rows}
-                    choices={choices}
-                    viewerZone={viewerZone}
-                    usedZones={usedZones}
-                    onCancel={() => {
-                      setEditing(null);
-                      focusRow(row.id, "edit");
-                    }}
-                    onDelete={() => {
-                      setRefused(null);
-                      void remove({ id: row.id }).then(report(row.name));
-                      setEditing(null);
-                      requestAnimationFrame(() => addRef.current?.focus());
-                    }}
-                    onSubmit={(draft) => {
-                      const checked = checkSchedule(row.id, draft);
-                      if (!checked.ok) return checked;
-                      setRefused(null);
-                      void update(checked.args).then(report(checked.args.name));
-                      setEditing(null);
-                      focusRow(row.id, "edit");
-                      return checked;
-                    }}
-                  />
-                ) : (
-                  <ScheduleItem
-                    row={row}
-                    overrides={overrides.rows}
-                    members={members.rows}
-                    locale={locale}
-                    now={now}
-                    viewerZone={viewerZone}
-                    userId={userId}
-                    manage={manage}
-                    canOverride={override}
-                    onEdit={() => {
-                      setRefused(null);
-                      closeAll();
-                      setEditing(row.id);
-                    }}
-                    onOverride={() => {
-                      setRefused(null);
-                      closeAll();
-                      setOverriding(row.id);
-                    }}
-                    onRemoveOverride={(target) => {
-                      setRefused(null);
-                      void removeOverride({ id: target.id }).then(report(row.name));
-                    }}
-                    overrideForm={
-                      overriding === row.id ? (
-                        <OverrideForm
-                          schedule={row}
-                          members={choices}
-                          self={manage ? null : userId}
-                          now={now}
-                          locale={locale}
-                          viewerZone={viewerZone}
-                          onCancel={() => {
-                            setOverriding(null);
-                            focusRow(row.id, "override");
-                          }}
-                          onSubmit={(args) => {
-                            setRefused(null);
-                            void addOverride({ id: newOverrideId(Date.now()), ...args }).then(
-                              report(row.name),
-                            );
-                            setOverriding(null);
-                            focusRow(row.id, "override");
-                          }}
-                        />
-                      ) : null
-                    }
-                  />
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : loading ? (
-          <div aria-hidden className="-mx-4 divide-y border-t sm:-mx-6">
-            {[0, 1].map((index) => (
-              <div key={index} className="flex flex-col gap-3 px-4 py-4 sm:px-6">
-                <span className="block h-5 w-40 rounded-sm bg-muted" />
-                <span className="block h-12 w-full max-w-md rounded-sm bg-muted" />
-              </div>
-            ))}
-          </div>
-        ) : status === "ready" && !adding ? (
-          <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-            {m.oncall_empty()}
-          </p>
+        {status === "ready" && rows.length === 0 && !adding ? (
+          <Empty>{m.oncall_empty()}</Empty>
         ) : null}
       </CardContent>
+
+      {status === "ready" && rows.length > 0 ? (
+        <CardList aria-labelledby="oncall-title">
+          {rows.map((row) => (
+            <li
+              key={row.id}
+              id={scheduleAnchor(row.id)}
+              data-schedule={row.id}
+              className={cn("flex scroll-mt-4 flex-col gap-4 py-4", CARD_X)}
+            >
+              {editing === row.id ? (
+                <ScheduleForm
+                  initial={draftFromSchedule(row)}
+                  // Only a loaded list can say someone is gone.
+                  loaded={members.status === "ready"}
+                  editing={row}
+                  members={members.rows}
+                  choices={choices}
+                  viewerZone={viewerZone}
+                  usedZones={usedZones}
+                  onCancel={() => {
+                    setEditing(null);
+                    focusRow(row.id, "edit");
+                  }}
+                  onDelete={() => {
+                    setRefused(null);
+                    void remove({ id: row.id }).then(report(row.name));
+                    setEditing(null);
+                    requestAnimationFrame(() => addRef.current?.focus());
+                  }}
+                  onSubmit={(draft) => {
+                    const checked = checkSchedule(row.id, draft);
+                    if (!checked.ok) return checked;
+                    setRefused(null);
+                    void update(checked.args).then(report(checked.args.name));
+                    setEditing(null);
+                    focusRow(row.id, "edit");
+                    return checked;
+                  }}
+                />
+              ) : (
+                <ScheduleItem
+                  row={row}
+                  overrides={overrides.rows}
+                  members={members.rows}
+                  locale={locale}
+                  now={now}
+                  viewerZone={viewerZone}
+                  userId={userId}
+                  manage={manage}
+                  canOverride={override}
+                  onEdit={() => {
+                    setRefused(null);
+                    closeAll();
+                    setEditing(row.id);
+                  }}
+                  onOverride={() => {
+                    setRefused(null);
+                    closeAll();
+                    setOverriding(row.id);
+                  }}
+                  onRemoveOverride={(target) => {
+                    setRefused(null);
+                    void removeOverride({ id: target.id }).then(report(row.name));
+                  }}
+                  overrideForm={
+                    overriding === row.id ? (
+                      <OverrideForm
+                        schedule={row}
+                        members={choices}
+                        self={manage ? null : userId}
+                        now={now}
+                        locale={locale}
+                        viewerZone={viewerZone}
+                        onCancel={() => {
+                          setOverriding(null);
+                          focusRow(row.id, "override");
+                        }}
+                        onSubmit={(args) => {
+                          setRefused(null);
+                          void addOverride({ id: newOverrideId(Date.now()), ...args }).then(
+                            report(row.name),
+                          );
+                          setOverriding(null);
+                          focusRow(row.id, "override");
+                        }}
+                      />
+                    ) : null
+                  }
+                />
+              )}
+            </li>
+          ))}
+        </CardList>
+      ) : loading ? (
+        <CardList aria-hidden>
+          {[0, 1].map((index) => (
+            <li key={index} className={cn("flex flex-col gap-3 py-4", CARD_X)}>
+              <span className="block h-5 w-40 rounded-sm bg-muted" />
+              <span className="block h-12 w-full max-w-md rounded-sm bg-muted" />
+            </li>
+          ))}
+        </CardList>
+      ) : null}
     </Card>
   );
 }

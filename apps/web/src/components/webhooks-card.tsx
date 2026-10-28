@@ -29,7 +29,8 @@ import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardList } from "@/components/ui/card";
+import { Empty } from "@/components/ui/empty";
 import { Field, FormError } from "@/components/ui/field";
 import { formatAge } from "@/lib/incidents";
 import {
@@ -156,15 +157,12 @@ type Shown = { secret: string; host: string; rotated: boolean };
 
 function Header({ action }: { action?: ReactNode }) {
   return (
-    <div className="flex flex-col gap-1 px-4 sm:px-6">
-      <div className="flex min-h-6 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <CardTitle id="webhooks-title" className="truncate">
-          {webhookText("title")}
-        </CardTitle>
-        {action}
-      </div>
-      <p className="max-w-prose text-sm text-muted-foreground">{webhookText("description")}</p>
-    </div>
+    <CardHeader
+      id="webhooks-title"
+      title={webhookText("title")}
+      description={webhookText("description")}
+      action={action}
+    />
   );
 }
 
@@ -189,6 +187,9 @@ export function WebhooksPanel({
   const [editing, setEditing] = useState<string | null>(null);
   const [shown, setShown] = useState<Shown | null>(null);
   const full = rows.length >= MAX_WEBHOOKS_PER_WORKSPACE;
+  // The list runs to the card's edges below the content; the content shows only when it has something in it.
+  const listed = !loading && !failed && rows.length > 0;
+  const content = shown || (full && !adding) || adding || (!loading && (failed || !listed));
   return (
     <Card aria-labelledby="webhooks-title">
       <Header
@@ -208,90 +209,91 @@ export function WebhooksPanel({
           ) : null
         }
       />
-      <CardContent className="flex flex-col gap-4">
-        {shown ? <SecretOnce shown={shown} onDismiss={() => setShown(null)} /> : null}
-        {full && !adding ? (
-          <p className="text-sm text-muted-foreground">{webhookText("limit")}</p>
-        ) : null}
-        {adding ? (
-          <EndpointForm
-            initial={emptyDraft()}
-            submitPart="create"
-            busyPart="creating"
-            withHeaders
-            onCancel={() => setAdding(false)}
-            onSubmit={async (draft, headers) => {
-              const result = await onCreate(draft, headers);
-              if (result.ok) {
-                setAdding(false);
-                setShown({ secret: result.secret, host: hostOf(draft.url), rotated: false });
-                return null;
-              }
-              if (result.field === "url") return { url: webhookText("url_invalid") };
-              if (result.field === "description")
-                return { description: webhookText("description_invalid") };
-              if (result.field === "events") return { events: webhookText("events_none") };
-              if (result.field === "headers") return { form: webhookText("headers_refused") };
-              return { form: webhookText(secretErrorPart(result.error)) };
-            }}
-          />
-        ) : null}
-        {loading ? null : failed ? (
-          <div className="flex flex-col items-start gap-2">
-            <FormError>{webhookText("load_failed")}</FormError>
-            <Button variant="outline" onClick={onRetry}>
-              <RotateCwIcon aria-hidden />
-              {webhookText("retry")}
-            </Button>
-          </div>
-        ) : rows.length ? (
-          <ul className="-mx-4 divide-y border-t sm:-mx-6">
-            {rows.map((row) =>
-              editing === row.id ? (
-                <li key={row.id} className="px-4 py-4 sm:px-6">
-                  <EndpointEditor
-                    row={row}
-                    locale={locale}
-                    now={now}
-                    onClose={() => setEditing(null)}
-                    onUpdate={onUpdate}
-                    onSetEnabled={onSetEnabled}
-                    onTest={onTest}
-                    onSetHeaders={onSetHeaders}
-                    onReplay={onReplay}
-                    onDelete={async (id) => {
-                      const ok = await onDelete(id);
-                      if (ok) setEditing(null);
-                      return ok;
-                    }}
-                    onRotate={async (id) => {
-                      const result = await onRotate(id);
-                      if (result.ok)
-                        setShown({ secret: result.secret, host: hostOf(row.url), rotated: true });
-                      return result.ok;
-                    }}
-                  />
-                </li>
-              ) : (
-                <EndpointItem
-                  key={row.id}
+      {content ? (
+        <CardContent className="flex flex-col gap-4">
+          {shown ? <SecretOnce shown={shown} onDismiss={() => setShown(null)} /> : null}
+          {full && !adding ? (
+            <p className="text-sm text-muted-foreground">{webhookText("limit")}</p>
+          ) : null}
+          {adding ? (
+            <EndpointForm
+              initial={emptyDraft()}
+              submitPart="create"
+              busyPart="creating"
+              withHeaders
+              onCancel={() => setAdding(false)}
+              onSubmit={async (draft, headers) => {
+                const result = await onCreate(draft, headers);
+                if (result.ok) {
+                  setAdding(false);
+                  setShown({ secret: result.secret, host: hostOf(draft.url), rotated: false });
+                  return null;
+                }
+                if (result.field === "url") return { url: webhookText("url_invalid") };
+                if (result.field === "description")
+                  return { description: webhookText("description_invalid") };
+                if (result.field === "events") return { events: webhookText("events_none") };
+                if (result.field === "headers") return { form: webhookText("headers_refused") };
+                return { form: webhookText(secretErrorPart(result.error)) };
+              }}
+            />
+          ) : null}
+          {loading ? null : failed ? (
+            <div className="flex flex-col items-start gap-2">
+              <FormError>{webhookText("load_failed")}</FormError>
+              <Button variant="outline" onClick={onRetry}>
+                <RotateCwIcon aria-hidden />
+                {webhookText("retry")}
+              </Button>
+            </div>
+          ) : !listed && !adding ? (
+            <Empty>{webhookText("empty")}</Empty>
+          ) : null}
+        </CardContent>
+      ) : null}
+      {listed ? (
+        <CardList>
+          {rows.map((row) =>
+            editing === row.id ? (
+              <li key={row.id} className="px-4 py-4 sm:px-6">
+                <EndpointEditor
                   row={row}
                   locale={locale}
                   now={now}
-                  onEdit={() => {
-                    setEditing(row.id);
-                    setAdding(false);
+                  onClose={() => setEditing(null)}
+                  onUpdate={onUpdate}
+                  onSetEnabled={onSetEnabled}
+                  onTest={onTest}
+                  onSetHeaders={onSetHeaders}
+                  onReplay={onReplay}
+                  onDelete={async (id) => {
+                    const ok = await onDelete(id);
+                    if (ok) setEditing(null);
+                    return ok;
+                  }}
+                  onRotate={async (id) => {
+                    const result = await onRotate(id);
+                    if (result.ok)
+                      setShown({ secret: result.secret, host: hostOf(row.url), rotated: true });
+                    return result.ok;
                   }}
                 />
-              ),
-            )}
-          </ul>
-        ) : !adding ? (
-          <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-            {webhookText("empty")}
-          </p>
-        ) : null}
-      </CardContent>
+              </li>
+            ) : (
+              <EndpointItem
+                key={row.id}
+                row={row}
+                locale={locale}
+                now={now}
+                onEdit={() => {
+                  setEditing(row.id);
+                  setAdding(false);
+                }}
+              />
+            ),
+          )}
+        </CardList>
+      ) : null}
     </Card>
   );
 }

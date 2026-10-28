@@ -25,8 +25,10 @@
 }
 
 .dark {
+  /* A faint light edge, not a black one: on the dark sheet a black ring read as a hole cut around the key. */
   --brigade-raised:
-    inset 0 1px 0 rgb(255 255 255 / 0.1), 0 1px 2px rgb(0 0 0 / 0.5), 0 0 0 1px rgb(0 0 0 / 0.7);
+    inset 0 1px 0 rgb(255 255 255 / 0.08), 0 0 0 1px rgb(255 255 255 / 0.07),
+    0 1px 2px rgb(0 0 0 / 0.45);
   --brigade-raised-primary:
     inset 0 1px 0 rgb(255 255 255 / 0.35), inset 0 -1px 0 rgb(0 0 0 / 0.15),
     0 1px 2px rgb(0 0 0 / 0.5), 0 0 0 1px color-mix(in oklab, var(--primary), black 40%);
@@ -48,7 +50,9 @@
 @utility field {
   height: --spacing(11);
   border-radius: var(--brigade-radius-md);
-  border: 1px solid var(--input);
+  /* Halfway between the card's edge and the control border: the inset shade and the step in ground already say
+     "type here", so the edge need not shout (a full --input edge read as a white outline on dark). */
+  border: 1px solid color-mix(in oklab, var(--input) 55%, var(--border));
   background-color: var(--background);
   box-shadow: var(--brigade-inset);
   font-size: var(--brigade-text-base);
@@ -113,6 +117,22 @@
     touch-action: manipulation;
     -webkit-user-select: none;
     user-select: none;
+  }
+
+  /* Everything that acts on a click says so with the pointer (Tailwind 4 leaves buttons at the default arrow). */
+  button:not(:disabled):not([data-disabled]),
+  [role="button"],
+  [role="menuitem"],
+  [role="menuitemradio"],
+  [role="menuitemcheckbox"],
+  [role="option"],
+  [role="tab"],
+  summary,
+  select:not(:disabled),
+  label:has(> input[type="radio"], > input[type="checkbox"]),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled) {
+    cursor: pointer;
   }
 
   /* Codes and paths read as code; figures that update keep their width. */

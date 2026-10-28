@@ -17,7 +17,8 @@ import { useId, useState, type FormEvent } from "react";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Empty } from "@/components/ui/empty";
 import { Field, FormError } from "@/components/ui/field";
 import { statusCardText as say, statusText } from "@/lib/status-page";
 
@@ -98,10 +99,7 @@ function StatusPublishLive({
   if (feeds.some((feed) => feed.status === "error")) {
     return (
       <Card aria-labelledby="status-publish-title">
-        <CardTitle id="status-publish-title" className="flex items-center gap-2 px-4 sm:px-6">
-          <GlobeIcon aria-hidden className="size-4 text-muted-foreground" />
-          {say("publish_title")}
-        </CardTitle>
+        <CardHeader id="status-publish-title" title={say("publish_title")} icon={GlobeIcon} />
         <CardContent className="flex flex-col items-start gap-2">
           <FormError>{say("load_failed")}</FormError>
           <Button variant="outline" onClick={onRetry}>
@@ -161,13 +159,10 @@ export function StatusPublishPanel(props: PanelProps) {
   const [notice, setNotice] = useState<Notice | null>(null);
   return (
     <Card aria-labelledby="status-publish-title">
-      <CardTitle id="status-publish-title" className="flex items-center gap-2 px-4 sm:px-6">
-        <GlobeIcon aria-hidden className="size-4 text-muted-foreground" />
-        {say("publish_title")}
-      </CardTitle>
+      <CardHeader id="status-publish-title" title={say("publish_title")} icon={GlobeIcon} />
       <CardContent className="flex flex-col gap-3">
         {!configured ? (
-          <p className="text-sm text-muted-foreground">{say("publish_not_set_up")}</p>
+          <Empty>{say("publish_not_set_up")}</Empty>
         ) : (
           <>
             {published ? (
@@ -187,7 +182,7 @@ export function StatusPublishPanel(props: PanelProps) {
                 />
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">{say("publish_none")}</p>
+              <Empty>{say("publish_none")}</Empty>
             )}
             <span role="status" className="text-sm text-muted-foreground">
               {notice && !open ? say(notice) : ""}

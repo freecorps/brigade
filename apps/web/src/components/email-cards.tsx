@@ -11,7 +11,7 @@ import { cn } from "cn";
 import { LoaderCircleIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { useMember } from "@/components/session";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { FormError } from "@/components/ui/field";
 
 const memberText = (part: string) => m.member_email_settings({ part });
@@ -197,10 +197,12 @@ function TogglePanel<K extends string>({
   };
   return (
     <Card id={id} aria-labelledby={titleId}>
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        {/* "Saving…" / "Saved" beside the title, where it takes no room of its own: the card's foot stays put. */}
-        <div className="flex items-center justify-between gap-4">
-          <CardTitle id={titleId}>{text("title")}</CardTitle>
+      {/* "Saving…" / "Saved" beside the title, where it takes no room of its own: the card's foot stays put. */}
+      <CardHeader
+        id={titleId}
+        title={text("title")}
+        description={text("description")}
+        action={
           <p
             role="status"
             className="flex shrink-0 items-center gap-1.5 text-sm text-muted-foreground"
@@ -217,9 +219,8 @@ function TogglePanel<K extends string>({
               text("saved")
             ) : null}
           </p>
-        </div>
-        <p className="max-w-prose text-sm text-muted-foreground">{text("description")}</p>
-      </div>
+        }
+      />
       <CardContent className="flex flex-col gap-3">
         {loading ? (
           <p className="text-sm text-muted-foreground">{text("loading")}</p>

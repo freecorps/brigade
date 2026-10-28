@@ -1,12 +1,14 @@
 import { m } from "@freecorps/brigade-i18n";
 import { can, formatIncidentNumber, type ServiceRow } from "@freecorps/brigade-schema";
 import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
+import { cn } from "cn";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   CalendarClockIcon,
   CircleAlertIcon,
   LoaderCircleIcon,
   PencilIcon,
+  TriangleAlertIcon,
   UserRoundIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -16,7 +18,8 @@ import { usePreferences } from "@/components/preferences";
 import { naming, Refusal, ServiceForm, TierBadge } from "@/components/services-card";
 import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CARD_X, CardContent, CardHeader, CardList } from "@/components/ui/card";
+import { Empty } from "@/components/ui/empty";
 import {
   catalogRefusal,
   catalogText,
@@ -188,50 +191,46 @@ function Service({
       ) : (
         <div className="grid items-start gap-6 md:grid-cols-[minmax(0,1fr)_--spacing(80)]">
           <Card aria-labelledby="service-incidents">
-            <CardTitle id="service-incidents" className="px-4 sm:px-6">
-              {catalogText("active_incidents")}
-            </CardTitle>
-            <CardContent>
-              {active.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  {incidents.status === "ready" ? catalogText("active_none") : null}
-                </p>
-              ) : (
-                <ul className="-mx-4 divide-y border-t sm:-mx-6">
-                  {active.map((incident) => (
-                    <li key={incident.id} className="flex flex-col gap-1.5 px-4 py-3 sm:px-6">
-                      {incident.number === null ? (
-                        <span className="font-medium [overflow-wrap:anywhere]">
-                          {incident.title}
-                        </span>
-                      ) : (
-                        <Link
-                          to="/incidents/$number"
-                          params={{ number: String(incident.number) }}
-                          className="font-medium [overflow-wrap:anywhere] hover:underline focus-visible:underline focus-visible:outline-none"
-                        >
-                          <span className="text-muted-foreground tabular-nums">
-                            {formatIncidentNumber(incident.number)}
-                          </span>{" "}
-                          {incident.title}
-                        </Link>
-                      )}
-                      <div className="flex flex-wrap gap-1.5">
-                        <SeverityBadge severity={incident.severity} />
-                        <StatusBadge status={incident.status} />
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
+            <CardHeader id="service-incidents" title={catalogText("active_incidents")} />
+            {active.length === 0 ? (
+              incidents.status === "ready" ? (
+                <CardContent>
+                  <Empty>{catalogText("active_none")}</Empty>
+                </CardContent>
+              ) : null
+            ) : (
+              <CardList>
+                {active.map((incident) => (
+                  <li key={incident.id} className={cn("flex flex-col gap-1.5 py-3", CARD_X)}>
+                    {incident.number === null ? (
+                      <span className="font-medium [overflow-wrap:anywhere]">{incident.title}</span>
+                    ) : (
+                      <Link
+                        to="/incidents/$number"
+                        params={{ number: String(incident.number) }}
+                        className="font-medium [overflow-wrap:anywhere] hover:underline focus-visible:underline focus-visible:outline-none"
+                      >
+                        <span className="text-muted-foreground tabular-nums">
+                          {formatIncidentNumber(incident.number)}
+                        </span>{" "}
+                        {incident.title}
+                      </Link>
+                    )}
+                    <div className="flex flex-wrap gap-1.5">
+                      <SeverityBadge severity={incident.severity} />
+                      <StatusBadge status={incident.status} />
+                    </div>
+                  </li>
+                ))}
+              </CardList>
+            )}
           </Card>
 
           <div className="flex min-w-0 flex-col gap-6 max-md:order-first">
             <Card aria-labelledby="service-about">
-              <CardTitle id="service-about" className="sr-only">
+              <h2 id="service-about" className="sr-only">
                 {catalogText("description")}
-              </CardTitle>
+              </h2>
               <CardContent className="flex flex-col gap-5 text-sm">
                 <section className="flex flex-col gap-1.5">
                   <h2 className="font-medium">{catalogText("description")}</h2>
@@ -242,7 +241,13 @@ function Service({
                 <section className="flex flex-col gap-1.5">
                   <h2 className="font-medium">{catalogText("owners")}</h2>
                   {row.owners.length === 0 ? (
-                    <p className="text-amber-700 dark:text-amber-400">{catalogText("unowned")}</p>
+                    <p className="flex items-center gap-1.5 text-muted-foreground">
+                      <TriangleAlertIcon
+                        aria-hidden
+                        className="size-3.5 shrink-0 text-amber-700 dark:text-amber-400"
+                      />
+                      {catalogText("unowned")}
+                    </p>
                   ) : (
                     <ul className="flex flex-col gap-2">
                       {row.owners.map((owner) => {

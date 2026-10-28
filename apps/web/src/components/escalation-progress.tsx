@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
   escalationText,
   everyoneWhoCanRespond,
@@ -129,9 +129,7 @@ export function EscalationProgress({
   const rowProps = { run, who, members, locale, timeZone, now };
   return (
     <Card aria-labelledby="escalation-progress-title">
-      <CardTitle id="escalation-progress-title" className="px-4 sm:px-6">
-        {escalationText("*")}
-      </CardTitle>
+      <CardHeader id="escalation-progress-title" title={escalationText("*")} />
       <CardContent className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
           <p

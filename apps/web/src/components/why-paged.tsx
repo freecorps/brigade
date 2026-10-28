@@ -37,7 +37,8 @@ import {
   type WhyPaged,
   type WhyVerdict,
 } from "@freecorps/brigade-sync";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Empty } from "@/components/ui/empty";
 import {
   byUrgency,
   callChoiceText,
@@ -138,15 +139,18 @@ export function PagingCard({
   const titleId = useId();
   return (
     <Card aria-labelledby={titleId}>
-      <CardTitle id={titleId} className="px-4 sm:px-6">
-        {whyText("title")}
-      </CardTitle>
+      <CardHeader
+        id={titleId}
+        title={whyText("title")}
+        action={
+          <WhyLink number={number} userId={who.self}>
+            {whyText("why_title_you")}
+          </WhyLink>
+        }
+      />
       <CardContent className="flex flex-col gap-3">
-        <WhyLink number={number} userId={who.self} className="self-start">
-          {whyText("why_title_you")}
-        </WhyLink>
         {rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{whyText("empty")}</p>
+          <Empty>{whyText("empty")}</Empty>
         ) : (
           <ul className="flex flex-col">
             {shown.map(({ id, verdict, call }) => {

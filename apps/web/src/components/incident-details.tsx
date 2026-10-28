@@ -19,7 +19,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Refusal, SELECT, TEXTAREA } from "@/components/services-card";
 import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
   catalogRefusal,
   catalogText,
@@ -65,8 +65,7 @@ export function IncidentDetailsCard({ row }: { row: IncidentRow }) {
 
   return (
     <Card aria-labelledby="details-title">
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <CardTitle id="details-title">{catalogText("details_title")}</CardTitle>
+      <CardHeader id="details-title" title={catalogText("details_title")}>
         {missing.length > 0 ? (
           <p className="flex items-start gap-1.5 text-sm text-amber-700 dark:text-amber-400">
             <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
@@ -75,7 +74,7 @@ export function IncidentDetailsCard({ row }: { row: IncidentRow }) {
             </span>
           </p>
         ) : null}
-      </div>
+      </CardHeader>
       <CardContent className="flex flex-col gap-5 text-sm">
         {refused ? <Refusal text={refused} onDismiss={() => setRefused(null)} /> : null}
         <TypePicker

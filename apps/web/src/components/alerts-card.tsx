@@ -56,7 +56,8 @@ import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardSection } from "@/components/ui/card";
+import { Empty } from "@/components/ui/empty";
 import { Field, FormError } from "@/components/ui/field";
 import {
   alertsText as say,
@@ -209,20 +210,19 @@ export function AlertsPanel(props: PanelProps) {
   const full = sources.length >= MAX_ALERT_SOURCES;
   return (
     <Card aria-labelledby="alerts-title">
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <div className="flex min-h-6 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <CardTitle id="alerts-title" className="truncate">
-            {say("title")}
-          </CardTitle>
-          {manage && !adding && !loading && !failed && !full ? (
+      <CardHeader
+        id="alerts-title"
+        title={say("title")}
+        description={say("description")}
+        action={
+          manage && !adding && !loading && !failed && !full ? (
             <Button variant="outline" onClick={() => setAdding(true)}>
               <PlusIcon aria-hidden />
               {say("add")}
             </Button>
-          ) : null}
-        </div>
-        <p className="max-w-prose text-sm text-muted-foreground">{say("description")}</p>
-      </div>
+          ) : null
+        }
+      />
       <CardContent className="flex flex-col gap-4">
         {loading ? null : failed ? (
           <div className="flex flex-col items-start gap-2">
@@ -278,11 +278,7 @@ export function AlertsPanel(props: PanelProps) {
 function Sources(props: PanelProps & { onShown: (shown: ShownUrl) => void }) {
   const { sources } = props;
   if (sources.length === 0) {
-    return (
-      <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-        {say("sources_empty")}
-      </p>
-    );
+    return <Empty>{say("sources_empty")}</Empty>;
   }
   return (
     <ul className="flex flex-col divide-y rounded-md border">
@@ -1104,21 +1100,20 @@ function Routes(props: PanelProps) {
   const [adding, setAdding] = useState(false);
   const full = routes.length >= MAX_ALERT_ROUTES;
   return (
-    <section aria-labelledby="alert-routes-title" className="flex flex-col gap-3 border-t pt-4">
-      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-        <div className="flex min-w-0 flex-col gap-1">
-          <h3 id="alert-routes-title" className="text-sm font-semibold">
-            {say("routes_title")}
-          </h3>
-          <p className="max-w-prose text-sm text-muted-foreground">{say("routes_hint")}</p>
-        </div>
-        {manage && !adding && !full ? (
+    <CardSection
+      id="alert-routes-title"
+      className="pt-4"
+      title={say("routes_title")}
+      description={say("routes_hint")}
+      action={
+        manage && !adding && !full ? (
           <Button variant="outline" onClick={() => setAdding(true)}>
             <PlusIcon aria-hidden />
             {say("add_route")}
           </Button>
-        ) : null}
-      </div>
+        ) : null
+      }
+    >
       {adding ? (
         <RouteForm
           route={null}
@@ -1147,7 +1142,7 @@ function Routes(props: PanelProps) {
           {say("route_limit", { value: String(MAX_ALERT_ROUTES) })}
         </p>
       ) : null}
-    </section>
+    </CardSection>
   );
 }
 
@@ -1627,14 +1622,9 @@ function RouteForm({
 function Recent({ recent, sources, incidents, locale, now }: PanelProps) {
   const rows = recent.slice(0, RECENT_SHOWN);
   return (
-    <section aria-labelledby="recent-alerts-title" className="flex flex-col gap-3 border-t pt-4">
-      <h3 id="recent-alerts-title" className="text-sm font-semibold">
-        {say("recent_title")}
-      </h3>
+    <CardSection id="recent-alerts-title" className="pt-4" title={say("recent_title")}>
       {rows.length === 0 ? (
-        <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-          {say("recent_empty")}
-        </p>
+        <Empty>{say("recent_empty")}</Empty>
       ) : (
         <ul className="flex flex-col divide-y rounded-md border">
           {rows.map((row) => (
@@ -1649,7 +1639,7 @@ function Recent({ recent, sources, incidents, locale, now }: PanelProps) {
           ))}
         </ul>
       )}
-    </section>
+    </CardSection>
   );
 }
 

@@ -53,7 +53,8 @@ import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardList } from "@/components/ui/card";
+import { Empty } from "@/components/ui/empty";
 import { Field, FormError } from "@/components/ui/field";
 import { formatAge, queryErrorReason } from "@/lib/incidents";
 import {
@@ -317,30 +318,29 @@ export function MonitorsCard() {
   const down = rows.filter(monitorAlerting).length;
   const loading = status !== "ready" && status !== "error";
   return (
-    <Card
-      aria-labelledby="monitors-title"
-      className={cn((rows.length > 0 || loading) && "overflow-hidden pb-0 sm:pb-0")}
-    >
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <div className="flex min-h-6 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <CardTitle id="monitors-title" className="truncate">
-            {m.monitors_title()}
-          </CardTitle>
-          <div className="flex flex-wrap items-center gap-2">
-            {ownsCap && !cappingOpen ? (
-              <Button ref={capRef} variant="ghost" onClick={() => setCapping(true)}>
-                <GaugeIcon aria-hidden />
-                {m.monitor_cap({ part: "edit", count: "", max: "" })}
-              </Button>
-            ) : null}
-            {manage && !adding ? (
-              <Button ref={addRef} variant="outline" onClick={() => ask({ kind: "add" })}>
-                <PlusIcon aria-hidden />
-                {m.monitor_add()}
-              </Button>
-            ) : null}
-          </div>
-        </div>
+    <Card aria-labelledby="monitors-title">
+      <CardHeader
+        id="monitors-title"
+        title={m.monitors_title()}
+        action={
+          (ownsCap && !cappingOpen) || (manage && !adding) ? (
+            <>
+              {ownsCap && !cappingOpen ? (
+                <Button ref={capRef} variant="ghost" onClick={() => setCapping(true)}>
+                  <GaugeIcon aria-hidden />
+                  {m.monitor_cap({ part: "edit", count: "", max: "" })}
+                </Button>
+              ) : null}
+              {manage && !adding ? (
+                <Button ref={addRef} variant="outline" onClick={() => ask({ kind: "add" })}>
+                  <PlusIcon aria-hidden />
+                  {m.monitor_add()}
+                </Button>
+              ) : null}
+            </>
+          ) : null
+        }
+      >
         {/* The summary line, held while the list loads; with nothing monitored it is left out, not left blank. */}
         {status === "ready" && rows.length === 0 ? null : (
           <div className="flex h-6 items-center gap-2 text-sm whitespace-nowrap text-muted-foreground tabular-nums">
@@ -365,9 +365,9 @@ export function MonitorsCard() {
             )}
           </div>
         )}
-      </div>
+      </CardHeader>
 
-      <CardContent className="flex flex-col gap-5">
+      <CardContent className="flex flex-col gap-5 empty:hidden">
         {cappingOpen ? (
           <MonitorCapForm
             current={settings?.cap ?? null}
@@ -417,50 +417,45 @@ export function MonitorsCard() {
         <StalledProbes rows={rows} now={now} locale={locale} />
         <CheckErrors rows={rows} now={now} locale={locale} />
 
-        {rows.length > 0 ? (
-          <ul
-            ref={listRef}
-            aria-labelledby="monitors-title"
-            className="-mx-4 divide-y border-t sm:-mx-6"
-          >
-            {rows.map((row) => (
-              <MonitorItem
-                key={row.id}
-                row={row}
-                locale={locale}
-                now={now}
-                userId={userId}
-                members={members}
-                policy={monitorPolicy(row, policies)}
-                actions={monitorActions(role, row)}
-                onPause={onPause}
-                onEdit={onEdit}
-                edit={
-                  editing === row.id ? (
-                    <MonitorForm
-                      mode={editMode(row)}
-                      policies={policies}
-                      onCancel={() => closeEdit(row.id)}
-                      onChanged={onChanged}
-                      discard={discard}
-                    />
-                  ) : null
-                }
-              />
-            ))}
-          </ul>
-        ) : loading ? (
-          <ul aria-hidden className="-mx-4 divide-y border-t sm:-mx-6">
-            {[0, 1, 2].map((index) => (
-              <MonitorItemSkeleton key={index} />
-            ))}
-          </ul>
-        ) : status === "ready" && !adding ? (
-          <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-            {m.monitors_empty()}
-          </p>
+        {status === "ready" && rows.length === 0 && !adding ? (
+          <Empty>{m.monitors_empty()}</Empty>
         ) : null}
       </CardContent>
+      {rows.length > 0 ? (
+        <CardList ref={listRef} aria-labelledby="monitors-title">
+          {rows.map((row) => (
+            <MonitorItem
+              key={row.id}
+              row={row}
+              locale={locale}
+              now={now}
+              userId={userId}
+              members={members}
+              policy={monitorPolicy(row, policies)}
+              actions={monitorActions(role, row)}
+              onPause={onPause}
+              onEdit={onEdit}
+              edit={
+                editing === row.id ? (
+                  <MonitorForm
+                    mode={editMode(row)}
+                    policies={policies}
+                    onCancel={() => closeEdit(row.id)}
+                    onChanged={onChanged}
+                    discard={discard}
+                  />
+                ) : null
+              }
+            />
+          ))}
+        </CardList>
+      ) : loading ? (
+        <CardList aria-hidden>
+          {[0, 1, 2].map((index) => (
+            <MonitorItemSkeleton key={index} />
+          ))}
+        </CardList>
+      ) : null}
     </Card>
   );
 }

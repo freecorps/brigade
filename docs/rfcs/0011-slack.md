@@ -237,7 +237,8 @@ private ones need the bot invited.
   it), not from the event, so events handled out of order still leave the latest state. Titles and names are user
   text: `&`, `<` and `>` are escaped for Slack's mrkdwn, so a title cannot mention `@channel` or forge a link.
   The language is the connection's (RFC 0008: shared channels use the workspace's locale; until workspaces have one,
-  Q15, it is set on the card and defaults to the connecting member's).
+  it is set on the card and defaults to the connecting member's). Decided (Q22), to build: once the workspace locale
+  exists (Q15), channel messages follow it.
 - **Idempotent per event.** The shard keeps a Slack ledger: events handled (`slack_events`), each job of an event
   (`slack_jobs`, with attempts and the earliest retry; "Jobs" below) and each incident's message (`slack_messages`:
   channel, `ts`). A redelivered event that is done
@@ -304,7 +305,8 @@ only, by the severity at declaration); `privateChannels` makes them private (`gr
 how long after the incident closes its channel is archived (0: at once; the card offers 0, 1, 24 and 168 hours), or
 null to keep it. A workspace without a main channel can still have incident channels.
 
-- **Created** on `incident.declared` with `conversations.create`, named `inc-<number>-<title as a slug>` (lowercase
+- **Created** on `incident.declared` with `conversations.create` (and, decided in Q22 and to build, on a severity
+  raised to SEV1 or SEV2 after declaring, when the workspace's setting is `major` and the incident has no channel yet), named `inc-<number>-<title as a slug>` (lowercase
   letters, digits and hyphens, accents dropped, at most 80 characters), with `-2` to `-4` when the name is taken. A
   renamed incident keeps its channel's name (renaming a channel others may have linked to is not worth the surprise);
   its messages show the new title. The
@@ -394,7 +396,9 @@ manifest are English (Slack apps have one manifest).
 | api Worker   | `SLACK_TOKEN_KEY`      | AES-256-GCM key for bot tokens (32 bytes, base64url)                 |
 | api Worker   | `DASHBOARD_URL`        | Already there (email links); the message's "Open in Brigade"         |
 
-Only `-dev` names are configured (`brigade-slack-dev` and its binding to `brigade-api-dev`); staging and production
+Who connects Slack stays owners and admins (`workspace:manage`); integrations get no permission of their own
+(decided, Q22). Freecorps creates the hosted Slack app for its instance (Q6); Freecorps does not use Slack itself,
+the integration is for teams that do. Only `-dev` names are configured (`brigade-slack-dev` and its binding to `brigade-api-dev`); staging and production
 follow with their deploys (owner's call). The dashboard's `SLACK` binding is optional and not committed: a service
 binding to a Worker that does not exist yet fails the dashboard's deploy, so it is added to `apps/web/wrangler.jsonc`
 with the Slack Worker's first deploy, and without it `/slack/*` answers 404. `integrations/slack/README.md` lists
@@ -403,6 +407,6 @@ the steps.
 ## Not in this slice
 
 - App Home and link unfurls.
-- A channel for an incident whose severity is raised to SEV1 or SEV2 after it was declared (Q22).
+- A channel for an incident whose severity is raised to SEV1 or SEV2 after it was declared (decided, Q22; to build).
 - Distribution beyond one app per instance (Slack Marketplace, Enterprise Grid org installs).
 - A test on a real Slack workspace: every Slack call here is tested against a fake Web API only (owner's call).

@@ -220,6 +220,7 @@ stay refused (RFC 0002 "Auth"). The code is `apps/api/src/invitations.ts`; the r
   one send of an invitation per 5 minutes (`INVITATION_RESEND_INTERVAL_MS`, `too_soon`), counted in the shard's own
   ledger (`invitation_sends`) under the member lock. Across workspaces, from D1's `invitation_send` (migration
   0005): 3 invitation emails per invited address per day (`INVITATIONS_PER_ADDRESS_DAILY_CAP`, `address_limited`;
+  decided to become 5 (Q21), so someone invited to several teams at once is not cut off; to build;
   counted on `invitationAddressKey`, the address with any `+tag` dropped from the local part, so `jane+1@` and
   `jane+2@` share one count, while the invitation keeps the address as typed),
   50 per inviter per day (`INVITATIONS_PER_INVITER_DAILY_CAP`, `inviter_limited`) and 5 per invitation ever
@@ -286,7 +287,8 @@ says who is on call; escalation policies (below) page from it.
 - **Who manages them** (`schedule:read`, `schedule:manage`, `schedule:override`): owners and admins create, edit and
   delete schedules and add or remove anyone's override; **responders add and remove overrides for themselves only**
   (covering a shift, "manage own on-call overrides" in the role table below), never someone else's and never the
-  rotations; viewers read. Members of a layer and of an override must be in the shard's member list and not
+  rotations; viewers read. Swapping a shift with someone else (an override for another member, accepted by them) is
+  decided for later (Q20). Members of a layer and of an override must be in the shard's member list and not
   viewers (viewers only read, so they never hold a shift).
 - **Members leaving.** `member.remove` (removed, left or reconciled) and a change to `viewer` (`member.changeRole`,
   `member.reconcile`, or `member.sync` copying a viewer role D1 got outside Brigade) take the member out of every layer and delete their overrides in the same transaction
@@ -294,13 +296,17 @@ says who is on call; escalation policies (below) page from it.
   of each layer keeps its order and the rotation counts again from its start, so later shifts move up (as PagerDuty
   does); the alternative, leaving their shifts as holes, keeps everyone else's dates but leaves time nobody covers,
   which is worse once schedules page. A layer left with nobody is a visible gap until someone edits it; the editor
-  asks for at least one member. Promoting a viewer back does not restore their place.
+  asks for at least one member. Promoting a viewer back does not restore their place. **Decided (Q20), to build:**
+  later shifts keep moving up, and the workspace's owners are emailed which schedules changed and for whom (through
+  the email notifier, RFC 0005 "Email"); the dashboard's overview warns about a schedule that has nobody on call now
+  or a layer left empty.
 - **On the phone.** The app's on-call screen and the incident list's line work out the member's shifts from the same
   rows (`nextHandoffs`). The iOS "I'm on call" widget cannot reach the shard: the app writes it a snapshot of the
   member's stretches on call (merged across schedules, 4 weeks ahead) into the App Group whenever the rows change,
   and the widget flips at each handoff by the clock alone. A snapshot over 24 hours old asks to open the app, since
   an override added since would not be in it (`apps/mobile/src/lib/widget.ts`).
-- **Limits.** 50 schedules per workspace, 100 overrides not yet ended per schedule; an override that ended over 30
+- **Limits.** 50 schedules per workspace, 100 overrides not yet ended per schedule, and (decided, Q20; to build) 20
+  not yet ended per member, so one responder cannot fill a schedule's cap and block everyone else's; an override that ended over 30
   days ago is deleted when the next one is added to its schedule (`schedule.override_removed`, `expired`), so the
   table stays small. Deleting a schedule deletes its overrides.
 
@@ -340,7 +346,13 @@ How a page uses them is RFC 0006 "Who is paged".
   policy (`incidentPolicy`: the monitor still firing on the incident, else the one whose alert opened it); a monitor
   that names none, or one since deleted, goes to the default, then to the interim rule. The run records which and why
   (`monitor`: the monitor's id and name, null for the default), and the incident page says it. A member's own
-  declaration always uses the default. An alert route picks a policy the same way, and comes first (RFC 0006 "Who is
+  declaration uses the default today; **decided (Q18), to build:** a member declaring by hand may pick a policy (an
+  optional field of `incident.declare`, checked against the shard's policies), which then comes first in the order
+  (RFC 0006 "Who is paged"); left out, nothing changes.
+- **Escalate from severity (decided, Q18; to build).** A policy has an "escalate from severity" setting
+  (`sev1` to `sev4`; default every severity, today's behaviour, so existing policies keep paging as they do). An
+  incident below it does not escalate: no levels fire after its first page (whom that page reaches is settled with
+  the build). An alert route picks a policy the same way, and comes first (RFC 0006 "Who is
   paged"); deleting a policy a route names puts the route back on the default (`alert_route.updated`,
   `reason: policy_deleted`).
 - **Deleting a policy a monitor names** is not refused: the monitor goes back to the default in the same transaction

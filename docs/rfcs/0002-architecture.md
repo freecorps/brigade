@@ -240,7 +240,16 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     account (`SIGN_UP_NOTICE_LIMIT`), after the response. What it does not close: whoever signs up with a free
     address and then signs in learns it was free, and holds an unverified account at it until its owner takes it back
     with a password reset (below); requiring verification before sign-in would close that, at the cost of instances
-    without email (Q21).
+    without email (an instance setting, decided below).
+  - **Sign-up and the first user (decided, Q21; to build).** Sign-up is locked per environment and **closed by
+    default** (self-host first): a closed instance refuses sign-up for everyone, and the dashboard and the app hide
+    it. An instance without email always has closed sign-up, since nobody there could verify or reset. The hosted
+    instance opens it once a Brigade-wide daily email ceiling is in place (RFC 0005 "Abuse"). With sign-up closed,
+    the setup script creates the first user: by default an owner account with a generated email and password,
+    printed to the console once and never stored by the script, or, with a flag, the email (and name) the operator
+    gives. "Require a verified email before sign-in" is an instance setting, off by default; on an instance with
+    email it closes the "learns the address was free" gap above. How someone invited joins a closed instance is
+    still open (Q21).
   - **Ending a session (built):** every way a Better Auth session ends deletes its row through
     `databaseHooks.session.delete` (sign-out, `revoke-session`, `revoke-sessions`, `revoke-other-sessions`, a
     password reset, an expired session found): the API Worker asks the shard of every workspace the user belongs to
@@ -394,8 +403,11 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
 - `dev` — local (`vp dev`, Miniflare for DOs), and a deployable `brigade-<app>-dev` Workers environment for shared
   testing.
 - `staging` — the `brigade-<app>-staging` Workers environment.
-- `production` — the top-level (unsuffixed) Wrangler config, deployed only with owner approval.
+- `production` — the top-level (unsuffixed) Wrangler config, deployed only with owner approval. The hosted instance
+  runs at `brigade.freecorps.com.br`.
 - With the Cloudflare Vite plugin the environment is picked at build time (`CLOUDFLARE_ENV=staging vp build`);
   `wrangler deploy` then deploys what was built and takes no `--env`.
 - The mobile app points at staging or production via build profile.
 - Self-hosted — one Cloudflare account, one `deploy` command, guided setup (Slack app manifest, relay registration).
+  To build (Q21, Q23): the setup script also creates the first user (sign-up stays closed), the `STATUS` KV
+  namespace, and optionally custom domains for status pages (RFC 0012 "Addresses").

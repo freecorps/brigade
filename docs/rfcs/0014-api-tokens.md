@@ -11,8 +11,9 @@ copy, the mutations), `apps/api/src/api-tokens.ts` (minting, revoking, resolving
 ## Who mints them, and what they carry
 
 - **Per workspace.** A token acts in one workspace only. Owners and admins mint and revoke them (`token:manage`,
-  RFC 0003's table). The list is synced to every member (`apiToken.all`, `workspace:read`): who in the workspace
-  acts through a script is no secret, like the member list. The list never holds the token or its hash.
+  RFC 0003's table). The list is synced to every member (`apiToken.all`, `workspace:read`) today. Decided (Q25), to
+  build: it is synced to owners and admins only (`token:manage`), the ones who act on it. The list never holds the
+  token or its hash.
 - **Name, expiry, scopes.** A name (1 to 60 characters), an optional expiry (1 to 365 days; none means until
   revoked) and one or more scopes. Up to 50 tokens a workspace that are neither revoked nor expired.
 - **Scopes are the permissions** of RFC 0003 (`incident:ack`, `incident:update`, `monitor:manage`, `members:manage`,
@@ -26,7 +27,8 @@ copy, the mutations), `apps/api/src/api-tokens.ts` (minting, revoking, resolving
   it works again.
 - **Its creator leaving disables it for good.** A use needs the creator to be a member with a Brigade role whose
   membership is older than the token: one who left (or was removed) and was invited back later does not bring their
-  old tokens back. The dashboard shows such a token as disabled; revoking it tidies the list. Disabling rather
+  old tokens back. The dashboard shows such a token as disabled; revoking it tidies the list. A token is never handed
+  over to another member (decided, Q25): mint a new one. Disabling rather
   than deleting keeps the timeline readable, and needs no write when D1 is edited outside Brigade.
 
 ## The token
@@ -106,7 +108,7 @@ copy, the mutations), `apps/api/src/api-tokens.ts` (minting, revoking, resolving
 - **Member changes:** a token's `PATCH`/`DELETE …/members/:userId` counts against its creator's per-member and
   workspace limit (`MEMBER_CHANGE_LIMIT`, keyed by `caller.userId`), shared with their own sessions, so minting more
   tokens buys no more changes. It is on top of the token's own rate limit below.
-- **Rate limit:** 300 requests a minute per token (Workers Rate Limiting, `API_TOKEN_LIMIT`, namespace ids 4141,
+- **Rate limit:** 300 requests a minute per token, fixed (a workspace does not set its own; decided, Q25) (Workers Rate Limiting, `API_TOKEN_LIMIT`, namespace ids 4141,
   4142 for `staging` and 4143 for `dev`, after 41X1 to 41X3 for the receipt and alert limits), counted once the
   token itself is valid (its digest found, its workspace and expiry checked) and before its creator is read, so wrong
   tokens never spend a real one's budget and one over its limit costs no more D1 reads. Over it: `429 rate_limited`, `Retry-After: 60`.

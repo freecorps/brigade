@@ -182,7 +182,9 @@ An incident pages through an escalation policy picked in a fixed order, below; w
 unchanged since Phase 1. The policy is read when a run starts: changing an incident's type mid-run changes nothing
 until its next run.
 
-**Which policy (decided).** A run takes the first of these that names a policy that still exists (`incidentPolicy`):
+**Which policy (decided).** A run takes the first of these that names a policy that still exists (`incidentPolicy`).
+Decided (Q18), to build: a policy a member picked when **declaring by hand** (an optional field, RFC 0003 "Escalation
+policies") comes before all of these.
 
 1. the **alert route** an alert source opened the incident through (RFC 0005 "Alert sources"; the run records it as
    `route`, and the incident page says "set on the alert route …");
@@ -272,7 +274,7 @@ chain:
   levels early and every repeat still waits its timeout. The page and its timeline entry
   say why ("Nobody on level 1 could be reached, so level 2 was paged now", `reason: undelivered`, `unreached: 1`).
   Only refusals count: a push APNs accepted counts as reached whether or not a receipt came back (receipts are best
-  effort), so one device that took it, on any member of the level, keeps the level waiting for its timeout; so does
+  effort; decided, Q18: a missing receipt never escalates early), so one device that took it, on any member of the level, keeps the level waiting for its timeout; so does
   whoever caused the run's first page being on level 1 (reached without a push), and a device that took a severity
   raise paging the level again (the shard's ledger remembers each planned page's run and step, `page_steps`, so this
   holds even when its delivery rows could not be written). Only the level's own page settling escalates: not a
@@ -320,7 +322,9 @@ can respond (owners, admins, responders; viewers only read), except whoever caus
 registered device. A commander without a device does not leave the incident unpaged: everyone who can respond is
 paged instead. Every member the page was for who has no device (the commander included) is recorded as not paged
 (`no_devices`, "Couldn't page Ana: no registered device"), and so is one none of whose devices fit in a page's 200
-(`over_limit`); RFC 0005 "Notifiers".
+(`over_limit`); RFC 0005 "Notifiers". **Decided (Q18), to build:** when more than 5 members of one page have no
+device, their lines collapse into one summary line ("Couldn't page 12 members: no registered device"), which lists
+them when opened; each is still recorded and emailed as before.
 
 Members are the shard's member list (RFC 0003), a copy of D1's that `member.sync` fills when a member opens a sync
 socket, so someone who never opened Brigade is not paged (they have no device either). A D1 outage must never become
@@ -353,7 +357,8 @@ shard's copy whenever that check fails. How the copy follows D1 (RFC 0003 "Membe
   the upgrade is refused (503) and the repair alarm is armed.
 - **Edits made outside Brigade** (straight in D1): reconciled on the next sync upgrade into the workspace by anyone
   (`member.reconcile`): a removed member's row and devices go, a changed role is copied, and their open sockets
-  close. Without anyone opening Brigade (decided, Q18), two more things catch up:
+  close. Without anyone opening Brigade (decided, Q18; the activity-driven reconcile stays, with no extra timer for an
+  idle shard), two more things catch up:
   - **Periodically, from the shard's alarm.** The first change with events since the member list last agreed with
     D1 records the shard as active and sets the alarm for `MEMBER_RECONCILE_PERIOD_MS` (10 minutes) after that last
     reconcile; the alarm then asks for the member repair, which reconciles (retrying every 30 s while D1 fails). An

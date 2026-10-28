@@ -185,7 +185,10 @@ custom hostnames: the owner points a CNAME at the instance's fallback origin and
 - **Never another workspace's page.** The lookup is `{ workspaceId, slug }`, and the entrypoint serves the snapshot
   under the slug only while that workspace pushed it (the snapshot's `workspaceId`), with a cache key of its own per
   workspace; subscribing and the links check the same (and subscribing the slug's holder in D1). A slug that changed
-  hands before the lookup caught up is the 404 page (tested).
+  hands before the lookup caught up is the 404 page (tested). The entrypoint also reads the hostname's holder in D1
+  (`status_custom_host`) on every request and answers the 404 page unless it is the lookup's workspace, so a key a late
+  event wrote back after the domain was removed or taken over never serves (tested). D1 failing serves anyway, logged:
+  the page is still only that workspace's own snapshot.
 - **One per page** (`status_domain`, one synced row: hostname, Cloudflare's id, `pending`, `active` or `failed`, the
   DNS records to create, Cloudflare's reason as a code, when it was last checked). Owners and admins
   (`status:manage`) add, check and remove it from the dashboard's Custom domain card; everyone reads it.
@@ -193,7 +196,8 @@ custom hostnames: the owner points a CNAME at the instance's fallback origin and
   `{ hostname }` checks the session and the role in D1 (an outsider never reaches Cloudflare or a shard), the
   hostname, and Workers Rate Limiting per workspace (`STATUS_DOMAIN_LIMIT`, 10 a minute: each change calls
   Cloudflare's API). It claims the hostname in D1 (`status_custom_host`, migration 0015, unique across the instance)
-  only when its insert wrote the row, stamped with the add's time: another workspace's is `409 hostname_taken`, and
+  only when its insert wrote the row, stamped with the add's time: another workspace's is `409 hostname_taken` (unless
+  it is taken over, below), and
   another add of the same workspace under way is `409 in_progress`, so a losing concurrent add never releases the
   winner's claim (tested). A claim of the workspace's own with no domain behind it for `CLAIM_STALE_MS` (2 minutes,
   past an add's longest run) is left over and taken over. Then it creates the custom hostname (`POST
@@ -206,6 +210,15 @@ custom hostnames: the owner points a CNAME at the instance's fallback origin and
   it. A shard that refuses after the create deletes Cloudflare's hostname, then releases the claim (tested); a delete
   Cloudflare refuses keeps the claim, logged, so no other workspace takes a name with a hostname of ours under it.
   The workspace's next add after `CLAIM_STALE_MS` finds and adopts it.
+- **Taken over after 7 days unverified (decided).** A hostname whose domain has been pending or failed for more than
+  `STATUS_DOMAIN_SQUAT_MS` (7 days, from `stateAt`: when it was added, or the check that moved it to its state) may be
+  added by another workspace, so nobody holds a name they never verified. The add deletes the old Cloudflare
+  hostname first (refused: `502 cloudflare_failed`, nothing changed), then the old workspace's shard runs the
+  server-only `statusDomain.release` as `ACCOUNT_ACTOR` (only for that Cloudflare id, still not active and in its state
+  since the cutoff; event `status_domain.removed` with `takenOver`, through the outbox), then the claim moves to the
+  new workspace and the add goes on as usual. An active domain, a newer one, or a claim with no domain behind it is
+  still `hostname_taken`. A domain verified between the read and the release keeps its row; its next check sees the
+  deleted hostname (tested).
 - **What a hostname may be**: lowercase letters, digits and hyphens in three or more labels, an internationalized
   name as punycode, at most 253 characters, no scheme, port or path, and no IP address in any spelling (`1.2.3`,
   `0x7f.1`, `[::1]`). A two-label name (`example.com`) is refused (`apex`): a CNAME cannot sit at a zone's apex
@@ -215,20 +228,25 @@ custom hostnames: the owner points a CNAME at the instance's fallback origin and
   anything under it: an own domain is the hostname without its first label (or itself when it has two).
 - **Verification**: the card shows the records Cloudflare asked for (the CNAME, and its ownership TXT record) with the
   state, and "Check again" (`POST …/domain/check`) asks Cloudflare (`GET …/custom_hostnames/:id`) and runs
-  `statusDomain.check` (event `status_domain.checked`, with the state it moved from). Active means the hostname and its
+  `statusDomain.check` (event `status_domain.checked`, with the state it moved from), with the Cloudflare id it asked
+  about: an answer about a hostname removed and added again meanwhile changes nothing (tested). Active means the hostname and its
   certificate are; failed means Cloudflare gave up (blocked, moved, deleted, a validation that timed out); anything
   else is pending. Cloudflare's reason is kept as a code (`dns`, `caa`, `timed_out`, `expired`, `moved`, `blocked`,
   `deleted`, `other`) the card words in English and Portuguese, never Cloudflare's own English.
 - **Checked again on its own.** The shard's alarm asks Cloudflare again (`statusDomain.check` as `ACCOUNT_ACTOR`, its
   event through the outbox, within `STATUS_DOMAIN_LIMIT`): a pending domain after as long as it has been pending (1
   minute to 1 hour), for 7 days; an active one daily, so a change at Cloudflare reaches the dashboard and the lookup;
-  a failed one not at all. A failed call backs off from 1 minute, doubling to 1 hour. The call (5 s deadline) runs
-  after the outbox and the status push, and never when an escalation level falls due before it could end.
+  a failed one not at all. A failed call backs off from 1 minute, doubling to 1 hour; adding or removing a domain
+  forgets the backoff. The call (5 s deadline) runs after the outbox and the status push, and never when an
+  escalation level falls due before it could end (tested with a Cloudflare that never answers). A page created while
+  a check waits can still be held for up to that 5 s, as with the status push.
 - **Removing** (`DELETE …/domain`) deletes the hostname at Cloudflare first (one it no longer has counts as deleted),
   then runs `statusDomain.remove` (`status_domain.removed`) and releases the claims stamped before it began. If
   Cloudflare refuses, nothing changes, so a domain the dashboard no longer shows never keeps serving.
 - **The public lookup** is a KV key per hostname (`host:<hostname>` = `{ workspaceId, slug }`, in `STATUS`), kept in
-  step by the queue consumer on `status_domain.added`, `.checked`, `.removed` and `status_page.configured`. It reads
+  step by the queue consumer on `status_domain.added`, `.checked`, `.removed` and `status_page.configured` (that one
+  never wakes a shard on an instance without custom domains, and is best effort, logged and acked: the page's
+  snapshot already stops serving a page made private or moved off its slug). It reads
   the shard's domain and page as they are now, never the event's copy, so events handled late or twice leave the
   latest state: the key exists only while the domain is active, the hostname is this workspace's in D1 and the page
   is public under a slug it holds. A hostname another workspace holds by then is left to that workspace's events

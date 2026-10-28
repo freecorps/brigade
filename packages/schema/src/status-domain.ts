@@ -3,6 +3,7 @@
 // (it holds the token); the shard keeps what the dashboard shows, written only by these server-only mutations, each
 // with its event, which also keeps the public hostname → page lookup in step.
 
+import { ACCOUNT_ACTOR } from "./devices.ts";
 import { defineMutation, fail, ok, type DomainEvent } from "./mutation.ts";
 import { defineQuery } from "./query.ts";
 import { STATUS_PAGE_ID } from "./status.ts";
@@ -27,6 +28,11 @@ export const STATUS_DOMAIN_ERRORS = [
   "deleted",
   "other",
 ] as const satisfies readonly StatusDomainError[];
+/**
+ * A domain pending or failed this long holds its hostname no more: another workspace may take it over (RFC 0012
+ * "Custom domains"), so nobody keeps a name they never verified.
+ */
+export const STATUS_DOMAIN_SQUAT_MS = 7 * 24 * 60 * 60 * 1000;
 /** At most this many DNS records are kept for the dashboard (a CNAME and Cloudflare's TXT records). */
 export const STATUS_DOMAIN_RECORDS_MAX = 5;
 const HOSTNAME_MAX = 253;
@@ -38,7 +44,11 @@ export type StatusDomainChecked = DomainEvent<
   "status_domain.checked",
   Domain & { previous: StatusDomainState }
 >;
-export type StatusDomainRemoved = DomainEvent<"status_domain.removed", { hostname: string }>;
+/** `takenOver`: another workspace took the hostname over after it sat unverified (`statusDomain.release`). */
+export type StatusDomainRemoved = DomainEvent<
+  "status_domain.removed",
+  { hostname: string; takenOver?: true }
+>;
 
 /**
  * Whether `value` is a hostname a page may use: lowercase letters, digits and hyphens in dot-separated labels of 1 to
@@ -59,6 +69,7 @@ const recordArgs = v.object({
   name: v.string({ min: 1, max: HOSTNAME_MAX }),
   value: v.string({ min: 1, max: 512 }),
 });
+const cloudflareId = v.string({ min: 1, max: 64 });
 const checkedArgs = {
   state: v.picklist(STATUS_DOMAIN_STATES),
   records: v.array(recordArgs, { max: STATUS_DOMAIN_RECORDS_MAX }),
@@ -73,7 +84,7 @@ export const addStatusDomain = defineMutation({
   name: "statusDomain.add",
   args: v.object({
     hostname: v.string({ min: 4, max: HOSTNAME_MAX }),
-    cloudflareId: v.string({ min: 1, max: 64 }),
+    cloudflareId,
     ...checkedArgs,
   }),
   permission: "status:manage",
@@ -90,6 +101,7 @@ export const addStatusDomain = defineMutation({
       ...args,
       records: args.records as StatusDomainRecord[],
       checkedAt: ctx.now,
+      stateAt: ctx.now,
       createdAt: ctx.now,
       createdBy: ctx.actor.id,
     };
@@ -104,16 +116,25 @@ export const addStatusDomain = defineMutation({
 });
 
 /**
- * Server only: what Cloudflare says now about the domain (`hostname` must still be the page's): its state, records
- * and the time asked. The event says the state it moved from (`previous`, the same when it did not move).
+ * Server only: what Cloudflare says now about the domain (`hostname` and `cloudflareId` must still be the page's, so
+ * an answer about a hostname removed and added again meanwhile changes nothing): its state, records and the time
+ * asked. The event says the state it moved from (`previous`, the same when it did not move).
  */
 export const checkStatusDomain = defineMutation({
   name: "statusDomain.check",
-  args: v.object({ hostname: v.string({ min: 4, max: HOSTNAME_MAX }), ...checkedArgs }),
+  args: v.object({
+    hostname: v.string({ min: 4, max: HOSTNAME_MAX }),
+    cloudflareId,
+    ...checkedArgs,
+  }),
   permission: "status:manage",
   apply(store, args, ctx) {
     const current = store.get("status_domain", STATUS_DOMAIN_ID);
-    if (!current || current.hostname !== args.hostname) {
+    if (
+      !current ||
+      current.hostname !== args.hostname ||
+      current.cloudflareId !== args.cloudflareId
+    ) {
       return fail("not_found", "No such domain on the page");
     }
     store.update("status_domain", STATUS_DOMAIN_ID, {
@@ -121,6 +142,7 @@ export const checkStatusDomain = defineMutation({
       records: args.records as StatusDomainRecord[],
       error: args.error,
       checkedAt: ctx.now,
+      ...(args.state === current.state ? {} : { stateAt: ctx.now }),
     });
     const event: StatusDomainChecked = {
       type: "status_domain.checked",
@@ -151,6 +173,44 @@ export const removeStatusDomain = defineMutation({
   },
 });
 
+/**
+ * Server only, as `ACCOUNT_ACTOR`: another workspace takes the hostname over (RFC 0012 "Custom domains"), once the
+ * API deleted it at Cloudflare. Only a domain still `cloudflareId`, not active, and in its state since `before` or
+ * earlier (`STATUS_DOMAIN_SQUAT_MS` ago); else `conflict`, and the domain stays.
+ */
+export const releaseStatusDomain = defineMutation({
+  name: "statusDomain.release",
+  args: v.object({
+    hostname: v.string({ min: 4, max: HOSTNAME_MAX }),
+    cloudflareId,
+    before: v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER }),
+  }),
+  permission: "status:manage",
+  apply(store, args, ctx) {
+    if (ctx.actor.kind !== ACCOUNT_ACTOR.kind || ctx.actor.id !== ACCOUNT_ACTOR.id) {
+      return fail("forbidden", "Only Brigade releases a domain");
+    }
+    const current = store.get("status_domain", STATUS_DOMAIN_ID);
+    if (
+      !current ||
+      current.hostname !== args.hostname ||
+      current.cloudflareId !== args.cloudflareId
+    ) {
+      return fail("not_found", "No such domain on the page");
+    }
+    if (current.state === "active" || current.stateAt > args.before) {
+      return fail("conflict", "The domain is not left unverified");
+    }
+    store.delete("status_domain", STATUS_DOMAIN_ID);
+    const event: StatusDomainRemoved = {
+      type: "status_domain.removed",
+      subject: STATUS_DOMAIN_ID,
+      data: { hostname: args.hostname, takenOver: true },
+    };
+    return ok(event);
+  },
+});
+
 /** The page's domain, for the dashboard (everyone reads it, like the page's settings). */
 export const statusDomainQuery = defineQuery({
   name: "statusDomain.get",
@@ -164,4 +224,5 @@ export const statusDomainServerMutations = [
   addStatusDomain,
   checkStatusDomain,
   removeStatusDomain,
+  releaseStatusDomain,
 ] as const;

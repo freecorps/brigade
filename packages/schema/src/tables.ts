@@ -912,6 +912,8 @@ export type StatusDomainRow = {
   error: StatusDomainError | null;
   /** When Cloudflare was last asked. */
   checkedAt: number;
+  /** Since when it is in its state: when it was added, or the check that moved it (a takeover reads it). */
+  stateAt: number;
   createdAt: number;
   createdBy: string;
 };

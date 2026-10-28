@@ -3,12 +3,18 @@
 // public lookup kept in step by events, serving the page at its hostname through the `StatusPages` entrypoint, and
 // the API Worker's own routes left exactly as they were.
 import { env, exports } from "cloudflare:workers";
-import { createExecutionContext, createMessageBatch, runInDurableObject } from "cloudflare:test";
+import {
+  createExecutionContext,
+  createMessageBatch,
+  getQueueResult,
+  runInDurableObject,
+} from "cloudflare:test";
 import {
   alertSourceToken,
   newHeartbeatSecret,
   newId,
   STATUS_DOMAIN_ID,
+  STATUS_DOMAIN_SQUAT_MS,
   type Actor,
 } from "@freecorps/brigade-schema";
 import type { StatusPagesApi } from "@freecorps/brigade-status-edge/api";
@@ -760,8 +766,16 @@ async function sync(t: Team, type: string) {
     "brigade-events",
     events.map((body, index) => ({ id: `msg-${index}`, timestamp: new Date(), attempts: 1, body })),
   );
-  await consumeEvents(batch, { WORKSPACE: env.WORKSPACE, DB: env.DB, STATUS: env.STATUS });
+  await consumeEvents(batch, { WORKSPACE: env.WORKSPACE, DB: env.DB, STATUS: env.STATUS, ...SAAS });
 }
+
+/** `workspaceId` holds `name` in D1, as an add leaves it. */
+const claim = (name: string, workspaceId: string) =>
+  env.DB.prepare(
+    "insert into status_custom_host (hostname, workspace_id, created_at) values (?, ?, ?)",
+  )
+    .bind(name, workspaceId, Date.now())
+    .run();
 
 const lookup = (name: string) => env.STATUS!.get(hostKey(name), { type: "json" });
 
@@ -810,6 +824,7 @@ describe("serving a page at its own hostname", () => {
     const t = await team();
     await t.push();
     const name = hostname();
+    await claim(name, t.id);
     const host = { workspaceId: t.id, slug: t.slug };
     const page = await visit(name, host, "/");
     expect(page.status).toBe(200);
@@ -838,6 +853,7 @@ describe("serving a page at its own hostname", () => {
     const b = await team();
     await b.push();
     const name = hostname();
+    await claim(name, a.id);
     // A lookup the events have not caught up with: A's hostname, B's slug.
     const stale = { workspaceId: a.id, slug: b.slug };
     const page = await visit(name, stale, "/");
@@ -851,7 +867,9 @@ describe("serving a page at its own hostname", () => {
     });
     expect(subscribe.status).toBe(404);
     // B's own hostname serves it, and the cached 404 above is not what it gets.
-    expect((await visit(hostname(), { workspaceId: b.id, slug: b.slug }, "/")).status).toBe(200);
+    const own = hostname();
+    await claim(own, b.id);
+    expect((await visit(own, { workspaceId: b.id, slug: b.slug }, "/")).status).toBe(200);
   });
 
   test("an event for a hostname another workspace holds now leaves its lookup alone", async () => {
@@ -957,5 +975,261 @@ describe("the API Worker's own routes, with every custom domain setting", () => 
     expect(paged.status).toBe(202);
     expect(await outbox(t, "incident.declared")).toHaveLength(1);
     expect(reads).toEqual([]);
+  });
+});
+
+describe("a lookup left behind never serves", () => {
+  test("a key written back after the domain was removed or taken over is the 404 page", async () => {
+    const a = await team();
+    const b = await team();
+    await a.push();
+    const name = hostname();
+    const host = { workspaceId: a.id, slug: a.slug };
+    // A late event wrote A's lookup back after the domain went: D1 no longer has the hostname as A's.
+    const removed = await visit(name, host, "/");
+    expect(removed.status).toBe(404);
+    expect(await removed.text()).not.toContain("All systems operational");
+    expect((await visit(name, host, `/status/${a.slug}/feed.json`)).status).toBe(404);
+    // Taken over by B since.
+    await claim(name, b.id);
+    expect((await visit(name, host, "/")).status).toBe(404);
+    // A's own, still held: served.
+    const held = hostname();
+    await claim(held, a.id);
+    expect((await visit(held, host, "/")).status).toBe(200);
+  });
+});
+
+/** Puts the workspace's domain in its state since `ago` milliseconds ago. */
+const age = (t: Team, ago: number, state?: "pending" | "active" | "failed") =>
+  runInDurableObject(t.stub, (instance: WorkspaceDO) => {
+    const shard = Reflect.get(instance, "shard") as Shard;
+    const at = Date.now() - ago;
+    shard.store.update("status_domain", STATUS_DOMAIN_ID, {
+      stateAt: at,
+      createdAt: at,
+      ...(state ? { state } : {}),
+    });
+  });
+
+describe("a hostname left unverified is taken over", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  test("pending for more than 7 days: deleted at Cloudflare, released by the old workspace with its event, then added", async () => {
+    const a = await team();
+    const b = await team();
+    const fake = cloudflare();
+    const name = hostname();
+    expect((await route(a, a.ana, "PUT", fake, { hostname: name })).status).toBe(200);
+    await age(a, STATUS_DOMAIN_SQUAT_MS + DAY);
+    const calls = fake.calls.length;
+    const taken = await route(b, b.ana, "PUT", fake, { hostname: name });
+    expect(taken.status).toBe(200);
+    expect(
+      fake.calls.slice(calls).map((call) => `${call.method} ${call.url.split("/").pop()}`),
+    ).toEqual(["DELETE cfh-1", "POST custom_hostnames"]);
+    expect(await domainRow(a)).toBeNull();
+    expect(await outbox(a, "status_domain.removed")).toMatchObject([
+      { data: { hostname: name, takenOver: true }, actor: { id: "sys_account" } },
+    ]);
+    expect(await holder(name)).toBe(b.id);
+    expect(await domainRow(b)).toMatchObject({ hostname: name, cloudflareId: "cfh-2" });
+    // A's event leaves B's hostname alone.
+    await env.STATUS!.put(hostKey(name), JSON.stringify({ workspaceId: b.id, slug: b.slug }));
+    await sync(a, "status_domain.removed");
+    expect(await lookup(name)).toEqual({ workspaceId: b.id, slug: b.slug });
+  });
+
+  test("failed for more than 7 days is taken over too; newer, or active however old, is not", async () => {
+    const fake = cloudflare();
+    const b = await team();
+    for (const [state, ago, status] of [
+      ["pending", STATUS_DOMAIN_SQUAT_MS - DAY, 409],
+      ["active", STATUS_DOMAIN_SQUAT_MS + DAY, 409],
+      ["failed", STATUS_DOMAIN_SQUAT_MS - DAY, 409],
+      ["failed", STATUS_DOMAIN_SQUAT_MS + DAY, 200],
+    ] as const) {
+      const a = await team();
+      const name = hostname();
+      expect((await route(a, a.ana, "PUT", fake, { hostname: name })).status).toBe(200);
+      await age(a, ago, state);
+      const deletes = fake.calls.filter((call) => call.method === "DELETE").length;
+      const taken = await route(b, b.ana, "PUT", fake, { hostname: name });
+      expect(taken.status, `${state} ${ago}`).toBe(status);
+      if (status === 409) {
+        expect(await taken.json()).toEqual({ error: "hostname_taken" });
+        expect(fake.calls.filter((call) => call.method === "DELETE")).toHaveLength(deletes);
+        expect(await holder(name)).toBe(a.id);
+        expect(await domainRow(a)).toMatchObject({ hostname: name, state });
+      } else {
+        expect(await holder(name)).toBe(b.id);
+        expect(await domainRow(a)).toBeNull();
+      }
+    }
+  });
+
+  test("Cloudflare refusing the delete changes nothing", async () => {
+    const a = await team();
+    const b = await team();
+    const fake = cloudflare();
+    const name = hostname();
+    await route(a, a.ana, "PUT", fake, { hostname: name });
+    await age(a, STATUS_DOMAIN_SQUAT_MS + DAY);
+    const failing = {
+      ...fake,
+      send: async (request: Request) =>
+        request.method === "DELETE"
+          ? new Response("unavailable", { status: 503 })
+          : fake.send(request),
+    };
+    const logs = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const taken = await route(b, b.ana, "PUT", failing, { hostname: name });
+      expect([taken.status, await taken.json()]).toEqual([502, { error: "cloudflare_failed" }]);
+    } finally {
+      logs.mockRestore();
+    }
+    expect(await holder(name)).toBe(a.id);
+    expect(await domainRow(a)).toMatchObject({ hostname: name });
+    expect(await outbox(a, "status_domain.removed")).toEqual([]);
+  });
+});
+
+describe("checks and backoff against a domain added again", () => {
+  test("a manual check answered after the domain was removed and added again leaves the new one alone", async () => {
+    const t = await team();
+    const fake = cloudflare();
+    const name = hostname();
+    await route(t, t.ana, "PUT", fake, { hostname: name });
+    const row = fake.hostnames.get("cfh-1")!;
+    row.status = "active";
+    row.ssl = "active";
+    // While Cloudflare answers about cfh-1, the domain is removed and added again as cfh-2.
+    const racing = {
+      ...fake,
+      send: async (request: Request) => {
+        if (request.method === "GET" && request.url.endsWith("/cfh-1")) {
+          const answer = await fake.send(request);
+          await runInDurableObject(t.stub, async (instance: WorkspaceDO) => {
+            await instance.changeStatusDomain(t.id, owner(t), "remove", { hostname: name });
+            const again = await instance.changeStatusDomain(t.id, owner(t), "add", {
+              hostname: name,
+              cloudflareId: "cfh-2",
+              state: "pending",
+              records: [],
+              error: null,
+            });
+            expect(again).toEqual({ ok: true });
+          });
+          return answer;
+        }
+        return fake.send(request);
+      },
+    };
+    const checked = await route(t, t.ana, "POST", racing, undefined, true);
+    expect(checked.status).toBe(404);
+    expect(await domainRow(t)).toMatchObject({ cloudflareId: "cfh-2", state: "pending" });
+    expect(await outbox(t, "status_domain.checked")).toEqual([]);
+  });
+
+  test("adding or removing a domain forgets the last one's backoff", async () => {
+    const t = await team();
+    const fake = cloudflare();
+    const meta = (key: string) =>
+      runInDurableObject(
+        t.stub,
+        (_instance: WorkspaceDO, state) =>
+          state.storage.sql
+            .exec<{ value: number }>("select value from shard_meta where key = ?", key)
+            .toArray()
+            .at(0)?.value,
+      );
+    const fail = () =>
+      runInDurableObject(t.stub, (_instance: WorkspaceDO, state) => {
+        for (const [key, value] of [
+          ["domain_attempts", 6],
+          ["domain_retry_at", Date.now() + 3_600_000],
+        ] as const) {
+          state.storage.sql.exec(
+            "insert into shard_meta (key, value) values (?, ?) on conflict (key) do update set value = excluded.value",
+            key,
+            value,
+          );
+        }
+      });
+    await fail();
+    await route(t, t.ana, "PUT", fake, { hostname: hostname() });
+    expect([await meta("domain_attempts"), await meta("domain_retry_at")]).toEqual([
+      undefined,
+      undefined,
+    ]);
+    await checker(t, fake);
+    const added = (await domainRow(t))!;
+    expect(
+      await runInDurableObject(t.stub, (instance: WorkspaceDO) =>
+        (Reflect.get(instance, "domains") as DomainChecker).nextAt(Date.now()),
+      ),
+    ).toBe(added.checkedAt + DOMAIN_RECHECK_MIN_MS);
+    await fail();
+    expect((await route(t, t.ana, "DELETE", fake)).status).toBe(200);
+    expect([await meta("domain_attempts"), await meta("domain_retry_at")]).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+});
+
+describe("the queue consumer and a page's changes", () => {
+  const configuredEvent = (workspaceId: string): BrigadeEvent => ({
+    id: newId("evt", Date.now(), random),
+    type: "status_page.configured",
+    source: `brigade://${workspaceId}/workspace`,
+    workspaceId,
+    time: new Date().toISOString(),
+    actor: { kind: "user", id: "usr_ana" },
+    data: {},
+    specversion: "1.0",
+  });
+  const consume = async (event: BrigadeEvent, extra: object) => {
+    const batch = createMessageBatch("brigade-events", [
+      { id: "msg-0", timestamp: new Date(), attempts: 1, body: event },
+    ]);
+    const ctx = createExecutionContext();
+    const asked: string[] = [];
+    const workspaces = {
+      getByName: (name: string) => {
+        asked.push(name);
+        throw new Error("shard unreachable");
+      },
+    } as unknown as Env["WORKSPACE"];
+    await consumeEvents(batch, { WORKSPACE: workspaces, DB: env.DB, STATUS: env.STATUS, ...extra });
+    return { asked, result: await getQueueResult(batch, ctx) };
+  };
+
+  test("without custom domains a page's change never wakes a shard for the lookup", async () => {
+    const id = newId("ws", Date.now(), random);
+    const { asked, result } = await consume(configuredEvent(id), {});
+    expect(asked).toEqual([]);
+    expect(result.explicitAcks).toEqual(["msg-0"]);
+  });
+
+  test("with them, a failure is logged and acked, never retried towards the dead-letter queue", async () => {
+    const id = newId("ws", Date.now(), random);
+    const logs = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { asked, result } = await consume(configuredEvent(id), SAAS);
+      expect(asked).toEqual([id]);
+      expect(result.explicitAcks).toEqual(["msg-0"]);
+      expect(result.retryMessages).toEqual([]);
+      // A domain's own event is still retried.
+      const removed = {
+        ...configuredEvent(id),
+        type: "status_domain.removed",
+        data: { hostname: hostname() },
+      };
+      expect((await consume(removed, SAAS)).result.retryMessages).toHaveLength(1);
+    } finally {
+      logs.mockRestore();
+    }
   });
 });

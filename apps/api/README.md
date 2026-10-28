@@ -607,6 +607,8 @@ written by the queue consumer and read only by the edge Worker.
 A claim the API could not clean up (Cloudflare refused to delete a hostname, or could not say whether it had one) is
 kept in `status_custom_host` and logged ("the claim is kept"): the same workspace adopts the hostname on its next add
 after 2 minutes; to free the name for another workspace, delete the hostname under Custom Hostnames, then the row.
+A domain left pending or failed for more than 7 days is freed on its own: another workspace's add deletes it at
+Cloudflare and takes it over (RFC 0012 "Custom domains").
 
 **Turning it off** means removing the `*/*` route (or the edge Worker) as well as the three secrets: with the
 secrets gone the dashboard hides the card, but the route would keep answering every hostname on the zone.

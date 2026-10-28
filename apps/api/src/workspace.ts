@@ -783,7 +783,36 @@ export class WorkspaceDO extends DurableObject<Env> {
     });
     if (!result.ok) return { ok: false, code: result.error.code };
     this.broadcast(result.version, changes, undefined);
+    if (name !== "check") this.domains.reset();
     this.armDomain();
+    return { ok: true };
+  }
+
+  /**
+   * Gives up the page's domain to another workspace's takeover (RPC from src/status-domain.ts, once Cloudflare's
+   * hostname is deleted): `statusDomain.release` as `ACCOUNT_ACTOR`, with its event, only while the domain is still
+   * `cloudflareId` and unverified since `before` or earlier.
+   */
+  releaseStatusDomain(
+    workspaceId: string,
+    hostname: string,
+    cloudflareId: string,
+    before: number,
+  ): { ok: true } | { ok: false; code: string } {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    const now = Date.now();
+    const { result, changes } = this.shard.mutate({
+      clientId: "status-domain",
+      mutationId: newId("mut", now, (length) => crypto.getRandomValues(new Uint8Array(length))),
+      actor: ACCOUNT_ACTOR,
+      name: "statusDomain.release",
+      args: { hostname, cloudflareId, before },
+      now,
+      internal: true,
+    });
+    if (!result.ok) return { ok: false, code: result.error.code };
+    this.broadcast(result.version, changes, undefined);
+    this.domains.reset();
     return { ok: true };
   }
 

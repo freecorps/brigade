@@ -96,17 +96,23 @@ export class DomainChecker {
       }
       this.deps.check({
         hostname: row.hostname,
+        cloudflareId: row.cloudflareId,
         state: seen.state,
         records: seen.records,
         error: seen.error,
       });
-      this.clearMeta("domain_attempts");
-      this.clearMeta("domain_retry_at");
+      this.reset();
     } catch (error) {
       this.failed(now, String(error));
     } finally {
       this.running = false;
     }
+  }
+
+  /** Forgets the backoff: a domain added or removed starts afresh, never behind the last one's failures. */
+  reset(): void {
+    this.clearMeta("domain_attempts");
+    this.clearMeta("domain_retry_at");
   }
 
   private async allowed(workspaceId: string): Promise<boolean> {

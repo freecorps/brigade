@@ -16,6 +16,7 @@ import {
   ESCALATION_ACTOR as ESCALATION,
   MONITOR_ACTOR,
   newId,
+  STATUS_DOMAIN_ID,
   type Actor,
   type Role,
   type TimelineRow,
@@ -24,6 +25,8 @@ import { Escalations, ESCALATION_RETRY_MS, MAX_LEVELS_PER_ALARM } from "../src/e
 import { consumeDeadLetters, consumeEvents, type Fetch } from "../src/notify.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
+import { CF_CALL_MS, type Fetch as CloudflareFetch } from "../src/status-domain-cf.ts";
+import type { DomainChecker } from "../src/status-domain-check.ts";
 import { StatusPublisher } from "../src/status-page.ts";
 import { STATUS_PUSH_BUDGET_MS, WorkspaceDO } from "../src/workspace.ts";
 
@@ -799,6 +802,76 @@ describe("fallbacks (the paging path's)", () => {
         Reflect.set(instance, "statusBudgetMs", STATUS_PUSH_BUDGET_MS);
       });
     }
+  });
+
+  test("a status domain check never starts when a level falls due within Cloudflare's deadline, so the level fires on time", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await deliver(event, relay().send);
+    await ws.run(ana, "statusPage.configure", {
+      slug: `esc-${Date.now().toString(36)}`,
+      title: "Acme",
+      locale: "en",
+      enabled: true,
+    });
+    await ws.run(ana, "statusDomain.add", {
+      hostname: "status.acme.test",
+      cloudflareId: "cfh-1",
+      state: "pending",
+      records: [],
+      error: null,
+    });
+    // A domain whose check is due, and a Cloudflare that never answers (only the call's own deadline would end it).
+    const asked: string[] = [];
+    let hang = true;
+    const at = Date.now() + 300;
+    await ws.withShard((shard, _state, instance) => {
+      const past = Date.now() - 2 * MINUTE;
+      shard.store.update("status_domain", STATUS_DOMAIN_ID, {
+        createdAt: past,
+        checkedAt: past,
+        stateAt: past,
+      });
+      const deps = Reflect.get(Reflect.get(instance, "domains") as DomainChecker, "deps") as {
+        config: () => unknown;
+        limiter: () => unknown;
+        send?: CloudflareFetch;
+      };
+      deps.config = () => ({
+        token: "test-saas-token",
+        zoneId: "zone-test",
+        target: "origin.saas.test",
+      });
+      deps.limiter = () => undefined;
+      deps.send = (request) => {
+        asked.push(request.url);
+        if (!hang) return Promise.resolve(new Response("bad gateway", { status: 502 }));
+        return new Promise((_resolve, reject) =>
+          request.signal.addEventListener("abort", () => reject(request.signal.reason)),
+        );
+      };
+      // The next level falls due well within one Cloudflare call.
+      const row = shard.store.get("incidents", incident)!;
+      shard.store.update("incidents", incident, { escalation: { ...row.escalation!, nextAt: at } });
+      shard.store.update("escalation_timers", incident, { at });
+    });
+    const took = await ws.withShard(async (_shard, _state, instance) => {
+      const started = Date.now();
+      await instance.alarm();
+      return Date.now() - started;
+    });
+    hang = false;
+    expect(asked).toEqual([]);
+    expect(took).toBeLessThan(CF_CALL_MS);
+    await vi.waitFor(
+      async () => {
+        await runDurableObjectAlarm(ws.stub);
+        expect(await ws.levels(incident)).toHaveLength(2);
+      },
+      { timeout: 5000, interval: 100 },
+    );
   });
 
   test("a dead-lettered level is recorded on the timeline", async () => {

@@ -40,6 +40,7 @@ describe("workspace.create", () => {
       "statusDomain.add",
       "statusDomain.check",
       "statusDomain.remove",
+      "statusDomain.release",
       "workspace.create",
       "member.sync",
       "followUp.remind",

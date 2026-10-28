@@ -32,7 +32,8 @@ export class StatusPages extends WorkerEntrypoint<Env> implements StatusPagesApi
  * A request to a custom hostname, for the page `host` names: `/` is the page, `/status/<its slug>` and its feeds and
  * subscription routes are themselves, and anything else (another page, the API, sign-in) is the 404 page, counted
  * as a miss. Each serves only `host.workspaceId`'s snapshot, so a slug that changed hands before the lookup caught up
- * shows the 404 page, never the other workspace's.
+ * shows the 404 page, never the other workspace's; and only while that workspace holds the hostname in D1, so a
+ * lookup written back after the domain was removed or taken over never serves.
  */
 export async function serveCustomHost(
   request: Request,
@@ -42,7 +43,8 @@ export async function serveCustomHost(
 ): Promise<Response> {
   const { workspaceId, slug } = host;
   if (!ORGANIZATION_ID.test(workspaceId) || !STATUS_SLUG.test(slug)) return miss(request, env);
-  const { pathname } = new URL(request.url);
+  const { pathname, hostname } = new URL(request.url);
+  if (!(await holds(env, hostname, workspaceId))) return statusNotFound();
   if (pathname === "/") return serveStatusPage(request, env, ctx, slug, workspaceId);
   const route = PAGE_ROUTE.exec(pathname);
   if (!route || route[1] !== slug) return miss(request, env);
@@ -52,6 +54,29 @@ export async function serveCustomHost(
     return serveSubscription(request, env, ctx, slug, route[3] as SubscriptionAction, workspaceId);
   }
   return serveStatusPage(request, env, ctx, slug, workspaceId);
+}
+
+/**
+ * Whether `workspaceId` holds `hostname` in D1 (`status_custom_host`). D1 failing serves anyway (logged): the page is
+ * still only that workspace's own snapshot, and a status page should stay up through an outage.
+ */
+async function holds(env: Env, hostname: string, workspaceId: string): Promise<boolean> {
+  try {
+    const holder = await env.DB.prepare(
+      "select workspace_id from status_custom_host where hostname = ?",
+    )
+      .bind(hostname)
+      .first<{ workspace_id: string }>();
+    return holder?.workspace_id === workspaceId;
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        message: "reading a custom hostname's holder failed",
+        error: String(error),
+      }),
+    );
+    return true;
+  }
 }
 
 async function miss(request: Request, env: Env): Promise<Response> {

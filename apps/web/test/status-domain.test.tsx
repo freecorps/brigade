@@ -50,6 +50,7 @@ const row = (extra: Partial<StatusDomainRow> = {}): StatusDomainRow => ({
   ],
   error: null,
   checkedAt: Date.UTC(2026, 9, 27, 12),
+  stateAt: 0,
   createdAt: 0,
   createdBy: "usr_ana",
   ...extra,

@@ -17,7 +17,8 @@ import { notifyRotation } from "./notify-rotation.ts";
 import { asksForInvitation, notifyInvitation } from "./notify-invite.ts";
 import { notifySlack, type SlackNotifyEnv } from "./notify-slack.ts";
 import { notifyStatus, type StatusNotifyEnv } from "./notify-status.ts";
-import { asksForStatusHost, syncStatusHost } from "./status-domain.ts";
+import { asksForStatusHost, notifyStatusHost } from "./status-domain.ts";
+import type { SaasEnv } from "./status-domain-cf.ts";
 import { notifyWebhookDisabled, notifyWebhooks, type WebhookNotifyEnv } from "./notify-webhooks.ts";
 import type { BrigadeEvent } from "./outbox.ts";
 import {
@@ -81,6 +82,7 @@ export const D1_HEALTH_TIMEOUT_MS = 3000;
 
 /** Optional: an instance without a relay still runs, and every page it would send is recorded as failed. */
 export type NotifyEnv = EmailEnv &
+  SaasEnv &
   EmailNotifyEnv &
   OperatorEnv &
   SlackNotifyEnv &
@@ -220,7 +222,7 @@ export async function consumeEvents(
               : statusEmail
                 ? await notifyStatus(event, message.attempts, env, mail, slots, waitUntil)
                 : asksForStatusHost(event)
-                  ? await syncStatusHost(event, env).then(() => undefined)
+                  ? await notifyStatusHost(event, env)
                   : reminder
                     ? await notifyReminder(event, message.attempts, env, mail)
                     : rotation

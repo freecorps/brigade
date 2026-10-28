@@ -25,6 +25,10 @@ Worker or entrypoint that does not exist fails the deploy. The top-level config 
 (`brigade-status-edge`, bound to `brigade-api`); `dev` is `brigade-status-edge-dev`, bound to `brigade-api-dev` and
 dev's `STATUS` namespace.
 
+There is no `staging` environment, unlike the API: staging has no `STATUS` namespace yet (apps/api `wrangler.jsonc`), so
+an edge there would have nothing to read, and it would need a Cloudflare for SaaS zone, fallback origin and token of its
+own. Bindings to a namespace or Worker that does not exist fail the deploy, so it is added with those.
+
 ```bash
 vp run build:dev     # or `vp run build` for production
 wrangler deploy      # the built config names the Worker and environment

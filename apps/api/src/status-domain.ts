@@ -10,7 +10,12 @@
 // `CF_SAAS_TOKEN`, `CF_ZONE_ID`, `CF_SAAS_FALLBACK_ORIGIN` and `DASHBOARD_URL`: then every route answers
 // `503 not_configured` and the dashboard hides the section.
 
-import { allows, isStatusHostname, type StatusDomainRow } from "@freecorps/brigade-schema";
+import {
+  allows,
+  isStatusHostname,
+  STATUS_DOMAIN_SQUAT_MS,
+  type StatusDomainRow,
+} from "@freecorps/brigade-schema";
 import type { Auth } from "./auth.ts";
 import { unauthenticated } from "./api-tokens.ts";
 import { checkMember, json, readJson } from "./member-route.ts";
@@ -23,15 +28,15 @@ import {
   type SaasEnv,
   type SaasHostname,
 } from "./status-domain-cf.ts";
-import type { StatusHost } from "@freecorps/brigade-status-edge/api";
+import { hostKey, type StatusHost } from "@freecorps/brigade-status-edge/api";
 import type { TokenRefused } from "./workspace.ts";
 
 /**
  * The public lookup of a verified hostname, in the `STATUS` namespace: `{ workspaceId, slug }` (`StatusHost`), which
- * the edge Worker hands to `StatusPages.serve`; the snapshot under the slug is served only while it is that
- * workspace's.
+ * the edge Worker hands to `StatusPages.serve`; the page is served only while that workspace holds the hostname in D1
+ * and pushed the snapshot under the slug. The edge's own helper, so the key is written as it is read.
  */
-export const hostKey = (hostname: string) => `host:${hostname}`;
+export { hostKey };
 
 /**
  * A claim this long-lived with no domain on the page behind it is left over (an add whose Cloudflare call or rollback
@@ -180,8 +185,13 @@ export async function statusDomainRoute(
   if (action === "add") {
     if (current) return refuse("domain_exists");
     const name = hostname!;
-    const claim = await claimHost(env.DB, name, workspaceId, Date.now());
+    const claimed = await claimHost(env.DB, name, workspaceId, Date.now());
+    const claim =
+      typeof claimed === "object" && "holder" in claimed
+        ? await takeOver(env, client, name, workspaceId, claimed.holder, Date.now())
+        : claimed;
     if (claim === "taken") return refuse("hostname_taken");
+    if (claim === "cloudflare_failed") return refuse("cloudflare_failed");
     if (claim === "busy") return refuse("in_progress");
     if (claim === "failed") return refuse("unavailable");
     const stamp = claim.stamp;
@@ -235,7 +245,12 @@ export async function statusDomainRoute(
       });
       return refuse("cloudflare_failed");
     }
-    const checked = await change("check", { hostname: current.hostname, ...shown(seen) });
+    // With the Cloudflare hostname asked about: one removed and added again meanwhile is not overwritten.
+    const checked = await change("check", {
+      hostname: current.hostname,
+      cloudflareId: current.cloudflareId,
+      ...shown(seen),
+    });
     if (!checked.ok) {
       return checked.code === "unauthenticated" ? unauthenticated() : refuse(refusal(checked.code));
     }
@@ -324,15 +339,15 @@ async function domainAllowed(env: DomainEnv, workspaceId: string): Promise<boole
 /**
  * Claims `hostname` for this add in D1, stamped `now` (`created_at`), which only this add releases. Claimed only when
  * the row was written: a free name, or one this workspace's earlier add left behind (`CLAIM_STALE_MS`, taken over
- * only if nobody took it over first). `taken` when another workspace holds it; `busy` when another add of this
- * workspace holds it now, so a losing concurrent add never releases the winner's claim.
+ * only if nobody took it over first). `holder` when another workspace holds it (`takeOver` decides); `busy` when
+ * another add of this workspace holds it now, so a losing concurrent add never releases the winner's claim.
  */
 async function claimHost(
   db: D1Database,
   hostname: string,
   workspaceId: string,
   now: number,
-): Promise<{ stamp: number } | "taken" | "busy" | "failed"> {
+): Promise<{ stamp: number } | { holder: Holder } | "busy" | "failed"> {
   try {
     const inserted = await db
       .prepare(
@@ -348,7 +363,9 @@ async function claimHost(
       .first<{ workspace_id: string; created_at: number }>();
     // Released meanwhile: asking again is the caller's to do.
     if (!holder) return "busy";
-    if (holder.workspace_id !== workspaceId) return "taken";
+    if (holder.workspace_id !== workspaceId) {
+      return { holder: { workspaceId: holder.workspace_id, createdAt: holder.created_at } };
+    }
     if (holder.created_at > now - CLAIM_STALE_MS) return "busy";
     const taken = await db
       .prepare(
@@ -360,6 +377,90 @@ async function claimHost(
     return taken.meta.changes === 1 ? { stamp: now } : "busy";
   } catch (error) {
     log("claiming a custom hostname failed", { error: String(error) });
+    return "failed";
+  }
+}
+
+type Holder = { workspaceId: string; createdAt: number };
+
+/**
+ * Another workspace holds `hostname`: taken over (RFC 0012 "Custom domains") only when its domain there has been
+ * pending or failed for `STATUS_DOMAIN_SQUAT_MS`, so nobody keeps a name they never verified. Cloudflare's hostname
+ * goes first (refused: `cloudflare_failed`, nothing changed), then the holder's shard runs `statusDomain.release` with
+ * its event, then the claim moves to this workspace, stamped `now`. Anything else is `taken`: an active domain, one
+ * newer than that, or a claim with no domain behind it (the holder's own add finds and adopts it).
+ */
+async function takeOver(
+  env: DomainEnv,
+  client: SaasClient,
+  hostname: string,
+  workspaceId: string,
+  holder: Holder,
+  now: number,
+): Promise<{ stamp: number } | "taken" | "busy" | "failed" | "cloudflare_failed"> {
+  const stub = env.WORKSPACE.getByName(holder.workspaceId);
+  let domain: StatusDomainRow | null;
+  try {
+    domain = (await stub.statusDomainState(holder.workspaceId)).domain;
+  } catch (error) {
+    log("WorkspaceDO.statusDomainState failed", {
+      workspaceId: holder.workspaceId,
+      error: String(error),
+    });
+    return "failed";
+  }
+  const before = now - STATUS_DOMAIN_SQUAT_MS;
+  if (
+    !domain ||
+    domain.hostname !== hostname ||
+    domain.state === "active" ||
+    domain.stateAt > before
+  ) {
+    return "taken";
+  }
+  const removed = await client.remove(domain.cloudflareId);
+  if (!removed.ok) {
+    log("deleting a custom hostname to take it over failed", {
+      workspaceId,
+      from: holder.workspaceId,
+      error: removed.message,
+    });
+    return "cloudflare_failed";
+  }
+  let released: { ok: true } | { ok: false; code: string };
+  try {
+    released = await stub.releaseStatusDomain(
+      holder.workspaceId,
+      hostname,
+      domain.cloudflareId,
+      before,
+    );
+  } catch (error) {
+    log("WorkspaceDO.releaseStatusDomain failed", {
+      workspaceId: holder.workspaceId,
+      error: String(error),
+    });
+    return "failed";
+  }
+  // Removed by its own workspace meanwhile is as good; verified meanwhile keeps it, its next check seeing the delete.
+  if (!released.ok && released.code !== "not_found") {
+    log("a custom hostname deleted for a takeover stayed with its workspace", {
+      workspaceId,
+      from: holder.workspaceId,
+      code: released.code,
+    });
+    return "taken";
+  }
+  try {
+    const moved = await env.DB.prepare(
+      `update status_custom_host set workspace_id = ?, created_at = ?
+       where hostname = ? and workspace_id = ? and created_at = ?`,
+    )
+      .bind(workspaceId, now, hostname, holder.workspaceId, holder.createdAt)
+      .run();
+    return moved.meta.changes === 1 ? { stamp: now } : "busy";
+  } catch (error) {
+    log("taking over a custom hostname's claim failed", { error: String(error) });
     return "failed";
   }
 }
@@ -399,6 +500,32 @@ const HOST_EVENTS = new Set([
 
 export const asksForStatusHost = (event: BrigadeEvent) => HOST_EVENTS.has(event.type);
 
+type HostEnv = { WORKSPACE: Env["WORKSPACE"]; DB?: D1Database; STATUS?: KVNamespace } & SaasEnv;
+
+/**
+ * The queue consumer's side of the lookup. A domain's own events are `syncStatusHost`'s, retried on a failure. A page's
+ * `status_page.configured` never wakes a shard on an instance without custom domains, and is best effort (logged,
+ * acked) where it has them: every page change sends one, and the page's snapshot already stops serving a page made
+ * private or moved off its slug, whatever the lookup says.
+ */
+export async function notifyStatusHost(event: BrigadeEvent, env: HostEnv): Promise<undefined> {
+  if (event.type !== "status_page.configured") {
+    await syncStatusHost(event, env);
+    return undefined;
+  }
+  if (!saasConfig(env)) return undefined;
+  try {
+    await syncStatusHost(event, env);
+  } catch (error) {
+    log("keeping a custom hostname's lookup in step failed", {
+      event: event.id,
+      workspaceId: event.workspaceId,
+      error: String(error),
+    });
+  }
+  return undefined;
+}
+
 /**
  * Keeps the public lookup in step (from the queue consumer): reads the shard's domain and page as they are now, never
  * the event's copy, so events handled late or twice leave the latest state. A hostname is served (`host:<name>` =
@@ -406,10 +533,7 @@ export const asksForStatusHost = (event: BrigadeEvent) => HOST_EVENTS.has(event.
  * deleted. A hostname another workspace holds by now is left to that workspace's events. Throws on a failure, so the
  * message is retried.
  */
-export async function syncStatusHost(
-  event: BrigadeEvent,
-  env: { WORKSPACE: Env["WORKSPACE"]; DB?: D1Database; STATUS?: KVNamespace },
-): Promise<void> {
+export async function syncStatusHost(event: BrigadeEvent, env: HostEnv): Promise<void> {
   const { DB: db, STATUS: kv } = env;
   if (!kv || !db) return;
   const state = await env.WORKSPACE.getByName(event.workspaceId).statusDomainState(

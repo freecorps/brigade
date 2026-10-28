@@ -5,6 +5,7 @@ import {
   AI_ACTOR,
   AI_DRAFT_STALE_MS,
   AI_DRAFTS_PER_DAY,
+  BUILTIN_LAYOUT,
   buildExport,
   exportChunks,
   EXPORTS_PER_HOUR,
@@ -19,6 +20,9 @@ import {
   MAX_LISTED_EXPORTS,
   MEMBERS_ACTOR,
   mutations,
+  POSTMORTEM_REVISIONS_KEPT,
+  postmortemRevisions,
+  restoredSections,
   queries,
   runMutation,
   runQuery,
@@ -320,6 +324,76 @@ describe("postmortems", () => {
     ).toMatchObject({ ok: true });
   });
 
+  test(`keeps the last ${POSTMORTEM_REVISIONS_KEPT} revisions, AI drafts included; a restore is a save of one`, () => {
+    const store = shard();
+    server(store, "postmortem.requestDraft", { id: INC, requestId: DRF }, responder);
+    server(
+      store,
+      "postmortem.writeDraft",
+      { id: INC, requestId: DRF, sections: sections({ summary: "Drafted." }), model: "@cf/x" },
+      ai(T + 1),
+    );
+    const writes = POSTMORTEM_REVISIONS_KEPT + 4;
+    for (let revision = 2; revision <= writes; revision++) {
+      const row = store.get("postmortems", INC)!;
+      expect(
+        run(
+          store,
+          "postmortem.save",
+          {
+            id: INC,
+            sections: sections({ summary: `Version ${revision}.` }),
+            baseRevision: row.revision,
+            baseUpdatedAt: row.updatedAt,
+          },
+          ctx("usr_caio", "responder", T + revision),
+        ),
+      ).toMatchObject({ ok: true });
+    }
+    const kept = postmortemRevisions(store, INC);
+    expect(kept.map((one) => one.revision)).toEqual(
+      Array.from({ length: POSTMORTEM_REVISIONS_KEPT }, (_, n) => writes - n),
+    );
+    expect(store.scan("postmortem_revisions")).toHaveLength(POSTMORTEM_REVISIONS_KEPT);
+    expect(kept[0]).toMatchObject({
+      sections: { summary: `Version ${writes}.` },
+      savedAt: T + writes,
+      savedBy: "usr_caio",
+      ai: false,
+    });
+    // Short of the cap, the AI draft is listed, as the member who asked for it.
+    const fresh = shard();
+    server(fresh, "postmortem.requestDraft", { id: INC, requestId: DRF }, responder);
+    server(
+      fresh,
+      "postmortem.writeDraft",
+      { id: INC, requestId: DRF, sections: sections({ summary: "Drafted." }), model: "@cf/x" },
+      ai(T + 1),
+    );
+    expect(postmortemRevisions(fresh, INC)).toMatchObject([
+      { revision: 1, ai: true, savedBy: "usr_caio", sections: { summary: "Drafted." } },
+    ]);
+    // Restoring the oldest kept one saves its text over the current revision: a revision of its own.
+    const oldest = kept.at(-1)!;
+    const row = store.get("postmortems", INC)!;
+    expect(
+      run(
+        store,
+        "postmortem.save",
+        {
+          id: INC,
+          sections: restoredSections(oldest, BUILTIN_LAYOUT),
+          baseRevision: row.revision,
+          baseUpdatedAt: row.updatedAt,
+        },
+        responder,
+      ),
+    ).toMatchObject({ ok: true, events: [{ data: { revision: writes + 1 } }] });
+    expect(store.get("postmortems", INC)!.sections.summary).toBe(oldest.sections.summary);
+    // Never synced: no query reads them.
+    expect(Object.keys(queries).some((name) => name.includes("revision"))).toBe(false);
+  });
+
   test("events never carry the text", () => {
     const store = shard();
     const result = run(store, "postmortem.save", {
@@ -395,6 +469,20 @@ describe("postmortems", () => {
       ),
     ).toMatchObject({ ok: false, error: { code: "conflict" } });
     expect(timelineKinds(store)).toEqual(["ai_drafted"]);
+  });
+
+  test("refused while an owner has AI drafts off for the workspace", () => {
+    const store = shard();
+    expect(run(store, "workspace.setAiDrafts", { enabled: false })).toMatchObject({ ok: true });
+    expect(
+      server(store, "postmortem.requestDraft", { id: INC, requestId: DRF }, responder),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    expect(store.get("postmortems", INC)).toBeUndefined();
+    expect(store.scan("ai_drafts")).toEqual([]);
+    run(store, "workspace.setAiDrafts", { enabled: true });
+    expect(
+      server(store, "postmortem.requestDraft", { id: INC, requestId: DRF }, responder),
+    ).toMatchObject({ ok: true });
   });
 
   test("a member's save while the draft runs wins: the draft fails as edited", () => {

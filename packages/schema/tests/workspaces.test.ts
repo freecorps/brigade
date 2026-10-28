@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vite-plus/test";
 import {
+  aiDraftsEnabled,
   createMemoryStore,
   DEFAULT_EMAIL_SETTINGS,
   emailSettings,
@@ -217,5 +218,32 @@ describe("workspace.setEmail", () => {
     expect(
       runMutation(mutations, "workspace.setEmail", { unpaged: true }, store, ctx()),
     ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+  });
+});
+
+describe("workspace.setAiDrafts", () => {
+  test("on until an owner turns it off; admins, responders and viewers may not; no change is a conflict", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    runMutation(serverMutations, "workspace.create", { id: WS, name: "Acme" }, store, ctx());
+    expect(aiDraftsEnabled(store.get("workspace", WS))).toBe(true);
+    for (const role of ["admin", "responder", "viewer"] as const) {
+      expect(
+        runMutation(mutations, "workspace.setAiDrafts", { enabled: false }, store, ctx(role)),
+        role,
+      ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    }
+    expect(
+      runMutation(mutations, "workspace.setAiDrafts", { enabled: false }, store, ctx()),
+    ).toEqual({
+      ok: true,
+      events: [{ type: "workspace.ai_drafts_changed", subject: WS, data: { enabled: false } }],
+    });
+    expect(aiDraftsEnabled(store.get("workspace", WS))).toBe(false);
+    expect(
+      runMutation(mutations, "workspace.setAiDrafts", { enabled: false }, store, ctx()),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(
+      runMutation(mutations, "workspace.setAiDrafts", { enabled: true }, store, ctx()),
+    ).toMatchObject({ ok: true, events: [{ data: { enabled: true } }] });
   });
 });

@@ -11,7 +11,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | part | output |
 * | --- | --- |
 * | "title" | "Postmortem templates" |
-* | "note" | "The sections a new postmortem starts with, per incident type. A postmortem keeps the sections it was made with: editing a template or changing an incident's ..." |
+* | "note" | "The sections a new postmortem starts with, per incident type. Once someone writes in a postmortem, it keeps its sections: editing a template or changing the ..." |
 * | "default_name" | "Workspace default" |
 * | "default_note" | "For incidents with no type, or a type without its own template." |
 * | "builtin" | "The seven built-in sections" |
@@ -44,6 +44,10 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "reset_default" | "Use the built-in sections" |
 * | "reset_confirm" | "Stop using this template? New postmortems take {name}. Postmortems already written keep their sections." |
 * | "reset_confirm_action" | "Stop using it" |
+* | "ai_title" | "AI drafts" |
+* | "ai_hint" | "Members can ask Workers AI for a first draft of a blank postmortem. Off, the button is hidden and the server refuses." |
+* | "ai_owner_only" | "Only owners can turn AI drafts on or off." |
+* | "ai_failed" | "Couldn't change AI drafts: {name}" |
 * | * | "Postmortem templates" |
 *
 * @param {Postmortem_Template_TextInputs} inputs
@@ -54,7 +58,7 @@ export const postmortem_template_text = /** @type {((inputs: Postmortem_Template
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
 		if (i?.part === "title") return /** @type {LocalizedString} */ (`Modelos de postmortem`);
-		if (i?.part === "note") return /** @type {LocalizedString} */ (`As seções com que um novo postmortem começa, por tipo de incidente. Um postmortem mantém as seções com que foi criado: editar um modelo ou mudar o tipo do incidente depois não o altera.`);
+		if (i?.part === "note") return /** @type {LocalizedString} */ (`As seções com que um novo postmortem começa, por tipo de incidente. Depois que alguém escreve em um postmortem, ele mantém as suas seções: editar um modelo ou mudar o tipo do incidente não o altera. Um postmortem em branco segue o novo tipo do incidente.`);
 		if (i?.part === "default_name") return /** @type {LocalizedString} */ (`Padrão do workspace`);
 		if (i?.part === "default_note") return /** @type {LocalizedString} */ (`Para incidentes sem tipo, ou de um tipo sem modelo próprio.`);
 		if (i?.part === "builtin") return /** @type {LocalizedString} */ (`As sete seções padrão`);
@@ -87,11 +91,15 @@ export const postmortem_template_text = /** @type {((inputs: Postmortem_Template
 		if (i?.part === "reset_default") return /** @type {LocalizedString} */ (`Usar as seções padrão`);
 		if (i?.part === "reset_confirm") return /** @type {LocalizedString} */ (`Deixar de usar este modelo? Novos postmortems passam a usar ${i?.name}. Postmortems já escritos mantêm suas seções.`);
 		if (i?.part === "reset_confirm_action") return /** @type {LocalizedString} */ (`Deixar de usar`);
+		if (i?.part === "ai_title") return /** @type {LocalizedString} */ (`Rascunhos de IA`);
+		if (i?.part === "ai_hint") return /** @type {LocalizedString} */ (`Os membros podem pedir ao Workers AI um primeiro rascunho de um postmortem em branco. Desativado, o botão some e o servidor recusa.`);
+		if (i?.part === "ai_owner_only") return /** @type {LocalizedString} */ (`Só proprietários podem ativar ou desativar os rascunhos de IA.`);
+		if (i?.part === "ai_failed") return /** @type {LocalizedString} */ (`Não foi possível mudar os rascunhos de IA: ${i?.name}`);
 		return /** @type {LocalizedString} */ (`Modelos de postmortem`)
 	}
 	{
 		if (i?.part === "title") return /** @type {LocalizedString} */ (`Postmortem templates`);
-		if (i?.part === "note") return /** @type {LocalizedString} */ (`The sections a new postmortem starts with, per incident type. A postmortem keeps the sections it was made with: editing a template or changing an incident's type later leaves it as it is.`);
+		if (i?.part === "note") return /** @type {LocalizedString} */ (`The sections a new postmortem starts with, per incident type. Once someone writes in a postmortem, it keeps its sections: editing a template or changing the incident's type leaves it as it is. A blank one follows the incident's new type.`);
 		if (i?.part === "default_name") return /** @type {LocalizedString} */ (`Workspace default`);
 		if (i?.part === "default_note") return /** @type {LocalizedString} */ (`For incidents with no type, or a type without its own template.`);
 		if (i?.part === "builtin") return /** @type {LocalizedString} */ (`The seven built-in sections`);
@@ -124,6 +132,10 @@ export const postmortem_template_text = /** @type {((inputs: Postmortem_Template
 		if (i?.part === "reset_default") return /** @type {LocalizedString} */ (`Use the built-in sections`);
 		if (i?.part === "reset_confirm") return /** @type {LocalizedString} */ (`Stop using this template? New postmortems take ${i?.name}. Postmortems already written keep their sections.`);
 		if (i?.part === "reset_confirm_action") return /** @type {LocalizedString} */ (`Stop using it`);
+		if (i?.part === "ai_title") return /** @type {LocalizedString} */ (`AI drafts`);
+		if (i?.part === "ai_hint") return /** @type {LocalizedString} */ (`Members can ask Workers AI for a first draft of a blank postmortem. Off, the button is hidden and the server refuses.`);
+		if (i?.part === "ai_owner_only") return /** @type {LocalizedString} */ (`Only owners can turn AI drafts on or off.`);
+		if (i?.part === "ai_failed") return /** @type {LocalizedString} */ (`Couldn't change AI drafts: ${i?.name}`);
 		return /** @type {LocalizedString} */ (`Postmortem templates`)
 	}
 });

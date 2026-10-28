@@ -9594,7 +9594,7 @@
           "Postmortems"
         ],
         "summary": "Ask Workers AI to draft an incident's postmortem",
-        "description": "Responders and up (`incident:update`). Runs `postmortem.requestDraft` (RFC 0013): the draft is written by the model in the background and arrives over Brigade Sync, in the status page's language when there is one, else `locale`. `409 conflict`: a draft is being written, or the postmortem has text a member wrote; `429 limit_reached`: too many drafts lately. `503 ai_unavailable`: the server has no Workers AI. With an API token: the `incident:update` scope.",
+        "description": "Responders and up (`incident:update`). Runs `postmortem.requestDraft` (RFC 0013): the draft is written by the model in the background and arrives over Brigade Sync, in the status page's language when there is one, else `locale`. `409 conflict`: a draft is being written, or the postmortem has text a member wrote; `429 limit_reached`: too many drafts lately. `403 ai_disabled`: an owner turned AI drafts off for the workspace. `503 ai_unavailable`: the server has no Workers AI. With an API token: the `incident:update` scope.",
         "security": [
           {
             "session": []
@@ -9719,6 +9719,7 @@
                       "enum": [
                         "forbidden_origin",
                         "not_a_member",
+                        "ai_disabled",
                         "forbidden"
                       ]
                     }
@@ -9806,6 +9807,228 @@
                       "enum": [
                         "unavailable",
                         "ai_unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/incidents/{incidentId}/postmortem/revisions": {
+      "get": {
+        "operationId": "listPostmortemRevisions",
+        "tags": [
+          "Postmortems"
+        ],
+        "summary": "List the kept revisions of an incident's postmortem",
+        "description": "Every member who reads incidents (`incident:read`). The last 20 revisions (RFC 0013 \"Revision history\"), newest first, each with its text by section, when and by whom it was saved, and whether Workers AI wrote it. Restoring one is a `postmortem.save` of its text over Brigade Sync. Empty for an incident with no postmortem yet. With an API token: the `incident:read` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "incidentId",
+            "in": "path",
+            "description": "The incident (`inc_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The kept revisions, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "revisions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "sections": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            },
+                            "description": "The text of each section, by key."
+                          },
+                          "savedAt": {
+                            "type": "integer",
+                            "description": "Unix time in milliseconds."
+                          },
+                          "savedBy": {
+                            "type": "string",
+                            "description": "A user id, or an API token's `tok_` id."
+                          },
+                          "ai": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "revision",
+                          "sections",
+                          "savedAt",
+                          "savedBy",
+                          "ai"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "revisions"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
                       ]
                     }
                   },

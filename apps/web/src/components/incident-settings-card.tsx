@@ -19,7 +19,7 @@ import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { CheckIcon, PencilIcon, PlusIcon, RotateCcwIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { SeverityBadge } from "@/components/incident-badges";
-import { PostmortemTemplates } from "@/components/postmortem-templates";
+import { AiDraftsSetting, PostmortemTemplates } from "@/components/postmortem-templates";
 import { Description, FORM, FormButtons, LABEL, Refusal, SELECT } from "@/components/services-card";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
@@ -209,6 +209,7 @@ export function IncidentSettingsCard() {
           count={loading(types.status) || loading(templates.status) ? null : false}
           add={null}
         >
+          {manage ? <AiDraftsSetting /> : null}
           <p className="text-sm text-muted-foreground">{templateText("note")}</p>
           <PostmortemTemplates
             types={types.rows}

@@ -13,7 +13,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "title" | "API tokens" |
 * | "description" | "Let scripts and integrations call Brigade's API for this workspace. A token acts with your role, never beyond the scopes you give it." |
 * | "add" | "Create token" |
-* | "manage_only" | "Only owners and admins can create and revoke API tokens." |
+* | "manage_only" | "Only owners and admins can see and manage API tokens." |
 * | "empty" | "No tokens yet. Create one for a script, a CI job or an integration." |
 * | "load_failed" | "Couldn't load the API tokens." |
 * | "retry" | "Try again" |
@@ -82,7 +82,7 @@ export const api_tokens_card = /** @type {((inputs: Api_Tokens_CardInputs, optio
 		if (i?.part === "title") return /** @type {LocalizedString} */ (`Tokens de API`);
 		if (i?.part === "description") return /** @type {LocalizedString} */ (`Permita que scripts e integrações chamem a API do Brigade neste workspace. Um token age com o seu papel, nunca além dos escopos que você der a ele.`);
 		if (i?.part === "add") return /** @type {LocalizedString} */ (`Criar token`);
-		if (i?.part === "manage_only") return /** @type {LocalizedString} */ (`Só donos e admins podem criar e revogar tokens de API.`);
+		if (i?.part === "manage_only") return /** @type {LocalizedString} */ (`Só donos e admins podem ver e gerenciar tokens de API.`);
 		if (i?.part === "empty") return /** @type {LocalizedString} */ (`Nenhum token ainda. Crie um para um script, um job de CI ou uma integração.`);
 		if (i?.part === "load_failed") return /** @type {LocalizedString} */ (`Não foi possível carregar os tokens de API.`);
 		if (i?.part === "retry") return /** @type {LocalizedString} */ (`Tentar de novo`);
@@ -145,7 +145,7 @@ export const api_tokens_card = /** @type {((inputs: Api_Tokens_CardInputs, optio
 		if (i?.part === "title") return /** @type {LocalizedString} */ (`API tokens`);
 		if (i?.part === "description") return /** @type {LocalizedString} */ (`Let scripts and integrations call Brigade's API for this workspace. A token acts with your role, never beyond the scopes you give it.`);
 		if (i?.part === "add") return /** @type {LocalizedString} */ (`Create token`);
-		if (i?.part === "manage_only") return /** @type {LocalizedString} */ (`Only owners and admins can create and revoke API tokens.`);
+		if (i?.part === "manage_only") return /** @type {LocalizedString} */ (`Only owners and admins can see and manage API tokens.`);
 		if (i?.part === "empty") return /** @type {LocalizedString} */ (`No tokens yet. Create one for a script, a CI job or an integration.`);
 		if (i?.part === "load_failed") return /** @type {LocalizedString} */ (`Couldn't load the API tokens.`);
 		if (i?.part === "retry") return /** @type {LocalizedString} */ (`Try again`);

@@ -2808,6 +2808,19 @@
         "part=read_only": "Only responders, admins and owners edit the postmortem.",
         "part=template_changed": "The postmortem template for this incident changed while you were writing. Your text is still here: copy what you need, then load the new sections.",
         "part=total": "{count} left in the whole postmortem",
+        "part=ai_refused_ai_disabled": "An owner turned AI drafts off for this workspace.",
+        "part=history": "Revision history",
+        "part=history_hide": "Hide revision history",
+        "part=history_loading": "Loading revisions…",
+        "part=history_failed": "Couldn't load the revisions: {reason}",
+        "part=history_note": "The last {count} revisions are kept. Restoring one opens it in the editor; saving it adds a new revision.",
+        "part=revision": "Revision {count}",
+        "part=revision_meta": "{time} by {name}",
+        "part=revision_ai": "AI draft",
+        "part=revision_current": "Current",
+        "part=restore": "Restore",
+        "part=restore_label": "Restore revision {count}",
+        "part=restoring": "Restoring revision {count}. Save to keep it as the latest version, or cancel.",
         "part=*": "Postmortem"
       }
     }
@@ -2818,7 +2831,7 @@
       "selectors": ["part"],
       "match": {
         "part=title": "Postmortem templates",
-        "part=note": "The sections a new postmortem starts with, per incident type. A postmortem keeps the sections it was made with: editing a template or changing an incident's type later leaves it as it is.",
+        "part=note": "The sections a new postmortem starts with, per incident type. Once someone writes in a postmortem, it keeps its sections: editing a template or changing the incident's type leaves it as it is. A blank one follows the incident's new type.",
         "part=default_name": "Workspace default",
         "part=default_note": "For incidents with no type, or a type without its own template.",
         "part=builtin": "The seven built-in sections",
@@ -2851,6 +2864,10 @@
         "part=reset_default": "Use the built-in sections",
         "part=reset_confirm": "Stop using this template? New postmortems take {name}. Postmortems already written keep their sections.",
         "part=reset_confirm_action": "Stop using it",
+        "part=ai_title": "AI drafts",
+        "part=ai_hint": "Members can ask Workers AI for a first draft of a blank postmortem. Off, the button is hidden and the server refuses.",
+        "part=ai_owner_only": "Only owners can turn AI drafts on or off.",
+        "part=ai_failed": "Couldn't change AI drafts: {name}",
         "part=*": "Postmortem templates"
       }
     }
@@ -3365,7 +3382,7 @@
         "part=title": "API tokens",
         "part=description": "Let scripts and integrations call Brigade's API for this workspace. A token acts with your role, never beyond the scopes you give it.",
         "part=add": "Create token",
-        "part=manage_only": "Only owners and admins can create and revoke API tokens.",
+        "part=manage_only": "Only owners and admins can see and manage API tokens.",
         "part=empty": "No tokens yet. Create one for a script, a CI job or an integration.",
         "part=load_failed": "Couldn't load the API tokens.",
         "part=retry": "Try again",

@@ -413,7 +413,8 @@ export type DraftRequestResult =
 
 /**
  * `POST /workspaces/:id/incidents/:incidentId/postmortem/draft` (body `{ locale }`, the asker's language, used when
- * the workspace has no status page language): responders and up, or an API token with `incident:update`. 503 `ai_unavailable` without the `AI` binding; 202
+ * the workspace has no status page language): responders and up, or an API token with `incident:update`. 503 `ai_unavailable` without the `AI` binding; 403
+ * `ai_disabled` when an owner turned AI drafts off for the workspace; 202
  * `{ requestId }` once the draft is pending, the draft itself arriving through sync.
  */
 export async function requestDraftRoute(
@@ -477,4 +478,63 @@ export async function requestDraftRoute(
     })(),
   );
   return json({ requestId }, 202);
+}
+
+/**
+ * `GET /workspaces/:id/incidents/:incidentId/postmortem/revisions`: the last revisions of the incident's postmortem
+ * (RFC 0013 "Revision history"), newest first, each with its text, who saved it and when. Every member who reads
+ * incidents, or an API token with `incident:read`. Restoring one is a `postmortem.save` of its text, over sync.
+ */
+export async function postmortemRevisionsRoute(
+  request: Request,
+  env: Omit<Env, "AI">,
+  lazyAuth: () => Auth,
+  workspaceId: string,
+  incidentId: string,
+  waitUntil?: (promise: Promise<unknown>) => void,
+): Promise<Response> {
+  const member = await checkMember(
+    request,
+    env,
+    lazyAuth,
+    workspaceId,
+    ["GET"],
+    "incident:read",
+    waitUntil,
+  );
+  if (!member.ok) return member.response;
+  if (!isId("inc", incidentId)) return json({ error: "not_found" }, 404);
+  try {
+    const result = await env.WORKSPACE.getByName(workspaceId).readPostmortemRevisions(
+      workspaceId,
+      member.actor,
+      incidentId,
+    );
+    if (!result.ok) {
+      if (result.code === "unauthenticated") return unauthenticated();
+      return json({ error: result.code }, DRAFT_STATUS[result.code] ?? 500);
+    }
+    return json(
+      {
+        revisions: result.revisions.map(({ revision, sections, savedAt, savedBy, ai }) => ({
+          revision,
+          sections,
+          savedAt,
+          savedBy,
+          ai,
+        })),
+      },
+      200,
+      { "Cache-Control": "private, no-store" },
+    );
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        message: "WorkspaceDO.readPostmortemRevisions failed",
+        workspaceId,
+        error: String(error),
+      }),
+    );
+    return json({ error: "unavailable" }, 503);
+  }
 }

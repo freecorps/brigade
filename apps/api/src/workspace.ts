@@ -3,6 +3,7 @@ import type { SlackActOutcome } from "@freecorps/brigade-slack/bridge";
 import {
   ACCOUNT_ACTOR,
   AI_ACTOR,
+  aiDraftsEnabled,
   BUILTIN_LAYOUT,
   allows,
   exportChunks,
@@ -13,6 +14,7 @@ import {
   ROLES,
   nextMaintenanceAt,
   nextReminderAt,
+  postmortemRevisions,
   remindersDue,
   STATUS_PAGE_ID,
   statusFollowKey,
@@ -23,6 +25,7 @@ import {
   type MutationErrorCode,
   type ExportScope,
   type PostmortemDraftFailure,
+  type PostmortemRevisionRow,
   type PostmortemSections,
   type ProbeRegion,
   type Role,
@@ -860,6 +863,10 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (await this.membership.refuses(workspaceId, actor.by ?? actor.id, Date.now())) {
       return { ok: false, code: "not_a_member" };
     }
+    // An owner turned AI drafts off for the workspace (Q24): refused before anything else counts.
+    if (!aiDraftsEnabled(this.shard.store.scan("workspace")[0])) {
+      return { ok: false, code: "ai_disabled" };
+    }
     // What the model reads comes first: an incident it cannot read is refused before the draft is pending and the
     // rate limit counts it. The mutation writes nothing `draftSource` reads, and nothing runs between the two.
     const language = this.shard.store.get("status_page", STATUS_PAGE_ID)?.locale ?? locale;
@@ -881,6 +888,31 @@ export class WorkspaceDO extends DurableObject<Env> {
     // The sections the draft fills: the postmortem's own, which the mutation took from its template if it was new.
     const layout = this.shard.store.get("postmortems", incidentId)?.layout ?? BUILTIN_LAYOUT;
     return { ok: true, requestId, source, layout: layout.map((section) => ({ ...section })) };
+  }
+
+  /**
+   * The kept revisions of the incident's postmortem, newest first (RPC from `GET
+   * /workspaces/:id/incidents/:incidentId/postmortem/revisions`, which checked the session or API token and
+   * `incident:read`). They are server-only, so a save never copies the document to every client; restoring one is a
+   * `postmortem.save` of its text from the dashboard.
+   */
+  async readPostmortemRevisions(
+    workspaceId: string,
+    actor: Actor,
+    incidentId: string,
+  ): Promise<{ ok: true; revisions: PostmortemRevisionRow[] } | { ok: false; code: string }> {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    const acting = this.tokenActor(actor);
+    if (!acting) return TOKEN_REFUSED;
+    actor = acting;
+    if (await this.membership.refuses(workspaceId, actor.by ?? actor.id, Date.now())) {
+      return { ok: false, code: "not_a_member" };
+    }
+    if (!isRole(actor.role) || !allows(actor, "incident:read")) {
+      return { ok: false, code: "forbidden" };
+    }
+    if (!this.shard.store.get("incidents", incidentId)) return { ok: false, code: "not_found" };
+    return { ok: true, revisions: postmortemRevisions(this.shard.store, incidentId) };
   }
 
   /** Writes the model's draft, or why there is none, as `sys_ai` (RPC from the Worker's `waitUntil`). */

@@ -1,6 +1,6 @@
 // API tokens (RFC 0014): per-workspace bearer tokens for scripts and integrations. The token itself and its digest
 // live in D1 only (the API Worker mints, hashes and resolves them); the shard keeps this list (`api_tokens`, synced to
-// every member, never the token or its digest) for the dashboard and for naming a token's timeline entries, and runs
+// owners and admins, never the token or its digest) for the dashboard and for naming a token's timeline entries, and runs
 // `apiToken.create` and `apiToken.revoke` so each is an event through its outbox (RFC 0005).
 
 import { can, PERMISSIONS, type Permission, type Role } from "./access.ts";
@@ -191,11 +191,15 @@ export const touchApiToken = defineMutation({
 
 export const apiTokenServerMutations = [createApiToken, revokeApiToken, touchApiToken] as const;
 
-/** The workspace's tokens, newest first: every member sees which scripts act in it, and by whom. */
+/**
+ * The workspace's tokens, newest first: which scripts act in it, and by whom. Owners and admins only (decided, Q25),
+ * the ones who mint and revoke them; to everyone else a token's timeline entries read "An API token". Never a token's
+ * own scope (`token:manage` is not one), so a script never lists its siblings.
+ */
 export const allApiTokens = defineQuery({
   name: "apiToken.all",
   args: v.object({}),
-  permission: "workspace:read",
+  permission: "token:manage",
   table: "api_tokens",
   filter: () => true,
   sort: (a, b) => b.createdAt - a.createdAt || (a.id < b.id ? 1 : -1),

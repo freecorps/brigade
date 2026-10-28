@@ -1,4 +1,6 @@
+import { mutationErrorReason } from "@freecorps/brigade-i18n/incident";
 import {
+  aiDraftsEnabled,
   DEFAULT_TEMPLATE_ID,
   isBuiltinSection,
   type IncidentTypeRow,
@@ -6,15 +8,24 @@ import {
   type PostmortemTemplateSection,
 } from "@freecorps/brigade-schema";
 import type { MutationOutcome } from "@freecorps/brigade-sync";
-import { useMutation } from "@freecorps/brigade-sync/react";
+import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { cn } from "cn";
-import { ArrowDownIcon, ArrowUpIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  PencilIcon,
+  PlusIcon,
+  SparklesIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { useId, useRef, useState, type FormEvent } from "react";
 import { FORM, FormButtons, LABEL, TEXTAREA } from "@/components/services-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Field } from "@/components/ui/field";
+import { useMember } from "@/components/session";
+import { Field, FormError } from "@/components/ui/field";
 import { catalogRefusal } from "@/lib/catalog";
+import { useFeatures } from "@/lib/follow-ups";
 import {
   addableSections,
   BUILTIN_LAYOUT,
@@ -30,6 +41,84 @@ import {
   templateText,
   type SectionErrors,
 } from "@/lib/postmortem-templates";
+
+/**
+ * Whether members may ask Workers AI for postmortem drafts (`workspace.setAiDrafts`, RFC 0013; decided, Q24). Shown
+ * to owners and admins on a server with Workers AI; only owners switch it.
+ */
+export function AiDraftsSetting() {
+  const { role } = useMember();
+  const features = useFeatures();
+  const workspace = useQuery("workspace.current", {});
+  const setAiDrafts = useMutation("workspace.setAiDrafts");
+  if (!features.ai || workspace.status !== "ready") return null;
+  return (
+    <AiDraftsSwitch
+      enabled={aiDraftsEnabled(workspace.rows[0])}
+      owner={role === "owner"}
+      onChange={(enabled) => setAiDrafts({ enabled })}
+    />
+  );
+}
+
+/** The switch without the hooks (tested with made-up data). */
+export function AiDraftsSwitch({
+  enabled,
+  owner,
+  onChange,
+}: {
+  enabled: boolean;
+  owner: boolean;
+  onChange: (enabled: boolean) => Promise<MutationOutcome>;
+}) {
+  const id = useId();
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const flip = (next: boolean) => {
+    setSaving(true);
+    setFailed(null);
+    void onChange(next).then((outcome) => {
+      setSaving(false);
+      if (!outcome.ok) {
+        setFailed(templateText("ai_failed", { name: mutationErrorReason(outcome.error.code) }));
+      }
+    });
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <label
+        htmlFor={id}
+        className={cn(
+          "flex min-h-11 items-start gap-3 rounded-md border px-3 py-2.5 text-sm",
+          "has-focus-visible:ring-3 has-focus-visible:ring-ring",
+          owner ? "cursor-pointer hover:bg-muted" : "cursor-default",
+          enabled ? "border-primary bg-primary/5" : "border-input",
+        )}
+      >
+        <input
+          id={id}
+          type="checkbox"
+          role="switch"
+          className="mt-0.5 size-4 shrink-0 accent-primary"
+          checked={enabled}
+          disabled={!owner || saving}
+          onChange={(event) => flip(event.target.checked)}
+        />
+        <span className="flex min-w-0 flex-col gap-0.5 [overflow-wrap:anywhere]">
+          <span className="flex items-center gap-1.5 font-medium">
+            <SparklesIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+            {templateText("ai_title")}
+          </span>
+          <span className="text-muted-foreground">{templateText("ai_hint")}</span>
+          {owner ? null : (
+            <span className="text-muted-foreground">{templateText("ai_owner_only")}</span>
+          )}
+        </span>
+      </label>
+      {failed ? <FormError>{failed}</FormError> : null}
+    </div>
+  );
+}
 
 /**
  * The workspace's postmortem templates (RFC 0013 "Templates"): its default and one per incident type, each the

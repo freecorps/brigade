@@ -1,6 +1,7 @@
 import { formatDateTime } from "@freecorps/brigade-i18n";
 import { mutationErrorReason } from "@freecorps/brigade-i18n/incident";
 import {
+  aiDraftsEnabled,
   can,
   canDraftPostmortem,
   draftRunning,
@@ -8,6 +9,8 @@ import {
   POSTMORTEM_SECTION_MAX,
   POSTMORTEM_TOTAL_MAX,
   postmortemLayout,
+  POSTMORTEM_REVISIONS_KEPT,
+  restoredSections,
   type IncidentRow,
   type PostmortemRow,
   type PostmortemSections,
@@ -17,21 +20,30 @@ import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { cn } from "cn";
 import {
   FileTextIcon,
+  HistoryIcon,
   LoaderCircleIcon,
   PencilIcon,
+  RotateCcwIcon,
   SparklesIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type FormEvent } from "react";
 import { useNow } from "@/components/incidents-card";
 import { usePreferences } from "@/components/preferences";
 import { FORM, Refusal, TEXTAREA } from "@/components/services-card";
 import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
-import { postmortemText, requestDraft, useFeatures } from "@/lib/follow-ups";
+import {
+  loadRevisions,
+  postmortemText,
+  requestDraft,
+  useFeatures,
+  type PostmortemRevision,
+} from "@/lib/follow-ups";
 import { onlyStarters, sectionName, starterSections } from "@/lib/postmortem-templates";
-import { people, personName } from "@/lib/timeline";
+import { people, personName, type People } from "@/lib/timeline";
 
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 /** A section shows how much room is left once it is this close to the cap. */
@@ -45,7 +57,12 @@ const keysOf = (layout: Layout) => layout.map((section) => section.key).join(","
 
 /** Why an AI draft request was refused, worded. */
 function refusalText(code: string): string {
-  if (code === "limit_reached" || code === "conflict" || code === "ai_unavailable") {
+  if (
+    code === "limit_reached" ||
+    code === "conflict" ||
+    code === "ai_unavailable" ||
+    code === "ai_disabled"
+  ) {
     return postmortemText(`ai_refused_${code}`);
   }
   return postmortemText("ai_refused_other", { reason: mutationErrorReason(code) });
@@ -58,8 +75,10 @@ function refusalText(code: string): string {
  * someone else saved since, it is refused and the editor keeps the text, so nothing is lost and nothing is overwritten
  * unseen. An editor never opens on a row holding an unconfirmed change, and saves one at a time: a base is never this
  * client's own optimistic revision. With Workers AI set up, "Draft with AI" asks for a
- * first draft while the document is empty (or still an unreviewed AI draft); it arrives through sync, marked as an AI
- * draft until a member saves it.
+ * first draft while the document is empty (or still an unreviewed AI draft), unless an owner turned AI drafts off for
+ * the workspace; it arrives through sync, marked as an AI draft until a member saves it. Its revision history (the
+ * last few revisions, kept by the shard) lists who saved each and when; restoring one opens it in the editor, and
+ * saving it is a save like any other.
  */
 export function PostmortemCard({ incident }: { incident: IncidentRow }) {
   const member = useMember();
@@ -70,6 +89,7 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
   const members = useQuery("members.all", {});
   const tokens = useQuery("apiToken.all", {});
   const templates = useQuery("postmortemTemplates.all", {});
+  const workspace = useQuery("workspace.current", {});
   const save = useMutation("postmortem.save");
   const row: PostmortemRow | undefined = query.rows[0];
   const layout = postmortemLayout(
@@ -82,6 +102,8 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
     base: Base;
     layout: Layout;
     sections: Record<string, string>;
+    /** The kept revision whose text the editor opened with, to restore it. */
+    restoring?: number;
   } | null>(null);
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState<Conflict>(null);
@@ -94,14 +116,17 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
   // Whether `row` is the server's: not while it holds a change the server has not answered yet. A postmortem not yet
   // made also waits for the templates, which say its sections.
   const confirmed = !query.pending && (row !== undefined || templates.status === "ready");
-  const open = () => {
+  const open = (from?: PostmortemRevision) => {
     if (!confirmed) return;
     setEditing({
       base: baseOf(row),
       layout,
-      sections: blank
-        ? starterSections(layout)
-        : Object.fromEntries(layout.map(({ key }) => [key, row?.sections[key] ?? ""])),
+      sections: from
+        ? (restoredSections(from, layout) as Record<string, string>)
+        : blank
+          ? starterSections(layout)
+          : Object.fromEntries(layout.map(({ key }) => [key, row?.sections[key] ?? ""])),
+      ...(from && { restoring: from.revision }),
     });
   };
   const startEditing = () => {
@@ -165,7 +190,12 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
   };
 
   const showDraft =
-    features.ai && editable && editing === null && !running && canDraftPostmortem(row);
+    features.ai &&
+    aiDraftsEnabled(workspace.rows[0]) &&
+    editable &&
+    editing === null &&
+    !running &&
+    canDraftPostmortem(row);
   const failed = row?.draft?.status === "failed" ? row.draft.reason : null;
   // A pending draft past its time was lost: it reads as failed.
   const lost = row?.draft?.status === "pending" && !running;
@@ -240,6 +270,7 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
           <Editor
             initial={editing.sections}
             layout={editing.layout}
+            restoring={editing.restoring}
             conflict={conflict}
             saving={saving}
             canReload={confirmed}
@@ -252,7 +283,7 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
               setConflict(null);
             }}
             onSave={onSave}
-            key={`${editing.base.revision}:${editing.base.updatedAt}:${keysOf(editing.layout)}`}
+            key={`${editing.base.revision}:${editing.base.updatedAt}:${keysOf(editing.layout)}:${editing.restoring ?? ""}`}
           />
         ) : blank ? (
           <p className="text-muted-foreground">
@@ -285,6 +316,21 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
                 name: personName(row.updatedBy, who),
               })}
             </p>
+            {row.revision > 0 ? (
+              <RevisionHistory
+                workspaceId={member.workspaceId}
+                incidentId={incident.id}
+                current={row.revision}
+                layout={layout}
+                who={who}
+                canRestore={editable && confirmed && !running}
+                onRestore={(revision) => {
+                  setConflict(null);
+                  setRefused(null);
+                  open(revision);
+                }}
+              />
+            ) : null}
           </>
         ) : null}
       </CardContent>
@@ -302,6 +348,7 @@ const baseOf = (row: PostmortemRow | undefined): Base =>
 function Editor({
   initial,
   layout,
+  restoring,
   conflict,
   saving,
   canReload,
@@ -311,6 +358,7 @@ function Editor({
 }: {
   initial: Record<string, string>;
   layout: Layout;
+  restoring?: number;
   conflict: Conflict;
   saving: boolean;
   canReload: boolean;
@@ -327,6 +375,12 @@ function Editor({
   };
   return (
     <form className={FORM} onSubmit={submit}>
+      {restoring !== undefined ? (
+        <p role="status" className="flex items-start gap-2 text-muted-foreground">
+          <HistoryIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+          {postmortemText("restoring", { count: restoring })}
+        </p>
+      ) : null}
       {conflict ? (
         <div role="alert" className="flex flex-col items-start gap-2 text-destructive">
           <p className="flex items-start gap-2">
@@ -409,5 +463,172 @@ function Editor({
         </Button>
       </div>
     </form>
+  );
+}
+
+type Loaded =
+  | { state: "loading" }
+  | { state: "failed"; error: string }
+  | { state: "ready"; revisions: PostmortemRevision[] };
+
+/**
+ * The postmortem's kept revisions (RFC 0013 "Revision history"), shown on demand: each with who saved it and when,
+ * its text when opened, and, for those who edit, Restore, which opens that text in the editor over the current
+ * revision. They are read over HTTP, not synced, and read again whenever a new revision lands while it is open.
+ */
+function RevisionHistory({
+  workspaceId,
+  incidentId,
+  current,
+  layout,
+  who,
+  canRestore,
+  onRestore,
+}: {
+  workspaceId: string;
+  incidentId: string;
+  current: number;
+  layout: Layout;
+  who: People;
+  canRestore: boolean;
+  onRestore: (revision: PostmortemRevision) => void;
+}) {
+  const [shown, setShown] = useState(false);
+  const [loaded, setLoaded] = useState<Loaded>({ state: "loading" });
+  const listId = useId();
+  useEffect(() => {
+    if (!shown) return;
+    let live = true;
+    setLoaded((previous) => (previous.state === "ready" ? previous : { state: "loading" }));
+    void loadRevisions(workspaceId, incidentId).then((result) => {
+      if (!live) return;
+      setLoaded(
+        result.ok
+          ? { state: "ready", revisions: result.revisions }
+          : { state: "failed", error: result.error },
+      );
+    });
+    return () => {
+      live = false;
+    };
+  }, [shown, workspaceId, incidentId, current]);
+  return (
+    <div className="flex flex-col gap-3">
+      <Button
+        variant="ghost"
+        className="self-start"
+        aria-expanded={shown}
+        aria-controls={shown ? listId : undefined}
+        onClick={() => setShown((open) => !open)}
+      >
+        <HistoryIcon aria-hidden />
+        {postmortemText(shown ? "history_hide" : "history")}
+      </Button>
+      {shown ? (
+        <div id={listId} className="flex flex-col gap-2">
+          <p className="text-xs text-muted-foreground">
+            {postmortemText("history_note", { count: POSTMORTEM_REVISIONS_KEPT })}
+          </p>
+          {loaded.state === "loading" ? (
+            <p role="status" className="text-muted-foreground">
+              {postmortemText("history_loading")}
+            </p>
+          ) : loaded.state === "failed" ? (
+            <p role="alert" className="text-destructive">
+              {postmortemText("history_failed", { reason: mutationErrorReason(loaded.error) })}
+            </p>
+          ) : (
+            <ol className="flex flex-col divide-y rounded-md border">
+              {loaded.revisions.map((revision) => (
+                <RevisionItem
+                  key={revision.revision}
+                  revision={revision}
+                  current={revision.revision === current}
+                  layout={layout}
+                  who={who}
+                  canRestore={canRestore}
+                  onRestore={onRestore}
+                />
+              ))}
+            </ol>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function RevisionItem({
+  revision,
+  current,
+  layout,
+  who,
+  canRestore,
+  onRestore,
+}: {
+  revision: PostmortemRevision;
+  current: boolean;
+  layout: Layout;
+  who: People;
+  canRestore: boolean;
+  onRestore: (revision: PostmortemRevision) => void;
+}) {
+  const { locale } = usePreferences();
+  return (
+    <li>
+      <details className="group">
+        <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring focus-visible:outline-none [&::-webkit-details-marker]:hidden">
+          <span className="font-medium tabular-nums">
+            {postmortemText("revision", { count: revision.revision })}
+          </span>
+          {current ? <Badge variant="secondary">{postmortemText("revision_current")}</Badge> : null}
+          {revision.ai ? (
+            <Badge variant="outline">
+              <SparklesIcon aria-hidden />
+              {postmortemText("revision_ai")}
+            </Badge>
+          ) : null}
+          <span className="min-w-0 text-xs text-muted-foreground tabular-nums [overflow-wrap:anywhere]">
+            {postmortemText("revision_meta", {
+              time: formatDateTime(revision.savedAt, locale, TIME_ZONE),
+              name: personName(revision.savedBy, who),
+            })}
+          </span>
+        </summary>
+        <div className="flex flex-col gap-3 border-t bg-muted/30 px-3 py-3">
+          <dl className="flex flex-col gap-3">
+            {layout.map((section) => {
+              const text = revision.sections[section.key];
+              return (
+                <div key={section.key} className="flex flex-col gap-0.5">
+                  <dt className="text-xs font-medium text-muted-foreground [overflow-wrap:anywhere]">
+                    {sectionName(section)}
+                  </dt>
+                  <dd
+                    className={cn(
+                      "whitespace-pre-wrap [overflow-wrap:anywhere]",
+                      !text && "text-muted-foreground italic",
+                    )}
+                  >
+                    {text || postmortemText("section_empty")}
+                  </dd>
+                </div>
+              );
+            })}
+          </dl>
+          {canRestore && !current ? (
+            <Button
+              variant="outline"
+              className="self-start"
+              aria-label={postmortemText("restore_label", { count: revision.revision })}
+              onClick={() => onRestore(revision)}
+            >
+              <RotateCcwIcon aria-hidden />
+              {postmortemText("restore")}
+            </Button>
+          ) : null}
+        </div>
+      </details>
+    </li>
   );
 }

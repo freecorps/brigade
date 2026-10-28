@@ -139,6 +139,46 @@ export const setEmailSettings = defineMutation({
   },
 });
 
+/** Whether the workspace lets its members ask for AI postmortem drafts: on until an owner turns it off. */
+export function aiDraftsEnabled(row: Pick<WorkspaceRow, "aiDrafts"> | undefined): boolean {
+  return row?.aiDrafts !== false;
+}
+
+export type WorkspaceAiDraftsChanged = DomainEvent<
+  "workspace.ai_drafts_changed",
+  { enabled: boolean }
+>;
+
+/**
+ * Turns AI postmortem drafts on or off for the workspace (RFC 0013 "Drafting with AI"; decided, Q24): owners only.
+ * Off, the dashboard hides "Draft with AI" and `postmortem.requestDraft` refuses. A draft already being written
+ * still lands. No change is a `conflict`.
+ */
+export const setAiDrafts = defineMutation({
+  name: "workspace.setAiDrafts",
+  args: v.object({ enabled: v.boolean() }),
+  permission: "workspace:manage",
+  apply(store, args, ctx) {
+    if (ctx.actor.role !== "owner")
+      return fail("forbidden", "Only owners turn AI drafts on or off");
+    const [row] = store.scan("workspace");
+    if (!row) return fail("not_found", "Workspace not found");
+    if (aiDraftsEnabled(row) === args.enabled) {
+      return fail(
+        "conflict",
+        args.enabled ? "AI drafts are already on" : "AI drafts are already off",
+      );
+    }
+    store.update("workspace", row.id, { aiDrafts: args.enabled });
+    const event: WorkspaceAiDraftsChanged = {
+      type: "workspace.ai_drafts_changed",
+      subject: row.id,
+      data: { enabled: args.enabled },
+    };
+    return ok(event);
+  },
+});
+
 /**
  * Server only: copies the member a socket acts as into the shard's member list (`members`), from what the Worker
  * read in D1 when it authenticated the upgrade (RFC 0004 "Socket topology"). D1 stays the authority on membership:

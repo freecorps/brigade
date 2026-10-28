@@ -214,6 +214,27 @@ describe("apiToken.revoke and apiToken.touch", () => {
   });
 });
 
+describe("apiToken.all", () => {
+  test("owners and admins list the tokens; responders, viewers and tokens are refused", () => {
+    const { store } = create();
+    for (const role of ["owner", "admin"] as const) {
+      expect(runQuery(queries, "apiToken.all", {}, store, role)).toMatchObject({
+        ok: true,
+        rows: [{ id: TOK }],
+      });
+    }
+    for (const role of ["responder", "viewer"] as const) {
+      expect(runQuery(queries, "apiToken.all", {}, store, role)).toMatchObject({
+        ok: false,
+        error: { code: "forbidden" },
+      });
+    }
+    expect(
+      runQuery(queries, "apiToken.all", {}, store, "owner", { scopes: TOKEN_SCOPES }),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+  });
+});
+
 describe("a token's scopes bound what it does over sync", () => {
   const token: Actor = {
     kind: "token",

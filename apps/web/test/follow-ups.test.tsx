@@ -32,6 +32,8 @@ import { routeTree } from "../src/routeTree.gen";
 let role: Role = "responder";
 /** What `GET /api/features` answers. */
 let features = { ai: false, exports: false };
+/** What `GET …/postmortem/revisions` answers. */
+let revisions: unknown[] = [];
 vi.mock("../src/lib/auth", async (original) => {
   const done = (data: () => unknown) => () => ({
     data: data(),
@@ -76,6 +78,7 @@ afterEach(() => {
   root = client = undefined;
   role = "responder";
   features = { ai: false, exports: false };
+  revisions = [];
   vi.restoreAllMocks();
   document.body.innerHTML = "";
   localStorage.clear();
@@ -92,7 +95,11 @@ const member = (id: string, name: string | null, memberRole: Role = "responder")
 async function mount(path: string, locale: "en" | "pt-BR" = "en") {
   void setI18nLocale(locale);
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
-    input === "/api/features" ? Response.json(features) : Promise.reject(new TypeError("offline")),
+    input === "/api/features"
+      ? Response.json(features)
+      : typeof input === "string" && input.endsWith("/postmortem/revisions")
+        ? Response.json({ revisions })
+        : Promise.reject(new TypeError("offline")),
   );
   resetFeatures();
   const dev: Actor = { kind: "user", id: "usr_dev", role };
@@ -320,6 +327,127 @@ describe("postmortem", () => {
       revision: 1,
       sections: { summary: "Checkout failed." },
     });
+  });
+});
+
+describe("postmortem: Q24", () => {
+  test("with AI drafts turned off for the workspace, the draft button is hidden", async () => {
+    features = { ai: true, exports: false };
+    const view = await mount("/incidents/1");
+    view.declare("Checkout down");
+    view.shard.store.insert("workspace", {
+      id: SHARD,
+      name: "Demo",
+      createdAt: T0,
+      createdBy: "usr_dev",
+      aiDrafts: false,
+    });
+    await act(() => view.router.load());
+    await view.flush();
+    await view.flush();
+    const postmortem = card("Postmortem")!;
+    expect(postmortem.textContent).toContain("Write postmortem");
+    expect(postmortem.textContent).not.toContain("Draft with AI");
+  });
+
+  test("the revision history lists who saved each; Restore opens one and saves it as a new revision", async () => {
+    const view = await mount("/incidents/1");
+    const id = view.declare("Checkout down");
+    view.shard.store.insert("postmortems", {
+      id,
+      sections: { ...EMPTY_SECTIONS, summary: "Second version." },
+      revision: 2,
+      ai: null,
+      draft: null,
+      createdAt: T0,
+      updatedAt: T0,
+      updatedBy: "usr_dev",
+    });
+    revisions = [
+      {
+        revision: 2,
+        sections: { summary: "Second version." },
+        savedAt: T0,
+        savedBy: "usr_dev",
+        ai: false,
+      },
+      {
+        revision: 1,
+        sections: { ...EMPTY_SECTIONS, summary: "First, by the AI." },
+        savedAt: T0 - 60_000,
+        savedBy: "usr_bia",
+        ai: true,
+      },
+    ];
+    await act(() => view.router.load());
+    await view.flush();
+    const postmortem = card("Postmortem")!;
+    await click(
+      $$("button", postmortem).find((button) => button.textContent === "Revision history"),
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const items = $$("li", postmortem);
+    expect(items).toHaveLength(2);
+    expect(items[0]!.textContent).toContain("Revision 2");
+    expect(items[0]!.textContent).toContain("Current");
+    expect(items[1]!.textContent).toContain("AI draft");
+    expect(items[1]!.textContent).toContain(LONG_NAME);
+    // The current one has nothing to restore.
+    expect($('[aria-label="Restore revision 2"]', postmortem)).toBeNull();
+    await click($('[aria-label="Restore revision 1"]', postmortem));
+    expect(postmortem.textContent).toContain("Restoring revision 1.");
+    expect($<HTMLTextAreaElement>("textarea", postmortem)!.value).toBe("First, by the AI.");
+    await click($$("button", postmortem).find((button) => button.textContent === "Save"));
+    await view.flush();
+    expect(view.shard.store.get("postmortems", id)).toMatchObject({
+      revision: 3,
+      sections: { summary: "First, by the AI." },
+    });
+  });
+
+  test("owners switch AI drafts off in Incident settings", async () => {
+    features = { ai: true, exports: false };
+    role = "owner";
+    const view = await mount("/");
+    view.shard.store.insert("workspace", {
+      id: SHARD,
+      name: "Demo",
+      createdAt: T0,
+      createdBy: "usr_dev",
+    });
+    await act(() => view.router.load());
+    await view.flush();
+    await view.flush();
+    const toggle = $<HTMLInputElement>(
+      'input[role="switch"]:not([disabled])',
+      document.querySelector('[aria-labelledby="incident-settings-title"]')!,
+    )!;
+    expect(toggle.closest("label")!.textContent).toContain("AI drafts");
+    expect(toggle.checked).toBe(true);
+    await click(toggle);
+    await view.flush();
+    expect(view.shard.store.get("workspace", SHARD)).toMatchObject({ aiDrafts: false });
+  });
+
+  test("admins see the AI drafts switch but cannot change it", async () => {
+    features = { ai: true, exports: false };
+    role = "admin";
+    const view = await mount("/");
+    view.shard.store.insert("workspace", {
+      id: SHARD,
+      name: "Demo",
+      createdAt: T0,
+      createdBy: "usr_dev",
+    });
+    await act(() => view.router.load());
+    await view.flush();
+    await view.flush();
+    const settings = document.querySelector('[aria-labelledby="incident-settings-title"]')!;
+    const label = $$("label", settings).find((one) => one.textContent?.includes("AI drafts"))!;
+    expect(label.textContent).toContain("Only owners can turn AI drafts on or off.");
+    expect($<HTMLInputElement>('input[role="switch"]', label)!.disabled).toBe(true);
   });
 });
 

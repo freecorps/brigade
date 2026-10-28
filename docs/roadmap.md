@@ -450,9 +450,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
     with AI" work there.
   - Left: staging and production buckets and their `AI` bindings (owner's call); the mobile app's follow-ups and
     postmortem; issue-tracker sync.
-  - Left (decided, Q24; RFC 0013): the last 20 postmortem revisions with restore from the dashboard; owners turning
-    AI drafts off per workspace; the draft in the workspace locale (Q15); reminders stopping once a follow-up is 14
-    days overdue; a still-blank postmortem following its incident's new type.
+  - Done since (decided, Q24; RFC 0013): the last 20 postmortem revisions, kept server-only, listed on the incident
+    page with who saved each and restored from there as a save; owners turning AI drafts off per workspace
+    (`workspace.setAiDrafts`); reminders stopping once a follow-up is 14 days overdue; a still-blank postmortem
+    following its incident's new type.
+  - Left (decided, Q24): the draft in the workspace locale, once the workspace locale (Q15) exists.
 - [ ] Public status page with email subscriptions
   - Done (RFC 0012): one page per workspace with a name, an address (`/status/<slug>`, unique across the instance,
     claimed in D1) and a language (en, pt-BR), public or a draft; components in optional groups with a status set by
@@ -537,7 +539,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     each as the creator's current role, re-checked in the shard (RFC 0014 "Using one").
   - Left: GitHub secret scanning partner registration for `brg_` (owner); setting `API_TOKEN_KEY` on deployed
     environments (owner); tokens on the status page's subscriber list (the public's addresses: a person's call); the
-    token list synced to owners and admins only (decided, Q25, RFC 0014).
+    token list synced to owners and admins only is done (decided, Q25, RFC 0014).
 
 ## Phase 4 — Open source launch (ongoing)
 

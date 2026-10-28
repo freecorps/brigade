@@ -10,7 +10,7 @@ export type Postmortem_Template_TextInputs = {
 * | part | output |
 * | --- | --- |
 * | "title" | "Postmortem templates" |
-* | "note" | "The sections a new postmortem starts with, per incident type. A postmortem keeps the sections it was made with: editing a template or changing an incident's ..." |
+* | "note" | "The sections a new postmortem starts with, per incident type. Once someone writes in a postmortem, it keeps its sections: editing a template or changing the ..." |
 * | "default_name" | "Workspace default" |
 * | "default_note" | "For incidents with no type, or a type without its own template." |
 * | "builtin" | "The seven built-in sections" |
@@ -43,6 +43,10 @@ export type Postmortem_Template_TextInputs = {
 * | "reset_default" | "Use the built-in sections" |
 * | "reset_confirm" | "Stop using this template? New postmortems take {name}. Postmortems already written keep their sections." |
 * | "reset_confirm_action" | "Stop using it" |
+* | "ai_title" | "AI drafts" |
+* | "ai_hint" | "Members can ask Workers AI for a first draft of a blank postmortem. Off, the button is hidden and the server refuses." |
+* | "ai_owner_only" | "Only owners can turn AI drafts on or off." |
+* | "ai_failed" | "Couldn't change AI drafts: {name}" |
 * | * | "Postmortem templates" |
 *
 * @param {Postmortem_Template_TextInputs} inputs

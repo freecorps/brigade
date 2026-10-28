@@ -15,6 +15,7 @@ import {
   type MutationResult,
   type MutationStore,
 } from "./mutation.ts";
+import { followNewType } from "./postmortems.ts";
 import { defineQuery } from "./query.ts";
 import {
   COMMANDER_ROLE,
@@ -1020,7 +1021,8 @@ export function liveFields(
 
 /**
  * Sets or clears the incident's type. Its defaults (severity) apply only when declaring: changing the type later
- * changes nothing else, and an escalation run under way keeps the policy it started with.
+ * changes nothing else, and an escalation run under way keeps the policy it started with. The one exception is a
+ * postmortem nobody wrote in yet, which takes the new type's template (`followNewType`).
  */
 export const setIncidentType = defineMutation({
   name: "incident.setType",
@@ -1040,6 +1042,8 @@ export const setIncidentType = defineMutation({
       ]);
     }
     store.update("incidents", args.id, { typeId: args.typeId, updatedAt: ctx.now });
+    // A postmortem nobody wrote in yet takes the new type's template; one with text keeps its sections.
+    followNewType(store, args.id, args.typeId, ctx.now);
     // A type deleted since has no name left: the entry says the incident changed from a deleted type.
     const previous = from ? store.get("incident_types", from) : undefined;
     appendTimeline(

@@ -11,9 +11,9 @@ copy, the mutations), `apps/api/src/api-tokens.ts` (minting, revoking, resolving
 ## Who mints them, and what they carry
 
 - **Per workspace.** A token acts in one workspace only. Owners and admins mint and revoke them (`token:manage`,
-  RFC 0003's table). The list is synced to every member (`apiToken.all`, `workspace:read`) today. Decided (Q25), to
-  build: it is synced to owners and admins only (`token:manage`), the ones who act on it. The list never holds the
-  token or its hash.
+  RFC 0003's table). The list is synced to owners and admins only (`apiToken.all`, `token:manage`; decided, Q25), the
+  ones who act on it; to everyone else, what a token did reads "An API token" on the timeline. A token never reads
+  it either (`token:manage` is never a scope). The list never holds the token or its hash.
 - **Name, expiry, scopes.** A name (1 to 60 characters), an optional expiry (1 to 365 days; none means until
   revoked) and one or more scopes. Up to 50 tokens a workspace that are neither revoked nor expired.
 - **Scopes are the permissions** of RFC 0003 (`incident:ack`, `incident:update`, `monitor:manage`, `members:manage`,
@@ -75,7 +75,7 @@ copy, the mutations), `apps/api/src/api-tokens.ts` (minting, revoking, resolving
   remove them; RFC 0002 "Public HTTP API"), the dashboard's own routes that need the server (outbound webhooks:
   creating one, rotating its secret and setting its custom headers, `webhook:manage`; the status page's settings,
   `status:manage`; making and downloading an export, `data:export`; asking for an AI postmortem draft,
-  `incident:update`) and the sync WebSocket (each query and mutation checked against the scopes). A `PATCH` of an incident or a catalog entry answers the row it changed, so it needs the read scope as well
+  `incident:update`; reading a postmortem's kept revisions, `incident:read`) and the sync WebSocket (each query and mutation checked against the scopes). A `PATCH` of an incident or a catalog entry answers the row it changed, so it needs the read scope as well
   (`incident:update` and `incident:read`; `catalog:manage` and `catalog:read`): a write-only token is not handed rows
   it may not read, even by an empty `PATCH`. Creates answer only the row they made, and the other writes
   `{ ok: true }`, so they need no read scope. No scope was added for them: they are the permissions those mutations and queries already need. Not: `POST

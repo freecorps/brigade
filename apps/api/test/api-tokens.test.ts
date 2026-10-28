@@ -892,16 +892,26 @@ describe("the token itself", () => {
       });
     }
     const t = await team();
-    const minted = await mint(t, t.ana, ["workspace:read", "incident:ack"]);
+    const minted = await mint(t, t.ana, ["workspace:read", "incident:read", "incident:ack"]);
     const hash = await tokenDigest(minted.token, undefined);
     expect((await ack(t, minted.token)).status).toBe(200);
     const socket = await openSocket(t, minted.token);
     const frames = collect(socket);
     socket.send(JSON.stringify({ type: "hello", protocol: PROTOCOL_VERSION, clientId: "script" }));
+    // A token never lists tokens (owners and admins only, Q25): its socket is refused the list.
     socket.send(JSON.stringify({ type: "subscribe", subId: "t", query: "apiToken.all", args: {} }));
     await vi.waitFor(() =>
+      expect(frames.find((frame) => frame.subId === "t")).toMatchObject({
+        type: "error",
+        code: "forbidden",
+      }),
+    );
+    socket.send(
+      JSON.stringify({ type: "subscribe", subId: "a", query: "incidents.active", args: {} }),
+    );
+    await vi.waitFor(() =>
       expect(
-        frames.find((frame) => frame.type === "snapshot" && frame.subId === "t"),
+        frames.find((frame) => frame.type === "snapshot" && frame.subId === "a"),
       ).toBeDefined(),
     );
     await api(`/workspaces/${t.id}/api-tokens/${minted.id}`, {

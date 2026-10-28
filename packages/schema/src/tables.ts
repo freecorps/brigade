@@ -513,6 +513,8 @@ export type WorkspaceRow = {
   createdBy: string;
   /** Who is emailed when paging fails (`workspace.setEmail`); absent: `DEFAULT_EMAIL_SETTINGS`. */
   email?: EmailSettings;
+  /** Whether members may ask Workers AI for a postmortem draft (`workspace.setAiDrafts`, RFC 0013); absent: on. */
+  aiDrafts?: boolean;
 };
 
 /**
@@ -1100,6 +1102,23 @@ export type PostmortemRow = {
   updatedBy: string;
 };
 
+/**
+ * Server-only: one revision of a postmortem as it was written (RFC 0013 "Revision history"), the last
+ * `POSTMORTEM_REVISIONS_KEPT` of each. Not synced, so a save never copies the document to every client; read through
+ * `GET /workspaces/:id/incidents/:incidentId/postmortem/revisions`.
+ */
+export type PostmortemRevisionRow = {
+  id: string; // `<incident id>:<revision>`
+  incidentId: string;
+  revision: number;
+  sections: PostmortemSections;
+  savedAt: number;
+  /** The member (or token) who saved it; for an AI draft, the member who asked for it. */
+  savedBy: string;
+  /** Written by Workers AI (`postmortem.writeDraft`), not typed by a member. */
+  ai: boolean;
+};
+
 /** Server-only: an AI draft asked for at `at` (its request id), counted against `AI_DRAFTS_PER_DAY`. */
 export type AiDraftRow = { id: string; at: number };
 
@@ -1332,6 +1351,7 @@ export type BrigadeTables = {
   follow_ups: FollowUpRow;
   follow_up_reminders: FollowUpReminderRow;
   postmortems: PostmortemRow;
+  postmortem_revisions: PostmortemRevisionRow;
   postmortem_templates: PostmortemTemplateRow;
   ai_drafts: AiDraftRow;
   exports: ExportRow;
@@ -1384,6 +1404,7 @@ export const TABLES = {
   follow_ups: { serverOnly: false },
   follow_up_reminders: { serverOnly: true },
   postmortems: { serverOnly: false },
+  postmortem_revisions: { serverOnly: true },
   postmortem_templates: { serverOnly: false },
   ai_drafts: { serverOnly: true },
   exports: { serverOnly: false },

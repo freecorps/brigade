@@ -324,7 +324,7 @@ function PageRow({
             <Button
               type="button"
               variant="ghost"
-              className="-ml-2 h-auto min-h-11 px-2 font-normal text-muted-foreground"
+              className="-ml-2 h-auto min-h-11 pointer-fine:h-auto px-2 font-normal text-muted-foreground"
               aria-expanded={showNames}
               aria-controls={namesId}
               onClick={() => setShowNames((shown) => !shown)}

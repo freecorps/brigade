@@ -71,8 +71,7 @@ import {
   type AlertsPart,
 } from "@/lib/alerts";
 
-const SELECT =
-  "h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring";
+const SELECT = "field w-full min-w-0 px-3 focus-visible:ring-3 focus-visible:ring-ring";
 /** How many recent alerts the card lists; the shard keeps more. */
 const RECENT_SHOWN = 15;
 
@@ -802,7 +801,7 @@ function RuleRow({
         type="button"
         variant="ghost"
         size="icon"
-        className="size-11"
+        className="size-11 pointer-fine:size-9"
         aria-label={say("remove_rule", { name: rule.value.trim() || say("rule_value") })}
         onClick={onRemove}
       >
@@ -1007,7 +1006,7 @@ function UrlPanel({ shown, onDismiss }: { shown: ShownUrl; onDismiss: () => void
           value={shown.url}
           aria-labelledby={textId}
           onFocus={(event) => event.currentTarget.select()}
-          className="h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 font-mono text-base outline-none focus-visible:ring-3 focus-visible:ring-ring sm:text-sm"
+          className="field w-full min-w-0 px-3 font-mono focus-visible:ring-3 focus-visible:ring-ring sm:text-sm"
         />
         <Button ref={copyRef} onClick={() => void copy()}>
           {copied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}

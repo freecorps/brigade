@@ -97,11 +97,11 @@ const FIELD_KEYS: Record<DraftField, string> = {
 
 /** A header row's inputs: the Field input's look, without its label (each has an aria-label). */
 const HEADER_INPUT =
-  "h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 font-mono text-sm outline-none placeholder:font-sans placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive sm:text-sm max-sm:text-base";
+  "field w-full min-w-0 px-3 font-mono text-sm placeholder:font-sans focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive sm:text-sm max-sm:text-base";
 
 /** The native selects' look, as the method and policy pickers had it. */
 const SELECT =
-  "h-11 w-full min-w-0 truncate rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
+  "field w-full min-w-0 truncate px-3 focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
 
 /** What the form is for: a new monitor, or changes to `row` (whose kind stays), which can also delete it. */
 export type MonitorFormMode =
@@ -379,7 +379,7 @@ export function MonitorForm({
                 id={methodId}
                 value={draft.method}
                 onChange={(event) => set("method", event.target.value as HttpMethod)}
-                className="h-11 rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring"
+                className="field px-3 focus-visible:ring-3 focus-visible:ring-ring"
               >
                 {HTTP_METHODS.map((method) => (
                   <option key={method} value={method}>
@@ -496,7 +496,7 @@ export function MonitorForm({
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="col-start-2 row-span-2 row-start-1 size-11 self-center sm:col-start-3 sm:row-span-1"
+                        className="col-start-2 row-span-2 row-start-1 size-11 self-center pointer-fine:size-9 sm:col-start-3 sm:row-span-1"
                         aria-label={
                           header.name.trim()
                             ? m.monitor_header({ part: "remove", name: header.name.trim() })

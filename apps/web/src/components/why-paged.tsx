@@ -400,7 +400,7 @@ function MemberPicker({
             search: { why: event.currentTarget.value },
           })
         }
-        className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring sm:text-sm"
+        className="field w-full px-3 focus-visible:ring-3 focus-visible:ring-ring sm:text-sm"
       >
         {options.map((option) => (
           <option key={option.id} value={option.id}>

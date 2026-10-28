@@ -326,7 +326,7 @@ export function MembersList({
 
 // 16px and 44px tall on phones (no zoom on focus, a full touch target); the desktop density from `sm` up.
 const SELECT =
-  "h-11 min-w-32 flex-1 rounded-md border border-input bg-card px-2 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring aria-disabled:opacity-60 sm:h-9 sm:w-40 sm:flex-none sm:text-sm";
+  "field min-w-32 flex-1 px-2 focus-visible:ring-3 focus-visible:ring-ring aria-disabled:opacity-60 sm:h-9 sm:w-40 sm:flex-none sm:text-sm";
 
 /**
  * One member: name (with "You" on one's own row) and email, then their role (a picker when it can change) and

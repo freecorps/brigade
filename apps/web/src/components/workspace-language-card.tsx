@@ -92,7 +92,7 @@ export function WorkspaceLanguagePanel({
             </label>
             <select
               id={selectId}
-              className="h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring sm:max-w-xs"
+              className="field w-full min-w-0 px-3 focus-visible:ring-3 focus-visible:ring-ring sm:max-w-xs"
               value={shown}
               disabled={state === "saving"}
               onChange={(event) => pick(event.target.value as WorkspaceLocale)}

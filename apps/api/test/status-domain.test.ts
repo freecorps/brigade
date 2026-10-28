@@ -42,7 +42,7 @@ const random = (n: number) => crypto.getRandomValues(new Uint8Array(n));
 const SAAS = {
   CF_SAAS_TOKEN: "test-saas-token",
   CF_ZONE_ID: "zone-test",
-  CF_SAAS_FALLBACK_ORIGIN: "status-origin.example.net",
+  CF_SAAS_FALLBACK_ORIGIN: "status-origin.saas.test",
   DASHBOARD_URL: ORIGIN,
 };
 const SAAS_CONFIG: SaasConfig = {
@@ -57,7 +57,7 @@ let clients = 0;
 let hosts = 0;
 const clientIp = () => `198.51.${Math.floor(++clients / 250) % 250}.${(clients % 250) + 1}`;
 /** Each test its own hostname and slug: KV and the edge cache keep them a while. */
-const hostname = () => `status-${Date.now().toString(36)}-${++hosts}.acme.example`;
+const hostname = () => `status-${Date.now().toString(36)}-${++hosts}.acme.test`;
 const slug = () => `dom-${Date.now().toString(36)}-${++hosts}`;
 
 const api = (
@@ -267,10 +267,10 @@ const holder = async (name: string) =>
 describe("hostnames", () => {
   const read = (value: unknown) => normalizeHostname(value, "brigade.example.com");
   test("a hostname is kept lowercase and in punycode, without a trailing dot", () => {
-    expect(read(" Status.Acme.Example. ")).toEqual({ ok: true, hostname: "status.acme.example" });
-    const idn = read("status.açaí.example");
+    expect(read(" Status.Acme.Test. ")).toEqual({ ok: true, hostname: "status.acme.test" });
+    const idn = read("status.açaí.test");
     expect(idn).toMatchObject({ ok: true });
-    expect(idn.ok && idn.hostname).toMatch(/^status\.xn--[a-z0-9-]+\.example$/);
+    expect(idn.ok && idn.hostname).toMatch(/^status\.xn--[a-z0-9-]+\.test$/);
   });
   test("no IP address, port, path, scheme, single label or bad label", () => {
     for (const bad of [
@@ -279,15 +279,15 @@ describe("hostnames", () => {
       "0x7f.1",
       "[::1]",
       "::1",
-      "status.acme.example:8443",
-      "status.acme.example/x",
-      "https://status.acme.example",
+      "status.acme.test:8443",
+      "status.acme.test/x",
+      "https://status.acme.test",
       "localhost",
-      "-bad.example",
-      "a..example",
+      "-bad.test",
+      "a..test",
       "",
       42,
-      `${"a".repeat(64)}.example`,
+      `${"a".repeat(64)}.test`,
     ]) {
       expect(read(bad), String(bad)).toEqual({ ok: false, code: "invalid_hostname" });
     }
@@ -301,14 +301,14 @@ describe("hostnames", () => {
     ]) {
       expect(read(own), own).toEqual({ ok: false, code: "own_domain" });
     }
-    expect(normalizeHostname("example.com.br", "brigade.example.com.br")).toEqual({
+    expect(normalizeHostname("acme.co.test", "brigade.acme.co.test")).toEqual({
       ok: false,
       code: "own_domain",
     });
-    expect(normalizeHostname("status.other.com.br", "brigade.example.com.br")).toMatchObject({
+    expect(normalizeHostname("status.other.co.test", "brigade.acme.co.test")).toMatchObject({
       ok: true,
     });
-    expect(read("status.example.org")).toMatchObject({ ok: true });
+    expect(read("status.acme.test")).toMatchObject({ ok: true });
   });
 });
 
@@ -330,7 +330,7 @@ describe("the dashboard's routes", () => {
     const name = hostname();
     expect(await (await route(t, t.caio, "GET", fake)).json()).toEqual({
       configured: true,
-      target: "status-origin.example.net",
+      target: "status-origin.saas.test",
     });
     // A responder may read it, not change it; nothing reaches Cloudflare.
     expect((await route(t, t.caio, "PUT", fake, { hostname: name })).status).toBe(403);
@@ -343,7 +343,7 @@ describe("the dashboard's routes", () => {
       hostname: name,
       state: "pending",
       records: [
-        { type: "CNAME", name, value: "status-origin.example.net" },
+        { type: "CNAME", name, value: "status-origin.saas.test" },
         { type: "TXT", name: `_cf-custom-hostname.${name}`, value: "token-cfh-1" },
       ],
     });
@@ -601,12 +601,12 @@ describe("claims, races and what Cloudflare is left with", () => {
 
   test("never the fallback origin, its domain, or a two-label apex", () => {
     const read = (value: string) =>
-      normalizeHostname(value, "brigade.example.com", "status-origin.example.net");
-    for (const ours of ["status-origin.example.net", "example.net", "x.example.net"]) {
+      normalizeHostname(value, "brigade.example.com", "status-origin.saas.test");
+    for (const ours of ["status-origin.saas.test", "saas.test", "x.saas.test"]) {
       expect(read(ours), ours).toEqual({ ok: false, code: "own_domain" });
     }
-    expect(read("acme.example")).toEqual({ ok: false, code: "apex" });
-    expect(read("status.acme.example")).toEqual({ ok: true, hostname: "status.acme.example" });
+    expect(read("acme.test")).toEqual({ ok: false, code: "apex" });
+    expect(read("status.acme.test")).toEqual({ ok: true, hostname: "status.acme.test" });
   });
 });
 

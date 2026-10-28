@@ -25,10 +25,10 @@ const run = (store: Store, name: string, args: unknown, context = ctx()) =>
   runMutation(serverMutations, name, args, store, context);
 
 const added = {
-  hostname: "status.acme.example",
+  hostname: "status.acme.test",
   cloudflareId: "cfh-1",
   state: "pending",
-  records: [{ type: "CNAME", name: "status.acme.example", value: "status-origin.example.net" }],
+  records: [{ type: "CNAME", name: "status.acme.test", value: "status-origin.saas.test" }],
   error: null,
 };
 
@@ -61,15 +61,15 @@ describe("status page domains", () => {
       events: [
         {
           type: "status_domain.added",
-          data: { hostname: "status.acme.example", state: "pending" },
+          data: { hostname: "status.acme.test", state: "pending" },
         },
       ],
     });
-    expect(
-      run(store, "statusDomain.add", { ...added, hostname: "other.acme.example" }),
-    ).toMatchObject({
-      error: { code: "conflict" },
-    });
+    expect(run(store, "statusDomain.add", { ...added, hostname: "other.acme.test" })).toMatchObject(
+      {
+        error: { code: "conflict" },
+      },
+    );
     expect(
       run(store, "statusDomain.check", {
         hostname: added.hostname,
@@ -83,7 +83,7 @@ describe("status page domains", () => {
     expect(runQuery(queries, "statusDomain.get", {}, store, "viewer")).toMatchObject({
       rows: [{ hostname: added.hostname, state: "active" }],
     });
-    expect(run(store, "statusDomain.remove", { hostname: "other.acme.example" })).toMatchObject({
+    expect(run(store, "statusDomain.remove", { hostname: "other.acme.test" })).toMatchObject({
       error: { code: "not_found" },
     });
     expect(run(store, "statusDomain.remove", { hostname: added.hostname })).toMatchObject({
@@ -93,16 +93,9 @@ describe("status page domains", () => {
   });
 
   test("only hostnames: no address, no single label, no bad label", () => {
-    expect(isStatusHostname("status.acme.example")).toBe(true);
-    expect(isStatusHostname("xn--ls8h.example")).toBe(true);
-    for (const bad of [
-      "203.0.113.7",
-      "localhost",
-      "a_b.example",
-      "-a.example",
-      "a..example",
-      "A.example",
-    ]) {
+    expect(isStatusHostname("status.acme.test")).toBe(true);
+    expect(isStatusHostname("xn--ls8h.test")).toBe(true);
+    for (const bad of ["203.0.113.7", "localhost", "a_b.test", "-a.test", "a..test", "A.test"]) {
       expect(isStatusHostname(bad), bad).toBe(false);
     }
     expect(run(ready(), "statusDomain.add", { ...added, hostname: "203.0.113.7" })).toMatchObject({

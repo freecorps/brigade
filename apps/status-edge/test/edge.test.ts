@@ -6,7 +6,7 @@ import { HOST_CACHE_TTL_S, serveEdge } from "../src/edge.ts";
 import type { EdgeEnv } from "../src/index.ts";
 
 const WORKSPACE = "ws_01JABCDEFGHJKMNPQRSTVWXYZ0";
-const HOST = "status.acme.example";
+const HOST = "status.acme.test";
 
 function edge(
   lookups: Record<string, unknown>,

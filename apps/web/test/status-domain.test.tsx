@@ -41,7 +41,7 @@ const row = (extra: Partial<StatusDomainRow> = {}): StatusDomainRow => ({
   cloudflareId: "cfh-1",
   state: "pending",
   records: [
-    { type: "CNAME", name: NAME, value: "status-origin.example.net" },
+    { type: "CNAME", name: NAME, value: "status-origin.saas.test" },
     {
       type: "TXT",
       name: `_cf-custom-hostname.${NAME}`,
@@ -60,7 +60,7 @@ function panel(props: Partial<Parameters<typeof StatusDomainPanel>[0]> = {}) {
   const ok = async () => ({ ok: true }) as const;
   const container = mount(
     <StatusDomainPanel
-      target="status-origin.example.net"
+      target="status-origin.saas.test"
       ready
       loading={false}
       domain={null}
@@ -92,13 +92,13 @@ describe("custom domain card", () => {
         return refuse ? { ok: false, error: "hostname_taken" } : { ok: true };
       },
     });
-    expect(container.textContent).toContain("Point a CNAME at status-origin.example.net.");
+    expect(container.textContent).toContain("Point a CNAME at status-origin.saas.test.");
     act(() => button(container, "Add domain")!.click());
     expect(container.textContent).toContain("Enter a domain.");
     expect(calls).toEqual([]);
-    act(() => type(container.querySelector("input")!, " status.acme.example "));
+    act(() => type(container.querySelector("input")!, " status.acme.test "));
     await act(async () => button(container, "Add domain")!.click());
-    expect(calls).toEqual(["add status.acme.example"]);
+    expect(calls).toEqual(["add status.acme.test"]);
     expect(container.textContent).toContain("already in use by another status page");
     refuse = false;
     await act(async () => button(container, "Add domain")!.click());
@@ -194,7 +194,7 @@ describe("custom domain card", () => {
       }
       for (const error of ["unavailable", "in_progress", "apex"] as const) {
         const { container } = panel({ onAdd: async () => ({ ok: false, error }) });
-        act(() => type(container.querySelector("input")!, "status.acme.example"));
+        act(() => type(container.querySelector("input")!, "status.acme.test"));
         const add = locale === "en" ? "Add domain" : "Adicionar domínio";
         await act(async () => button(container, add)!.click());
         expect(container.textContent, `${locale} ${error}`).toContain(words[locale][error]);
@@ -214,24 +214,24 @@ describe("the API calls", () => {
     return { calls, fetcher };
   };
   test("reads whether the instance has custom domains, and sends each change to its route", async () => {
-    const on = fake(200, { configured: true, target: "status-origin.example.net" });
+    const on = fake(200, { configured: true, target: "status-origin.saas.test" });
     expect(await loadDomainConfig("ws_1", on.fetcher)).toEqual({
       configured: true,
-      target: "status-origin.example.net",
+      target: "status-origin.saas.test",
     });
     expect(await loadDomainConfig("ws_1", fake(200, { configured: false }).fetcher)).toEqual({
       configured: false,
     });
     expect(await loadDomainConfig("ws_1", fake(503, {}).fetcher)).toBeNull();
     const done = fake(200, { ok: true });
-    await addDomain("ws_1", "status.acme.example", done.fetcher);
+    await addDomain("ws_1", "status.acme.test", done.fetcher);
     await checkDomain("ws_1", done.fetcher);
     await removeDomain("ws_1", done.fetcher);
     expect(done.calls).toEqual([
       {
         url: "/api/workspaces/ws_1/status-page/domain",
         method: "PUT",
-        body: JSON.stringify({ hostname: "status.acme.example" }),
+        body: JSON.stringify({ hostname: "status.acme.test" }),
       },
       { url: "/api/workspaces/ws_1/status-page/domain/check", method: "POST", body: undefined },
       { url: "/api/workspaces/ws_1/status-page/domain", method: "DELETE", body: undefined },

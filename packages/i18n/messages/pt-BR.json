@@ -64,6 +64,37 @@
   "language_name_en": "English",
   "language_name_pt_br": "Português (Brasil)",
   "overview_title": "Visão geral",
+  "overview_pulse": [
+    {
+      "declarations": ["input part", "input count", "input total", "input share"],
+      "selectors": ["part"],
+      "match": {
+        "part=incidents_label": "Incidentes ativos",
+        "part=incidents_clear": "Tudo calmo",
+        "part=incidents_link": "Abrir incidentes",
+        "part=monitors_label": "Monitores",
+        "part=monitors_up": "{count} de {total} no ar",
+        "part=monitors_none": "Nenhum monitor ainda",
+        "part=monitors_link": "Abrir monitores",
+        "part=follow_label": "Ações em aberto",
+        "part=follow_overdue": "Atrasadas: {count}",
+        "part=follow_none": "Nada atrasado",
+        "part=follow_link": "Abrir ações",
+        "part=glance_title": "Monitores",
+        "part=glance_description": "Os checks recentes de cada monitor, todas as regiões numa linha.",
+        "part=glance_all": "Todos os monitores",
+        "part=recent_up": "{share} no ar nos checks recentes",
+        "part=regions": "Regiões: {count}",
+        "part=regions_down": "{count} de {total} regiões fora",
+        "part=no_history": "Nenhum check ainda",
+        "part=alerts_title": "Alertas nas últimas 24 horas",
+        "part=alerts_description": "Alertas que começaram a disparar em cada hora, de todas as fontes de alertas.",
+        "part=alerts_total": "Total: {count}",
+        "part=alerts_row": "Alertas",
+        "part=*": "Brigade"
+      }
+    }
+  ],
   "overview_cover": [
     {
       "declarations": ["input part", "input name", "input from", "input to"],

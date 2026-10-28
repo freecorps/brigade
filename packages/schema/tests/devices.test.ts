@@ -159,20 +159,49 @@ describe("device.register", () => {
     expect(store.scan("devices").map((device) => device.id)).toEqual([fresh]);
   });
 
-  test(`at most ${MAX_DEVICES_PER_MEMBER} devices per member`, () => {
+  test(`a new device over ${MAX_DEVICES_PER_MEMBER} replaces the member's least recently registered one`, () => {
     const store = createMemoryStore<BrigadeTables>();
+    const at = (now: number, actor: Actor, input: unknown) =>
+      runMutation(serverMutations, "device.register", input, store, { actor, now, server: true });
+    const ids: string[] = [];
     for (let i = 0; i < MAX_DEVICES_PER_MEMBER; i++) {
+      const id = deviceId();
+      ids.push(id);
       const token = i.toString(16).padStart(64, "0");
-      expect(run(store, ana, "device.register", args(deviceId(), { pushToken: token })).ok).toBe(
-        true,
-      );
+      expect(at(T + i * 1000, ana, args(id, { pushToken: token })).ok).toBe(true);
     }
+    // Bia's devices are never Ana's to replace.
+    const theirs = deviceId();
     expect(
-      run(store, ana, "device.register", args(deviceId(), { pushToken: "f".repeat(64) })),
-    ).toMatchObject({
-      ok: false,
-      error: { code: "limit_reached" },
+      at(T, { ...bia, role: "responder" }, args(theirs, { pushToken: "e".repeat(64) })).ok,
+    ).toBe(true);
+    // The first one registered again since: the second is now the least recently registered.
+    expect(
+      runMutation(serverMutations, "device.touch", { id: ids[0]! }, store, {
+        actor: ana,
+        now: T + 60_000,
+        server: true,
+      }),
+    ).toEqual({ ok: true, events: [] });
+    const newest = deviceId();
+    const result = at(T + 120_000, ana, args(newest, { pushToken: "f".repeat(64) }));
+    expect(result).toMatchObject({
+      ok: true,
+      events: [
+        {
+          type: "device.unregistered",
+          subject: ids[1],
+          data: { id: ids[1], userId: "usr_ana", reason: "replaced" },
+        },
+        { type: "device.registered", subject: newest },
+      ],
     });
+    const anas = store.scan("devices").filter((device) => device.userId === "usr_ana");
+    expect(anas).toHaveLength(MAX_DEVICES_PER_MEMBER);
+    expect(anas.map((device) => device.id)).toContain(newest);
+    expect(anas.map((device) => device.id)).not.toContain(ids[1]);
+    expect(store.get("member_devices", ids[1])).toBeUndefined();
+    expect(store.get("devices", theirs)).toBeDefined();
   });
 
   test("refuses malformed tokens and keys, and system actors", () => {

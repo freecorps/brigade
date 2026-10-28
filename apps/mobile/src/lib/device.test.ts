@@ -219,7 +219,8 @@ test("signing out unregisters it, so the next member to sign in on the phone is 
   expect(await unregisterPhone(phone(as(ANA)))).toBe(true);
 });
 
-test("the member's device limit is a failure, not an up-to-date registration", async () => {
+// A paging path (AGENTS.md): reinstalls make new devices, and the newest phone must never be locked out by old ones.
+test("a phone over the member's device limit still registers, replacing their least recently registered one", async () => {
   const store = createMemoryStore<BrigadeTables>();
   const as = shard(store);
   for (let n = 0; n < MAX_DEVICES_PER_MEMBER; n++) {
@@ -228,7 +229,27 @@ test("the member's device limit is a failure, not an up-to-date registration", a
     const deps = phone(as(ANA), { publicKey: async () => key, pushToken: async () => token });
     expect(await registerPhone(deps)).toBe("on");
   }
-  expect(await registerPhone(phone(as(ANA)))).toBe("failed");
+  expect(await registerPhone(phone(as(ANA)))).toBe("on");
+  expect(store.scan("devices")).toHaveLength(MAX_DEVICES_PER_MEMBER);
+});
+
+test("an instance from before that, still refusing a phone over the limit, says so instead of a bare failure", async () => {
+  const limit = async () => ({
+    ok: false as const,
+    error: { code: "limit_reached", message: "At most 10 devices per member" },
+  });
+  expect(await registerPhone(phone(limit))).toBe("limit");
+  const registered = await registerEverywhere(
+    phone(limit, {
+      registerAll: async () => ({
+        ok: true,
+        workspaces: { ws_one: "ok", ws_two: "limit_reached" },
+      }),
+    }),
+    ["ws_two"],
+    "ws_one",
+  );
+  expect(registered).toEqual({ ws_one: "on", ws_two: "limit" });
 });
 
 test("without a key, permission or a working token it says why instead of registering", async () => {

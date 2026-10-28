@@ -759,9 +759,22 @@ describe("registering a phone in every workspace it was opened in", () => {
     await addMember(w.id, pia.id, "responder");
     const phone = newId("dev", 0, random);
     await register(w, { kind: "user", id: otto.id, role: "owner" }, phone);
-    expect(await (await registerOver(pia.cookie, [w.id], phoneArgs(phone))).json()).toEqual({
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const args = phoneArgs(phone);
+    expect(await (await registerOver(pia.cookie, [w.id], args)).json()).toEqual({
       workspaces: { [w.id]: "forbidden" },
     });
+    // Each answer that is not `ok` is logged for `wrangler tail`, with its workspace and code and nothing secret.
+    const refused = warnings.mock.calls
+      .map(([line]) => String(line))
+      .filter((line) => line.includes("device registration refused"));
+    expect(refused.map((line) => JSON.parse(line))).toEqual([
+      { message: "device registration refused", workspace: w.id, code: "forbidden" },
+    ]);
+    const logged = warnings.mock.calls.flat().join(" ");
+    expect(logged).not.toContain(args.pushToken);
+    expect(logged).not.toContain(args.publicKey);
+    warnings.mockRestore();
     expect((await registerOver(pia.cookie, [], phoneArgs(phone))).status).toBe(400);
     expect((await registerOver(pia.cookie, ["nope"], phoneArgs(phone))).status).toBe(400);
     expect((await registerOver("", [w.id], phoneArgs(phone))).status).toBe(401);

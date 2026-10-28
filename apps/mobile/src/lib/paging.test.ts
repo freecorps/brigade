@@ -1,6 +1,19 @@
-import { expect, test } from "vite-plus/test";
-import { registerPhone, type DeviceDeps, type Paging, type Registrations } from "./device";
-import { pagingCycle, retryDelay, type PagingDeps } from "./paging";
+import { afterEach, expect, test, vi } from "vite-plus/test";
+import {
+  registerEverywhere,
+  registerPhone,
+  type DeviceDeps,
+  type Paging,
+  type Registrations,
+} from "./device";
+import {
+  knownTokens,
+  MIN_TRY_GAP_MS,
+  pagingCycle,
+  retryDelay,
+  RETRY_JITTER,
+  type PagingDeps,
+} from "./paging";
 import type { FinishResult } from "./sign-out";
 
 /** Timers run by hand: `elapse(ms)` fires every timer due by then, in order. */
@@ -16,6 +29,9 @@ function clock() {
         timers = timers.filter((other) => other !== timer);
       };
     }) satisfies PagingDeps["setTimer"],
+    now: () => now,
+    // Every wait on its step: jitter is tested on its own.
+    random: () => 0.5,
     pending: () => timers.map((timer) => timer.at - now),
     settle,
     async elapse(ms: number) {
@@ -58,14 +74,19 @@ function phone(answers: { finish: FinishResult[]; register: Paging[] }) {
   };
 }
 
-test("the waits back off to every ten minutes", () => {
-  expect([0, 1, 2, 3, 10].map(retryDelay)).toEqual([30_000, 120_000, 600_000, 600_000, 600_000]);
+test("the waits back off to every ten minutes, each give or take a fifth", () => {
+  expect([0, 1, 2, 3, 4, 10].map((n) => retryDelay(n))).toEqual([
+    5_000, 30_000, 120_000, 600_000, 600_000, 600_000,
+  ]);
+  expect(retryDelay(0, 0)).toBe(5_000 * (1 - RETRY_JITTER));
+  expect(retryDelay(3, 0.999_999)).toBeLessThanOrEqual(600_000 * (1 + RETRY_JITTER));
+  expect(retryDelay(3, 0.999_999)).toBeGreaterThan(600_000);
 });
 
 test("a phone with nothing left registers once, after finishing, and does not try again", async () => {
   const time = clock();
   const p = phone({ finish: ["none"], register: ["on"] });
-  pagingCycle({ ...p, setTimer: time.setTimer });
+  pagingCycle({ ...p, setTimer: time.setTimer, now: time.now, random: time.random });
   await time.settle();
   expect(p.log).toEqual(["finish", "register"]);
   expect(p.shown).toEqual(["on"]);
@@ -79,58 +100,107 @@ test("a finish left pending while online is tried again on the backoff until the
     finish: ["pending", "pending", "finished", "none"],
     register: ["taken", "taken", "on"],
   });
-  pagingCycle({ ...p, setTimer: time.setTimer });
+  pagingCycle({ ...p, setTimer: time.setTimer, now: time.now, random: time.random });
   await time.settle();
   expect(p.shown).toEqual(["taken"]);
+  expect(time.pending()).toEqual([5_000]);
+  await time.elapse(5_000);
+  expect(p.shown).toEqual(["taken", "taken"]);
   expect(time.pending()).toEqual([30_000]);
   await time.elapse(30_000);
-  expect(p.shown).toEqual(["taken", "taken"]);
-  expect(time.pending()).toEqual([120_000]);
-  await time.elapse(120_000);
   // Finished first, then registered: the phone pages the member signed in now.
   expect(p.log).toEqual(["finish", "register", "finish", "register", "finish", "register"]);
   expect(p.shown).toEqual(["taken", "taken", "on"]);
   expect(time.pending()).toEqual([]);
 });
 
-test("a registration that failed or found the phone taken is tried again, every ten minutes at most", async () => {
+test("a registration that failed is tried again, every ten minutes at most", async () => {
   const time = clock();
   const p = phone({ finish: ["none"], register: ["failed"] });
-  pagingCycle({ ...p, setTimer: time.setTimer });
+  pagingCycle({ ...p, setTimer: time.setTimer, now: time.now, random: time.random });
   await time.settle();
-  await time.elapse(30_000 + 120_000 + 600_000);
-  expect(p.shown).toEqual(["failed", "failed", "failed", "failed"]);
+  await time.elapse(5_000 + 30_000 + 120_000 + 600_000);
+  expect(p.shown).toEqual(["failed", "failed", "failed", "failed", "failed"]);
   expect(time.pending()).toEqual([600_000]);
+});
+
+test("a phone still another member's is tried again every ten minutes; too many phones is left to the member", async () => {
+  const time = clock();
+  const taken = phone({ finish: ["none"], register: ["taken"] });
+  pagingCycle({ ...taken, setTimer: time.setTimer, now: time.now, random: time.random });
+  await time.settle();
+  expect(time.pending()).toEqual([600_000]);
+
+  const later = clock();
+  const limit = phone({ finish: ["none"], register: ["limit", "on"] });
+  const cycle = pagingCycle({
+    ...limit,
+    setTimer: later.setTimer,
+    now: later.now,
+    random: later.random,
+  });
+  await later.settle();
+  // Retrying changes nothing until they sign out on another phone: no timer, and Try again still works at once.
+  expect(later.pending()).toEqual([]);
+  await cycle.retry();
+  expect(limit.shown).toEqual(["limit", "on"]);
 });
 
 test("with nobody signed in, a kept sign-out is still finished on the backoff", async () => {
   const time = clock();
   const p = phone({ finish: ["pending", "finished"], register: [] });
-  pagingCycle({ ...p, register: null, setTimer: time.setTimer });
+  pagingCycle({
+    ...p,
+    register: null,
+    setTimer: time.setTimer,
+    now: time.now,
+    random: time.random,
+  });
   await time.settle();
-  expect(time.pending()).toEqual([30_000]);
-  await time.elapse(30_000);
+  expect(time.pending()).toEqual([5_000]);
+  await time.elapse(5_000);
   expect(p.log).toEqual(["finish", "finish"]);
   expect(p.shown).toEqual([]);
   expect(time.pending()).toEqual([]);
 });
 
-test("Try again, the foreground or a reconnect tries now instead of waiting, keeping one wait", async () => {
+test("Try again tries now instead of waiting, keeping one wait", async () => {
   const time = clock();
   const p = phone({
     finish: ["pending", "pending", "finished"],
     register: ["taken", "taken", "on"],
   });
-  const cycle = pagingCycle({ ...p, setTimer: time.setTimer });
+  const cycle = pagingCycle({ ...p, setTimer: time.setTimer, now: time.now, random: time.random });
   await time.settle();
-  expect(time.pending()).toEqual([30_000]);
+  expect(time.pending()).toEqual([5_000]);
   await cycle.retry();
   expect(p.shown).toEqual(["taken", "taken"]);
   // The backoff carries on from where it was, and the old wait is gone.
-  expect(time.pending()).toEqual([120_000]);
+  expect(time.pending()).toEqual([30_000]);
   await cycle.retry();
   expect(p.shown).toEqual(["taken", "taken", "on"]);
   expect(time.pending()).toEqual([]);
+});
+
+test("the foreground, a reconnect or a new token try now, but never within the gap of the last try", async () => {
+  const time = clock();
+  const p = phone({ finish: ["none"], register: ["failed"] });
+  const cycle = pagingCycle({ ...p, setTimer: time.setTimer, now: time.now, random: time.random });
+  await time.settle();
+  await time.elapse(5_000 + 30_000);
+  expect(p.log.filter((step) => step === "register")).toHaveLength(3);
+  expect(time.pending()).toEqual([120_000]);
+  // Back in the foreground long after the last try: now.
+  await time.elapse(MIN_TRY_GAP_MS);
+  cycle.nudge();
+  await time.settle();
+  expect(p.log.filter((step) => step === "register")).toHaveLength(4);
+  // Nudged again and again right after: one try, once the gap is over, and the backoff after it.
+  for (let n = 0; n < 50; n++) cycle.nudge();
+  expect(time.pending()).toEqual([MIN_TRY_GAP_MS]);
+  await time.elapse(MIN_TRY_GAP_MS);
+  expect(p.log.filter((step) => step === "register")).toHaveLength(5);
+  expect(time.pending()).toEqual([600_000]);
 });
 
 test("a retry asked for during a try runs once, right after it", async () => {
@@ -152,6 +222,8 @@ test("a retry asked for during a try runs once, right after it", async () => {
     },
     onPaging: () => {},
     setTimer: time.setTimer,
+    now: time.now,
+    random: time.random,
   });
   const first = cycle.retry();
   const second = cycle.retry();
@@ -164,7 +236,7 @@ test("a retry asked for during a try runs once, right after it", async () => {
 test("a stopped cycle neither reports nor tries again", async () => {
   const time = clock();
   const p = phone({ finish: ["pending"], register: ["taken"] });
-  const cycle = pagingCycle({ ...p, setTimer: time.setTimer });
+  const cycle = pagingCycle({ ...p, setTimer: time.setTimer, now: time.now, random: time.random });
   void cycle.stop();
   await time.settle();
   expect(p.shown).toEqual([]);
@@ -198,6 +270,8 @@ test("signing out does not wait for a push token that never comes, and the token
     register: async (proceed) => ({ [W]: await registerPhone(deps, proceed) }),
     onPaging: (registrations) => shown.push(first(registrations)),
     setTimer: time.setTimer,
+    now: time.now,
+    random: time.random,
   });
   await time.settle();
   // Sign-out starts while the token is still pending: stopping resolves at once.
@@ -223,6 +297,8 @@ test("a registration already sent stays ahead of the unregister sent after stopp
     },
     onPaging: () => {},
     setTimer: time.setTimer,
+    now: time.now,
+    random: time.random,
   });
   await time.settle();
   await cycle.stop();
@@ -238,10 +314,12 @@ test("a finish or registration that throws counts as not done, not as a crash", 
     register: () => Promise.reject(new Error("socket")),
     onPaging: (registrations) => shown.push(first(registrations)),
     setTimer: time.setTimer,
+    now: time.now,
+    random: time.random,
   });
   await time.settle();
   expect(shown).toEqual(["failed"]);
-  expect(time.pending()).toEqual([30_000]);
+  expect(time.pending()).toEqual([5_000]);
 });
 
 test("one workspace still failing is tried again even with the others on", async () => {
@@ -256,13 +334,73 @@ test("one workspace still failing is tried again even with the others on", async
     register: async () => answers.shift()!,
     onPaging: (registrations) => shown.push(registrations),
     setTimer: time.setTimer,
+    now: time.now,
+    random: time.random,
   });
   await time.settle();
-  expect(time.pending()).toEqual([30_000]);
-  await time.elapse(30_000);
+  expect(time.pending()).toEqual([5_000]);
+  await time.elapse(5_000);
   expect(shown).toEqual([
     { ws_one: "on", ws_two: "failed" },
     { ws_one: "on", ws_two: "on" },
   ]);
   expect(time.pending()).toEqual([]);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+test("fetching the push token to register does not ask for another registration (the loop seen on Android)", async () => {
+  vi.useFakeTimers();
+  // expo-notifications fires the token listener with the token each `getDevicePushTokenAsync` fetched, on iOS and
+  // Android alike: src/components/session.tsx registers again only when it is new.
+  const tokens = knownTokens();
+  const listeners: ((token: string) => void)[] = [];
+  let calls = 0;
+  const token = "c".repeat(64);
+  const deps: DeviceDeps = {
+    platform: "android",
+    apsEnvironment: undefined,
+    publicKey: async () => `BA${"abcdefghij".repeat(9).slice(0, 85)}`,
+    permission: async () => true,
+    pushToken: async () => {
+      tokens.fetched(token);
+      queueMicrotask(() => listeners.forEach((listener) => listener(token)));
+      return token;
+    },
+    registerAll: async (_, workspaces) => {
+      calls += 1;
+      // A failure the shard keeps answering, so the phone stays `failed` and on the backoff.
+      return { ok: true, workspaces: Object.fromEntries(workspaces.map((id) => [id, "internal"])) };
+    },
+    mutate: async () => ({ ok: true }),
+  };
+  const cycle = pagingCycle({
+    finish: async () => "none",
+    register: (proceed) => registerEverywhere(deps, [W], W, proceed),
+    onPaging: () => {},
+    setTimer: (run, ms) => {
+      const timer = setTimeout(run, ms);
+      return () => clearTimeout(timer);
+    },
+    now: Date.now,
+    random: () => 0.5,
+  });
+  listeners.push((value) => {
+    if (tokens.changed(value)) cycle.nudge();
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  // At once, 5 s later, then 30 s later: three tries in the first minute, not one a second.
+  expect(calls).toBe(3);
+  // Then 2 min and 10 min after those.
+  await vi.advanceTimersByTimeAsync(700_000);
+  expect(calls).toBe(5);
+  // A token that is new does register at once, and Try again does too.
+  listeners.forEach((listener) => listener("d".repeat(64)));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(calls).toBe(6);
+  await cycle.retry();
+  expect(calls).toBe(7);
+  void cycle.stop();
 });

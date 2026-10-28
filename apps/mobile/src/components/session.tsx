@@ -29,6 +29,7 @@ import {
   phoneDeps,
   phoneDeviceId,
   phoneWorkspaces,
+  pushTokens,
   registerAllWith,
   SESSION_LIFETIME_MS,
 } from "@/lib/phone";
@@ -123,8 +124,8 @@ function finishLeftover(target: Server): Promise<FinishResult> {
 
 /**
  * Finishing kept sign-outs, then registering the phone with `register` (src/lib/paging.ts), while `enabled`: again on
- * a backoff while something is left undone, and right away when the phone is back online or the app comes back to
- * the foreground. A new `register` starts over.
+ * a backoff while something is left undone, and soon (`MIN_TRY_GAP_MS` at most) when the phone is back online, the
+ * app comes back to the foreground or a token is new. A new `register` starts over.
  */
 function usePaging(
   enabled: boolean,
@@ -145,16 +146,21 @@ function usePaging(
         const timer = setTimeout(run, ms);
         return () => clearTimeout(timer);
       },
+      now: Date.now,
+      random: Math.random,
     });
     cycle.current = made;
     const foreground = AppState.addEventListener("change", (state) => {
-      if (state === "active") void made.retry();
+      if (state === "active") made.nudge();
     });
     // iOS: a new or withdrawn PushKit token is registered at once, so calls only go to a token the app holds; and a new
-    // APNs token likewise, in every workspace, or the others page a dead one. Critical Alerts or notifications turned
-    // on or off happen in Settings, so coming back to the foreground registers them.
-    const voipToken = BrigadeCall?.addListener("onVoipToken", () => void made.retry());
-    const pushToken = Notifications.addPushTokenListener(() => void made.retry());
+    // APNs or FCM token likewise, in every workspace, or the others page a dead one. Only a new one: the listener also
+    // hears the token each registration fetches. Critical Alerts or notifications turned on or off happen in Settings,
+    // so coming back to the foreground registers them.
+    const voipToken = BrigadeCall?.addListener("onVoipToken", () => made.nudge());
+    const pushToken = Notifications.addPushTokenListener((token) => {
+      if (pushTokens.changed(String(token.data))) made.nudge();
+    });
     return () => {
       foreground.remove();
       voipToken?.remove();
@@ -168,7 +174,7 @@ function usePaging(
   useEffect(() => {
     const back = online && !wasOnline.current;
     wasOnline.current = online;
-    if (back) void cycle.current?.retry();
+    if (back) cycle.current?.nudge();
   }, [online]);
   const retry = useCallback(() => cycle.current?.retry() ?? Promise.resolve(), []);
   const stop = useCallback(() => cycle.current?.stop() ?? Promise.resolve(), []);

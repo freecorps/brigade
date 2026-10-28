@@ -68,7 +68,19 @@ export type Paging =
   | "unsupported"
   /** Another member's device has this id: they never signed out on this phone (RFC 0006 "A handed-over phone"). */
   | "taken"
+  /**
+   * The member has the most devices the workspace allows (`limit_reached`): only an instance from before a new device
+   * replaced the least recently registered one answers it. Signing out on a phone they no longer use frees a place.
+   */
+  | "limit"
   | "failed";
+
+/** What a `device.register` code that is not `ok` (nor `conflict`) means for this phone. */
+function refused(code: string | undefined): Paging {
+  if (code === "forbidden") return "taken";
+  if (code === "limit_reached") return "limit";
+  return "failed";
+}
 
 /** Whether this phone gets pages, per workspace id: every workspace it was opened in for the member. */
 export type Registrations = Record<string, Paging>;
@@ -208,7 +220,7 @@ export async function registerEverywhere(
         left.push(id);
         continue;
       }
-      registered[id] = code === "ok" ? "on" : code === "forbidden" ? "taken" : "failed";
+      registered[id] = code === "ok" ? "on" : refused(code);
     }
     if (Object.values(registered).includes("on")) keepReceiptOrigin(deps);
     if (left.length > 0) gone(left);
@@ -234,20 +246,22 @@ async function registerHere(
       if (!proceed()) return "pending";
       result = await deps.mutate("device.register", older);
     }
-    // `conflict`: registered already with these values. The member's device limit is `limit_reached`.
+    // `conflict`: registered already with these values.
     if (result.ok || result.error.code === "conflict") {
       keepReceiptOrigin(deps);
       return "on";
     }
-    return result.error.code === "forbidden" ? "taken" : "failed";
+    return refused(result.error.code);
   } catch {
     return "failed";
   }
 }
 
-/** Whether any workspace's registration is left undone (tried again on the backoff). */
+/** Whether any workspace's registration is left undone (src/lib/paging.ts `nextTry` says when it is tried again). */
 export function registrationsLeft(registrations: Registrations): boolean {
-  return Object.values(registrations).some((paging) => paging === "taken" || paging === "failed");
+  return Object.values(registrations).some(
+    (paging) => paging === "taken" || paging === "limit" || paging === "failed",
+  );
 }
 
 /** How long registering waits for PushKit after the alert token is in hand. */

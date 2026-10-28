@@ -15,6 +15,8 @@ import {
   type IngestItem,
   type NormalizedAlert,
   type RandomBytes,
+  type WorkspaceLocale,
+  workspaceLocale,
 } from "@freecorps/brigade-schema";
 import type { MutateOutcome, Shard } from "./shard.ts";
 import type { RowChange } from "./store.ts";
@@ -113,12 +115,13 @@ export const SIGNATURE_HEADER = {
  */
 function unreadable(
   source: AlertSourceRow,
+  locale: WorkspaceLocale,
   part: "malformed" | "too_large" = "malformed",
 ): NormalizedAlert {
   return {
     dedupKey: "malformed",
-    // TODO(RFC 0008): the workspace's default locale, once workspaces have one.
-    title: alert_incident_title({ part, name: source.name }, { locale: "en" }),
+    // Shared text: in the workspace's locale (RFC 0008, Q15).
+    title: alert_incident_title({ part, name: source.name }, { locale }),
     severity: "high",
     status: "firing",
     link: null,
@@ -126,13 +129,19 @@ function unreadable(
   };
 }
 
-const CAPACITY_TITLE = () => alert_incident_title({ part: "capacity", name: "" }, { locale: "en" });
+const capacityTitle = (locale: WorkspaceLocale) =>
+  alert_incident_title({ part: "capacity", name: "" }, { locale });
 
 export class AlertIntake {
   /** Quiet rows that failed to route again on their own, and when they may be tried again (`REROUTE_RETRY_MS`). */
   private readonly rerouteFailed = new Map<string, number>();
 
   constructor(private readonly options: AlertIntakeOptions) {}
+
+  /** The language of the titles the shard writes for incidents it opens: the workspace's (RFC 0008, Q15). */
+  private locale(): WorkspaceLocale {
+    return workspaceLocale(this.options.shard.store.scan("workspace")[0]);
+  }
 
   /**
    * One payload for `sourceId`, with the SHA-256 of its URL secret, its raw bytes and its headers (lower-cased).
@@ -194,13 +203,13 @@ export class AlertIntake {
       malformed = alerts.length === 0;
       partly = (refused.length > 0 || normalized.unreadable > 0) && !malformed;
     }
-    if (malformed) alerts = [unreadable(source)];
+    if (malformed) alerts = [unreadable(source, this.locale())];
 
     const first = this.ingest(
       source.id,
       alerts,
       malformed,
-      partly ? unreadable(source) : undefined,
+      partly ? unreadable(source, this.locale()) : undefined,
     );
     if (first.ok)
       return { status: "accepted", alerts: alerts.length + (partly ? 1 : 0), malformed };
@@ -212,7 +221,7 @@ export class AlertIntake {
       code: first.error.code,
       message: first.error.message,
     });
-    const fallback = this.ingest(source.id, [unreadable(source)], true);
+    const fallback = this.ingest(source.id, [unreadable(source, this.locale())], true);
     if (fallback.ok) return { status: "accepted", alerts: 1, malformed: true };
     if (fallback.error.code === "not_found") return { status: "not_found" };
     log("the unreadable alert was refused too", {
@@ -245,7 +254,7 @@ export class AlertIntake {
       source: sourceId,
       kind: source.kind,
     });
-    const result = this.ingest(source.id, [unreadable(source, "too_large")], true);
+    const result = this.ingest(source.id, [unreadable(source, this.locale(), "too_large")], true);
     if (result.ok) return { status: "accepted", alerts: 1, malformed: true };
     if (result.error.code === "not_found") return { status: "not_found" };
     log("the unreadable alert was refused", {
@@ -302,7 +311,7 @@ export class AlertIntake {
       mutationId: newId("ing", now, random),
       actor: ALERTS_ACTOR,
       name: "alert.ingest",
-      args: { sourceId, malformed, alerts: items, capacityTitle: CAPACITY_TITLE() },
+      args: { sourceId, malformed, alerts: items, capacityTitle: capacityTitle(this.locale()) },
       now,
       internal: true,
     });
@@ -370,6 +379,7 @@ export class AlertIntake {
   ): "done" | "failed" {
     const { shard, randomBytes: random, log } = this.options;
     const store = shard.store;
+    const locale = this.locale();
     let outcome: "done" | "failed" = "failed";
     let reason: Record<string, unknown> = {};
     try {
@@ -384,14 +394,14 @@ export class AlertIntake {
             alertId: newId("alt", now, random),
             incidentId: newId("inc", now, random),
             ...(one.kind === "monitor" && {
-              // TODO(RFC 0008): the workspace's default locale, as for the incidents monitors open.
+              // In the workspace's locale, as for the incidents monitors open (RFC 0008, Q15).
               title: monitor_incident_title(
                 { name: store.get("monitors", one.row.monitorId)?.name ?? one.row.monitorId },
-                { locale: "en" },
+                { locale },
               ),
             }),
           })),
-          capacityTitle: CAPACITY_TITLE(),
+          capacityTitle: capacityTitle(locale),
         },
         now,
         internal: true,

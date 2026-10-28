@@ -149,7 +149,8 @@ async function sendJob(
         { email: recipient.email, ...(recipient.name ? { name: recipient.name } : {}) },
         resolveLocale(recipient.locale ?? undefined),
       );
-      const result = await sender.send(email);
+      // About a page that failed: the instance's daily ceiling counts it but never drops it (src/email-ceiling.ts).
+      const result = await sender.send({ ...email, priority: "paging" });
       if (result.ok) return { userId: recipient.userId, ok: true, retry: false };
       // Never the address or the content.
       log("email refused", {

@@ -10,6 +10,7 @@ import {
   serverMutations,
   SLACK_ROW_ID,
   TABLES,
+  ACCOUNT_ACTOR,
   type BrigadeTables,
   type MutationContext,
   type Role,
@@ -337,5 +338,48 @@ describe("notification.failSlack", () => {
       kind: "slack_failed",
       reason: "no_channel",
     });
+  });
+});
+
+describe("slack.takeOver (Q21)", () => {
+  const account: MutationContext = { actor: ACCOUNT_ACTOR, now: T + 1, server: true };
+
+  test("disconnects the connection the account made, as Disconnect does, its token kept to be revoked", () => {
+    const store = connected();
+    expect(Object.keys(mutations)).not.toContain("slack.takeOver");
+    expect(
+      runMutation(serverMutations, "slack.takeOver", { userId: "usr_ana" }, store, account),
+    ).toEqual({
+      ok: true,
+      events: [
+        {
+          type: "slack.disconnected",
+          subject: SLACK_ROW_ID,
+          data: { teamId: "T0TEST0001", reason: "takeover" },
+        },
+      ],
+    });
+    expect(store.get("slack", SLACK_ROW_ID)).toBeUndefined();
+    expect(store.get("slack_tokens", SLACK_ROW_ID)).toBeUndefined();
+    expect(store.get("slack_revocations", "T0TEST0001")).toMatchObject({ token: TOKEN });
+  });
+
+  test("leaves a connection someone else made, and runs only as the server's account actor", () => {
+    const store = connected();
+    expect(
+      runMutation(serverMutations, "slack.takeOver", { userId: "usr_bia" }, store, account),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(
+      runMutation(serverMutations, "slack.takeOver", { userId: "usr_ana" }, store, ctx()),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    expect(store.get("slack", SLACK_ROW_ID)).toBeDefined();
+  });
+
+  test("slack.configure keeps the connection's language when a client leaves it out", () => {
+    const store = connected();
+    expect(
+      runMutation(mutations, "slack.configure", { channelId: "C0CHAN0001" }, store, ctx()),
+    ).toMatchObject({ ok: true });
+    expect(store.get("slack", SLACK_ROW_ID)?.locale).toBe("pt-BR");
   });
 });

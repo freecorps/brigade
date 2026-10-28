@@ -3,9 +3,14 @@
 // sign-ups, and `GET /config`.
 import { env, exports } from "cloudflare:workers";
 import { createExecutionContext } from "cloudflare:test";
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, test, vi } from "vite-plus/test";
 import worker from "../src/index.ts";
-import { SIGN_UP_CLOSED_CODE, signUpMode, type SignUpMode } from "../src/sign-up.ts";
+import {
+  SIGN_UP_CLOSED_CODE,
+  signUpMode,
+  verifiedEmailRequired,
+  type SignUpMode,
+} from "../src/sign-up.ts";
 import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
@@ -17,13 +22,19 @@ let clients = 0;
 /** A new client IP (TEST-NET-3) per call: sign-up is rate-limited per IP. */
 const clientIp = () => `203.0.${Math.floor(++clients / 250) % 113}.${(clients % 250) + 1}`;
 
-/** The Worker as an instance with `SIGNUP` set to `mode` (`undefined`: unset). */
+/**
+ * The Worker as an instance with `SIGNUP` set to `mode` (`undefined`: unset), and `vars` over the tests' env (a var
+ * set to `undefined` is taken out: `EMAIL_LOG: undefined` is an instance without email).
+ */
 function under(
   mode: string | undefined,
   path: string,
   init: { method?: string; body?: string; headers?: Record<string, string> } = {},
+  vars: Record<string, string | undefined> = {},
 ) {
-  const { SIGNUP: _unset, ...rest } = env as typeof env & { SIGNUP?: string };
+  const { SIGNUP: _unset, ...base } = env as typeof env & { SIGNUP?: string };
+  const rest: Record<string, unknown> = { ...base, ...vars };
+  for (const [name, value] of Object.entries(vars)) if (value === undefined) delete rest[name];
   const request = new Request(`${ORIGIN}${path}`, {
     ...init,
     headers: {
@@ -33,16 +44,37 @@ function under(
       ...init.headers,
     },
   }) as Parameters<typeof worker.fetch>[0];
-  const instance = (mode === undefined ? rest : { ...rest, SIGNUP: mode }) as typeof env;
+  const instance = (mode === undefined ? rest : { ...rest, SIGNUP: mode }) as unknown as typeof env;
   return worker.fetch(request, instance, createExecutionContext());
 }
 
-const signUp = (mode: string | undefined, address: string, headers: Record<string, string> = {}) =>
-  under(mode, "/auth/sign-up/email", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ name: "Rui", email: address, password: PASSWORD }),
-  });
+const signUp = (
+  mode: string | undefined,
+  address: string,
+  headers: Record<string, string> = {},
+  vars: Record<string, string | undefined> = {},
+) =>
+  under(
+    mode,
+    "/auth/sign-up/email",
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: "Rui", email: address, password: PASSWORD }),
+    },
+    vars,
+  );
+
+const signIn = (address: string, vars: Record<string, string | undefined> = {}) =>
+  under(
+    "open",
+    "/auth/sign-in/email",
+    { method: "POST", body: JSON.stringify({ email: address, password: PASSWORD }) },
+    vars,
+  );
+
+/** An instance with no email sender at all: no `EMAIL_FROM`, and not the dev log double. */
+const NO_EMAIL = { EMAIL_LOG: undefined, EMAIL_FROM: undefined };
 
 /** An owner with a workspace, verified (to invite), signed up on the tests' open instance. */
 async function owner() {
@@ -185,7 +217,7 @@ describe("GET /config", () => {
     ] as const) {
       const response = await under(mode, "/config");
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ signUp: expected });
+      expect(await response.json()).toEqual({ signUp: expected, requireVerifiedEmail: false });
       expect(response.headers.get("Cache-Control")).toBe("public, max-age=60");
     }
   });
@@ -194,5 +226,95 @@ describe("GET /config", () => {
     const response = await under("open", "/config", { method: "POST" });
     expect(response.status).toBe(405);
     expect(response.headers.get("Allow")).toBe("GET");
+  });
+});
+
+describe("an instance without email (Q21)", () => {
+  test("always has closed sign-up, whatever SIGNUP says; /config says why, and it is logged once", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const mode of ["open", "invite"]) {
+        const address = email("Hugo");
+        const response = await signUp(mode, address, {}, NO_EMAIL);
+        expect(response.status).toBe(403);
+        expect(await response.json()).toMatchObject({ code: SIGN_UP_CLOSED_CODE });
+        expect(await users(address)).toBe(0);
+        const config = await under(mode, "/config", {}, NO_EMAIL);
+        expect(await config.json()).toEqual({
+          signUp: "closed",
+          signUpClosedBy: "no_email",
+          requireVerifiedEmail: false,
+        });
+      }
+      const told = error.mock.calls.filter((call) =>
+        String(call[0]).includes("sign-up is closed: this instance has no email sender"),
+      );
+      expect(told).toHaveLength(1);
+      // Closed as asked is nothing to explain.
+      const closed = await under("closed", "/config", {}, NO_EMAIL);
+      expect(await closed.json()).toEqual({ signUp: "closed", requireVerifiedEmail: false });
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  test("an invited address still gets in, as under closed", async () => {
+    const team = await owner();
+    const address = email("Iris");
+    await invite(team, address);
+    expect((await signUp("open", address, {}, NO_EMAIL)).status).toBe(200);
+  });
+});
+
+describe("REQUIRE_VERIFIED_EMAIL (Q21)", () => {
+  test("off by default: an unverified account signs in", async () => {
+    const address = email("Joao");
+    expect((await signUp("open", address)).status).toBe(200);
+    expect((await signIn(address)).status).toBe(200);
+  });
+
+  test("on: an unverified account cannot sign in until its address is verified, with a clear code", async () => {
+    const on = { REQUIRE_VERIFIED_EMAIL: "true" };
+    expect(verifiedEmailRequired("true")).toBe(true);
+    expect(verifiedEmailRequired(" ON ")).toBe(true);
+    for (const value of [undefined, "", "false", "0", "nope"]) {
+      expect(verifiedEmailRequired(value)).toBe(false);
+    }
+    const config = await under("open", "/config", {}, on);
+    expect(await config.json()).toEqual({ signUp: "open", requireVerifiedEmail: true });
+    const address = email("Kai");
+    expect((await signUp("open", address, {}, on)).status).toBe(200);
+    const refused = await signIn(address, on);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ code: "EMAIL_NOT_VERIFIED" });
+    expect(refused.headers.get("Set-Cookie") ?? "").not.toContain("session_token");
+    // The wrong password says nothing about verification.
+    const wrong = await under(
+      "open",
+      "/auth/sign-in/email",
+      { method: "POST", body: JSON.stringify({ email: address, password: "not the password" }) },
+      on,
+    );
+    expect(wrong.status).toBe(401);
+    await env.DB.prepare(`update "user" set "emailVerified" = 1 where email = ?`)
+      .bind(address)
+      .run();
+    expect((await signIn(address, on)).status).toBe(200);
+  });
+
+  test("ignored without email, where no address could ever be verified", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const vars = { ...NO_EMAIL, REQUIRE_VERIFIED_EMAIL: "true" };
+      const team = await owner();
+      const address = email("Lia");
+      await invite(team, address);
+      expect((await signUp("open", address, {}, vars)).status).toBe(200);
+      expect((await signIn(address, vars)).status).toBe(200);
+      const config = await under("open", "/config", {}, vars);
+      expect(await config.json()).toMatchObject({ requireVerifiedEmail: false });
+    } finally {
+      error.mockRestore();
+    }
   });
 });

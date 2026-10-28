@@ -2,6 +2,8 @@
 // binding (`send_email` in wrangler.jsonc), and a double that only logs what it would send, for local runs. Which
 // one a Worker uses is `emailSender(env)`: none at all when nothing is configured, and then no email is sent.
 
+import { emailDailyCeiling, withEmailCeiling } from "./email-ceiling.ts";
+
 /** One email to one person. Every field is final: the sender adds only the `From`. */
 export type OutgoingEmail = {
   to: { email: string; name?: string };
@@ -13,6 +15,12 @@ export type OutgoingEmail = {
    * `Content-Language`, ...): it refuses the whole email for any other.
    */
   headers?: Record<string, string>;
+  /**
+   * `paging`: an email about a page that failed (the member it missed, the owners when it reached nobody) or about
+   * paging itself failing (the operators'). The instance's daily ceiling counts it but never drops it
+   * (src/email-ceiling.ts). Not sent to the provider.
+   */
+  priority?: "paging";
 };
 
 /**
@@ -42,6 +50,10 @@ export type EmailEnv = {
   EMAIL_FROM?: string;
   /** DEV ONLY: "1" logs each email instead of sending it, when `EMAIL_FROM` is not set (`vp run dev`). */
   EMAIL_LOG?: string;
+  /** D1, where the instance's daily email ceiling is counted (src/email-ceiling.ts). Without it, nothing is counted. */
+  DB?: D1Database;
+  /** The most emails the instance sends a day, from every workspace together (`emailDailyCeiling`). */
+  EMAIL_DAILY_CEILING?: string;
 };
 
 /**
@@ -123,11 +135,21 @@ export function linkFallback(
   sender: EmailSender,
   origin: string | null | undefined,
 ): string | undefined {
-  return sender === logEmailSender ? (origin ?? undefined) : undefined;
+  // By id: the sender may come wrapped in the daily ceiling (src/email-ceiling.ts), which keeps it.
+  return sender.id === logEmailSender.id ? (origin ?? undefined) : undefined;
 }
 
-/** The sender the env configures, or undefined when email is not set up. */
+/**
+ * The sender the env configures, or undefined when email is not set up. With D1 it is under the instance's daily
+ * ceiling (src/email-ceiling.ts), so every email any part of the Worker sends is counted there.
+ */
 export function emailSender(env: EmailEnv): EmailSender | undefined {
+  const sender = configuredSender(env);
+  if (!sender || !env.DB) return sender;
+  return withEmailCeiling(sender, env.DB, emailDailyCeiling(env.EMAIL_DAILY_CEILING));
+}
+
+function configuredSender(env: EmailEnv): EmailSender | undefined {
   if (env.EMAIL && env.EMAIL_FROM) {
     const from = parseSender(env.EMAIL_FROM);
     if (from) return new CloudflareEmailSender(env.EMAIL, from);
@@ -137,6 +159,12 @@ export function emailSender(env: EmailEnv): EmailSender | undefined {
   }
   if (env.EMAIL_LOG === "1") return logEmailSender;
   return undefined;
+}
+
+/** Whether the env sets up a sender at all: without one, sign-up is always closed (src/sign-up.ts). */
+export function emailConfigured(env: EmailEnv): boolean {
+  if (env.EMAIL && env.EMAIL_FROM && parseSender(env.EMAIL_FROM)) return true;
+  return env.EMAIL_LOG === "1";
 }
 
 /** `Name <address>` or a bare address; undefined when it is neither. */

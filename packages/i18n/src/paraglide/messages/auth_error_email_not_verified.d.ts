@@ -5,7 +5,7 @@ export type Auth_Error_Email_Not_VerifiedInputs = {};
 /**
 * | output |
 * | --- |
-* | "Confirm your email first: open the link Brigade sent you, then sign in." |
+* | "Confirm your email first: open the link Brigade sent you, then sign in. Lost the link? Reset your password, which confirms your email too." |
 *
 * @param {Auth_Error_Email_Not_VerifiedInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

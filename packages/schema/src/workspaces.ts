@@ -66,9 +66,21 @@ export function fitMemberName(raw: string): string | null {
 /** A workspace name as people type it; the API checks it with this before Better Auth stores it. */
 export const workspaceName = v.string({ min: 1, max: WORKSPACE_NAME_MAX });
 
+/**
+ * The languages a workspace writes its shared text in (RFC 0008 "Workspace locale", Q15): a monitor's incident title,
+ * Slack channel messages, AI postmortem drafts. The same as `user.locale`'s.
+ */
+export const WORKSPACE_LOCALES = ["en", "pt-BR"] as const;
+export type WorkspaceLocale = (typeof WORKSPACE_LOCALES)[number];
+
+/** A workspace's locale: `en` for a row from before workspaces had one. */
+export function workspaceLocale(row: Pick<WorkspaceRow, "locale"> | undefined): WorkspaceLocale {
+  return row?.locale ?? "en";
+}
+
 export type WorkspaceCreated = DomainEvent<
   "workspace.created",
-  Pick<WorkspaceRow, "id" | "name" | "createdBy">
+  Pick<WorkspaceRow, "id" | "name" | "createdBy"> & { locale: WorkspaceLocale }
 >;
 
 /**
@@ -78,7 +90,12 @@ export type WorkspaceCreated = DomainEvent<
 export const createWorkspace = defineMutation({
   name: "workspace.create",
   // The id is the shard's workspace (the Better Auth organization id), not a client-made one.
-  args: v.object({ id: v.id("ws"), name: workspaceName }),
+  // `locale`: the creator's (`user.locale`); left out, `en`.
+  args: v.object({
+    id: v.id("ws"),
+    name: workspaceName,
+    locale: v.omittable(v.picklist(WORKSPACE_LOCALES)),
+  }),
   permission: "workspace:create",
   apply(store, args, ctx) {
     // Run once per shard, by the Worker as the creating owner; anything else finds the row already there.
@@ -88,12 +105,13 @@ export const createWorkspace = defineMutation({
       name: args.name,
       createdAt: ctx.now,
       createdBy: ctx.actor.id,
+      locale: args.locale ?? "en",
     };
     store.insert("workspace", row);
     const event: WorkspaceCreated = {
       type: "workspace.created",
       subject: row.id,
-      data: { id: row.id, name: row.name, createdBy: row.createdBy },
+      data: { id: row.id, name: row.name, createdBy: row.createdBy, locale: workspaceLocale(row) },
     };
     return ok(event);
   },
@@ -174,6 +192,36 @@ export const setAiDrafts = defineMutation({
       type: "workspace.ai_drafts_changed",
       subject: row.id,
       data: { enabled: args.enabled },
+    };
+    return ok(event);
+  },
+});
+
+export type WorkspaceLocaleChanged = DomainEvent<
+  "workspace.locale_changed",
+  { locale: WorkspaceLocale; previous: WorkspaceLocale }
+>;
+
+/**
+ * Changes the language the workspace writes shared text in (RFC 0008 "Workspace locale", Q15); owners only, like the
+ * monitor cap. Text to one person keeps following their own `user.locale`. No change is a `conflict`.
+ */
+export const setWorkspaceLocale = defineMutation({
+  name: "workspace.setLocale",
+  args: v.object({ locale: v.picklist(WORKSPACE_LOCALES) }),
+  permission: "workspace:manage",
+  apply(store, args, ctx) {
+    if (ctx.actor.role !== "owner")
+      return fail("forbidden", "Only owners set the workspace language");
+    const [row] = store.scan("workspace");
+    if (!row) return fail("not_found", "Workspace not found");
+    const previous = workspaceLocale(row);
+    if (previous === args.locale) return fail("conflict", "The workspace language is unchanged");
+    store.update("workspace", row.id, { locale: args.locale });
+    const event: WorkspaceLocaleChanged = {
+      type: "workspace.locale_changed",
+      subject: row.id,
+      data: { locale: args.locale, previous },
     };
     return ok(event);
   },

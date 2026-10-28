@@ -1,7 +1,11 @@
 // Who may create an account on this instance (RFC 0002 "Auth", "Sign-up modes"): the `SIGNUP` variable, `closed` when
-// unset, and the unauthenticated `GET /config` the dashboard and the mobile app read it from to hide the form.
+// unset and always `closed` without email (Q21); whether an account must verify its address before signing in
+// (`REQUIRE_VERIFIED_EMAIL`, off by default); and the unauthenticated `GET /config` the dashboard and the mobile app
+// read them from to hide the form.
 //
 // Kept free of Workers imports, like src/auth.ts: the database comes in as an argument.
+
+import { emailConfigured, type EmailEnv } from "./email.ts";
 
 /**
  * - `open`: anyone may sign up (the `dev` environment, local runs and the tests).
@@ -49,16 +53,80 @@ export async function signUpAllowed(
   return row !== null;
 }
 
+/** Whether `REQUIRE_VERIFIED_EMAIL` asks for it: `true`, `1`, `on` or `yes`, in any case. Anything else is off. */
+export function verifiedEmailRequired(value: unknown): boolean {
+  const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return text === "true" || text === "1" || text === "on" || text === "yes";
+}
+
+/** The parts of the Worker's env that say who may sign up and sign in. */
+export type AccessEnv = EmailEnv & { SIGNUP?: string; REQUIRE_VERIFIED_EMAIL?: string };
+
+/**
+ * Who may sign up and sign in on this instance, as it really runs:
+ * - `signUp`: `SIGNUP`'s mode, but `closed` when no email sender is set up (`email` false), whatever `SIGNUP` says: nobody
+ *   there could verify an address or reset a password (Q21). An invited address still gets in, as under `closed`.
+ * - `configured`: what `SIGNUP` asked for, so `GET /config` can say it was closed for want of email.
+ * - `requireVerifiedEmail`: `REQUIRE_VERIFIED_EMAIL`, only with email: without it no address could ever be verified,
+ *   and every account but the first owner's would be locked out for good.
+ */
+export type InstanceAccess = {
+  signUp: SignUpMode;
+  configured: SignUpMode;
+  email: boolean;
+  requireVerifiedEmail: boolean;
+};
+
+/** What was already logged about settings email overrides, so each is said once per isolate, not per request. */
+const told = new Set<string>();
+
+export function instanceAccess(env: AccessEnv): InstanceAccess {
+  const configured = signUpMode(env.SIGNUP);
+  const email = emailConfigured(env);
+  const asked = verifiedEmailRequired(env.REQUIRE_VERIFIED_EMAIL);
+  if (!email && configured !== "closed") tell("sign-up", configured);
+  if (!email && asked) tell("verification", "required");
+  return {
+    signUp: email ? configured : "closed",
+    configured,
+    email,
+    requireVerifiedEmail: email && asked,
+  };
+}
+
+function tell(setting: "sign-up" | "verification", value: string): void {
+  if (told.has(setting)) return;
+  told.add(setting);
+  console.error(
+    JSON.stringify({
+      message:
+        setting === "sign-up"
+          ? "sign-up is closed: this instance has no email sender (EMAIL_FROM), whatever SIGNUP says"
+          : "verified email before sign-in is off: this instance has no email sender (EMAIL_FROM)",
+      [setting === "sign-up" ? "signUp" : "requireVerifiedEmail"]: value,
+    }),
+  );
+}
+
 /**
  * `GET /config`: what the clients need before anyone signs in. No session, nothing about any account or workspace;
- * cached a minute, as the mode only changes with a deploy.
+ * cached a minute, as it only changes with a deploy. `signUp` is the mode in force; `signUpClosedBy: "no_email"` says
+ * `SIGNUP` asked for more but the instance cannot send email; `requireVerifiedEmail` says sign-in waits for a verified
+ * address.
  */
-export function serveConfig(request: Request, mode: SignUpMode): Response {
+export function serveConfig(request: Request, access: InstanceAccess): Response {
   if (request.method !== "GET") {
     return Response.json(
       { error: "method_not_allowed" },
       { status: 405, headers: { Allow: "GET" } },
     );
   }
-  return Response.json({ signUp: mode }, { headers: { "Cache-Control": "public, max-age=60" } });
+  return Response.json(
+    {
+      signUp: access.signUp,
+      ...(access.signUp !== access.configured ? { signUpClosedBy: "no_email" } : {}),
+      requireVerifiedEmail: access.requireVerifiedEmail,
+    },
+    { headers: { "Cache-Control": "public, max-age=60" } },
+  );
 }

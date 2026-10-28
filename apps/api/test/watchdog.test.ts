@@ -11,6 +11,7 @@ import {
 } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 import worker from "../src/index.ts";
+import { withEmailCeiling } from "../src/email-ceiling.ts";
 import type { EmailSender, OutgoingEmail } from "../src/email.ts";
 import { consumeEvents, type Fetch, type NotifyEnv } from "../src/notify.ts";
 import { operatorAddresses } from "../src/notify-operators.ts";
@@ -651,6 +652,46 @@ describe("the heartbeat, end to end", () => {
     expect(operatorAddresses("Ops@Example.com, ops@example.com,OPS@EXAMPLE.COM")).toEqual([
       "ops@example.com",
     ]);
+  });
+
+  test("the operators' email is sent past the instance's daily email ceiling", async () => {
+    const { stub, notifyEnv } = watchdog();
+    const sent: OutgoingEmail[] = [];
+    const inner: EmailSender = {
+      id: "test",
+      async send(email) {
+        sent.push(email);
+        return { ok: true };
+      },
+    };
+    // A ceiling of one, already used up today.
+    const day = new Date().toISOString().slice(0, 10);
+    await env.DB.prepare(
+      `insert into "email_day" ("day", "sent") values (?, 1) on conflict ("day") do update set "sent" = "sent" + 1`,
+    )
+      .bind(day)
+      .run();
+    const mail = withEmailCeiling(inner, env.DB, 1);
+    expect(
+      (await mail.send({ to: { email: "x@example.com" }, subject: "s", text: "t", html: "h" })).ok,
+    ).toBe(false);
+    const operators = {
+      ...notifyEnv(),
+      WATCHDOG: { getByName: () => stub } as unknown as NotifyEnv["WATCHDOG"],
+      OPERATOR_EMAILS: "ops@example.com",
+    };
+    const event: BrigadeEvent = {
+      id: "evt_status_ceiling",
+      type: STATUS_EVENT,
+      source: `brigade://${SYSTEM_WORKSPACE}/watchdog`,
+      workspaceId: SYSTEM_WORKSPACE,
+      time: new Date().toISOString(),
+      actor: { kind: "system", id: "sys_watchdog" },
+      data: { status: "degraded", previous: "ok", reasons: ["d1_failing"] },
+      specversion: "1.0",
+    };
+    await deliver([event], operators, relay().send, mail);
+    expect(sent.map((one) => one.to.email)).toEqual(["ops@example.com"]);
   });
 
   test("other system events are acked and never reach a shard", async () => {

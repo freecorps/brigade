@@ -316,9 +316,9 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     shard serves none are deleted, as there is nothing to act on). Any other way a session ends goes on without the
     record when D1 cannot write it. An admin revoking another user's sessions has no route yet (Better Auth's admin plugin is off); when it
     lands, it deletes rows through the same hook.
-  - **Workspaces (built):** a user belongs to up to 10; the dashboard's header lists them (Better Auth's
-    `organization/list`) and switches with `organization/set-active`, then opens the new workspace's shard; the
-    header's New workspace (`/workspaces/new`) creates another with `POST /workspaces`. The mobile app does the same
+  - **Workspaces (built):** a user belongs to up to 10; the dashboard's workspace switcher (at the top of its
+    sidebar) lists them (Better Auth's `organization/list`) and switches with `organization/set-active`, then opens
+    the new workspace's shard; the switcher's New workspace (`/workspaces/new`) creates another with `POST /workspaces`. The mobile app does the same
     from its account section (RFC 0006 "Device registration" for what happens to the phone's pages).
   - **Mobile (email and password, built):** Better Auth's Expo integration, `@better-auth/expo` 1.7.13: the server's
     `expo()` plugin and the app's `expoClient` with `expo-secure-store`. The app keeps the session cookie in secure

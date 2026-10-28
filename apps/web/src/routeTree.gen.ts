@@ -10,20 +10,46 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AccountRouteImport } from './routes/account'
+import { Route as AlertsRouteImport } from './routes/alerts'
+import { Route as EscalationRouteImport } from './routes/escalation'
 import { Route as FollowUpsRouteImport } from './routes/follow-ups'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
+import { Route as IntegrationsRouteImport } from './routes/integrations'
+import { Route as MembersRouteImport } from './routes/members'
+import { Route as MonitorsRouteImport } from './routes/monitors'
+import { Route as OnCallRouteImport } from './routes/on-call'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as SignUpRouteImport } from './routes/sign-up'
+import { Route as StatusPageRouteImport } from './routes/status-page'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
+import { Route as IncidentsIndexRouteImport } from './routes/incidents.index'
 import { Route as IncidentsNumberRouteImport } from './routes/incidents.$number'
 import { Route as InvitationsIdRouteImport } from './routes/invitations.$id'
+import { Route as ServicesIndexRouteImport } from './routes/services.index'
 import { Route as ServicesIdRouteImport } from './routes/services.$id'
 import { Route as WorkspacesNewRouteImport } from './routes/workspaces.new'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountRoute = AccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AlertsRoute = AlertsRouteImport.update({
+  id: '/alerts',
+  path: '/alerts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EscalationRoute = EscalationRouteImport.update({
+  id: '/escalation',
+  path: '/escalation',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FollowUpsRoute = FollowUpsRouteImport.update({
@@ -36,9 +62,34 @@ const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
   path: '/forgot-password',
   getParentRoute: () => rootRouteImport,
 } as any)
+const IntegrationsRoute = IntegrationsRouteImport.update({
+  id: '/integrations',
+  path: '/integrations',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MembersRoute = MembersRouteImport.update({
+  id: '/members',
+  path: '/members',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MonitorsRoute = MonitorsRouteImport.update({
+  id: '/monitors',
+  path: '/monitors',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OnCallRoute = OnCallRouteImport.update({
+  id: '/on-call',
+  path: '/on-call',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
   id: '/reset-password',
   path: '/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignInRoute = SignInRouteImport.update({
@@ -51,9 +102,19 @@ const SignUpRoute = SignUpRouteImport.update({
   path: '/sign-up',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StatusPageRoute = StatusPageRouteImport.update({
+  id: '/status-page',
+  path: '/status-page',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const VerifyEmailRoute = VerifyEmailRouteImport.update({
   id: '/verify-email',
   path: '/verify-email',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IncidentsIndexRoute = IncidentsIndexRouteImport.update({
+  id: '/incidents/',
+  path: '/incidents/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IncidentsNumberRoute = IncidentsNumberRouteImport.update({
@@ -64,6 +125,11 @@ const IncidentsNumberRoute = IncidentsNumberRouteImport.update({
 const InvitationsIdRoute = InvitationsIdRouteImport.update({
   id: '/invitations/$id',
   path: '/invitations/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ServicesIndexRoute = ServicesIndexRouteImport.update({
+  id: '/services/',
+  path: '/services/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ServicesIdRoute = ServicesIdRouteImport.update({
@@ -79,98 +145,175 @@ const WorkspacesNewRoute = WorkspacesNewRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/alerts': typeof AlertsRoute
+  '/escalation': typeof EscalationRoute
   '/follow-ups': typeof FollowUpsRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/integrations': typeof IntegrationsRoute
+  '/members': typeof MembersRoute
+  '/monitors': typeof MonitorsRoute
+  '/on-call': typeof OnCallRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/settings': typeof SettingsRoute
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
+  '/status-page': typeof StatusPageRoute
   '/verify-email': typeof VerifyEmailRoute
   '/incidents/$number': typeof IncidentsNumberRoute
   '/invitations/$id': typeof InvitationsIdRoute
   '/services/$id': typeof ServicesIdRoute
   '/workspaces/new': typeof WorkspacesNewRoute
+  '/incidents/': typeof IncidentsIndexRoute
+  '/services/': typeof ServicesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/alerts': typeof AlertsRoute
+  '/escalation': typeof EscalationRoute
   '/follow-ups': typeof FollowUpsRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/integrations': typeof IntegrationsRoute
+  '/members': typeof MembersRoute
+  '/monitors': typeof MonitorsRoute
+  '/on-call': typeof OnCallRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/settings': typeof SettingsRoute
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
+  '/status-page': typeof StatusPageRoute
   '/verify-email': typeof VerifyEmailRoute
   '/incidents/$number': typeof IncidentsNumberRoute
   '/invitations/$id': typeof InvitationsIdRoute
   '/services/$id': typeof ServicesIdRoute
   '/workspaces/new': typeof WorkspacesNewRoute
+  '/incidents': typeof IncidentsIndexRoute
+  '/services': typeof ServicesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/alerts': typeof AlertsRoute
+  '/escalation': typeof EscalationRoute
   '/follow-ups': typeof FollowUpsRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/integrations': typeof IntegrationsRoute
+  '/members': typeof MembersRoute
+  '/monitors': typeof MonitorsRoute
+  '/on-call': typeof OnCallRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/settings': typeof SettingsRoute
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
+  '/status-page': typeof StatusPageRoute
   '/verify-email': typeof VerifyEmailRoute
   '/incidents/$number': typeof IncidentsNumberRoute
   '/invitations/$id': typeof InvitationsIdRoute
   '/services/$id': typeof ServicesIdRoute
   '/workspaces/new': typeof WorkspacesNewRoute
+  '/incidents/': typeof IncidentsIndexRoute
+  '/services/': typeof ServicesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/account'
+    | '/alerts'
+    | '/escalation'
     | '/follow-ups'
     | '/forgot-password'
+    | '/integrations'
+    | '/members'
+    | '/monitors'
+    | '/on-call'
     | '/reset-password'
+    | '/settings'
     | '/sign-in'
     | '/sign-up'
+    | '/status-page'
     | '/verify-email'
     | '/incidents/$number'
     | '/invitations/$id'
     | '/services/$id'
     | '/workspaces/new'
+    | '/incidents/'
+    | '/services/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/account'
+    | '/alerts'
+    | '/escalation'
     | '/follow-ups'
     | '/forgot-password'
+    | '/integrations'
+    | '/members'
+    | '/monitors'
+    | '/on-call'
     | '/reset-password'
+    | '/settings'
     | '/sign-in'
     | '/sign-up'
+    | '/status-page'
     | '/verify-email'
     | '/incidents/$number'
     | '/invitations/$id'
     | '/services/$id'
     | '/workspaces/new'
+    | '/incidents'
+    | '/services'
   id:
     | '__root__'
     | '/'
+    | '/account'
+    | '/alerts'
+    | '/escalation'
     | '/follow-ups'
     | '/forgot-password'
+    | '/integrations'
+    | '/members'
+    | '/monitors'
+    | '/on-call'
     | '/reset-password'
+    | '/settings'
     | '/sign-in'
     | '/sign-up'
+    | '/status-page'
     | '/verify-email'
     | '/incidents/$number'
     | '/invitations/$id'
     | '/services/$id'
     | '/workspaces/new'
+    | '/incidents/'
+    | '/services/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AccountRoute: typeof AccountRoute
+  AlertsRoute: typeof AlertsRoute
+  EscalationRoute: typeof EscalationRoute
   FollowUpsRoute: typeof FollowUpsRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
+  IntegrationsRoute: typeof IntegrationsRoute
+  MembersRoute: typeof MembersRoute
+  MonitorsRoute: typeof MonitorsRoute
+  OnCallRoute: typeof OnCallRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  SettingsRoute: typeof SettingsRoute
   SignInRoute: typeof SignInRoute
   SignUpRoute: typeof SignUpRoute
+  StatusPageRoute: typeof StatusPageRoute
   VerifyEmailRoute: typeof VerifyEmailRoute
   IncidentsNumberRoute: typeof IncidentsNumberRoute
   InvitationsIdRoute: typeof InvitationsIdRoute
   ServicesIdRoute: typeof ServicesIdRoute
   WorkspacesNewRoute: typeof WorkspacesNewRoute
+  IncidentsIndexRoute: typeof IncidentsIndexRoute
+  ServicesIndexRoute: typeof ServicesIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -180,6 +323,27 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/account': {
+      id: '/account'
+      path: '/account'
+      fullPath: '/account'
+      preLoaderRoute: typeof AccountRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/alerts': {
+      id: '/alerts'
+      path: '/alerts'
+      fullPath: '/alerts'
+      preLoaderRoute: typeof AlertsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/escalation': {
+      id: '/escalation'
+      path: '/escalation'
+      fullPath: '/escalation'
+      preLoaderRoute: typeof EscalationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/follow-ups': {
@@ -196,11 +360,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ForgotPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/integrations': {
+      id: '/integrations'
+      path: '/integrations'
+      fullPath: '/integrations'
+      preLoaderRoute: typeof IntegrationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/members': {
+      id: '/members'
+      path: '/members'
+      fullPath: '/members'
+      preLoaderRoute: typeof MembersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/monitors': {
+      id: '/monitors'
+      path: '/monitors'
+      fullPath: '/monitors'
+      preLoaderRoute: typeof MonitorsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/on-call': {
+      id: '/on-call'
+      path: '/on-call'
+      fullPath: '/on-call'
+      preLoaderRoute: typeof OnCallRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/reset-password': {
       id: '/reset-password'
       path: '/reset-password'
       fullPath: '/reset-password'
       preLoaderRoute: typeof ResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sign-in': {
@@ -217,11 +416,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SignUpRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/status-page': {
+      id: '/status-page'
+      path: '/status-page'
+      fullPath: '/status-page'
+      preLoaderRoute: typeof StatusPageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/verify-email': {
       id: '/verify-email'
       path: '/verify-email'
       fullPath: '/verify-email'
       preLoaderRoute: typeof VerifyEmailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/incidents/': {
+      id: '/incidents/'
+      path: '/incidents'
+      fullPath: '/incidents/'
+      preLoaderRoute: typeof IncidentsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/incidents/$number': {
@@ -236,6 +449,13 @@ declare module '@tanstack/react-router' {
       path: '/invitations/$id'
       fullPath: '/invitations/$id'
       preLoaderRoute: typeof InvitationsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/services/': {
+      id: '/services/'
+      path: '/services'
+      fullPath: '/services/'
+      preLoaderRoute: typeof ServicesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/services/$id': {
@@ -257,16 +477,27 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AccountRoute: AccountRoute,
+  AlertsRoute: AlertsRoute,
+  EscalationRoute: EscalationRoute,
   FollowUpsRoute: FollowUpsRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
+  IntegrationsRoute: IntegrationsRoute,
+  MembersRoute: MembersRoute,
+  MonitorsRoute: MonitorsRoute,
+  OnCallRoute: OnCallRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  SettingsRoute: SettingsRoute,
   SignInRoute: SignInRoute,
   SignUpRoute: SignUpRoute,
+  StatusPageRoute: StatusPageRoute,
   VerifyEmailRoute: VerifyEmailRoute,
   IncidentsNumberRoute: IncidentsNumberRoute,
   InvitationsIdRoute: InvitationsIdRoute,
   ServicesIdRoute: ServicesIdRoute,
   WorkspacesNewRoute: WorkspacesNewRoute,
+  IncidentsIndexRoute: IncidentsIndexRoute,
+  ServicesIndexRoute: ServicesIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -73,8 +73,8 @@ function deepFreeze<T extends object>(value: T): T {
 // only solid badge fill in either theme, so it reads from across the room; every other badge is a
 // tint, and SEV2-4 step down in prominence. Destructive is a dark oxblood (a light salmon on dark), a
 // lightness band away from SEV1 even under protanopia and deuteranopia, so a SEV1 badge never reads as
-// a Delete button. Charts avoid green so a series never reads as "resolved". The sidebar sits on the
-// page ground.
+// a Delete button. Charts avoid green so a series never reads as "resolved". The sidebar and the
+// dashboard's frame sit on a ground one step darker than the page, which rests on it as an inset sheet.
 const light = {
   background: "#f7f7f5",
   foreground: "#161615",
@@ -100,13 +100,13 @@ const light = {
   chart3: "#a8620a",
   chart4: "#1d3557",
   chart5: "#8e8d85",
-  sidebar: "#f7f7f5",
+  sidebar: "#eaeae4",
   sidebarForeground: "#161615",
   sidebarPrimary: "#0b6467",
   sidebarPrimaryForeground: "#ffffff",
-  sidebarAccent: "#e9e9e4",
+  sidebarAccent: "#dcdcd5",
   sidebarAccentForeground: "#161615",
-  sidebarBorder: "#e2e2dd",
+  sidebarBorder: "#d6d6ce",
   sidebarRing: "#0f8a87",
   severity: {
     sev1: { bg: "#d0141e", fg: "#ffffff" },
@@ -154,13 +154,13 @@ const dark = {
   chart3: "#e0a24a",
   chart4: "#f0f2f8",
   chart5: "#74746c",
-  sidebar: "#121211",
+  sidebar: "#0c0c0b",
   sidebarForeground: "#ededea",
   sidebarPrimary: "#4cc3b8",
   sidebarPrimaryForeground: "#06201f",
-  sidebarAccent: "#262624",
+  sidebarAccent: "#232321",
   sidebarAccentForeground: "#ededea",
-  sidebarBorder: "#2c2c2a",
+  sidebarBorder: "#242422",
   sidebarRing: "#4cc3b8",
   severity: {
     sev1: { bg: "#d81b24", fg: "#ffffff" },

@@ -512,6 +512,28 @@ test("the real root keeps the card's state across a language switch, with a chan
   expect(row("Checkout down")!.textContent).toContain("Não foi possível mover para Descartado.");
 });
 
+test("the shell names the page and counts the open incidents on the sidebar's Incidents row", async () => {
+  vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("offline"));
+  const view = mount({ app: true });
+  await act(() => view.router!.load());
+  await view.flush();
+  const nav = $('nav[aria-label="Dashboard"]')!;
+  const link = (name: string) =>
+    $$("a", nav).find((a) => a.textContent?.startsWith(name)) as HTMLAnchorElement;
+  expect($("h1")?.textContent).toBe("Overview");
+  expect(link("Overview").getAttribute("aria-current")).toBe("page");
+  // None open: no badge, not a "0".
+  expect(link("Incidents").textContent).toBe("Incidents");
+
+  const first = view.declare("Checkout down", "sev1");
+  view.declare("Login slow", "sev3");
+  await view.flush();
+  expect(link("Incidents").textContent).toBe("Incidents2");
+  view.shard.write(ops, "incident.setStatus", { id: first, status: "resolved" });
+  await view.flush();
+  expect(link("Incidents").textContent).toBe("Incidents1");
+});
+
 test("focus moved outside the card stays there when the row it came from is removed", async () => {
   const view = mount();
   const gone = view.declare("Leaving", "sev1");

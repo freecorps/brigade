@@ -6,8 +6,8 @@ What an incident leaves behind once it is over (RFC 0001 goal 6, RFC 0003 `Follo
 items with an owner and a due date, a postmortem document with a first draft from Workers AI, and a way to take the
 incidents out of Brigade as a file. None of it is on a paging path. The code: `packages/schema/src/followups.ts`,
 `postmortems.ts` and `exports.ts`; `apps/api/src/postmortem.ts` and `exports.ts`; and the dashboard's Follow-ups and
-Postmortem cards on the incident page, the overview's Open follow-ups and Export incidents cards and the Postmortem
-templates part of its Incident settings card, and `/follow-ups`.
+Postmortem cards on the incident page, the overview's Open follow-ups card, the Export incidents card and the
+Postmortem templates part of the Incident settings card (both on Workspace settings, `/settings`), and `/follow-ups`.
 
 ## Shape
 

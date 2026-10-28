@@ -1,8 +1,14 @@
 // @vitest-environment happy-dom
 // The overview's warning about schedules with a layer that has nobody in it (RFC 0003 "Schedules", Q20): which
-// schedules it names, its links to their rows in the On-call card, its wording for each role and language, and that
+// schedules it names, its links to their rows in the On-call card (on the On call page), its wording for each role and language, and that
 // it says nothing while every layer has someone.
 import { setLocale as setI18nLocale } from "@freecorps/brigade-i18n";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
 import type { ScheduleLayer, ScheduleRow } from "@freecorps/brigade-schema";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -58,44 +64,52 @@ describe("OnCallGapsView", () => {
     root = undefined;
   });
 
-  function mount(gaps: ScheduleGap[], manage: boolean, locale: "en" | "pt-BR" = "en") {
+  // Its links are the router's, so it renders as the only route of a router of its own.
+  async function mount(gaps: ScheduleGap[], manage: boolean, locale: "en" | "pt-BR" = "en") {
     void setI18nLocale(locale);
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
-    act(() =>
+    const router = createRouter({
+      routeTree: createRootRoute({
+        component: () => <OnCallGapsView gaps={gaps} manage={manage} locale={locale} />,
+      }),
+      history: createMemoryHistory({ initialEntries: ["/"] }),
+    });
+    await act(async () => {
       root!.render(
         <PreferencesProvider initialLocale={locale}>
-          <OnCallGapsView gaps={gaps} manage={manage} locale={locale} />
+          <RouterProvider router={router} />
         </PreferencesProvider>,
-      ),
-    );
+      );
+      await router.load();
+    });
   }
 
-  test("nothing while every layer has someone", () => {
-    mount([], true);
+  test("nothing while every layer has someone", async () => {
+    await mount([], true);
     expect(container.textContent).toBe("");
   });
 
-  test("links each schedule to its row in the On-call card, with what an owner can do", () => {
-    mount([{ id: "sch_2", name: "Platform", layers: ["Layer 2", "Nights"] }], true);
+  test("links each schedule to its row in the On-call card, with what an owner can do", async () => {
+    await mount([{ id: "sch_2", name: "Platform", layers: ["Layer 2", "Nights"] }], true);
     expect(container.querySelector("h2")?.textContent).toBe(
       "A schedule has a layer with nobody in it",
     );
     const link = container.querySelector("a")!;
     expect(link.textContent).toBe("Platform");
-    expect(link.getAttribute("href")).toBe("#schedule-sch_2");
+    expect(link.getAttribute("href")).toBe("/on-call#schedule-sch_2");
     expect(container.textContent).toContain("Nobody in Layer 2 and Nights");
     expect(container.textContent).toContain("Edit the schedule to add someone");
   });
 
-  test("a responder is told to ask; many schedules are counted, listed up to a few, in Portuguese too", () => {
+  test("a responder is told to ask; many schedules are counted, listed up to a few, in Portuguese too", async () => {
     const gaps = Array.from({ length: GAPS_SHOWN + 3 }, (_, index) => ({
       id: `sch_${index}`,
       name: `Schedule ${index}`,
       layers: ["Primary"],
     }));
-    mount(gaps, false, "pt-BR");
+    await mount(gaps, false, "pt-BR");
     try {
       expect(container.querySelector("h2")?.textContent).toBe(
         "8 escalas têm uma camada sem ninguém",
@@ -104,7 +118,7 @@ describe("OnCallGapsView", () => {
       expect(container.textContent).toContain("Peça a um proprietário ou admin");
       const more = [...container.querySelectorAll("a")].at(-1)!;
       expect(more.textContent).toBe("mais 3");
-      expect(more.getAttribute("href")).toBe("#oncall");
+      expect(more.getAttribute("href")).toBe("/on-call#oncall");
     } finally {
       void setI18nLocale("en");
     }

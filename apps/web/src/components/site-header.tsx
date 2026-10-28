@@ -13,6 +13,7 @@ import {
   SunIcon,
   type LucideIcon,
 } from "lucide-react";
+import { cn } from "cn";
 import { useState } from "react";
 import { usePreferences } from "@/components/preferences";
 import { Button } from "@/components/ui/button";
@@ -85,7 +86,7 @@ export function SiteHeader() {
  * its shard (components/session), and changes still waiting for the old one's shard are sent there all the same.
  * Truncated; the full name is in its title and in the account menu.
  */
-function WorkspaceSwitcher() {
+export function WorkspaceSwitcher({ place = "header" }: { place?: "header" | "sidebar" }) {
   const workspace = authClient.useActiveOrganization();
   const list = authClient.useListOrganizations();
   const navigate = useNavigate();
@@ -108,11 +109,14 @@ function WorkspaceSwitcher() {
     // Another workspace's incident or service numbers mean nothing here.
     await navigate({ to: "/" });
   };
+  const sidebar = place === "sidebar";
   return (
     <div className="flex min-w-0 items-center gap-3 text-sm font-medium">
-      <span aria-hidden className="text-lg font-light text-border max-sm:hidden">
-        /
-      </span>
+      {sidebar ? null : (
+        <span aria-hidden className="text-lg font-light text-border max-sm:hidden">
+          /
+        </span>
+      )}
       <DropdownMenu
         open={open}
         onOpenChange={(next) => {
@@ -125,17 +129,39 @@ function WorkspaceSwitcher() {
       >
         <DropdownMenuTrigger
           render={
-            <Button variant="ghost" className="-mx-2 h-11 max-w-full min-w-0 shrink gap-1.5 px-2" />
+            sidebar ? (
+              <Button
+                variant="ghost"
+                className="h-12 w-full min-w-0 justify-start gap-2.5 px-2 text-left hover:bg-sidebar-accent aria-expanded:bg-sidebar-accent"
+              />
+            ) : (
+              <Button
+                variant="ghost"
+                className="-mx-2 h-11 max-w-full min-w-0 shrink gap-1.5 px-2"
+              />
+            )
           }
         >
+          {/* In the sidebar the workspace is the product's face: the mark, its name, and the app's under it. */}
+          {sidebar ? <BrigadeTile /> : null}
           <span className="sr-only">{m.workspace_label()}: </span>
-          <span className="truncate" title={name}>
-            {name}
+          <span className={sidebar ? "flex min-w-0 flex-1 flex-col" : "contents"}>
+            <span className="truncate" title={name}>
+              {name}
+            </span>
+            {sidebar ? (
+              <span aria-hidden className="truncate text-xs font-normal text-muted-foreground">
+                {m.app_name()}
+              </span>
+            ) : null}
           </span>
           <ChevronsUpDownIcon aria-hidden className="text-muted-foreground" />
           <span className="sr-only">{m.account_flow({ part: "switcher", name: "" })}</span>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-72 max-w-[calc(100vw-2rem)]">
+        <DropdownMenuContent
+          align="start"
+          className={sidebar ? "w-(--anchor-width) min-w-60" : "w-72 max-w-[calc(100vw-2rem)]"}
+        >
           <DropdownMenuGroup>
             <DropdownMenuLabel>
               {m.account_flow({ part: "workspaces", name: "" })}
@@ -206,7 +232,15 @@ function WorkspaceSwitcher() {
  * The member's name, email and workspace, and Sign out. A sign-out the API could not finish (503 `SIGN_OUT_FAILED`, or
  * no answer) keeps the session: the menu stays open and says so, and the item tries again.
  */
-function AccountMenu({ name, email }: { name: string; email: string }) {
+export function AccountMenu({
+  name,
+  email,
+  place = "header",
+}: {
+  name: string;
+  email: string;
+  place?: "header" | "sidebar";
+}) {
   const workspace = authClient.useActiveOrganization().data?.name;
   const [signingOut, setSigningOut] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -229,11 +263,39 @@ function AccountMenu({ name, email }: { name: string; email: string }) {
         if (next) setFailed(false);
       }}
     >
-      <DropdownMenuTrigger render={<Button variant="outline" size="icon" />}>
-        <CircleUserRoundIcon aria-hidden />
-        <span className="sr-only">{m.account_menu_label({ name })}</span>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent className="max-w-72">
+      {place === "sidebar" ? (
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              className="h-12 w-full min-w-0 justify-start gap-2.5 px-2 text-left font-normal hover:bg-sidebar-accent aria-expanded:bg-sidebar-accent"
+            />
+          }
+        >
+          <span
+            aria-hidden
+            className="flex size-7 shrink-0 items-center justify-center rounded-full bg-sidebar-accent text-xs font-semibold text-sidebar-accent-foreground"
+          >
+            {initials(name)}
+          </span>
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="truncate font-medium">{name}</span>
+            <span className="truncate text-xs text-muted-foreground">{email}</span>
+          </span>
+          <ChevronsUpDownIcon aria-hidden className="text-muted-foreground" />
+          <span className="sr-only">{m.account_menu_label({ name })}</span>
+        </DropdownMenuTrigger>
+      ) : (
+        <DropdownMenuTrigger render={<Button variant="outline" size="icon" />}>
+          <CircleUserRoundIcon aria-hidden />
+          <span className="sr-only">{m.account_menu_label({ name })}</span>
+        </DropdownMenuTrigger>
+      )}
+      <DropdownMenuContent
+        align={place === "sidebar" ? "start" : "end"}
+        side={place === "sidebar" ? "top" : "bottom"}
+        className={place === "sidebar" ? "w-(--anchor-width) min-w-60 max-w-72" : "max-w-72"}
+      >
         <DropdownMenuGroup>
           {/* Wrapped, never truncated: on a phone this is the only place the full email and workspace show. */}
           <DropdownMenuLabel className="flex flex-col gap-0.5 pb-2 [overflow-wrap:anywhere]">
@@ -272,6 +334,39 @@ function AccountMenu({ name, email }: { name: string; email: string }) {
   );
 }
 
+/**
+ * Up to two letters for a member's avatar: the first of the first and last words ("Ana Souza" → "AS"), or the first
+ * one for a single word. By code point, so an emoji or a letter outside the BMP stays whole.
+ */
+export function initials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  const first = words[0];
+  if (!first) return "?";
+  const last = words.length > 1 ? words.at(-1) : undefined;
+  const letter = (word: string) => Array.from(word)[0]?.toLocaleUpperCase() ?? "";
+  return letter(first) + (last ? letter(last) : "");
+}
+
+/** The mark on a brand tile, raised like a key: the workspace switcher's face in the sidebar. */
+function BrigadeTile() {
+  return (
+    <span
+      aria-hidden
+      className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.25),0_1px_2px_rgb(0_0_0/0.25)]"
+    >
+      <svg viewBox="0 0 24 24" className="size-5" fill="none">
+        <path
+          d="M4 12.5 12 6l8 6.5M4 19l8-6.5 8 6.5"
+          stroke="currentColor"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </span>
+  );
+}
+
 /** Two rank chevrons: a brigade's insignia, drawn in the brand hue. */
 function BrigadeMark() {
   return (
@@ -287,20 +382,43 @@ function BrigadeMark() {
   );
 }
 
-function LanguageMenu() {
+/**
+ * In the dashboard's top bar (`bar`) the language and theme menus are quiet ghost buttons, the language by its code
+ * ("PT-BR") and the theme by its icon: they are utilities, and the bar's first word is the page's name.
+ */
+const BAR_TRIGGER = "h-11 px-2.5 text-muted-foreground hover:text-foreground pointer-fine:h-8";
+
+export function LanguageMenu({ place = "header" }: { place?: "header" | "bar" }) {
   const { locale, setLocale } = usePreferences();
   const signedIn = authClient.useSession().data != null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={<Button variant="outline" className="max-sm:w-11 max-sm:px-0 sm:px-3" />}
+        render={
+          place === "bar" ? (
+            <Button variant="ghost" className={cn(BAR_TRIGGER, "max-sm:w-11 max-sm:px-0")} />
+          ) : (
+            <Button variant="outline" className="max-sm:w-11 max-sm:px-0 sm:px-3" />
+          )
+        }
       >
         <LanguagesIcon aria-hidden />
         {/* Icon-only on phones, like the theme menu, so the workspace name keeps the room; the accessible name
             still says which language is on: "Language: English" / "Idioma: Português (Brasil)". */}
         <span className="sr-only">{m.language_label()}: </span>
-        <span className="max-sm:sr-only">{LANGUAGE_NAMES[locale]()}</span>
-        <ChevronDownIcon aria-hidden className="text-muted-foreground max-sm:hidden" />
+        {place === "bar" ? (
+          <>
+            <span aria-hidden className="text-xs font-semibold tracking-wide max-sm:hidden">
+              {locale.toUpperCase()}
+            </span>
+            <span className="sr-only">{LANGUAGE_NAMES[locale]()}</span>
+          </>
+        ) : (
+          <>
+            <span className="max-sm:sr-only">{LANGUAGE_NAMES[locale]()}</span>
+            <ChevronDownIcon aria-hidden className="text-muted-foreground max-sm:hidden" />
+          </>
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         <DropdownMenuGroup>
@@ -326,19 +444,28 @@ function LanguageMenu() {
   );
 }
 
-function ThemeMenu() {
+export function ThemeMenu({ place = "header" }: { place?: "header" | "bar" }) {
   const { theme, resolvedTheme, setTheme } = usePreferences();
   // The trigger shows what is on screen; the menu shows the choice (System, with its current look).
   const Icon = THEMES[resolvedTheme].icon;
+  const bar = place === "bar";
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={<Button variant="outline" className="max-sm:w-11 max-sm:px-0 sm:px-3" />}
+        render={
+          bar ? (
+            <Button variant="ghost" className={cn(BAR_TRIGGER, "w-11 px-0 pointer-fine:w-8")} />
+          ) : (
+            <Button variant="outline" className="max-sm:w-11 max-sm:px-0 sm:px-3" />
+          )
+        }
       >
         <Icon aria-hidden />
         <span className="sr-only">{m.theme_label()}: </span>
-        <span className="max-sm:sr-only">{THEMES[theme].name()}</span>
-        <ChevronDownIcon aria-hidden className="text-muted-foreground max-sm:hidden" />
+        <span className={bar ? "sr-only" : "max-sm:sr-only"}>{THEMES[theme].name()}</span>
+        {bar ? null : (
+          <ChevronDownIcon aria-hidden className="text-muted-foreground max-sm:hidden" />
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         <DropdownMenuGroup>

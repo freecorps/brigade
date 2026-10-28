@@ -158,10 +158,12 @@ async function mount(path: string, locale: "en" | "pt-BR" = "en") {
       });
     }
   };
+  // What the page sent; the shell's own `member.setTimeZone` (it keeps the member's zone on every page) is not.
   const sentMutations = () =>
     network.sockets
       .flatMap((socket) => socket.sent)
-      .filter((f) => (f as { type: string }).type === "mutate");
+      .filter((f) => (f as { type: string }).type === "mutate")
+      .filter((f) => (f as { name?: string }).name !== "member.setTimeZone");
   return { shard, router, declare, flush, sentMutations };
 }
 
@@ -410,7 +412,7 @@ describe("postmortem: Q24", () => {
   test("owners switch AI drafts off in Incident settings", async () => {
     features = { ai: true, exports: false };
     role = "owner";
-    const view = await mount("/");
+    const view = await mount("/settings");
     view.shard.store.insert("workspace", {
       id: SHARD,
       name: "Demo",
@@ -434,7 +436,7 @@ describe("postmortem: Q24", () => {
   test("admins see the AI drafts switch but cannot change it", async () => {
     features = { ai: true, exports: false };
     role = "admin";
-    const view = await mount("/");
+    const view = await mount("/settings");
     view.shard.store.insert("workspace", {
       id: SHARD,
       name: "Demo",
@@ -504,7 +506,7 @@ describe("postmortem templates", () => {
 
   test("an owner edits the default template: reorders, adds a custom section, sees the preview", async () => {
     role = "owner";
-    const view = await mount("/");
+    const view = await mount("/settings");
     await act(() => view.router.load());
     await view.flush();
     const edit = $('[aria-label="Edit the postmortem template of Workspace default"]');

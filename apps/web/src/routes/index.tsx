@@ -1,38 +1,21 @@
-import { m } from "@freecorps/brigade-i18n";
 import { createFileRoute } from "@tanstack/react-router";
-import { AlertsCard } from "@/components/alerts-card";
-import { CallsCard } from "@/components/calls-card";
-import { DevicesCard } from "@/components/devices-card";
-import { EmailCard, TimeZoneSync, WorkspaceEmailCard } from "@/components/email-cards";
-import { WorkspaceLanguageCard } from "@/components/workspace-language-card";
-import { EscalationCard } from "@/components/escalation-card";
-import { ApiTokensCard } from "@/components/api-tokens-card";
-import { ExportCard } from "@/components/export-card";
+import { Page } from "@/components/app-shell";
 import { OpenFollowUpsCard } from "@/components/follow-ups-card";
-import { IncidentSettingsCard } from "@/components/incident-settings-card";
 import { IncidentsCard } from "@/components/incidents-card";
-import { LegendCard } from "@/components/legend-card";
-import { MembersCard } from "@/components/members-card";
-import { MonitorsCard } from "@/components/monitors-card";
-import { OnCallCard } from "@/components/oncall-card";
 import { OnCallGapsNotice } from "@/components/oncall-gaps";
 import { PagingHealthNotice } from "@/components/paging-health";
-import { ServicesCard } from "@/components/services-card";
 import { usePreferences } from "@/components/preferences";
 import { RequireWorkspace } from "@/components/session";
-import { SlackCard } from "@/components/slack-card";
-import { MaintenanceCard } from "@/components/maintenance-card";
-import { StatusDomainCard } from "@/components/status-domain-card";
-import { StatusPageCard } from "@/components/status-page-card";
-import { StackCard } from "@/components/stack-card";
-import { WebhooksCard } from "@/components/webhooks-card";
 import { TakeoverNotice } from "@/components/takeover-notice";
 import { VerifyNotice } from "@/components/verify-notice";
 import { authClient } from "@/lib/auth";
-import { ENVIRONMENT } from "@/lib/environment";
+import { sectionLabel } from "@/lib/navigation";
 import { usePageTitle } from "@/lib/page-title";
 
-export const Route = createFileRoute("/")({ component: Dashboard });
+export const Route = createFileRoute("/")({
+  component: Dashboard,
+  staticData: { section: "overview" },
+});
 
 /** Signed-in members only: the gate sends everyone else to sign in (or to create their workspace). */
 function Dashboard() {
@@ -43,49 +26,25 @@ function Dashboard() {
   );
 }
 
+/**
+ * What needs someone now: anything wrong with paging or the member's account, schedules with nobody in a layer, the
+ * open incidents and the follow-ups left from them. Everything else has its own section in the sidebar.
+ */
 function Overview() {
   // Read so a language switch re-renders the page (and its cards) in place: the router memoizes route
   // components, and the root no longer remounts them on a locale change.
   usePreferences();
-  usePageTitle(m.overview_title());
+  usePageTitle(sectionLabel("overview"));
   const session = authClient.useSession();
   const user = session.data?.user;
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-10">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold">{m.overview_title()}</h1>
-        <p className="max-w-prose text-sm text-muted-foreground">
-          {m.environment({ env: ENVIRONMENT, part: "overview" })}
-        </p>
-      </div>
+    <Page>
       <PagingHealthNotice />
       {user ? <VerifyNotice email={user.email} verified={user.emailVerified} /> : null}
       {user ? <TakeoverNotice key={user.id} /> : null}
       <OnCallGapsNotice />
       <IncidentsCard />
       <OpenFollowUpsCard />
-      <OnCallCard />
-      <DevicesCard />
-      <CallsCard />
-      <EmailCard />
-      <TimeZoneSync />
-      <EscalationCard />
-      <MonitorsCard />
-      <ServicesCard />
-      <IncidentSettingsCard />
-      <AlertsCard />
-      <MembersCard />
-      <WorkspaceEmailCard />
-      <WorkspaceLanguageCard />
-      <StatusPageCard />
-      <StatusDomainCard />
-      <MaintenanceCard />
-      <SlackCard />
-      <WebhooksCard />
-      <ApiTokensCard />
-      <ExportCard />
-      <StackCard />
-      <LegendCard />
-    </div>
+    </Page>
   );
 }

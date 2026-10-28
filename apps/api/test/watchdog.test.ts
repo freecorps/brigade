@@ -576,10 +576,14 @@ describe("the heartbeat, end to end", () => {
     const once = deepBeats(fresh.stub, fresh.heartbeats, fresh.notifyEnv);
     await once.beat(once.deep("ok").send, { DB: env.DB });
     await vi.waitFor(() => expect(pings()).toHaveLength(7));
+    const { lastOkAt } = await fresh.stub.health();
+    expect(lastOkAt).not.toBeNull();
     await once.beat(once.deep("error").send, { DB: env.DB });
+    // The relay answered, but a page to an iPhone could not have gone out: "last OK" stays where it was.
     expect(await fresh.stub.health()).toMatchObject({
       status: "degraded",
       reasons: ["apns_failing"],
+      lastOkAt,
     });
     expect(pings()).toHaveLength(7);
   });

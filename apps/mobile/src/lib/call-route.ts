@@ -70,10 +70,11 @@ export const SYSTEM_END_MS = 2_000;
 
 /**
  * The reason for an unanswered call's end on iOS, where CallKit reports a person's decline and the system ending
- * the call the same way. `msSinceRinging` is undefined if CallKit never confirmed the call.
+ * the call the same way. `msSinceRinging` is undefined if CallKit has not confirmed the call yet: nobody could have
+ * seen it, so that end is the system's too (`failed`).
  */
 export function unansweredEndReason(msSinceRinging: number | undefined): CallEndReason {
-  return msSinceRinging !== undefined && msSinceRinging < SYSTEM_END_MS ? "failed" : "declined";
+  return msSinceRinging === undefined || msSinceRinging < SYSTEM_END_MS ? "failed" : "declined";
 }
 
 /**

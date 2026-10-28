@@ -186,9 +186,11 @@ export class WatchdogDO extends DurableObject<Env> {
       this.set("last_proved_at", String(now));
       this.set("relay", relay);
       for (const key of ["apns", "fcm", "d1"] as const) this.check(key, checks?.[key] ?? "unknown");
-      if (relay === "ok") this.set("last_ok_at", String(now));
+      const failed = (["apns", "fcm", "d1"] as const).some((key) => this.get(key) === "error");
+      // "The last time a page could have gone out": not while APNs, FCM or D1 is failing.
+      if (relay === "ok" && !failed) this.set("last_ok_at", String(now));
       this.settle(now);
-      return (["apns", "fcm", "d1"] as const).some((key) => this.get(key) === "error");
+      return failed;
     });
     await this.armDrain(now);
     const pages = relay === "ok" && !failing;

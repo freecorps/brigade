@@ -194,12 +194,13 @@ describe("knownCall: a repeat of an ended page", () => {
     expect(unansweredEndReason(SYSTEM_END_MS - 1)).toBe("failed");
     expect(unansweredEndReason(SYSTEM_END_MS)).toBe("declined");
     expect(unansweredEndReason(15_000)).toBe("declined");
-    expect(unansweredEndReason(undefined)).toBe("declined");
+    // Ended before CallKit confirmed it: nobody saw it.
+    expect(unansweredEndReason(undefined)).toBe("failed");
     expect(knownCall(false, { reason: unansweredEndReason(60), atMs: 0 }, 1_000)).toBe("new");
     const swift = native("ios/CallCenter.swift");
     expect(swift).toContain(`static let systemEnd: TimeInterval = ${SYSTEM_END_MS / 1000}`);
     expect(swift).toMatch(
-      /call\.answered\s+\? "hung_up"\s+: call\.ringingSince\.map \{ Date\(\)\.timeIntervalSince\(\$0\) < Self\.systemEnd \} == true \? "failed" : "declined"/,
+      /call\.answered\s+\? "hung_up"\s+: call\.ringingSince\.map \{ Date\(\)\.timeIntervalSince\(\$0\) < Self\.systemEnd \} \?\? true \? "failed" : "declined"/,
     );
     expect(swift).toContain("self.calls[call.id]?.ringingSince = Date()");
   });
@@ -210,7 +211,7 @@ describe("knownCall: a repeat of an ended page", () => {
     for (const reason of ["declined", "hung_up", "timed_out", "missed"] as const) {
       expect(postsPageOnEnd(reason)).toBe(false);
     }
-    expect(postsPageOnEnd(unansweredEndReason(undefined))).toBe(false);
+    expect(postsPageOnEnd(unansweredEndReason(undefined))).toBe(true);
     const swift = native("ios/CallCenter.swift");
     expect(swift).toContain(
       'static func postsPageOnEnd(_ reason: String) -> Bool { reason == "failed" }',

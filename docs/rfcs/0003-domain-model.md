@@ -349,8 +349,8 @@ How a page uses them is RFC 0006 "Who is paged".
   hand may pick a policy (`escalationPolicyId` on `incident.declare` and on `POST /workspaces/:id/incidents`; the
   dashboard's and the app's declare forms offer it once the workspace has policies): stored on the incident, first in
   the order, and the run says "picked when the incident was declared" (`picked`); one deleted since falls through to
-  the usual order. Changing it after the declare, and the Slack form, are not offered yet. An alert route picks a policy the same way, and comes first (RFC 0006 "Who is
-  paged"); deleting a policy a route names puts the route back on the default (`alert_route.updated`,
+  the usual order. Changing it after the declare, and the Slack form, are not offered yet. An alert route picks a policy the same way, and comes right after a hand-picked one
+  (RFC 0006 "Which policy"); deleting a policy a route names puts the route back on the default (`alert_route.updated`,
   `reason: policy_deleted`).
 - **Escalate from a severity** (`minSeverity`, Q18 decided): `sev1` to `sev3`, or null (the default, and what a
   policy from before it reads as): every severity escalates, as before. Set with the policy's other fields by

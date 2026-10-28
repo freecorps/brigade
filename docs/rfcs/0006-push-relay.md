@@ -245,7 +245,9 @@ when it starts (`escalatesAt`) **pages once and does not escalate**, which means
   for a page whatever the new severity, and the page starts the run on its event (de-duplicated by it, so a
   redelivery or a replay pages nobody twice). A raise that stays below the threshold (SEV4 to SEV3 on a policy that
   escalates from SEV2) pages nothing, as before. (A run never stays `running` below the threshold: it ends as
-  `paged_once` in the same transaction that started it.)
+  `paged_once` in the same transaction that started it.) The threshold is the one the run started with: a policy whose
+  `minSeverity` is edited during the incident applies from the next run (a raise into SEV1 or SEV2 always starts
+  one).
 
 Tests: `packages/schema/tests/escalation.test.ts` ("escalating from a severity": a declarer alone on the first level,
 a raise up to it, `escalation.now` on a run that paged once), `apps/api/test/escalation.test.ts` ("escalating from a

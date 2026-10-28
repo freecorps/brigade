@@ -389,11 +389,12 @@ results (a new monitor is up on its first success).
      the bearer send token (5 s timeout). The deep check is only for the send token's holder (`401` otherwise, so its
      detail is never public; the plain `/health` stays `{ ok: true }`). It proves the token, and asks each push provider
      whether it would take a page without sending one: APNs gets the relay's cached provider token on a request for a
-     device that cannot exist (all zeros), so `400 BadDeviceToken` means it took the token, and so does `429` (APNs
-     checks the provider token before it rate-limits), while `403 InvalidProviderToken` / `ExpiredProviderToken` means
+     device that cannot exist (all zeros), so `400 BadDeviceToken` means it took the token, and so does `429 TooManyRequests` (that
+     device token rate-limited; `429 TooManyProviderTokenUpdates` is the provider token refreshed too often, which
+     pages would hit too, so an error), while `403 InvalidProviderToken` / `ExpiredProviderToken` means
      the key is revoked or wrong. Only the host of the relay's `APNS_ENVIRONMENT` is asked: one key signs for both
      hosts, so a key one takes the other takes too. FCM is asked for an OAuth access
-     token for `FCM_SERVICE_ACCOUNT`, a fresh one each time (`not_configured` without it: a relay serving iOS only). A relay from
+     token for `FCM_SERVICE_ACCOUNT`, a fresh one each time (each provider gets 3 s, inside the consumer's 5 s) (`not_configured` without it: a relay serving iOS only). A relay from
      before the deep check answers its plain `/health` there; then the consumer falls back to proving the token as
      before (`POST /send` with no body: `400 invalid_body` means accepted, before any APNs call or log), and the
      providers are `unknown`. Beside it the consumer makes **one cheap D1 read** (`select 1`, 3 s). It reports all of
@@ -406,7 +407,8 @@ results (a new monitor is up on its first success).
      relay marks it `transient`: a provider timing out or answering 5xx, Google's token endpoint slow or busy; and any
      failed D1 read) counts only on the **3rd proved beat in a row** it fails (`TRANSIENT_FAILURES_TO_DEGRADE`, a count
      per check in the watchdog's storage): before that the beat still pings and the status does not change, so one
-     slow answer does not page the operators. A check that passes starts its count again. Anything else is silence.
+     slow answer does not page the operators. A check that passes starts its count again, so a provider failing two beats in three never degrades (accepted:
+     the pages themselves are retried, and a lasting outage fails three in a row). Anything else is silence.
      The ping runs in the object's `waitUntil`, so a check that hangs never holds up the consumer and the pages in its
      batch.
 

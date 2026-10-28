@@ -113,6 +113,17 @@ describe("GET /health?deep=1", () => {
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ ok: true, apns: { status: "ok" } });
+    // The provider token refreshed too often: pages would be refused too.
+    const updates = await handle(
+      deep(),
+      env,
+      providers({ status: 429, reason: "TooManyProviderTokenUpdates" }).send,
+    );
+    expect(updates.status).toBe(503);
+    expect(await updates.json()).toMatchObject({
+      ok: false,
+      apns: { status: "error", reason: "TooManyProviderTokenUpdates" },
+    });
   });
 
   test("FCM with a service account asks Google for a fresh access token each time, and says when it refuses", async () => {

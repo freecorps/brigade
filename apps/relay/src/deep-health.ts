@@ -38,7 +38,7 @@ export type ProviderCheck =
 export type DeepHealth = { ok: boolean; apns: ProviderCheck; fcm: ProviderCheck };
 
 /** How long each provider gets. */
-export const DEEP_CHECK_TIMEOUT_MS = 4000;
+export const DEEP_CHECK_TIMEOUT_MS = 3000;
 /** No device has this token: APNs answers `BadDeviceToken` once it accepted the provider token. */
 export const NO_DEVICE_TOKEN = "0".repeat(64);
 
@@ -97,8 +97,9 @@ async function checkApns(
     const response = await send(request);
     const reason = await readReason(response);
     if (response.status === 400 && reason === "BadDeviceToken") return { status: "ok" };
-    // Rate limited: APNs checked the provider token before it counted the request.
-    if (response.status === 429) return { status: "ok" };
+    // This device token rate limited: the provider token was taken. `TooManyProviderTokenUpdates` (also 429) is the
+    // provider token itself refreshed too often, which pages would hit too: an error.
+    if (response.status === 429 && reason === "TooManyRequests") return { status: "ok" };
     if (reason === "ExpiredProviderToken" || reason === "InvalidProviderToken") {
       options.tokens.clear();
     }

@@ -129,6 +129,21 @@ test("a phone registers its call token so pages can ring; without one it registe
     { platform: "android", environment: "production", pushToken: fcm, voipToken: fcm },
   ]);
   expect(other.scan("member_devices")).toMatchObject([{ platform: "android", voip: true }]);
+
+  // There it is an FCM fetch too, so it is waited for, not raced against PushKit's grace: one answered late still
+  // registers, not an Android phone that never rings (nothing re-registers it, as `onVoipToken` does on iOS).
+  const slow = createMemoryStore<BrigadeTables>();
+  expect(
+    await registerPhone(
+      phone(shard(slow)(ANA), {
+        platform: "android",
+        pushToken: async () => fcm,
+        voipToken: () =>
+          new Promise((resolve) => setTimeout(() => resolve(fcm), VOIP_GRACE_MS + 100)),
+      }),
+    ),
+  ).toBe("on");
+  expect(slow.scan("devices")).toMatchObject([{ pushToken: fcm, voipToken: fcm }]);
 });
 
 test("Critical Alerts are reported only when allowed, so an instance from before them still registers the phone", async () => {

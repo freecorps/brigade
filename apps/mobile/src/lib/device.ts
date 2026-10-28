@@ -149,7 +149,10 @@ async function registration(deps: DeviceDeps): Promise<DeviceRegistration | "uns
   return deviceRegistration({
     publicKey,
     pushToken,
-    voipToken: await Promise.race([voip, later(VOIP_GRACE_MS, null)]),
+    // Android's call token is its FCM token, fetched like the push token: waited for, since nothing registers it
+    // when it comes later (iOS's `onVoipToken`).
+    voipToken:
+      deps.platform === "android" ? await voip : await Promise.race([voip, later(VOIP_GRACE_MS, null)]),
     criticalAlerts: await allowsCritical(deps),
     platform: deps.platform,
     apsEnvironment: deps.apsEnvironment,

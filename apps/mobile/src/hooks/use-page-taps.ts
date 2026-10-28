@@ -44,8 +44,16 @@ export function usePageTaps(): void {
       pending = null;
       switchingTo = null;
       // After the stack has mounted: expo-router refuses to navigate before the root layout has.
-      const timer = setTimeout(() => router.navigate(incidentByIdRoute(page.incident)), 0);
-      return () => clearTimeout(timer);
+      let opened = false;
+      const timer = setTimeout(() => {
+        opened = true;
+        router.navigate(incidentByIdRoute(page.incident));
+      }, 0);
+      // Cancelled before it ran (a re-render, a remount): the page waits again, for the next run or mount to open.
+      return () => {
+        clearTimeout(timer);
+        if (!opened && pending === null) pending = page;
+      };
     }
     if (step === "switch") {
       switchingTo = page.workspace;

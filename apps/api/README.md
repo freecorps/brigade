@@ -410,8 +410,12 @@ wrangler kv namespace create brigade-status    # the status pages' snapshots: it
 
 The `STATUS` KV namespace is part of the setup (decided, Q23; RFC 0012 "The snapshot"): without it every status page
 answers 404 while the dashboard still sets them up. Give the top-level `STATUS` entry its `id`, or `wrangler deploy`
-provisions a namespace of its own. Then set the secrets ("Deploying dev" lists them), deploy the relay, the API and
-the dashboard, and create the first owner ("First owner").
+provisions a namespace of its own. Exports need a bucket too (`wrangler r2 bucket create brigade-exports` and the
+lifecycle rule in "Deploying dev" step 6, its name in `r2_buckets`). The production build (`vp run build`) adds two
+bindings the top level leaves out because local runs and the tests use it (vite.config.ts `PRODUCTION_BINDINGS`):
+`RELAY`, the relay Worker `brigade-relay` on the same account, and `AI`. An instance using another relay removes
+`RELAY` there and sets the `RELAY_URL` secret. Then set the secrets ("Deploying dev" lists them), deploy the relay,
+the API and the dashboard, and create the first owner ("First owner").
 
 ## First owner
 

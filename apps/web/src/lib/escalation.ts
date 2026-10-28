@@ -82,7 +82,8 @@ export function draftFromPolicy(row: EscalationPolicyRow): PolicyDraft {
     })),
     repeat: row.repeat,
     isDefault: row.isDefault,
-    minSeverity: row.minSeverity ?? null,
+    // SEV4 reads as "every severity", so saving it back stores what the editor shows.
+    minSeverity: minSeverityOf(minSeverityChoice(row.minSeverity ?? null)),
   };
 }
 

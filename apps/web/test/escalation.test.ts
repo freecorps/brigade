@@ -14,10 +14,13 @@ import type {
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import {
   checkPolicy,
+  draftFromPolicy,
   draftTargets,
   emptyPolicy,
   failedDeliveries,
   forecast,
+  minSeverityChoice,
+  minSeverityOf,
   nextStep,
   runStatus,
   timeoutKind,
@@ -102,6 +105,22 @@ describe("the policy editor", () => {
   });
 });
 
+describe("escalate from a severity", () => {
+  test("every severity is no threshold; SEV4 reads and saves as every severity", () => {
+    expect(minSeverityChoice(null)).toBe("every");
+    expect(minSeverityChoice("sev4")).toBe("every");
+    expect(minSeverityChoice("sev2")).toBe("sev2");
+    expect(minSeverityOf("every")).toBeNull();
+    expect(minSeverityOf("sev1")).toBe("sev1");
+    const row = { name: "Checkout", levels: [], repeat: 0, isDefault: false };
+    const draft = (minSeverity: "sev2" | "sev4" | null | undefined) =>
+      draftFromPolicy({ ...row, minSeverity } as unknown as Parameters<typeof draftFromPolicy>[0]);
+    expect(draft("sev4").minSeverity).toBeNull();
+    expect(draft(undefined).minSeverity).toBeNull();
+    expect(draft("sev2").minSeverity).toBe("sev2");
+  });
+});
+
 describe("a run on the incident page", () => {
   const run = (pages: Escalation["pages"], repeat = 0): Escalation => ({
     policyId: ESC,
@@ -135,6 +154,17 @@ describe("a run on the incident page", () => {
     expect(nextStep(run([page(1)]))).toEqual({ kind: "level", level: 2 });
     expect(nextStep(run([page(1), page(2)], 1))).toEqual({ kind: "repeat", level: 1 });
     expect(nextStep(run([page(1), page(2)]))).toEqual({ kind: "end", level: 2 });
+  });
+
+  test("below the policy's threshold the run reads as paged once, unless someone acknowledged", () => {
+    const once: Escalation = { ...run([page(1)]), status: "paged_once", once: "sev2", endedAt: 30 };
+    const open = { acknowledgedAt: null, acknowledgedBy: null };
+    expect(runStatus(once, open, [], [])).toEqual({ kind: "once", minSeverity: "sev2", at: 30 });
+    expect(runStatus(once, { acknowledgedAt: 40, acknowledgedBy: "usr_ana" }, [], [])).toEqual({
+      kind: "acknowledged",
+      by: "usr_ana",
+      at: 40,
+    });
   });
 
   test("forecasts the next level: its people, and each schedule with whoever is on call now", () => {

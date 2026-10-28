@@ -10,6 +10,7 @@ import {
   freshFloor,
   MAX_MONITORS_PER_WORKSPACE,
   MONITOR_ACTOR,
+  MONITOR_HISTORY,
   monitorAlerting,
   monitorSources,
   monitorStatus,
@@ -1161,6 +1162,33 @@ describe("monitor.report: quorum → alert → incident", () => {
 });
 
 describe("monitor.report: restarts, refreshes and stale probes", () => {
+  test("every report is kept for charts, in check-time order, up to MONITOR_HISTORY, and a restart empties it", () => {
+    const db = store();
+    const id = createHttp(db, ["weur", "wnam"]);
+    report(db, id, "wnam", true, T + 2000);
+    // weur's check started first but lands second: it still sits before wnam's.
+    report(db, id, "weur", false, T + 1500, T + 2500);
+    expect(db.get("monitors", id)?.history).toEqual([
+      { source: "weur", at: T + 1500, up: false, latencyMs: 42 },
+      { source: "wnam", at: T + 2000, up: true, latencyMs: 42 },
+    ]);
+    for (let index = 1; index <= MONITOR_HISTORY; index++) {
+      const at = T + 2000 + index * REPORT_EVERY_MS;
+      expect(report(db, id, "wnam", true, at).ok).toBe(true);
+    }
+    const history = db.get("monitors", id)!.history!;
+    expect(history).toHaveLength(MONITOR_HISTORY);
+    // The oldest went first.
+    expect(history[0]!.at).toBe(T + 2000 + REPORT_EVERY_MS);
+    // A new target starts over, results and history alike.
+    const later = T + 3000 + (MONITOR_HISTORY + 1) * REPORT_EVERY_MS;
+    const retarget = { ...httpArgs(["weur", "wnam"]), id, url: "https://example.com/other" };
+    expect(runMutation(mutations, "monitor.updateHttp", retarget, db, as("admin", later)).ok).toBe(
+      true,
+    );
+    expect(db.get("monitors", id)).toMatchObject({ checks: [], history: [] });
+  });
+
   test("a check time from the future is refused, so it cannot freeze the region's result", () => {
     const db = store();
     const id = createHttp(db, ["weur"]);

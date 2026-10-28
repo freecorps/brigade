@@ -257,6 +257,13 @@ results (a new monitor is up on its first success).
   mutation is declared `silent` and writes nothing to the outbox; `monitor.checked` is emitted only when a region's
   verdict or failure reason changes.
 
+- **Recent results:** each report also lands in the monitor row's `history`, the last `MONITOR_HISTORY` (96) samples from
+  every source in check-time order (source, check time, verdict, latency): about 8 hours of a single source at the
+  5-minute refresh, under 3 for three regions, in about 4 KB of synced row. The dashboard draws its latency and
+  up/down charts from it, and the status page can later. It is a chart's memory, not a log: it starts over with the
+  results (a create, a new target, a resume), and it is never an input to the status, which stays the fresh results'
+  vote. Rows from before have none until their next report.
+
 - **Freshness:** a region's result counts for `max(3 × interval, 2 × 5 min)` (`staleAfterMs`; two refresh periods
   at least, since an unchanged verdict is re-sent only every 5 minutes). The status is a majority of the fresh
   results (1 of 1, 2 of 2, 2 of 3, …), and at least half of the monitor's regions, rounded up, must be fresh

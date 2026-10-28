@@ -27,6 +27,7 @@ import { MONITOR_PATTERN_MAX, patternProblem } from "./pattern.ts";
 import { defineQuery } from "./query.ts";
 import type {
   MonitorCheck,
+  MonitorSample,
   MonitorHeader,
   MonitorRow,
   StatusRange,
@@ -93,6 +94,12 @@ export const CONSECUTIVE_CHECKS = 2;
  * dashboard's latency and colo stay fresh without a shard version per check. Heartbeats refresh alike.
  */
 export const REPORT_EVERY_MS = 5 * 60 * 1000;
+
+/**
+ * Reports a monitor keeps for charts (RFC 0007 "Recent results"): about 8 hours of one source refreshed every
+ * `REPORT_EVERY_MS`, or under 3 of three regions, in about 4 KB of synced row.
+ */
+export const MONITOR_HISTORY = 96;
 /**
  * Check errors (decided, RFC 0007 "Body patterns"): a check Brigade could not judge, which says nothing about the
  * target. `pattern_slow`: the body pattern gave up past the cost it was saved with, which a saved pattern never does
@@ -919,6 +926,7 @@ const fresh = (ctx: MutationContext) => ({
   since: ctx.now,
   restartedAt: ctx.now,
   checks: [],
+  history: [],
   alertId: null,
   incidentId: null,
   createdAt: ctx.now,
@@ -1054,9 +1062,10 @@ export const createHeartbeatMonitor = defineMutation({
  */
 const restart = (
   ctx: MutationContext,
-): Pick<MonitorRow, "status" | "checks" | "since" | "restartedAt"> => ({
+): Pick<MonitorRow, "status" | "checks" | "history" | "since" | "restartedAt"> => ({
   status: "pending",
   checks: [],
+  history: [],
   since: ctx.now,
   restartedAt: ctx.now,
 });
@@ -1559,7 +1568,17 @@ export const reportMonitorCheck = defineMutation({
         data: { ...check, error: reason(check) },
       } satisfies MonitorChecked);
     }
-    const patch: Partial<Omit<MonitorRow, "id">> = { checks, updatedAt: ctx.now };
+    // Kept in check-time order, so a report from a slower region that lands after a faster one still sits in place.
+    const sample: MonitorSample = {
+      source: check.source,
+      at: check.at,
+      up: check.up,
+      latencyMs: check.latencyMs,
+    };
+    const history = [...(monitor.history ?? []), sample]
+      .sort((a, b) => a.at - b.at)
+      .slice(-MONITOR_HISTORY);
+    const patch: Partial<Omit<MonitorRow, "id">> = { checks, history, updatedAt: ctx.now };
     const moved = moveTo(store, monitor, monitorStatus(monitor, checks, ctx.now), open, ctx, patch);
     if ("failed" in moved) return moved.failed;
     store.update("monitors", id, patch);

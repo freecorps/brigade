@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Page } from "@/components/app-shell";
-import { TimeZoneSync } from "@/components/email-cards";
 import { OpenFollowUpsCard } from "@/components/follow-ups-card";
 import { IncidentsCard } from "@/components/incidents-card";
 import { OnCallGapsNotice } from "@/components/oncall-gaps";
@@ -44,7 +43,6 @@ function Overview() {
       {user ? <VerifyNotice email={user.email} verified={user.emailVerified} /> : null}
       {user ? <TakeoverNotice key={user.id} /> : null}
       <OnCallGapsNotice />
-      <TimeZoneSync />
       <IncidentsCard />
       <OpenFollowUpsCard />
     </Page>

@@ -396,7 +396,7 @@ export function LanguageMenu({ place = "header" }: { place?: "header" | "bar" })
       <DropdownMenuTrigger
         render={
           place === "bar" ? (
-            <Button variant="ghost" className={BAR_TRIGGER} />
+            <Button variant="ghost" className={cn(BAR_TRIGGER, "max-sm:w-11 max-sm:px-0")} />
           ) : (
             <Button variant="outline" className="max-sm:w-11 max-sm:px-0 sm:px-3" />
           )

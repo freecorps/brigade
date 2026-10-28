@@ -149,6 +149,13 @@ export function OnCallCard() {
         ? "ready"
         : "loading";
   const loading = status === "loading";
+  // A link from the overview's gap warning (`/on-call#schedule-…`) lands before the rows exist, so the router's own
+  // scroll finds nothing: once they render, bring the schedule it names into view.
+  useEffect(() => {
+    if (status !== "ready") return;
+    const target = decodeURIComponent(window.location.hash.slice(1));
+    if (target) document.getElementById(target)?.scrollIntoView({ block: "start" });
+  }, [status]);
   const choices = rotationChoices(members.rows);
   const usedZones = rows.map((row) => row.timeZone);
   return (

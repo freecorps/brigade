@@ -158,10 +158,12 @@ async function mount(path: string, locale: "en" | "pt-BR" = "en") {
       });
     }
   };
+  // What the page sent; the shell's own `member.setTimeZone` (it keeps the member's zone on every page) is not.
   const sentMutations = () =>
     network.sockets
       .flatMap((socket) => socket.sent)
-      .filter((f) => (f as { type: string }).type === "mutate");
+      .filter((f) => (f as { type: string }).type === "mutate")
+      .filter((f) => (f as { name?: string }).name !== "member.setTimeZone");
   return { shard, router, declare, flush, sentMutations };
 }
 

@@ -4,6 +4,7 @@ import { Link, useMatches } from "@tanstack/react-router";
 import { cn } from "cn";
 import { MenuIcon, XIcon } from "lucide-react";
 import { useId, useState, type ReactNode } from "react";
+import { TimeZoneSync } from "@/components/email-cards";
 import { usePreferences } from "@/components/preferences";
 import {
   AccountMenu,
@@ -69,7 +70,8 @@ export function PlainFrame({ children }: { children: ReactNode }) {
  * to look at. On wide screens the sheet scrolls inside the window and the sidebar stays put; on phones the sidebar
  * folds into a sheet from the left, the sheet becomes the whole page and the window scrolls.
  *
- * `live`: the workspace's shard is open (inside its SyncProvider), so the shell can show its counts; while the
+ * `live`: the workspace's shard is open (inside its SyncProvider), so the shell can show its counts and keep the
+ * member's time zone (which their follow-up reminders follow) on this browser's, whichever page they open; while the
  * workspace still loads it shows the frame without them.
  */
 export function AppShell({ live, children }: { live: boolean; children: ReactNode }) {
@@ -79,6 +81,7 @@ export function AppShell({ live, children }: { live: boolean; children: ReactNod
   const user = session.data?.user;
   return (
     <div className="flex min-h-dvh bg-sidebar md:h-dvh md:overflow-hidden">
+      {live ? <TimeZoneSync /> : null}
       <aside className="hidden w-64 shrink-0 md:flex md:flex-col">
         <SidebarBody live={live} user={user} />
       </aside>

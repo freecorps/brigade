@@ -24,6 +24,7 @@ import {
   newId,
   NOTIFIER_ACTOR,
   roleDefinitions,
+  SEVERITIES,
   SLACK_ROW_ID,
   type Actor,
   type IncidentRow,
@@ -936,23 +937,24 @@ export class SlackDesk {
         jobs.push({ key: "invite", work: { kind: "invite", channel: open.channel_id, users } });
       }
     };
+    const wanted = connection.incidentChannels ?? "off";
+    const major = incident.severity === "sev1" || incident.severity === "sev2";
+    const wants = wanted === "all" || (wanted === "major" && major);
+    const createChannel = () => {
+      if (!wants || channel) return;
+      jobs.push({
+        key: "channel",
+        work: {
+          kind: "channel",
+          number: incident.number,
+          title: incident.title,
+          private: connection.privateChannels ?? false,
+        },
+      });
+    };
     switch (event.type) {
       case "incident.declared": {
-        const wanted = connection.incidentChannels ?? "off";
-        const wants =
-          wanted === "all" ||
-          (wanted === "major" && (incident.severity === "sev1" || incident.severity === "sev2"));
-        if (wants && !channel) {
-          jobs.push({
-            key: "channel",
-            work: {
-              kind: "channel",
-              number: incident.number,
-              title: incident.title,
-              private: connection.privateChannels ?? false,
-            },
-          });
-        }
+        createChannel();
         if (open) {
           invite(this.responders(incident));
           jobs.push({
@@ -985,8 +987,28 @@ export class SlackDesk {
         updateMessages();
         mirror();
         break;
+      // Raised to SEV1 or SEV2 after declaring, with no channel yet: the channel the declaration would have made (Q22).
+      // Only this event's own channel is invited to and posted in, so a raise never re-posts in an older one.
+      case "incident.severity_changed": {
+        if (raisedToMajor(event) && major && isActive(incident.status)) createChannel();
+        if (open && !open.ts && this.job(event.id, "channel")?.done) {
+          invite(this.responders(incident));
+          jobs.push({
+            key: "message:incident",
+            work: {
+              kind: "message",
+              channel: open.channel_id,
+              ts: null,
+              incident: view(),
+              link: null,
+            },
+          });
+        }
+        updateMessages();
+        mirror();
+        break;
+      }
       case "incident.acknowledged":
-      case "incident.severity_changed":
       // The message reads the title as it is now; the channel keeps the name it was made with.
       case "incident.renamed":
         updateMessages();
@@ -1596,6 +1618,14 @@ function normalize(text: string): string {
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
+}
+
+/** Whether an `incident.severity_changed` raised the incident to SEV1 or SEV2. */
+function raisedToMajor(event: BrigadeEvent): boolean {
+  const rank = (value: unknown) => SEVERITIES.findIndex((one) => one === value);
+  const from = rank(Reflect.get(Object(event.data), "from"));
+  const to = rank(Reflect.get(Object(event.data), "to"));
+  return to >= 0 && to <= 1 && from > to;
 }
 
 function summary(incident: IncidentRow): SlackIncident {

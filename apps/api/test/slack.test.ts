@@ -1238,6 +1238,42 @@ describe("a channel per incident, and the timeline mirror", () => {
     ]);
   });
 
+  test("a SEV3 raised to SEV2 gets its channel then, once; lowering and raising again makes no second one", async () => {
+    const t = await team();
+    const teamId = await withChannels(t, { incidentChannels: "major" });
+    const slack = slackApi();
+    await deliver([await declare(t, teamId, "Slow search", "sev3")], slack.send);
+    expect(slack.calls.map((call) => call.method)).toEqual(["chat.postMessage"]);
+
+    expect(
+      await as(t, teamId, t.caio.email, { kind: "severity", severity: "sev2", number: 1 }),
+    ).toMatchObject({ ok: true });
+    const raised = (await eventsOf(t, "incident.severity_changed")).at(-1)!;
+    const after = slackApi();
+    await deliver([raised], after.send);
+    await deliver([raised], after.send);
+    expect(after.calls.map((call) => call.method)).toEqual([
+      "conversations.create",
+      "users.lookupByEmail",
+      "conversations.invite",
+      "chat.postMessage",
+      "chat.update",
+      "chat.postMessage",
+    ]);
+    expect(after.calls[0]?.body).toEqual({ name: "inc-1-slow-search", is_private: false });
+    expect(after.calls[3]?.body.channel).toBe("C0INC00001");
+    // The main channel's message now links the new channel; the severity line goes in it.
+    expect(after.calls[4]?.body.channel).toBe("C0CHAN0001");
+    expect(JSON.stringify(after.calls[4]?.body.blocks)).toContain("Incident channel: <#C0INC00001>");
+    expect(after.calls[5]?.body.channel).toBe("C0INC00001");
+
+    await as(t, teamId, t.caio.email, { kind: "severity", severity: "sev3", number: 1 });
+    await as(t, teamId, t.caio.email, { kind: "severity", severity: "sev1", number: 1 });
+    const again = slackApi();
+    await deliver(await eventsOf(t, "incident.severity_changed"), again.send);
+    expect(again.calls.map((call) => call.method)).not.toContain("conversations.create");
+  });
+
   test("/inc in the incident's channel acts on it; updates are mirrored there, but not `!update` messages", async () => {
     const t = await team();
     const teamId = await withChannels(t);

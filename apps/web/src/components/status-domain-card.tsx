@@ -52,7 +52,8 @@ export function StatusDomainCard() {
     <StatusDomainPanel
       target={config.target}
       ready={page.rows.length > 0}
-      loading={domain.status === "loading"}
+      // Both: a domain answered before the page would read as "set up the page first" for a moment.
+      loading={domain.status === "loading" || page.status === "loading"}
       domain={domain.rows[0] ?? null}
       manage={can(role, "status:manage")}
       onAdd={(hostname) => addDomain(workspaceId, hostname)}
@@ -107,7 +108,8 @@ function AddDomain({ target, onAdd }: PanelProps) {
   const [error, setError] = useState<DomainError | "required" | null>(null);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    const typed = hostname.trim();
+    // The API lowercases too; doing it here keeps what the card shows the same as what is stored.
+    const typed = hostname.trim().toLowerCase();
     if (!typed) {
       setError("required");
       return;

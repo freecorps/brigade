@@ -218,7 +218,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     fixed: a member's newest phone locked out by the 10-device limit (#109) and the app re-registering every few
     seconds (#109, #110).
   - Left: the Acknowledge action from a cold background launch, and on Android at all; Android pages tried on a real
-    phone; OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the
+    phone (dev has its Firebase project and the relay's `FCM_SERVICE_ACCOUNT`; production needs its own first); OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the
     session's active one); creating an account or workspace from the app; a tablet layout beyond a readable width.
 - [ ] Event outbox + queue + push notifier
   - Done: the shard alarm drains the outbox to `brigade-events` (`-dev`, `-staging`) in commit order, in bounded

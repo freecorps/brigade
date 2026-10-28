@@ -505,6 +505,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
 ## Phase 4 — Open source launch (ongoing)
 
 - [ ] One-command self-host deploy + setup wizard (Slack manifest, relay registration)
+  - [x] Sign-up closed by default per environment (`SIGNUP`: `open`, `invite`, `closed`; `dev` open) and the first
+        owner from `vp run setup:first-user` with a one-time `BOOTSTRAP_TOKEN` (RFC 0002 "Sign-up modes", "The first
+        owner")
 - [ ] Hosted push relay with terms of service
 - [ ] App Store / Play Store release (after CLA is in place)
 - [ ] Public site + docs (en, pt-BR); contribution guide; community translations

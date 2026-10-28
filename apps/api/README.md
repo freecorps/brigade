@@ -64,6 +64,13 @@ roles and removal, invitations, …) would change D1 without the shard's member 
 event in the outbox (RFC 0005). Member roles, removal and leaving go through `/workspaces/:id/members/:userId`
 (below); deleting a workspace is off.
 
+**Sign-up** (RFC 0002 "Sign-up modes", `src/sign-up.ts`): the `SIGNUP` variable is `open`, `invite` or `closed`, and
+unset (production, staging, a self-hosted instance) is `closed`. Under `invite` and `closed` only an address holding a
+pending invitation may sign up; anything else answers `403 SIGN_UP_CLOSED`. `GET /config` (no session) answers
+`{ "signUp": "<mode>" }`, which the dashboard and the app read to show or hide their sign-up forms. `dev` sets
+`open` in `wrangler.jsonc`, and so do local runs and the tests (`LOCAL_VARS` in `vite.config.ts`). The first account
+on a closed instance comes from "First owner" below.
+
 A user also has a `locale` (`en` or `pt-BR`, Better Auth's `additionalFields`): the language Brigade writes to them
 in, emails included (RFC 0008). Sign-up takes it from the body, or else from the first `Accept-Language`;
 `/update-user` changes it (the dashboard's language switch does). Anything else is `400 INVALID_LOCALE`.
@@ -377,6 +384,26 @@ Local secrets go in `apps/api/.dev.vars` (`.dev.vars.<env>` per environment), wh
 come from `secrets.required` in `wrangler.jsonc`, so `wrangler types` no longer reads `.dev.vars` and the committed
 types stay the same with or without one.
 
+## First owner
+
+A new instance has sign-up closed, so its first owner comes from a one-time, server-side path (RFC 0002 "The first
+owner", `src/bootstrap.ts`): `POST /setup/first-user`, which exists only while the `BOOTSTRAP_TOKEN` secret is set,
+takes it as `Authorization: Bearer`, and refuses once any user exists. From the repository root:
+
+```bash
+export BOOTSTRAP_TOKEN="$(openssl rand -base64 32)"                # 44 characters, only in this shell
+printf %s "$BOOTSTRAP_TOKEN" | (cd apps/api && wrangler secret put BOOTSTRAP_TOKEN)   # add --env for dev or staging
+vp run setup:first-user -- --url https://brigade.example.com
+(cd apps/api && wrangler secret delete BOOTSTRAP_TOKEN); unset BOOTSTRAP_TOKEN        # done: the route is gone
+```
+
+`--url` is the dashboard's origin (HTTPS; plain HTTP only for localhost). By default the owner is
+`owner@<that host>`, named "Owner", in a workspace named "Brigade"; `--email`, `--name` and `--workspace` choose
+otherwise. The script generates a strong password and prints the address and password once: the API stores only
+Better Auth's hash, so keep it in a password manager. The address is marked verified. Others join through
+invitations (closed and `invite` instances let an invited address sign up). Locally (`vp run dev`, sign-up open)
+none of this is needed; to try it, put `BOOTSTRAP_TOKEN` in `apps/api/.dev.vars` on an empty local D1.
+
 ## Deploying dev
 
 The `dev` environment (`brigade-api-dev`, `brigade-web-dev`, `brigade-relay-dev`) is for testing on a real phone.
@@ -411,7 +438,10 @@ In order, from `apps/api` unless noted:
    secret left from before is ignored while the binding is there. Deploy the relay before the API: a binding to a
    Worker that does not exist fails the deploy.
 
-3. **API.** `vp run build:dev`, then `wrangler deploy` (the built config already names `brigade-api-dev`).
+3. **API.** `vp run build:dev`, then `wrangler deploy` (the built config already names `brigade-api-dev`). `dev`
+   has `SIGNUP` `open` in `wrangler.jsonc`, so anyone signs up there; production and staging leave it unset
+   (`closed`), and their first owner comes from "First owner" above. To change an environment's mode, set its
+   `vars.SIGNUP` in `wrangler.jsonc` and deploy.
 4. **Web**, from `apps/web`: `vp run build:dev`, then `wrangler deploy`. It needs no secrets; its `dev` environment
    turns on `workers_dev`.
 5. **Slack**, later: integrations/slack/README.md, then add the `SLACK` binding to apps/web's `dev` environment and

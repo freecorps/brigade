@@ -2,10 +2,17 @@
 // forwards `/api/auth/*` to the API Worker), the dashboard's own `POST /api/workspaces`, and the pure checks and
 // error wording the forms use (tested in test/auth.test.ts).
 import { m, type Locale } from "@freecorps/brigade-i18n";
-import { checkEmail, checkPassword, type FieldErrors } from "@freecorps/brigade-i18n/auth";
+import {
+  checkEmail,
+  checkPassword,
+  readSignUpMode,
+  type FieldErrors,
+  type SignUpMode,
+} from "@freecorps/brigade-i18n/auth";
 import { memberName, WORKSPACE_NAME_MAX, workspaceName } from "@freecorps/brigade-schema";
 import { inferAdditionalFields, organizationClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
+import { useEffect, useState } from "react";
 
 // The sign-in checks and error wording are shared with the mobile app (packages/i18n).
 export {
@@ -16,6 +23,7 @@ export {
   type AuthFailure,
   type FieldErrors,
   type SignInField,
+  type SignUpMode,
 } from "@freecorps/brigade-i18n/auth";
 
 /** What a user may type as their name; Better Auth itself does not cap it. */
@@ -36,6 +44,43 @@ export function makeAuthClient(customFetchImpl?: typeof fetch) {
 }
 
 export const authClient = makeAuthClient();
+
+let signUpMode: Promise<SignUpMode> | undefined;
+
+/**
+ * Who may sign up on this instance (`GET /api/config`, RFC 0002 "Sign-up modes"), once per page load: it changes only
+ * with a deploy. A failed answer reads as `closed` and is asked again next time.
+ */
+export function loadSignUpMode(fetcher: typeof fetch = fetch): Promise<SignUpMode> {
+  signUpMode ??= fetcher("/api/config", { headers: { Accept: "application/json" } })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(String(response.status));
+      return readSignUpMode(await response.json());
+    })
+    .catch(() => {
+      signUpMode = undefined;
+      return "closed" as const;
+    });
+  return signUpMode;
+}
+
+/** Forgets the cached mode (tests). */
+export function resetSignUpMode() {
+  signUpMode = undefined;
+}
+
+/** The instance's sign-up mode; undefined until it answers, so no sign-up link shows and then goes. */
+export function useSignUpMode(): SignUpMode | undefined {
+  const [mode, setMode] = useState<SignUpMode>();
+  useEffect(() => {
+    let live = true;
+    void loadSignUpMode().then((next) => live && setMode(next));
+    return () => {
+      live = false;
+    };
+  }, []);
+  return mode;
+}
 
 /**
  * Stores the language picked in the dashboard on the signed-in user, so emails come in it too (RFC 0008). Best

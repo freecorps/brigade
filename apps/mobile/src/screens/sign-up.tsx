@@ -17,6 +17,7 @@ import { ThemedText } from "@/components/themed-text";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
 import { authClient, server } from "@/lib/auth-client";
+import { useSignUpMode } from "@/lib/sign-up-mode";
 import { createWorkspace } from "@/lib/workspaces";
 
 type SignUpField = "name" | "email" | "password" | "workspace";
@@ -63,6 +64,7 @@ export function SignUp() {
     workspace: useRef<ComponentRef<typeof TextInput>>(null),
   };
   const sending = useRef(false);
+  const signUpMode = useSignUpMode();
 
   const change = (field: SignUpField) => (text: string) => {
     setValues((current) => ({ ...current, [field]: text }));
@@ -131,6 +133,26 @@ export function SignUp() {
     else router.replace("/");
   };
 
+  // Closed: the app has no invitation flow, so no form (RFC 0002 "Sign-up modes"); an invitation's link opens the
+  // dashboard, where its owner signs up.
+  if (signUpMode === "closed") {
+    return (
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        style={{ backgroundColor: colors.background }}
+        contentContainerStyle={[padding, { gap: spacing[5] }]}
+      >
+        <ThemedText selectable>{m.auth_error_sign_up_closed()}</ThemedText>
+        <View style={{ alignItems: "flex-start" }}>
+          <TextButton
+            label={m.auth_to_sign_in()}
+            onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))}
+          />
+        </View>
+      </ScrollView>
+    );
+  }
+
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
@@ -138,7 +160,9 @@ export function SignUp() {
       style={{ backgroundColor: colors.background }}
       contentContainerStyle={[padding, { gap: spacing[5] }]}
     >
-      <ThemedText>{m.auth_sign_up_description()}</ThemedText>
+      <ThemedText>
+        {signUpMode === "invite" ? m.auth_sign_up_invite_only() : m.auth_sign_up_description()}
+      </ThemedText>
       <Field
         ref={refs.name}
         label={m.auth_name_label()}

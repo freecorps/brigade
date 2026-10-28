@@ -32,6 +32,8 @@ export type Server = {
    * dashboard too, so the whole reset happens there (RFC 0002 "Auth").
    */
   forgotPassword: string;
+  /** `GET` here says who may sign up on the instance (apps/api src/sign-up.ts, RFC 0002 "Sign-up modes"). */
+  config: string;
   sync: (workspaceId: string) => string;
   /** `POST` here creates a workspace (the dashboard's `/api/workspaces`, apps/api `createWorkspace`). */
   workspaces: string;
@@ -61,6 +63,7 @@ export function brigadeServer({
   return {
     auth: `${origin}/api/auth`,
     forgotPassword: `${origin}/forgot-password`,
+    config: `${origin}/api/config`,
     sync: (workspaceId) => `${socket}/api/sync/${encodeURIComponent(workspaceId)}`,
     workspaces: `${origin}/api/workspaces`,
     devices: `${origin}/api/devices/register`,

@@ -27,6 +27,12 @@ import {
   renderVerificationEmail,
 } from "./email-templates.ts";
 import { linkFallback, type EmailSender } from "./email.ts";
+import {
+  SIGN_UP_CLOSED_CODE,
+  SIGN_UP_CLOSED_MESSAGE,
+  signUpAllowed,
+  type SignUpMode,
+} from "./sign-up.ts";
 import { createAccessControl } from "better-auth/plugins/access";
 import { adminAc, defaultStatements, ownerAc } from "better-auth/plugins/organization/access";
 
@@ -86,6 +92,11 @@ export type AuthBindings = {
   /** The D1 database (the `DB` binding): Better Auth's tables, and the counters and clean-ups Brigade runs there. */
   database: D1Database;
   secret: string;
+  /**
+   * Who may sign up (`SIGNUP`, src/sign-up.ts). Unset is `closed`, as for the Worker: `workerAuth` always passes the
+   * instance's own.
+   */
+  signUp?: SignUpMode;
   /** Runs promises after the response (`ctx.waitUntil`). */
   waitUntil?: (promise: Promise<unknown>) => void;
   /**
@@ -280,6 +291,7 @@ const beforeHook = (
       return checkResetRequest(bindings, ctx, background, admitted);
     }
     if (ctx.path === "/sign-in/email") return checkSignIn(bindings, ctx);
+    if (ctx.path.startsWith("/sign-up")) await checkSignUpMode(bindings, ctx);
     return checkName(ctx);
   });
 };
@@ -308,6 +320,37 @@ async function checkSignIn(
     throw APIError.from("TOO_MANY_REQUESTS", {
       code: "TOO_MANY_REQUESTS",
       message: "Too many sign-in attempts for this account",
+    });
+  }
+}
+
+/**
+ * Any `/sign-up/*` route (RFC 0002 "Sign-up modes"): refused with `SIGN_UP_CLOSED` (403) unless the instance's mode lets
+ * this address in. Better Auth counts its per-IP limit before any hook, so refused sign-ups still spend it. Only
+ * `/sign-up/email` exists; any other sign-up a later plugin adds is refused outright until it is checked here too.
+ */
+async function checkSignUpMode(
+  bindings: AuthBindings,
+  ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0],
+) {
+  const mode = bindings.signUp ?? "closed";
+  if (mode === "open") return;
+  const email: unknown =
+    ctx.path === "/sign-up/email" ? Reflect.get(Object(ctx.body), "email") : undefined;
+  let allowed: boolean;
+  try {
+    allowed = await signUpAllowed(bindings.database, mode, email, Date.now());
+  } catch (error) {
+    console.error(JSON.stringify({ message: "checking a sign-up failed", error: String(error) }));
+    throw APIError.from("SERVICE_UNAVAILABLE", {
+      code: "SERVICE_UNAVAILABLE",
+      message: "Try again",
+    });
+  }
+  if (!allowed) {
+    throw APIError.from("FORBIDDEN", {
+      code: SIGN_UP_CLOSED_CODE,
+      message: SIGN_UP_CLOSED_MESSAGE,
     });
   }
 }

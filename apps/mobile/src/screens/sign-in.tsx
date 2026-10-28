@@ -24,6 +24,7 @@ import { ThemedText } from "@/components/themed-text";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
 import { authClient, server } from "@/lib/auth-client";
+import { useSignUpMode } from "@/lib/sign-up-mode";
 
 /**
  * Everything before a member is ready: the sign-in form, or why there is none yet (loading, no server, offline,
@@ -72,6 +73,7 @@ export function SignIn() {
 function SignInForm() {
   const colors = useTheme();
   const forgotPassword = server?.forgotPassword;
+  const signUpMode = useSignUpMode();
   const [values, setValues] = useState<Record<SignInField, string>>({ email: "", password: "" });
   const [errors, setErrors] = useState<FieldErrors<SignInField>>({});
   const [failure, setFailure] = useState<string | null>(null);
@@ -174,17 +176,23 @@ function SignInForm() {
           />
         </View>
       ) : null}
-      <View
-        style={{
-          flexDirection: "row",
-          flexWrap: "wrap",
-          alignItems: "center",
-          columnGap: spacing[2],
-        }}
-      >
-        <ThemedText variant="caption">{m.auth_no_account()}</ThemedText>
-        <TextButton label={m.auth_to_sign_up()} onPress={() => router.push("/sign-up")} />
-      </View>
+      {signUpMode === "open" || signUpMode === "invite" ? (
+        <View
+          style={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            alignItems: "center",
+            columnGap: spacing[2],
+          }}
+        >
+          <ThemedText variant="caption">{m.auth_no_account()}</ThemedText>
+          <TextButton label={m.auth_to_sign_up()} onPress={() => router.push("/sign-up")} />
+        </View>
+      ) : signUpMode === "closed" ? (
+        <ThemedText variant="caption" selectable>
+          {m.auth_error_sign_up_closed()}
+        </ThemedText>
+      ) : null}
     </View>
   );
 }

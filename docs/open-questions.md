@@ -122,7 +122,9 @@ to confirm in production:
   only the address and an instance without email can never verify. Its owner takes it back with a password reset,
   which marks the address verified and signs everyone else out (RFC 0002 "Auth"), so no manual release is planned
   where email is set up. Left: an instance without email, where nobody can reset; should its operator have a way to
-  free an address, or is no sign-up by others (closed sign-up) the answer there?
+  free an address, or is no sign-up by others the answer there? Sign-up is now closed by default (`SIGNUP`, RFC 0002
+  "Sign-up modes"), so on such an instance only an invited address can be signed up with by someone else; what is
+  left is an operator who opens it.
 - **Password reset**: at most 3 per address and IP an hour and 10 per address a day (counted for any address,
   account or not), and 3 per IP a minute. The hourly count is keyed by address and IP so that someone holding an
   account at another person's address cannot use up the owner's resets from their own network: the owner, asking

@@ -21,6 +21,7 @@
     "cf-typegen": "wrangler types",
     "cf-typegen:check": "wrangler types --check",
     "openapi": "NODE_OPTIONS=--conditions=@freecorps/source vpx ./scripts/openapi.ts",
+    "setup:first-user": "node ./scripts/create-first-user.mjs",
     "sdk-fixture": "NODE_OPTIONS=--conditions=@freecorps/source vpx ./scripts/sdk-fixture.ts"
   },
   "dependencies": {

@@ -7,11 +7,13 @@ import {
   checkSignUp,
   checkWorkspaceName,
   createWorkspace,
+  loadSignUpMode,
   makeAuthClient,
   NAME_MAX,
   openWorkspace,
   PASSWORD_MAX,
   PASSWORD_MIN,
+  resetSignUpMode,
   saveLocale,
   signOutDashboard,
   switchWorkspace,
@@ -131,8 +133,45 @@ describe("server failures", () => {
     [{ status: 429 }, "sign-in", "Too many attempts. Wait a minute and try again."],
     [null, "sign-up", "Could not reach Brigade. Check your connection and try again."],
     [{ status: 500 }, "sign-in", "Something went wrong. Try again."],
+    [
+      { status: 403, code: "SIGN_UP_CLOSED" },
+      "sign-up",
+      "Sign-up is closed on this instance — ask an owner for an invitation.",
+    ],
   ] as const)("%o during %s", (error, during, message) => {
     expect(authErrorMessage(error, during)).toBe(message);
+  });
+
+  test("the closed sign-up in Portuguese", async () => {
+    await setLocale("pt-BR");
+    expect(authErrorMessage({ status: 403, code: "SIGN_UP_CLOSED" }, "sign-up")).toBe(
+      "O cadastro está fechado nesta instância — peça um convite a um proprietário.",
+    );
+  });
+});
+
+describe("the sign-up mode", () => {
+  beforeEach(() => resetSignUpMode());
+
+  test.each([
+    [{ signUp: "open" }, "open"],
+    [{ signUp: "invite" }, "invite"],
+    [{ signUp: "closed" }, "closed"],
+    [{ signUp: "wide open" }, "closed"],
+    [{}, "closed"],
+  ] as const)("%o reads as %s", async (body, mode) => {
+    const fetcher = vi.fn(() => Promise.resolve(Response.json(body)));
+    await expect(loadSignUpMode(fetcher as unknown as typeof fetch)).resolves.toBe(mode);
+    expect(fetcher).toHaveBeenCalledWith("/api/config", expect.anything());
+  });
+
+  test("asked once per page load; a failure reads as closed and is asked again", async () => {
+    const failing = vi.fn(() => Promise.reject(new Error("offline")));
+    await expect(loadSignUpMode(failing as unknown as typeof fetch)).resolves.toBe("closed");
+    const answering = vi.fn(() => Promise.resolve(Response.json({ signUp: "open" })));
+    await expect(loadSignUpMode(answering as unknown as typeof fetch)).resolves.toBe("open");
+    await expect(loadSignUpMode(answering as unknown as typeof fetch)).resolves.toBe("open");
+    expect(answering).toHaveBeenCalledTimes(1);
   });
 });
 

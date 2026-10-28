@@ -8,8 +8,10 @@ import { workspaceSource } from "../../vite.workspace.ts";
  * use the top-level (production) config. Only `vp dev` and the tests set it, never a build or a deployed
  * environment. No app relies on it since the mobile app signs in; it stays for local tools and the tests.
  * `EMAIL_LOG` makes the email notifier log what it would send instead (src/email.ts), unless `EMAIL_FROM` is set.
+ * `SIGNUP: "open"`: anyone signs up locally and in the tests, as on `dev` (src/sign-up.ts); the tests of the other modes
+ * pass their own.
  */
-export const LOCAL_VARS = { SYNC_DEV_ACTOR: "1", EMAIL_LOG: "1" };
+export const LOCAL_VARS = { SYNC_DEV_ACTOR: "1", EMAIL_LOG: "1", SIGNUP: "open" };
 
 /**
  * Test-only Better Auth secret. Not a credential: it signs cookies inside one test run. Local dev and deployed

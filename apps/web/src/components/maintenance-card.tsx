@@ -413,7 +413,7 @@ function WindowForm({
         </fieldset>
       ) : null}
       {components.length > 0 ? (
-        <label className="flex min-h-11 items-start gap-3 text-sm">
+        <label className="flex min-h-11 items-start gap-3 border-t pt-4 text-sm">
           <input
             type="checkbox"
             className="mt-0.5 size-5 shrink-0 accent-primary"

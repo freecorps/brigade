@@ -44,6 +44,7 @@ test("release builds never fall back to the Metro host", () => {
   const server = brigadeServer({ ...release, override: "https://brigade.example.com" });
   expect(server?.auth).toBe("https://brigade.example.com/api/auth");
   expect(server?.forgotPassword).toBe("https://brigade.example.com/forgot-password");
+  expect(server?.config).toBe("https://brigade.example.com/api/config");
   expect(server?.ack("ws_1", "a/b")).toBe(
     "https://brigade.example.com/api/workspaces/ws_1/incidents/a%2Fb/ack",
   );

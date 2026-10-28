@@ -17,7 +17,8 @@
   "type": "module",
   "scripts": {
     "dev": "vp run --filter @freecorps/brigade-web dev",
-    "ready": "vp check && vp run -r test && vp run -r build"
+    "ready": "vp check && vp run -r test && vp run -r build",
+    "setup:first-user": "node apps/api/scripts/create-first-user.mjs"
   },
   "devDependencies": {
     "vite": "catalog:",

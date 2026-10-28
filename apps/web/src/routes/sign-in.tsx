@@ -12,6 +12,7 @@ import {
   checkSignIn,
   type FieldErrors,
   type SignInField,
+  useSignUpMode,
 } from "@/lib/auth";
 import { isInvitationId } from "@/lib/invitations";
 import { usePageTitle } from "@/lib/page-title";
@@ -29,6 +30,7 @@ function SignIn() {
   const navigate = useNavigate();
   const { invitation } = Route.useSearch();
   const session = authClient.useSession();
+  const signUpMode = useSignUpMode();
   const [values, setValues] = useState<Record<SignInField, string>>({ email: "", password: "" });
   const [errors, setErrors] = useState<FieldErrors<SignInField>>({});
   const [failure, setFailure] = useState<string | null>(null);
@@ -83,16 +85,21 @@ function SignIn() {
       title={m.auth_sign_in_title()}
       description={m.auth_sign_in_description()}
       footer={
-        <>
-          {m.auth_no_account()}{" "}
-          <Link
-            to="/sign-up"
-            search={invitation ? { invitation } : {}}
-            className="font-medium text-primary underline-offset-4 hover:underline"
-          >
-            {m.auth_to_sign_up()}
-          </Link>
-        </>
+        // A closed instance offers sign-up only from an invitation's link (RFC 0002 "Sign-up modes").
+        invitation || signUpMode === "open" || signUpMode === "invite" ? (
+          <>
+            {m.auth_no_account()}{" "}
+            <Link
+              to="/sign-up"
+              search={invitation ? { invitation } : {}}
+              className="font-medium text-primary underline-offset-4 hover:underline"
+            >
+              {m.auth_to_sign_up()}
+            </Link>
+          </>
+        ) : signUpMode === "closed" ? (
+          m.auth_error_sign_up_closed()
+        ) : undefined
       }
     >
       <form onSubmit={submit} noValidate className="flex flex-col gap-4" aria-busy={busy}>

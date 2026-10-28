@@ -118,7 +118,8 @@ the session are relied on, and the reference says how), `GET /workspaces/:id` (t
 its phone in every workspace it was opened in, RFC 0006 "Device registration"), the status page's subscribers
 (`GET`, `DELETE /workspaces/:id/status-page/subscribers`, `GET …/export`: the public's addresses, cookie only),
 `POST /workspaces/:id/api-tokens` and `DELETE /workspaces/:id/api-tokens/:tokenId` (the dashboard's API tokens card:
-the token is answered once, RFC 0014), `GET /features` (what the deployment has, RFC 0013) and `/slack/*`. The
+the token is answered once, RFC 0014), `GET /features` (what the deployment has, RFC 0013), `GET /config` (the
+sign-up mode, "Auth" below), `POST /setup/first-user` (the first owner, "Auth" below) and `/slack/*`. The
 webhook, status page, export and draft routes were internal (cookie only) until API tokens reached them: they are in
 the reference now, with the dashboard still their main caller. `GET /status/:slug` is the
 public status page itself (RFC 0012): HTML
@@ -241,15 +242,45 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     address and then signs in learns it was free, and holds an unverified account at it until its owner takes it back
     with a password reset (below); requiring verification before sign-in would close that, at the cost of instances
     without email (an instance setting, decided below).
-  - **Sign-up and the first user (decided, Q21; to build).** Sign-up is locked per environment and **closed by
-    default** (self-host first): a closed instance refuses sign-up for everyone, and the dashboard and the app hide
-    it. An instance without email always has closed sign-up, since nobody there could verify or reset. The hosted
-    instance opens it once a Brigade-wide daily email ceiling is in place (RFC 0005 "Abuse"). With sign-up closed,
-    the setup script creates the first user: by default an owner account with a generated email and password,
-    printed to the console once and never stored by the script, or, with a flag, the email (and name) the operator
-    gives. "Require a verified email before sign-in" is an instance setting, off by default; on an instance with
-    email it closes the "learns the address was free" gap above. With sign-up closed, a pending invitation still
-    lets the invited address create its account when accepting it.
+  - **Sign-up and the first user (decided, Q21).** Sign-up is locked per environment and **closed by default**
+    (self-host first), and the setup script creates the first user; both are built, below. Still to build: an
+    instance without email always has closed sign-up, since nobody there could verify or reset (today only the
+    default keeps it closed); the hosted instance opens it once a Brigade-wide daily email ceiling is in place (RFC
+    0005 "Abuse"); "Require a verified email before sign-in" is an instance setting, off by default; on an instance
+    with email it closes the "learns the address was free" gap above.
+  - **Sign-up modes (built):** who may create an account is the API Worker's `SIGNUP` variable (`src/sign-up.ts`):
+    `open` (anyone; the `dev` environment, local runs and the tests), `invite` or `closed`. Unset or misspelled is
+    `closed`, so production and staging, and every self-hosted instance that sets nothing, start closed (Q21: no
+    sign-up by others is the answer for instances without email too). Under `invite` and `closed` a sign-up is let in
+    only for an address holding a pending invitation that has not run out, in any workspace, compared in lower case;
+    anything else is refused before Better Auth hashes or stores anything, `403 SIGN_UP_CLOSED` ("Sign-up is closed
+    on this instance — ask an owner for an invitation", worded by `authErrorMessage` in en and pt-BR). The check is
+    a `before` hook on every `/sign-up/*` path, so a sign-up route a later plugin adds is refused until it is checked
+    there too, and Better Auth's per-IP limit (3 per 10 s) counts before it, refused sign-ups included. **Decision:**
+    `closed` still lets an invited address create its account, since an invitation is an owner's explicit word and
+    invitations would otherwise reach only people who already have an account. So the two differ only in what the
+    clients offer, which they read from the unauthenticated `GET /config` (`{ signUp }`, cached a minute): under
+    `invite` the dashboard's and the app's sign-up forms show, saying only invited addresses get in; under `closed`
+    the sign-in pages say sign-up is closed and the dashboard shows its form only from an invitation's link (the app,
+    which has no invitation flow, shows none). The cost, accepted: under `invite` and `closed` a refused sign-up says
+    an address has no pending invitation, which the per-IP limit bounds; it still says nothing about accounts, as a
+    taken address with an invitation gets the uniform answer below.
+  - **The first owner (built):** a closed instance gets its first account from `vp run setup:first-user`
+    (`apps/api/scripts/create-first-user.mjs`, Node, no dependencies), which calls `POST /setup/first-user` through
+    the dashboard's `/api` with `Authorization: Bearer` and the `BOOTSTRAP_TOKEN` secret (`src/bootstrap.ts`). Without
+    the secret the route does not exist (404); a secret under 32 characters is refused as a configuration error
+    (503); the token is compared in constant time (both sides hashed, then `timingSafeEqual`). It refuses for good
+    once any user exists (409), and a latch row in D1's `rateLimit` table makes two calls at once create one owner
+    (the other gets 409 `setup_in_progress`); a latch older than five minutes, left by a run that died, is taken over.
+    It creates the account with its address verified (whoever holds the secret runs the instance) and Better Auth's
+    password hash, then a workspace with the account as owner through Better Auth's own create, so the shard is
+    provisioned as for `POST /workspaces`; a failure removes the account and its workspace again and drops the latch. The script generates the password
+    (24 random bytes) and, unless `--email`, `--name` and `--workspace` say otherwise, `owner@<the instance's host>`,
+    "Owner" and "Brigade"; it sends them only over HTTPS (or to localhost), follows no redirect, and prints the address and password once,
+    warning that a made-up address cannot receive a reset.
+    The password lives nowhere else; the operator deletes the secret afterwards. Chosen over a Worker RPC entrypoint
+    or SQL through `wrangler d1 execute` because it needs no Cloudflare credentials on the operator's machine beyond
+    setting a secret, and it goes through Better Auth's hashing and the shard's provisioning like every account.
   - **Ending a session (built):** every way a Better Auth session ends deletes its row through
     `databaseHooks.session.delete` (sign-out, `revoke-session`, `revoke-sessions`, `revoke-other-sessions`, a
     password reset, an expired session found): the API Worker asks the shard of every workspace the user belongs to
@@ -410,5 +441,5 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
   `wrangler deploy` then deploys what was built and takes no `--env`.
 - The mobile app points at staging or production via build profile.
 - Self-hosted — one Cloudflare account, one `deploy` command, guided setup (Slack app manifest, relay registration).
-  To build (Q21, Q23): the setup script also creates the first user (sign-up stays closed), the `STATUS` KV
-  namespace, and optionally custom domains for status pages (RFC 0012 "Addresses").
+  To build (Q21, Q23): the setup script also runs `vp run setup:first-user` (built, "The first owner"; sign-up stays
+  closed), creates the `STATUS` KV namespace, and optionally custom domains for status pages (RFC 0012 "Addresses").

@@ -282,6 +282,7 @@ describe("what the verification email says", () => {
       const auth = createAuth({
         database: env.DB,
         secret: env.BETTER_AUTH_SECRET,
+        signUp: "open",
         email: { sender, ...(dashboardUrl ? { dashboardUrl } : {}) },
       });
       const response = await auth.handler(

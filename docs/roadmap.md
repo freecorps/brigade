@@ -118,9 +118,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
     the RPC, or whose undo failed, and a shard that committed `workspace.create` before its RPC failed and was undone
     (it would announce a workspace D1 no longer has: tombstone it with a compensating event); an admin route to
     revoke another user's sessions (the session hook already closes their sockets once it exists).
-  - Left (decided, Q21; RFC 0002 "Auth"): sign-up locked per environment and closed by default, always closed on an
-    instance without email; the setup script creating the first user (an owner with a generated email and password
-    printed once, or a flag for the email and name); "require a verified email before sign-in" as an instance
+  - Done: sign-up locked per environment and closed by default (`SIGNUP`: `open`, `invite`, `closed`; `dev` open;
+    an invitation still creates its account), and the first owner from `vp run setup:first-user` with a one-time
+    `BOOTSTRAP_TOKEN` (RFC 0002 "Sign-up modes", "The first owner").
+  - Left (decided, Q21; RFC 0002 "Auth"): sign-up always closed on an instance without email; "require a verified
+    email before sign-in" as an instance
     setting, off by default; a workspace locale set at sign-up and editable by owners (Q15, RFC 0008).
 - [ ] Monitors (HTTP/TCP/heartbeat) with quorum → alerts → incidents
   - Done: HTTP, TCP and heartbeat monitors as mutations in `packages/schema` (owners and admins manage, everyone reads),
@@ -529,9 +531,10 @@ Validate the risky assumptions before writing product code. Each spike produces 
 ## Phase 4 — Open source launch (ongoing)
 
 - [ ] One-command self-host deploy + setup wizard (Slack manifest, relay registration)
-  - Left (decided, Q21, Q23; RFC 0002 "Environments"): sign-up closed by default, with the setup script creating the
-    first user (an owner with a generated email and password printed to the console once, or a flag for the email
-    and name); creating the `STATUS` KV namespace; optional custom domains for status pages.
+  - [x] Sign-up closed by default per environment and the first owner from `vp run setup:first-user` with a
+        one-time `BOOTSTRAP_TOKEN` (RFC 0002 "Sign-up modes", "The first owner")
+  - Left (decided, Q23; RFC 0002 "Environments"): the setup wizard calling it, creating the `STATUS` KV namespace;
+    optional custom domains for status pages.
 - [ ] Hosted push relay with terms of service
 - [ ] App Store / Play Store release (after CLA is in place)
 - [ ] Public site + docs (en, pt-BR); contribution guide; community translations

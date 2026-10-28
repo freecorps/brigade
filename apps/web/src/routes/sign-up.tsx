@@ -15,6 +15,7 @@ import {
   openWorkspace,
   type FieldErrors,
   type SignUpField,
+  useSignUpMode,
 } from "@/lib/auth";
 import { isInvitationId } from "@/lib/invitations";
 import { usePageTitle } from "@/lib/page-title";
@@ -42,6 +43,7 @@ function SignUp() {
   const navigate = useNavigate();
   const { invitation } = Route.useSearch();
   const session = authClient.useSession();
+  const signUpMode = useSignUpMode();
   const [values, setValues] = useState<Record<SignUpField, string>>({
     name: "",
     email: "",
@@ -63,6 +65,30 @@ function SignUp() {
       <Navigate to="/invitations/$id" params={{ id: invitation }} replace />
     ) : (
       <Navigate to="/" replace />
+    );
+  }
+
+  // Closed: only an invitation's link leads here with a form (RFC 0002 "Sign-up modes"). Until the mode answers, the
+  // title alone, so no form shows and then goes.
+  if (!invitation && signUpMode !== "open" && signUpMode !== "invite") {
+    return signUpMode === "closed" ? (
+      <AuthPage
+        title={m.auth_sign_up_closed_title()}
+        description={m.auth_error_sign_up_closed()}
+        footer={
+          <>
+            {m.auth_have_account()}{" "}
+            <Link
+              to="/sign-in"
+              className="font-medium text-primary underline-offset-4 hover:underline"
+            >
+              {m.auth_to_sign_in()}
+            </Link>
+          </>
+        }
+      />
+    ) : (
+      <AuthPage title={m.auth_sign_up_title()} />
     );
   }
 
@@ -135,7 +161,13 @@ function SignUp() {
   return (
     <AuthPage
       title={m.auth_sign_up_title()}
-      description={invitation ? m.auth_sign_up_invited_description() : m.auth_sign_up_description()}
+      description={
+        invitation
+          ? m.auth_sign_up_invited_description()
+          : signUpMode === "invite"
+            ? m.auth_sign_up_invite_only()
+            : m.auth_sign_up_description()
+      }
       footer={
         <>
           {m.auth_have_account()}{" "}

@@ -33,6 +33,18 @@ export function checkSignIn(values: Record<SignInField, string>): FieldErrors<Si
   return errors;
 }
 
+/**
+ * Who may sign up on an instance (`GET /api/config`, RFC 0002 "Sign-up modes"): `open` shows the sign-up form;
+ * `invite` shows it, saying only invited addresses get in; `closed` offers it only from an invitation's link.
+ */
+export type SignUpMode = "open" | "invite" | "closed";
+
+/** The mode in a `GET /api/config` answer; anything unreadable is `closed`, as the server reads its own. */
+export function readSignUpMode(config: unknown): SignUpMode {
+  const mode: unknown = Reflect.get(Object(config), "signUp");
+  return mode === "open" || mode === "invite" ? mode : "closed";
+}
+
 /** The shape Better Auth's client returns errors in (`{ status, code?, message? }`), or a thrown fetch error. */
 export type AuthFailure = { status?: number; code?: string } | null | undefined;
 
@@ -58,6 +70,9 @@ export function authErrorMessage(
     return m.account_flow({ part: "sign_up_taken", name: "" });
   }
   if (status === 0) return m.auth_error_network();
+  // The instance's sign-up mode refused the address (RFC 0002 "Sign-up modes").
+  if (during === "sign-up" && error?.code === "SIGN_UP_CLOSED")
+    return m.auth_error_sign_up_closed();
   if (status === 429) return m.auth_error_rate_limited();
   if (during === "sign-in" && (status === 401 || error?.code === "INVALID_EMAIL_OR_PASSWORD")) {
     return m.auth_error_credentials();

@@ -4,6 +4,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, test, vi } from "vite-plus/test";
 import {
   CEILING_CODE,
+  CEILING_COUNT_TIMEOUT_MS,
   EMAIL_DAILY_CEILING_DEFAULT,
   emailDailyCeiling,
   pruneEmailDays,
@@ -134,6 +135,36 @@ describe("the instance's daily email ceiling", () => {
       expect(await capped.send(email("b@example.com", "paging"))).toEqual({ ok: true });
       expect(mail.sent).toHaveLength(2);
     } finally {
+      error.mockRestore();
+    }
+  });
+
+  test("a D1 that hangs never holds up an email: a page's at once, any other after a bounded wait", async () => {
+    const mail = recorder();
+    const hung = {
+      prepare: () => ({
+        bind: () => ({ first: () => new Promise(() => {}) }),
+      }),
+    } as unknown as D1Database;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers();
+    try {
+      const capped = withEmailCeiling(mail.sender, hung, 1);
+      // The page's email goes out before D1 answers; its count is let go after the bounded wait.
+      const page = capped.send(email("a@example.com", "paging"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mail.sent).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(CEILING_COUNT_TIMEOUT_MS);
+      expect(await page).toEqual({ ok: true });
+      // Any other waits for the count only so long, then is sent anyway.
+      const reset = capped.send(email("b@example.com"));
+      await vi.advanceTimersByTimeAsync(CEILING_COUNT_TIMEOUT_MS - 1);
+      expect(mail.sent).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await reset).toEqual({ ok: true });
+      expect(mail.sent).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
       error.mockRestore();
     }
   });

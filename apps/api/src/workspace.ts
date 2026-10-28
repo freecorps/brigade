@@ -1121,14 +1121,14 @@ export class WorkspaceDO extends DurableObject<Env> {
         .map((monitor) => monitor.name);
       const revoked = this.shard.store.scan("heartbeats").length;
       this.serverMutation("monitor.takeOver", { tokenHash });
+      // After the monitors are paused: a monitor the routes kept quiet must not page the owner on the way out (RFC
+      // 0002 "Taking back an address"); paused monitors are never rerouted.
+      if (routes > 0) this.rerouteAlerts();
       // A Slack connection the account made: disconnected as Disconnect does, the bot token given back to Slack by
       // the notifier (`slack.takeOver`, Q21). Last of the steps that can fail, so a retry still finds it to name.
       const slack = this.shard.store.get("slack", SLACK_ROW_ID);
       const slackTeam = slack?.connectedBy === userId ? slack.teamName : undefined;
       if (slackTeam !== undefined) this.serverMutation("slack.takeOver", { userId });
-      // After the monitors are paused: a monitor the routes kept quiet must not page the owner on the way out (RFC
-      // 0002 "Taking back an address"); paused monitors are never rerouted.
-      if (routes > 0) this.rerouteAlerts();
       return {
         ok: true,
         paused,

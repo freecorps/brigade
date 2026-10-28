@@ -744,6 +744,15 @@ describe("an address someone else signed up with", () => {
         failed: false,
       },
     ]);
+    // A retry finds no connection: nothing disconnected twice.
+    await signOutWith(env, 0)(yan.id, { takeOver: true, at: Date.now() });
+    const again = await w.withShard((_shard, state) =>
+      state.storage.sql
+        .exec<{ event: string }>("select event from outbox order by seq")
+        .toArray()
+        .filter((row) => (JSON.parse(row.event) as BrigadeEvent).type === "slack.disconnected"),
+    );
+    expect(again).toHaveLength(1);
   });
 
   test("two takeovers at once leave one notice with what either of them paused", async () => {

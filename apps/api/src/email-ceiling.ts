@@ -15,6 +15,11 @@ export const EMAIL_DAILY_CEILING_DEFAULT = 2000;
 export const EMAIL_DAILY_CEILING_MAX = 1_000_000;
 /** How many days of counts the cron keeps (`pruneEmailDays`). */
 const KEEP_DAYS = 7;
+/**
+ * How long a send waits for D1 to count it. Past this it is sent anyway, as when D1 fails: every wait on the email
+ * path is bounded, and a D1 that hangs must not hold up a verification, a reset, or anything else.
+ */
+export const CEILING_COUNT_TIMEOUT_MS = 1500;
 /** The code a dropped email answers with; never retried. */
 export const CEILING_CODE = "E_BRIGADE_DAILY_CEILING";
 
@@ -36,9 +41,11 @@ const dayOf = (at: number) => new Date(at).toISOString().slice(0, 10);
 /**
  * `sender` under the instance's daily ceiling, counted in `db`. Each send first counts itself with one upsert, which
  * only goes through below the ceiling (so isolates sending at once never overshoot it); one that does not is dropped,
- * logged and answered `{ ok: false, retry: false }`. A `priority: "paging"` email always counts and is always sent. If
- * D1 cannot count, the email is sent anyway and the failure logged: the per-feature caps still hold, and a D1 outage
- * must not stop a verification or a reset.
+ * logged and answered `{ ok: false, retry: false }`. A `priority: "paging"` email is sent first and never waits on D1:
+ * it is counted alongside the send (a lost count is fine), so a D1 that hangs, the very outage the operators' email
+ * is about, never holds it up. If D1 cannot count another email within `CEILING_COUNT_TIMEOUT_MS`, or fails, it is
+ * sent anyway and the failure logged: the per-feature caps still hold, and a D1 outage must not stop a verification or
+ * a reset. Counted before the send, so an attempt that fails and is retried counts each time.
  */
 export function withEmailCeiling(
   sender: EmailSender,
@@ -51,8 +58,7 @@ export function withEmailCeiling(
     async send(email: OutgoingEmail): Promise<EmailResult> {
       const paging = email.priority === "paging";
       const day = dayOf(now());
-      let counted: boolean;
-      try {
+      const count = (async () => {
         const row = await db
           .prepare(
             paging
@@ -63,7 +69,20 @@ export function withEmailCeiling(
           )
           .bind(day, ...(paging ? [] : [ceiling]))
           .first<{ sent: number }>();
-        counted = row !== null;
+        return row !== null;
+      })();
+      if (paging) {
+        const [result] = await Promise.all([
+          sender.send(email),
+          bounded(count).catch((error: unknown) => {
+            log("email ceiling not counted", { day, error: String(error) });
+          }),
+        ]);
+        return result;
+      }
+      let counted: boolean;
+      try {
+        counted = await bounded(count);
       } catch (error) {
         log("email ceiling not counted: sending anyway", { day, error: String(error) });
         counted = true;
@@ -80,6 +99,17 @@ export function withEmailCeiling(
       return sender.send(email);
     },
   };
+}
+
+/** `promise`, or a rejection once `CEILING_COUNT_TIMEOUT_MS` passed. */
+function bounded<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("D1 timed out")), CEILING_COUNT_TIMEOUT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 /** Deletes the counts of days older than `KEEP_DAYS` (the cron). Never throws. */

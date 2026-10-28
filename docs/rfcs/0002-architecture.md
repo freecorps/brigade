@@ -255,7 +255,8 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     link, or reset the password, which confirms the address too); no email is sent at sign-in (no `sendOnSignIn`), so
     a sign-in can never be used to email someone. It closes the "learns the address was free" gap above. It is
     ignored without email (logged once), where nobody but the first owner could ever sign in; `GET /config` says
-    whether it is in force (`requireVerifiedEmail`). Sessions from before it was turned on are kept.
+    whether it is in force (`requireVerifiedEmail`). Sessions and API tokens from before it was turned on are kept: it gates
+    sign-in only, so an operator who wants unverified accounts out also ends their sessions.
   - **Sign-up modes (built):** who may create an account is the API Worker's `SIGNUP` variable (`src/sign-up.ts`):
     `open` (anyone; the `dev` environment, local runs and the tests), `invite` or `closed`. Unset or misspelled is
     `closed`, so production and staging, and every self-hosted instance that sets nothing, start closed (Q21: no

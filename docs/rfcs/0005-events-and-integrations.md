@@ -385,8 +385,11 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   logged (never the address) and answered as a refusal that is not retried, which each caller records as it records
   any refused send. **An email about a page that failed is never dropped**: the notifier's member and owners' emails
   and the operators' email are marked `priority: "paging"`, counted (so the rest of the day stays closed) and always
-  sent (tested in `apps/api/test/email.test.ts` and `email-ceiling.test.ts`). If D1 cannot count, the email is sent
-  and the failure logged: the per-feature caps still hold. The cron deletes days older than a week. With it in
+  sent, without waiting on D1: the count runs alongside the send, so a D1 that hangs (the outage the operators'
+  email may be about) never holds it up (tested in `apps/api/test/email.test.ts`, `email-ceiling.test.ts` and
+  `watchdog.test.ts`). Any other email waits at most `CEILING_COUNT_TIMEOUT_MS` (1.5 s) for its count; if D1 cannot
+  count by then, or fails, it is sent and the failure logged: the per-feature caps still hold. An email is counted
+  before it is sent, so an attempt that fails and is retried counts each time. The cron deletes days older than a week. With it in
   place, a shared instance may open sign-up (RFC 0002 "Sign-up and the first user").
 - **Push first.** Email only acts on failures push already recorded, so it can never delay or stop a page. The
   consumer handles a batch's messages in parallel and acks each on its own: a page in the same batch as an email

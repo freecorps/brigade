@@ -201,11 +201,23 @@ function NavItem({
   );
 }
 
-/** How many incidents are open now, on the Incidents row; nothing while none are or the list loads. */
+/**
+ * How many incidents are open now, on the Incidents row; nothing while none are or the list loads. While a SEV1 is
+ * open the number turns SEV1 red behind a dot, the one mark in the sidebar that says something is on fire.
+ */
 function OpenIncidentsBadge() {
   const { rows, status } = useQuery("incidents.active", {});
   if (status !== "ready" || rows.length === 0) return null;
-  return <SidebarMenuBadge>{rows.length}</SidebarMenuBadge>;
+  const fire = rows.some((row) => row.severity === "sev1");
+  return (
+    <SidebarMenuBadge
+      data-sev1={fire || undefined}
+      className={cn(fire && "inline-flex items-center gap-1.5 font-semibold text-destructive")}
+    >
+      {fire ? <span aria-hidden className="size-1.5 rounded-full bg-current" /> : null}
+      {rows.length}
+    </SidebarMenuBadge>
+  );
 }
 
 function TopBar({ live, user }: { live: boolean; user: User }) {
@@ -238,15 +250,24 @@ function TopBar({ live, user }: { live: boolean; user: User }) {
 /** The page's name: its h1, or, on a detail page with its own h1, a link back to the section. */
 function SectionName({ id, heading }: { id: SectionId; heading: "bar" | "page" }) {
   const label = sectionLabel(id);
+  // The section's sidebar icon leads its name, so the bar reads as where you are rather than as a second title.
+  const Icon = SECTIONS[id].icon;
+  const icon = <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />;
   if (heading === "bar") {
-    return <h1 className="min-w-0 truncate text-base font-semibold">{label}</h1>;
+    return (
+      <h1 className="flex min-w-0 items-center gap-2.5 text-sm font-medium">
+        {icon}
+        <span className="truncate">{label}</span>
+      </h1>
+    );
   }
   return (
     <Link
       to={SECTIONS[id].to}
-      className="-mx-1 inline-flex min-h-11 min-w-0 items-center truncate rounded-md px-1 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring md:min-h-8"
+      className="-mx-1 inline-flex min-h-11 min-w-0 items-center gap-2.5 rounded-md px-1 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring md:min-h-8"
     >
-      {label}
+      {icon}
+      <span className="truncate">{label}</span>
     </Link>
   );
 }

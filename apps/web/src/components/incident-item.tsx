@@ -39,6 +39,7 @@ const UNSAVED = "rounded-sm outline-1 outline-offset-2 outline-current outline-d
  */
 export function IncidentItem({
   row,
+  arrived = false,
   pending,
   online,
   locale,
@@ -49,6 +50,8 @@ export function IncidentItem({
   onSeverity,
 }: {
   row: IncidentRow;
+  /** Arrived while the list was on screen: it settles in rather than appearing. */
+  arrived?: boolean;
   /** Which of its changes the shard has not confirmed yet. */
   pending: { any: boolean; status: boolean; severity: boolean };
   online: boolean;
@@ -72,17 +75,19 @@ export function IncidentItem({
       tabIndex={-1}
       data-incident={row.id}
       className={cn(
-        "relative scroll-mt-4 outline-none focus-visible:ring-3 focus-visible:ring-ring focus-visible:ring-inset grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 px-4 py-3 sm:px-6",
+        // The title's link is stretched over the row (as on the services list); the two menus sit above it.
+        "relative scroll-mt-4 outline-none focus-visible:ring-3 focus-visible:ring-ring focus-visible:ring-inset grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 px-4 py-3 transition-colors duration-150 ease-out has-[a[data-incident-link]:hover]:bg-muted/50 has-[a[data-incident-link]:focus-visible]:ring-3 has-[a[data-incident-link]:focus-visible]:ring-ring has-[a[data-incident-link]:focus-visible]:ring-inset sm:px-6",
         INCIDENT_COLUMNS,
         "md:items-start",
-        row.severity === "sev1" &&
-          "before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-sev1",
+        arrived && "enter",
       )}
     >
       {/* Not numbered until the shard has it: a glyph and a short word, never wrapped. */}
       <div className="whitespace-nowrap md:row-span-2">
         {number ? (
-          <span className="text-sm font-medium text-muted-foreground tabular-nums">{number}</span>
+          <span className="font-mono text-[0.8125rem] leading-5 text-muted-foreground">
+            {number}
+          </span>
         ) : (
           <span className="inline-flex items-center gap-1 rounded-sm border border-dashed border-muted-foreground/60 px-1 text-xs leading-5 text-muted-foreground">
             <PendingIcon aria-hidden className="size-3 shrink-0" />
@@ -120,7 +125,7 @@ export function IncidentItem({
       {/* Phones: both menus on one line, and -mb-2 trims the space under the 44px triggers without shrinking
           them. From md the wrapper dissolves and each menu takes its own column, centred on the row. */}
       <div className="col-span-2 -mb-2 -ml-1.5 flex flex-wrap items-center gap-1 max-[374px]:-ml-1 md:contents">
-        <div className="md:col-start-3 md:row-span-2 md:row-start-1 md:self-center">
+        <div className="relative z-10 md:col-start-3 md:row-span-2 md:row-start-1 md:self-center">
           <SeverityMenu
             severity={row.severity}
             pending={pending.severity}
@@ -128,7 +133,7 @@ export function IncidentItem({
             onChange={(next) => onSeverity(row, next)}
           />
         </div>
-        <div className="md:col-start-4 md:row-span-2 md:row-start-1 md:self-center">
+        <div className="relative z-10 md:col-start-4 md:row-span-2 md:row-start-1 md:self-center">
           <StatusMenu
             status={row.status}
             pending={pending.status}
@@ -138,14 +143,13 @@ export function IncidentItem({
           />
         </div>
       </div>
-      {notices ? <div className="col-span-full mt-2">{notices}</div> : null}
+      {notices ? <div className="relative z-10 col-span-full mt-2">{notices}</div> : null}
     </li>
   );
 }
 
-// Always underlined (lightly), so the title reads as a link without a pointer to hover with.
-const TITLE_LINK =
-  "rounded-sm underline decoration-muted-foreground/50 underline-offset-4 outline-none hover:decoration-current focus-visible:ring-3 focus-visible:ring-ring";
+// Stretched over the row, so the whole row opens the incident; the row's tint marks hover and focus.
+const TITLE_LINK = "outline-none after:absolute after:inset-0";
 
 /**
  * The title as a link to the incident's page. A client-side navigation inside the app; a plain link where the list

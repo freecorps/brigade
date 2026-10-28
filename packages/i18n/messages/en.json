@@ -2852,7 +2852,9 @@
         "text=loading": "Loading follow-ups…",
         "text=load_failed": "Couldn't load follow-ups: {reason}",
         "text=incident_column": "Incident",
-        "text=mine": "Mine only",
+        "text=mine_filter": "Whose follow-ups",
+        "text=all": "All",
+        "text=mine": "Mine",
         "text=back": "Overview",
         "text=title_required": "Say what needs doing.",
         "text=*": "Follow-ups"

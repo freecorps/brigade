@@ -36,6 +36,13 @@ export const catalog_count = /** @type {((inputs: Catalog_CountInputs, options?:
 	if (locale === "pt-BR") {
 		const countPlural = registry.plural("pt-BR", i?.count, {}, true);
 		const countFormatted = registry.number("pt-BR", i?.count, {}, true);
+		if (i?.kind === "services" && (i?.count === 0 || i?.count === "0")) return /** @type {LocalizedString} */ (`0 serviços`);
+		if (i?.kind === "types" && (i?.count === 0 || i?.count === "0")) return /** @type {LocalizedString} */ (`0 tipos`);
+		if (i?.kind === "fields" && (i?.count === 0 || i?.count === "0")) return /** @type {LocalizedString} */ (`0 campos`);
+		if (i?.kind === "options" && (i?.count === 0 || i?.count === "0")) return /** @type {LocalizedString} */ (`0 opções`);
+		if (i?.kind === "roles" && (i?.count === 0 || i?.count === "0")) return /** @type {LocalizedString} */ (`0 papéis`);
+		if (i?.kind === "missing" && (i?.count === 0 || i?.count === "0")) return /** @type {LocalizedString} */ (`0 campos obrigatórios a preencher`);
+		if (i?.kind === "active" && (i?.count === 0 || i?.count === "0")) return /** @type {LocalizedString} */ (`0 incidentes ativos`);
 		if (i?.kind === "services" && countPlural === "one") return /** @type {LocalizedString} */ (`${countFormatted} serviço`);
 		if (i?.kind === "types" && countPlural === "one") return /** @type {LocalizedString} */ (`${countFormatted} tipo`);
 		if (i?.kind === "fields" && countPlural === "one") return /** @type {LocalizedString} */ (`${countFormatted} campo`);

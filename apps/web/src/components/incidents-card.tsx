@@ -30,7 +30,6 @@ import { DeclareForm } from "@/components/declare-form";
 import { INCIDENT_COLUMNS, IncidentItem, IncidentItemSkeleton } from "@/components/incident-item";
 import { usePreferences } from "@/components/preferences";
 import { useOptionalMember } from "@/components/session";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import {
@@ -72,6 +71,12 @@ export function IncidentsCard() {
   const editable = member ? can(member.role, "incident:update") : true;
   // Back from an incident's page: focus goes to its title link again, where the user left the list.
   const returning = useRef(takeOpened());
+  // The incidents already open when the list first showed: only those that arrive after it (declared here or
+  // anywhere else) settle in, so opening the page never plays an entrance.
+  const firstShown = useRef<ReadonlySet<string> | null>(null);
+  if (firstShown.current === null && status === "ready") {
+    firstShown.current = new Set(rows.map((row) => row.id));
+  }
   useLayoutEffect(() => {
     if (returning.current === null || rows.length === 0) return;
     const link = cardRef.current?.querySelector<HTMLElement>(
@@ -284,7 +289,7 @@ export function IncidentsCard() {
       onFocus={onFocus}
       onBlur={onBlur}
       aria-labelledby="incidents-title"
-      // Rows run to the card's edges (the SEV1 rule included), so the card clips them to its corners.
+      // Rows run to the card's edges (their hover tint included), so the card clips them to its corners.
       className={cn(rows.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
     >
       {/* Two fixed lines: nothing below moves as the connection, the count or the SEV1 badge change. */}
@@ -299,11 +304,12 @@ export function IncidentsCard() {
           {status === "ready" ? (
             <>
               <span>{m.incidents_active_count({ count: rows.length })}</span>
+              {/* Words in SEV1 red, not a second badge: the rows below already carry the solid one. */}
               {sev1 > 0 ? (
-                <Badge variant="sev1">
-                  <OctagonAlertIcon aria-hidden />
+                <span className="inline-flex items-center gap-1 font-medium text-destructive">
+                  <OctagonAlertIcon aria-hidden className="size-3.5 shrink-0" />
                   {m.incidents_sev1_count({ count: sev1 })}
-                </Badge>
+                </span>
               ) : null}
             </>
           ) : view === "connecting" ? (
@@ -347,6 +353,7 @@ export function IncidentsCard() {
                 <IncidentItem
                   key={row.id}
                   row={row}
+                  arrived={firstShown.current !== null && !firstShown.current.has(row.id)}
                   pending={{
                     any: busy.has(row.id),
                     status: busy.has(`${row.id}/status`),

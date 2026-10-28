@@ -48,7 +48,9 @@ export type Followup_TextInputs = {
 * | "loading" | "Loading follow-ups…" |
 * | "load_failed" | "Couldn't load follow-ups: {reason}" |
 * | "incident_column" | "Incident" |
-* | "mine" | "Mine only" |
+* | "mine_filter" | "Whose follow-ups" |
+* | "all" | "All" |
+* | "mine" | "Mine" |
 * | "back" | "Overview" |
 * | "title_required" | "Say what needs doing." |
 * | * | "Follow-ups" |

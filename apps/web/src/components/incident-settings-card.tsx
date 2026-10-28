@@ -400,7 +400,7 @@ function Section({
   const headingId = `incident-settings-${id}`;
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
-      <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-4 gap-y-2 pointer-fine:min-h-9">
         <div className="flex min-w-0 items-baseline gap-2">
           <h3 id={headingId} className="font-semibold">
             {title}

@@ -415,6 +415,18 @@ test("the list puts SEV1 first, whatever its age", async () => {
   expect($("#incidents-title")!.closest("section")!.textContent).toContain("1 is SEV1");
 });
 
+test("only incidents that arrive after the list first showed settle in", async () => {
+  const view = mount();
+  view.declare("Already open", "sev2");
+  await view.flush();
+  expect(row("Already open")!.classList.contains("enter")).toBe(false);
+  // Declared elsewhere while the list is on screen.
+  view.declare("Arrived later", "sev3");
+  await view.flush();
+  expect(row("Arrived later")!.classList.contains("enter")).toBe(true);
+  expect(row("Already open")!.classList.contains("enter")).toBe(false);
+});
+
 test("unavailable: a calm count line, the reason and that it keeps trying; the form stays", async () => {
   const view = mount({ offline: true });
   await view.flush();
@@ -529,9 +541,13 @@ test("the shell names the page and counts the open incidents on the sidebar's In
   view.declare("Login slow", "sev3");
   await view.flush();
   expect(link("Incidents").textContent).toBe("Incidents2");
+  // A SEV1 is open: the count turns red; once it resolves, the count is grey again.
+  const badge = () => $('[data-slot="sidebar-menu-badge"]', link("Incidents"))!;
+  expect(badge().dataset.sev1).toBe("true");
   view.shard.write(ops, "incident.setStatus", { id: first, status: "resolved" });
   await view.flush();
   expect(link("Incidents").textContent).toBe("Incidents1");
+  expect(badge().dataset.sev1).toBeUndefined();
 });
 
 test("focus moved outside the card stays there when the row it came from is removed", async () => {

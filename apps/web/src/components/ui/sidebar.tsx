@@ -100,15 +100,15 @@ function SidebarMenuButton({ className, render, ...props }: useRender.ComponentP
 }
 
 /**
- * A count at the row's end, only on a queue that needs someone (incidents open now). Solid SEV1 red, the one fill
- * that reads from across the room, so it says "something is on fire" without opening the page.
+ * A count at the row's end, only on a queue that needs someone (incidents open now): a plain number in the row's
+ * grey, so the sidebar stays quiet. The caller colours it when the count is urgent (a SEV1 is open).
  */
 function SidebarMenuBadge({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span
       data-slot="sidebar-menu-badge"
       className={cn(
-        "ml-auto inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-sm bg-sev1 px-1.5 text-xs font-semibold text-sev1-foreground tabular-nums",
+        "ml-auto shrink-0 text-xs font-medium text-muted-foreground tabular-nums",
         className,
       )}
       {...props}

@@ -62,6 +62,32 @@
   }
 }
 
+/*
+ * Something that arrives while the page is already on screen (an incident declared elsewhere, a refusal under a
+ * form): it settles in from 4px above instead of teleporting. Entry only, through @starting-style, so nothing
+ * plays on the way out and nothing plays where the browser lacks it. Reduced motion keeps the fade, drops the travel.
+ */
+@utility enter {
+  transition-property: opacity, translate;
+  transition-duration: var(--brigade-duration-base);
+  transition-timing-function: var(--brigade-ease-out);
+  @starting-style {
+    opacity: 0;
+    translate: 0 calc(-4px * var(--brigade-motion-travel));
+  }
+}
+
+/* A mark that confirms a press (a follow-up's check): it grows in from 80%, never from nothing. */
+@utility enter-pop {
+  transition-property: opacity, scale;
+  transition-duration: var(--brigade-duration-fast);
+  transition-timing-function: var(--brigade-ease-out);
+  @starting-style {
+    opacity: 0;
+    scale: calc(1 - 0.2 * var(--brigade-motion-travel));
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring;
@@ -92,5 +118,29 @@
   /* Codes and paths read as code; figures that update keep their width. */
   code {
     @apply font-mono;
+  }
+
+  /* Disclosures open and close instead of snapping: the content's height and opacity, where the browser can
+     animate to `auto` (elsewhere they snap, as before). Under reduced motion only the fade remains. */
+  :root {
+    interpolate-size: allow-keywords;
+  }
+  details::details-content {
+    height: 0;
+    overflow: clip;
+    opacity: 0;
+    transition-property: height, opacity, content-visibility;
+    transition-duration: var(--brigade-duration-base);
+    transition-timing-function: var(--brigade-ease-out);
+    transition-behavior: allow-discrete;
+  }
+  details[open]::details-content {
+    height: auto;
+    opacity: 1;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    details::details-content {
+      transition-property: opacity, content-visibility;
+    }
   }
 }

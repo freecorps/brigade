@@ -175,9 +175,14 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Role definitions are done (Phase 3 item). Publishing an update to the status page
     is done (Phase 3 item). Members who join by invitation are in the shard's member list from the moment they accept. The mobile incident screen is done (Mobile item).
 - [ ] Brigade Sync in production for web + mobile
-  - Done so far: D1 `brigade-db` and `brigade-db-staging` exist with the migrations applied. Left: production and
-    staging queues, the first deploy, and the relay's production secrets. The hosted instance runs at
-    `brigade.freecorps.com.br` (RFC 0002 "Environments").
+  - Done so far: D1 `brigade-db` and `brigade-db-staging` exist with the migrations applied (production's through
+    0015). Production's queues (`brigade-events`, `brigade-events-dlq`), KV namespace (`brigade-status`) and exports
+    bucket (`brigade-exports`, with its lifecycle rule) exist and are bound at wrangler.jsonc's top level; the
+    production relay (`brigade-relay`) is deployed with its APNs and FCM secrets, the same key and Firebase project as
+    `dev`'s, since the app is one bundle id. The production build adds the `RELAY` and `AI` bindings
+    (apps/api vite.config.ts `PRODUCTION_BINDINGS`). Left: the first API and dashboard deploy, the dashboard's custom
+    domain, the email sender and the first owner. The hosted instance runs at `brigade.freecorps.com.br` (RFC 0002
+    "Environments"). Staging has its database only.
 - [x] Web dashboard: incident list/detail, monitors
   - The incident list, the incident page (`/incidents/<number>`), the Monitors card (create, edit, pause, delete;
     HTTP, TCP and heartbeat) and the Members card.
@@ -223,7 +228,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     again (RFC 0006 "Device registration"). Every registration, one that changed nothing included, moves "last heard
     from".
   - Left: the Acknowledge action from a cold background launch, and on Android at all; Android pages tried on a real
-    phone (dev has its Firebase project and the relay's `FCM_SERVICE_ACCOUNT`; production needs its own first); OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the
+    phone (dev's and production's relays share the Firebase project and its `FCM_SERVICE_ACCOUNT`); OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the
     session's active one); creating an account or workspace from the app; a tablet layout beyond a readable width.
 - [ ] Event outbox + queue + push notifier
   - Done: the shard alarm drains the outbox to `brigade-events` (`-dev`, `-staging`) in commit order, in bounded
@@ -239,9 +244,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
     dead-letter queue `brigade-events-dlq-dev` exist; the dead-letter consumer is created on the next deploy.
   - Done on `dev` (2026-10-27): a real push end to end from the deployed API through the relay to an iPhone
     ([write-up](spikes/s1-apns-encryption.md#real-iphone)).
-  - Left: the production and staging queues (owner approval); `RELAY_SEND_TOKEN` on the deployed API (dev reaches
-    its relay through the `RELAY` service binding; production and staging add theirs with their relay's first deploy);
-    VoIP call pages on a real iPhone (sent since Phase 2, RFC 0010); `FCM_SERVICE_ACCOUNT` on the deployed relays
+  - Left: staging's queues and relay (owner approval); production's first API deploy, which reaches `brigade-relay`
+    through its `RELAY` binding;
+    VoIP call pages on a real iPhone (sent since Phase 2, RFC 0010); `FCM_SERVICE_ACCOUNT` on staging's relay
     (Android pages go out through FCM since the relay's FCM sender, RFC 0006); a lower-urgency push for another incident can still replace a
     page stored for an offline phone (the app re-syncing open pages is the fallback, RFC 0006 "Offline phones");
     the "a page reached nobody" email to admins as well as owners, with no exception for whoever declared (decided,
@@ -468,7 +473,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     admins with a preview; a postmortem keeps the sections it was made with; the AI draft and exports follow them.
   - `dev` has the `brigade-exports-dev` bucket (with its lifecycle rule) and the `AI` binding, so exports and "Draft
     with AI" work there.
-  - Left: staging and production buckets and their `AI` bindings (owner's call); the mobile app's follow-ups and
+  - Production has `brigade-exports` (same lifecycle rule) and `AI`, both from its first deploy.
+  - Left: staging's bucket and `AI` binding (owner's call); the mobile app's follow-ups and
     postmortem; issue-tracker sync.
   - Done since (decided, Q24; RFC 0013): the last 20 postmortem revisions, kept server-only, listed on the incident
     page with who saved each and restored from there as a save; owners turning AI drafts off per workspace
@@ -507,8 +513,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     those following one of their components or groups, or everything, and to everyone when they name none; a
     subscriber whose components are all gone hears of everything; per-component counts on the dashboard and a
     `follows` column in the CSV.
-  - Left: staging's and production's KV namespaces (`dev` binds `brigade-status-dev`), applying migrations 0008 to 0010 and
-    0013 to staging's and production's databases, and 0013 to `dev`'s (owner's call, apps/api README "Status page");
+  - Left: staging's KV namespace (`dev` binds `brigade-status-dev`, production `brigade-status`), applying migrations
+    0008 to 0010 and 0013 to staging's database (owner's call, apps/api README "Status page");
     the mobile app's publish and maintenance actions; the rest of Q23 (uptime choices, the large-provider list).
   - Done (Q23): "this page may be out of date" past 48 hours; a per-IP rate limit on `/status/*` misses
     (`STATUS_MISS_LIMIT`, 30 a minute, then 429); a draft's slug claimed only when the page first goes public;

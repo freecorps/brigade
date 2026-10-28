@@ -31,6 +31,18 @@ const TEST_SLACK_TOKEN_KEY = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
  */
 const TEST_WEBHOOK_SECRET_KEY = "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk";
 
+/**
+ * Bindings only the production build (`vp run build`, no CLOUDFLARE_ENV) adds to wrangler.jsonc's top level, which
+ * local runs and the tests use too: there Workers AI would call Cloudflare, and a `RELAY` to a Worker that is not
+ * running stops workerd from starting. `RELAY` is the production relay on this account (`brigade-relay`, apps/relay),
+ * reached by binding because a Worker cannot fetch another Worker of its account at its public URL; deploy it first.
+ * A self-hosted instance without its own relay removes `RELAY` here and sets RELAY_URL. `AI`: postmortem drafts.
+ */
+const PRODUCTION_BINDINGS = {
+  services: [{ binding: "RELAY", service: "brigade-relay" }],
+  ai: { binding: "AI" },
+};
+
 export default defineConfig(async ({ command, mode }) => ({
   // The Vite plugin runs the Worker in dev and build; tests run it through the Vitest plugin instead.
   // `workspaceSource()` resolves packages/schema and packages/sync to their TypeScript source (RFC 0002).
@@ -58,7 +70,13 @@ export default defineConfig(async ({ command, mode }) => ({
           workspaceSource(),
         ]
       : [
-          cloudflare(command === "serve" ? { config: { vars: LOCAL_VARS } } : {}),
+          cloudflare(
+            command === "serve"
+              ? { config: { vars: LOCAL_VARS } }
+              : process.env.CLOUDFLARE_ENV
+                ? {}
+                : { config: PRODUCTION_BINDINGS },
+          ),
           workspaceSource(),
         ],
   test: {

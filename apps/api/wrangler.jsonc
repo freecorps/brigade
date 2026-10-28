@@ -48,8 +48,8 @@
   // as failed; `max_retries` is above that (`QUEUE_MAX_RETRIES`) so the Queue never drops a page first. Whatever
   // still fails (the shard unreachable or throwing every time) lands in the dead-letter queue, which this Worker
   // also consumes: it records each page there on its incident's timeline once and acks, never retrying
-  // (`consumeDeadLetters`). Production and staging queues do not exist yet: the first deploy (owner approval)
-  // creates them with `wrangler queues create`.
+  // (`consumeDeadLetters`). Production's queues exist (`brigade-events`, `brigade-events-dlq`); staging's do not
+  // yet: its first deploy (owner approval) creates them with `wrangler queues create`.
   "queues": {
     "producers": [{ "binding": "EVENTS", "queue": "brigade-events" }],
     "consumers": [
@@ -124,17 +124,19 @@
     },
   ],
   // The public status page's snapshots (RFC 0012, src/status-page.ts): each workspace shard pushes its page here on
-  // every change, and `GET /status/:slug` reads it, so no visitor ever wakes a shard. Without an `id` this binding is
-  // for local runs and the tests only (Miniflare simulates it); `dev` binds `brigade-status-dev`. KV is unbound in
-  // `staging` until a namespace exists (apps/api/README.md "Status page"), and the page then answers 404 while the
-  // dashboard still sets it up.
-  "kv_namespaces": [{ "binding": "STATUS" }],
+  // every change, and `GET /status/:slug` reads it, so no visitor ever wakes a shard. Production binds
+  // `brigade-status`, `dev` binds `brigade-status-dev`; local runs and the tests use Miniflare's simulation whatever
+  // the `id`. KV is unbound in `staging` until a namespace exists (apps/api/README.md "Status page"), and the page then
+  // answers 404 while the dashboard still sets it up.
+  "kv_namespaces": [{ "binding": "STATUS", "id": "7c80c30cfbce41bcbbb1ffa6c56265ae" }],
   // Exports (RFC 0013, src/exports.ts): files owners and admins export, under `workspaces/<id>/`, never public, read
-  // back through `GET /workspaces/:id/exports/:exportId`. Without a `bucket_name` this binding is for local runs and the
-  // tests only (Miniflare simulates it). `dev` binds `brigade-exports-dev` and Workers AI (`AI`, postmortem drafts);
-  // `staging` has neither until its bucket exists (apps/api/README.md "Exports"), and there exporting answers 503 and
-  // the "Draft with AI" button is hidden.
-  "r2_buckets": [{ "binding": "EXPORTS" }],
+  // back through `GET /workspaces/:id/exports/:exportId`. Production binds `brigade-exports` (8-day lifecycle rule on
+  // `workspaces/`); local runs and the tests use Miniflare's simulation. `dev` binds `brigade-exports-dev` and
+  // Workers AI (`AI`, postmortem drafts). Production's `AI` and `RELAY` are not here but added by the production
+  // build (vite.config.ts `PRODUCTION_BINDINGS`): this top level is also what local runs and the tests use, where
+  // `AI` would call Cloudflare and a `RELAY` to a Worker that is not running stops workerd from starting.
+  // `staging` has neither until its bucket exists (apps/api/README.md "Exports"), and there exporting answers 503.
+  "r2_buckets": [{ "binding": "EXPORTS", "bucket_name": "brigade-exports" }],
   // Set with `wrangler secret put` (deployed) or apps/api/.dev.vars (local, gitignored); never in this file.
   // RELAY_SEND_TOKEN (src/notify.ts) is optional: paging needs it and the relay, reached through the `RELAY` service
   // binding (per environment, below) or, unbound, at the RELAY_URL secret (a self-hosted instance using Freecorps'
@@ -260,9 +262,8 @@
       "ai": { "binding": "AI" },
       "secrets": { "required": ["BETTER_AUTH_SECRET"] },
       // The relay on this account (apps/relay). A Worker's fetch to another workers.dev Worker on the same account is
-      // answered 404, so the API reaches it through this binding and RELAY_URL is not used. Only `dev` has one: a
-      // binding to a Worker that does not exist fails the deploy, so production and staging add theirs with their
-      // relay's first deploy. Locally and in the tests it is unbound.
+      // answered 404, so the API reaches it through this binding and RELAY_URL is not used. `staging` has none yet: a
+      // binding to a Worker that does not exist fails the deploy, so it adds its own with its relay's first deploy.
       "services": [{ "binding": "RELAY", "service": "brigade-relay-dev" }],
     },
     "staging": {

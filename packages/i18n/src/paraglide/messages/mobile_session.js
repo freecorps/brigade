@@ -25,6 +25,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "pages_unsupported" | "Not on this phone yet" |
 * | "pages_failed" | "Couldn't register this phone. Brigade keeps trying." |
 * | "pages_taken" | "This phone still pages the person signed in on it before you, who signed out without a connection. Brigade frees it for you once it can finish their sign-out." |
+* | "pages_limit" | "You have the most phones this workspace allows registered for pages. Sign out of Brigade on a phone you no longer use, then tap Try again." |
 * | "open_hint" | "Opens the incident" |
 * | "assign_hint" | "Opens the members who can hold it" |
 * | "pages_notice_title" | "This phone isn't paging you" |
@@ -66,6 +67,7 @@ export const mobile_session = /** @type {((inputs: Mobile_SessionInputs, options
 		if (i?.part === "pages_unsupported") return /** @type {LocalizedString} */ (`Ainda não neste telefone`);
 		if (i?.part === "pages_failed") return /** @type {LocalizedString} */ (`Não foi possível registrar este telefone. O Brigade continua tentando.`);
 		if (i?.part === "pages_taken") return /** @type {LocalizedString} */ (`Este telefone ainda chama a pessoa que entrou nele antes de você e saiu sem conexão. O Brigade libera o telefone para você assim que conseguir concluir a saída dela.`);
+		if (i?.part === "pages_limit") return /** @type {LocalizedString} */ (`Você já tem o máximo de telefones que este workspace permite registrar para chamados. Saia do Brigade em um telefone que não usa mais e toque em Tentar de novo.`);
 		if (i?.part === "open_hint") return /** @type {LocalizedString} */ (`Abre o incidente`);
 		if (i?.part === "assign_hint") return /** @type {LocalizedString} */ (`Abre os membros que podem assumir`);
 		if (i?.part === "pages_notice_title") return /** @type {LocalizedString} */ (`Este telefone não está chamando você`);
@@ -101,6 +103,7 @@ export const mobile_session = /** @type {((inputs: Mobile_SessionInputs, options
 		if (i?.part === "pages_unsupported") return /** @type {LocalizedString} */ (`Not on this phone yet`);
 		if (i?.part === "pages_failed") return /** @type {LocalizedString} */ (`Couldn't register this phone. Brigade keeps trying.`);
 		if (i?.part === "pages_taken") return /** @type {LocalizedString} */ (`This phone still pages the person signed in on it before you, who signed out without a connection. Brigade frees it for you once it can finish their sign-out.`);
+		if (i?.part === "pages_limit") return /** @type {LocalizedString} */ (`You have the most phones this workspace allows registered for pages. Sign out of Brigade on a phone you no longer use, then tap Try again.`);
 		if (i?.part === "open_hint") return /** @type {LocalizedString} */ (`Opens the incident`);
 		if (i?.part === "assign_hint") return /** @type {LocalizedString} */ (`Opens the members who can hold it`);
 		if (i?.part === "pages_notice_title") return /** @type {LocalizedString} */ (`This phone isn't paging you`);

@@ -39,7 +39,7 @@ function useCover() {
   const now = useNow(60_000);
   // Members too: until they load, every name would read "Unnamed member" for a moment.
   const status =
-    schedules.status === "error" || overrides.status === "error"
+    schedules.status === "error" || overrides.status === "error" || members.status === "error"
       ? "error"
       : schedules.status === "ready" && overrides.status === "ready" && members.status === "ready"
         ? "ready"
@@ -59,7 +59,7 @@ function useCover() {
   );
   return {
     status,
-    error: (schedules.error ?? overrides.error)?.code,
+    error: (schedules.error ?? overrides.error ?? members.error)?.code,
     lanes,
     members: members.rows,
     now,

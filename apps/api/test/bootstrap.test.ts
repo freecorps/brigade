@@ -132,6 +132,26 @@ describe("POST /setup/first-user", () => {
     expect((await setup()).status).toBe(201);
   });
 
+  test("a latch left by a run that died is taken over after five minutes", async () => {
+    const hold = (at: number) =>
+      env.DB.prepare(
+        `insert into "rateLimit" (id, key, count, "lastRequest") values ('rl_test', 'setup:first-user', 1, ?)
+         on conflict (key) do update set "lastRequest" = excluded."lastRequest"`,
+      )
+        .bind(at)
+        .run();
+    await hold(Date.now() - 60_000);
+    const busy = await setup();
+    expect(busy.status).toBe(409);
+    expect(await busy.json()).toEqual({ error: "setup_in_progress" });
+    await hold(Date.now() - 6 * 60_000);
+    expect((await setup()).status).toBe(201);
+  });
+
+  test("a secret stored with a trailing newline still matches", async () => {
+    expect((await setup(FIRST, { secret: `${TOKEN}\n` })).status).toBe(201);
+  });
+
   test("does not exist without the secret", async () => {
     const response = await setup(FIRST, { secret: null });
     expect(response.status).toBe(404);

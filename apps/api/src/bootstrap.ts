@@ -16,6 +16,8 @@ export const BOOTSTRAP_TOKEN_MIN = 32;
 
 /** The `rateLimit` row that lets one bootstrap run at a time (a latch, dropped when a run fails). */
 const LATCH_KEY = "setup:first-user";
+/** A latch older than this belongs to a run that died (a deploy, the CPU limit) and is taken over. */
+const LATCH_STALE_MS = 5 * 60_000;
 
 const MAX_BODY = 4096;
 /** Better Auth's password lengths (`minPasswordLength`, `maxPasswordLength`), as its sign-up checks them. */
@@ -25,7 +27,7 @@ const PASSWORD_MAX = 128;
 /**
  * `POST /setup/first-user` `{ email, name, workspace, password }`, `Authorization: Bearer <BOOTSTRAP_TOKEN>`:
  * 201 `{ userId, workspaceId, email }`. 404 without the secret; 401 for a wrong token; 409 `already_set_up` once any
- * user exists (or while another run holds the latch); 400 `invalid_args`; 503 `bootstrap_token_too_short` for a
+ * user exists, 409 `setup_in_progress` while another run holds the latch; 400 `invalid_args`; 503 `bootstrap_token_too_short` for a
  * secret shorter than `BOOTSTRAP_TOKEN_MIN`.
  */
 export async function bootstrapFirstUser(
@@ -34,13 +36,15 @@ export async function bootstrapFirstUser(
   db: D1Database,
   lazyAuth: () => Auth,
 ): Promise<Response> {
+  // A secret stored with a trailing newline (piped from `echo`) still matches what the script sends.
+  token = token?.trim();
   if (!token) return json({ error: "not_found" }, 404);
   if (request.method !== "POST")
     return json({ error: "method_not_allowed" }, 405, { Allow: "POST" });
   if (token.length < BOOTSTRAP_TOKEN_MIN) {
     return json({ error: "bootstrap_token_too_short" }, 503);
   }
-  const sent = /^Bearer (.+)$/.exec(request.headers.get("Authorization") ?? "")?.[1] ?? "";
+  const sent = /^Bearer (.+)$/.exec(request.headers.get("Authorization") ?? "")?.[1]?.trim() ?? "";
   if (!(await sameSecret(sent, token))) return json({ error: "unauthenticated" }, 401);
 
   const text = await readBounded(request, MAX_BODY);
@@ -69,16 +73,20 @@ export async function bootstrapFirstUser(
   }
 
   // One run at a time: two calls at once could both find no user. The latch is a `rateLimit` row (the cron prunes it
-  // after two days, by then long unneeded), kept after a success.
+  // after two days, by then long unneeded), kept after a success; one left by a run that died is taken over.
   const now = Date.now();
   const latch = await db
     .prepare(
       `insert into "rateLimit" (id, key, count, "lastRequest") values (?, ?, 1, ?)
-       on conflict (key) do nothing returning id`,
+       on conflict (key) do update set "lastRequest" = excluded."lastRequest"
+       where "rateLimit"."lastRequest" < ? returning id`,
     )
-    .bind(authId("rateLimit", now, randomBytes), LATCH_KEY, now)
+    .bind(authId("rateLimit", now, randomBytes), LATCH_KEY, now, now - LATCH_STALE_MS)
     .first();
-  if (!latch) return json({ error: "already_set_up" }, 409);
+  if (!latch) {
+    const users = await db.prepare(`select count(*) as n from "user"`).first<{ n: number }>();
+    return json({ error: (users?.n ?? 0) > 0 ? "already_set_up" : "setup_in_progress" }, 409);
+  }
   const release = () => db.prepare(`delete from "rateLimit" where key = ?`).bind(LATCH_KEY).run();
 
   let userId: string | undefined;
@@ -117,17 +125,20 @@ export async function bootstrapFirstUser(
     );
     // Back to no user, so the script can run again: any workspace the run made (the only ones on a new instance),
     // then the user, whose accounts, sessions and memberships go with it (`on delete cascade`).
-    if (userId) {
-      await db.batch([
-        db
-          .prepare(
-            `delete from organization where id in (select "organizationId" from member where "userId" = ?)`,
-          )
-          .bind(userId),
-        db.prepare(`delete from "user" where id = ?`).bind(userId),
-      ]);
+    try {
+      if (userId) {
+        await db.batch([
+          db
+            .prepare(
+              `delete from organization where id in (select "organizationId" from member where "userId" = ?)`,
+            )
+            .bind(userId),
+          db.prepare(`delete from "user" where id = ?`).bind(userId),
+        ]);
+      }
+    } finally {
+      await release();
     }
-    await release();
     return json({ error: "internal" }, 500);
   }
 }

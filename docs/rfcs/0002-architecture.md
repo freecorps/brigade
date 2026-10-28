@@ -264,12 +264,14 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     the dashboard's `/api` with `Authorization: Bearer` and the `BOOTSTRAP_TOKEN` secret (`src/bootstrap.ts`). Without
     the secret the route does not exist (404); a secret under 32 characters is refused as a configuration error
     (503); the token is compared in constant time (both sides hashed, then `timingSafeEqual`). It refuses for good
-    once any user exists (409), and a latch row in D1's `rateLimit` table makes two calls at once create one owner.
+    once any user exists (409), and a latch row in D1's `rateLimit` table makes two calls at once create one owner
+    (the other gets 409 `setup_in_progress`); a latch older than five minutes, left by a run that died, is taken over.
     It creates the account with its address verified (whoever holds the secret runs the instance) and Better Auth's
     password hash, then a workspace with the account as owner through Better Auth's own create, so the shard is
-    provisioned as for `POST /workspaces`; a failure removes the account again. The script generates the password
+    provisioned as for `POST /workspaces`; a failure removes the account and its workspace again and drops the latch. The script generates the password
     (24 random bytes) and, unless `--email`, `--name` and `--workspace` say otherwise, `owner@<the instance's host>`,
-    "Owner" and "Brigade"; it sends them only over HTTPS (or to localhost) and prints the address and password once.
+    "Owner" and "Brigade"; it sends them only over HTTPS (or to localhost), follows no redirect, and prints the address and password once,
+    warning that a made-up address cannot receive a reset.
     The password lives nowhere else; the operator deletes the secret afterwards. Chosen over a Worker RPC entrypoint
     or SQL through `wrangler d1 execute` because it needs no Cloudflare credentials on the operator's machine beyond
     setting a secret, and it goes through Better Auth's hashing and the shard's provisioning like every account.

@@ -68,6 +68,8 @@ try {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ email, name, workspace, password }),
+    // A redirect would resend the body, password included, past the HTTPS check above.
+    redirect: "manual",
   });
 } catch (error) {
   fail(`Could not reach ${origin.origin}: ${error.message}`);
@@ -78,11 +80,21 @@ const reasons = {
   401: "BOOTSTRAP_TOKEN does not match the API Worker's secret.",
   404: "The instance has no BOOTSTRAP_TOKEN secret set (or the URL is not the dashboard's).",
   409: "This instance already has a user: sign in instead, or ask an owner for an invitation.",
+  setup_in_progress: "Another run is creating the first owner; wait a few minutes and try again.",
   503: "The API Worker's BOOTSTRAP_TOKEN is too short: set one of at least 32 characters.",
 };
-if (response.status !== 201) {
+if (response.status >= 300 && response.status < 400) {
   fail(
-    `Creating the first owner failed (${response.status}). ${reasons[response.status] ?? ""}`.trim(),
+    `${origin.origin} answered with a redirect to ${response.headers.get("Location") ?? "nowhere"}: give the dashboard's final origin with --url.`,
+  );
+}
+if (response.status !== 201) {
+  const error = await response
+    .json()
+    .then((body) => body?.error)
+    .catch(() => undefined);
+  fail(
+    `Creating the first owner failed (${response.status}). ${reasons[error] ?? reasons[response.status] ?? ""}`.trim(),
   );
 }
 const created = await response.json();
@@ -95,3 +107,8 @@ console.log(`First owner created on ${origin.origin}
 
 This password is shown only now. Save it in a password manager, then remove the BOOTSTRAP_TOKEN secret
 (wrangler secret delete BOOTSTRAP_TOKEN). Invite your team from the dashboard.`);
+if (values.email === undefined) {
+  console.log(`
+${email} was made up and marked verified, and an address cannot be changed later: if it receives no mail,
+a forgotten password cannot be reset. Pass --email with a real address to avoid that.`);
+}

@@ -11,12 +11,15 @@ import {
 } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 import worker from "../src/index.ts";
+import type { EmailSender, OutgoingEmail } from "../src/email.ts";
 import { consumeEvents, type Fetch, type NotifyEnv } from "../src/notify.ts";
+import { operatorAddresses } from "../src/notify-operators.ts";
 import { OutboxDrain, type BrigadeEvent } from "../src/outbox.ts";
 import {
   BEAT_STALE_MS,
   HEARTBEAT_EVENT,
   MAX_PROOF_LATENCY_MS,
+  OPERATOR_EMAIL_HOURLY_CAP,
   pagingStatus,
   PING_TIMEOUT_MS,
   pingUrl,
@@ -95,13 +98,18 @@ async function pinged(stub: DurableObjectStub<WatchdogDO>, expected: boolean | n
   });
 }
 
-async function deliver(events: BrigadeEvent[], notifyEnv: NotifyEnv, send: Fetch) {
+async function deliver(
+  events: BrigadeEvent[],
+  notifyEnv: NotifyEnv,
+  send: Fetch,
+  mail?: EmailSender,
+) {
   const batch = createMessageBatch(
     "brigade-events",
     events.map((body, i) => ({ id: `msg-${i}`, timestamp: new Date(), attempts: 1, body })),
   );
   const ctx = createExecutionContext();
-  await consumeEvents(batch, notifyEnv, send);
+  await consumeEvents(batch, notifyEnv, send, mail);
   return getQueueResult(batch, ctx);
 }
 
@@ -185,6 +193,18 @@ describe("pagingStatus", () => {
       reasons: ["relay_not_configured"],
     });
   });
+
+  test("the deeper checks on the last proof: APNs, FCM and D1 failing each degrade; not configured or unknown never", () => {
+    const times = { firstBeatAt: NOW, lastBeatAt: NOW, provedBeatAt: NOW, lastProvedAt: NOW };
+    expect(
+      pagingStatus({ ...times, relay: "ok", apns: "error", fcm: "error", d1: "error" }, NOW),
+    ).toEqual({ status: "degraded", reasons: ["apns_failing", "fcm_failing", "d1_failing"] });
+    for (const quiet of ["ok", "not_configured", "unknown", null] as const) {
+      expect(
+        pagingStatus({ ...times, relay: "ok", apns: quiet, fcm: quiet, d1: quiet }, NOW),
+      ).toEqual({ status: "ok", reasons: [] });
+    }
+  });
 });
 
 describe("pingUrl", () => {
@@ -254,9 +274,13 @@ describe("the heartbeat, end to end", () => {
     const result = await deliver([heartbeat!, heartbeat!], notifyEnv(), up.send);
     expect(result.explicitAcks.sort()).toEqual(["msg-0", "msg-1"]);
     expect(result.retryMessages).toEqual([]);
-    // The token check: the send route with the token and no body, which never reaches APNs.
-    expect(up.urls[0]).toBe("POST https://relay.test/send");
-    expect(up.auth[0]).toBe("Bearer test-token");
+    // A relay without the deep check answers it as a relay from before it: then the token check, the send route
+    // with the token and no body, which never reaches APNs.
+    // (Both deliveries run side by side, so the order is theirs.)
+    expect(new Set(up.urls)).toEqual(
+      new Set(["GET https://relay.test/health?deep=1", "POST https://relay.test/send"]),
+    );
+    expect(new Set(up.auth)).toEqual(new Set(["Bearer test-token"]));
     expect(pings()).toEqual([PING_URL]);
     await pinged(stub, true);
     expect(await stub.health()).toMatchObject({
@@ -446,6 +470,114 @@ describe("the heartbeat, end to end", () => {
     // The change waits in the outbox for the pipeline to come back.
     expect((await events()).filter((event) => event.type === STATUS_EVENT)).toHaveLength(1);
     expect(pings()).toEqual([]);
+  });
+
+  test("a relay with the deep check: the providers are recorded; APNs, FCM or D1 failing stops the pings", async () => {
+    const { stub, heartbeats, notifyEnv } = watchdog();
+    /** The relay's deep check answering `apns` and `fcm` (apps/relay src/deep-health.ts). */
+    const deep = (apns: string, fcm = "not_configured") => {
+      const urls: string[] = [];
+      const send: Fetch = async (request) => {
+        urls.push(`${request.method} ${request.url}`);
+        const ok = apns === "ok" && fcm !== "error";
+        return Response.json(
+          { ok, apns: { status: apns }, fcm: { status: fcm } },
+          { status: ok ? 200 : 503 },
+        );
+      };
+      return { urls, send };
+    };
+    const beat = async (send: Fetch, extra: Partial<NotifyEnv> = {}) => {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      await stub.beat();
+      await deliver([(await heartbeats()).at(-1)!], { ...notifyEnv(), ...extra }, send);
+    };
+    const ok = deep("ok");
+    await beat(ok.send, { DB: env.DB });
+    // One request: no token check on the send route once the deep check answered.
+    expect(ok.urls).toEqual(["GET https://relay.test/health?deep=1"]);
+    expect(await stub.health()).toMatchObject({ status: "ok", reasons: [] });
+    await pinged(stub, true);
+    expect(pings()).toHaveLength(1);
+
+    await beat(deep("error").send);
+    expect(await stub.health()).toMatchObject({ status: "degraded", reasons: ["apns_failing"] });
+    expect(pings()).toHaveLength(1);
+
+    await beat(deep("ok", "error").send);
+    expect(await stub.health()).toMatchObject({ status: "degraded", reasons: ["fcm_failing"] });
+    expect(pings()).toHaveLength(1);
+
+    // One D1 read per beat: a D1 that throws degrades the status and silences the external check too.
+    const broken = {
+      prepare: () => {
+        throw new Error("D1 is down");
+      },
+    } as unknown as D1Database;
+    await beat(deep("ok").send, { DB: broken });
+    expect(await stub.health()).toMatchObject({ status: "degraded", reasons: ["d1_failing"] });
+    expect(pings()).toHaveLength(1);
+    // FCM not configured (a relay serving iOS only) is no failure: pings again.
+    await beat(deep("ok").send, { DB: env.DB });
+    await vi.waitFor(() => expect(pings()).toHaveLength(2));
+  });
+
+  test("OPERATOR_EMAILS are emailed each status change, once per event and capped per hour", async () => {
+    const { stub, notifyEnv } = watchdog();
+    const sent: OutgoingEmail[] = [];
+    const mail: EmailSender = {
+      id: "test",
+      async send(email) {
+        sent.push(email);
+        return { ok: true };
+      },
+    };
+    const change = (n: number, data: object): BrigadeEvent => ({
+      id: `evt_status_${n}`,
+      type: STATUS_EVENT,
+      source: `brigade://${SYSTEM_WORKSPACE}/watchdog`,
+      workspaceId: SYSTEM_WORKSPACE,
+      time: new Date().toISOString(),
+      actor: { kind: "system", id: "sys_watchdog" },
+      data,
+      specversion: "1.0",
+    });
+    const operators = {
+      ...notifyEnv(),
+      WATCHDOG: { getByName: () => stub } as unknown as NotifyEnv["WATCHDOG"],
+      OPERATOR_EMAILS: " ops@example.com, not an address ,oncall@example.org,ops@example.com",
+    };
+    const degraded = change(1, {
+      status: "degraded",
+      previous: "ok",
+      reasons: ["apns_failing", "d1_failing"],
+    });
+    // Redelivered in the same batch and again later: one email per operator.
+    const result = await deliver([degraded, degraded], operators, relay().send, mail);
+    expect(result.explicitAcks.sort()).toEqual(["msg-0", "msg-1"]);
+    await deliver([degraded], operators, relay().send, mail);
+    expect(sent.map((one) => one.to.email).sort()).toEqual([
+      "oncall@example.org",
+      "ops@example.com",
+    ]);
+    expect(sent[0]!.subject).toBe("Brigade's paging self-check is degraded");
+    expect(sent[0]!.text).toContain("Apple's push service refused the relay's key");
+    expect(sent[0]!.text).toContain("The database (D1) didn't answer a simple read.");
+    // Capped: at most OPERATOR_EMAIL_HOURLY_CAP changes an hour are emailed; the rest only logged.
+    for (let n = 2; n <= OPERATOR_EMAIL_HOURLY_CAP + 2; n++) {
+      await deliver(
+        [change(n, { status: n % 2 ? "degraded" : "ok", reasons: [] })],
+        operators,
+        relay().send,
+        mail,
+      );
+    }
+    expect(sent).toHaveLength(OPERATOR_EMAIL_HOURLY_CAP * 2);
+    // Without OPERATOR_EMAILS, or without email set up, nothing is sent and the event is still acked.
+    const quiet = await deliver([change(99, { status: "ok" })], notifyEnv(), relay().send, mail);
+    expect(quiet.explicitAcks).toEqual(["msg-0"]);
+    expect(sent).toHaveLength(OPERATOR_EMAIL_HOURLY_CAP * 2);
+    expect(operatorAddresses("a@b.co,,  c@d.io ,x")).toEqual(["a@b.co", "c@d.io"]);
   });
 
   test("other system events are acked and never reach a shard", async () => {

@@ -35,6 +35,7 @@ const draft = (patch: Partial<PolicyDraft> = {}): PolicyDraft => ({
   levels: [{ id: LVL, targets: [{ kind: "member", id: "usr_ana" }], timeout: "5" }],
   repeat: 1,
   isDefault: true,
+  minSeverity: null,
   ...patch,
 });
 
@@ -53,6 +54,7 @@ describe("the policy editor", () => {
         levels: [{ id: LVL, targets: [{ kind: "member", id: "usr_ana" }], timeoutMinutes: 5 }],
         repeat: 1,
         isDefault: true,
+        minSeverity: null,
       },
     });
     for (const timeout of ["0", "1441", "2.5", "", "five"]) {

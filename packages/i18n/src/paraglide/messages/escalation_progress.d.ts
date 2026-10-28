@@ -11,6 +11,7 @@ export type Escalation_ProgressInputs = {
 * | --- | --- |
 * | "running" | "Escalating" |
 * | "resolved" | "Stopped: resolved {time}" |
+* | "once" | "Paged once, not escalated: this policy escalates from {level}" |
 * | "next_level" | "Level {level} at {time}" |
 * | "next_repeat" | "Level 1 again at {time}" |
 * | "next_end" | "Everyone who can respond at {time}" |

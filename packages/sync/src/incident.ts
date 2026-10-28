@@ -195,9 +195,16 @@ export function bodyParts(body: string): BodyPart[] {
 type PageFailed = Extract<TimelineRow, { kind: "page_failed" }> & { userId: string };
 
 /**
+ * More member failures than this from one notifier run, for the same reason, read as one summary line ("Couldn't
+ * page 12 people: no registered device"); this many or fewer, one line each (Q18 decided, RFC 0006 "Who is paged").
+ * Who they were stays behind Show names and in why-wasn't-I-paged.
+ */
+export const PAGE_FAILURES_SUMMARY_OVER = 5;
+
+/**
  * A timeline line: one entry, or the pages one notifier run could not send for the same reason (consecutive
- * `page_failed` entries for members, at the same time), so a SEV1 that reached nobody in a large workspace is one
- * line, not one per member above the first update.
+ * `page_failed` entries for members, at the same time) when there are more than `PAGE_FAILURES_SUMMARY_OVER`, so a
+ * SEV1 that reached nobody in a large workspace is one line, not one per member above the first update.
  */
 export type TimelineItem =
   | { kind: "entry"; entry: TimelineRow }
@@ -212,14 +219,15 @@ export type TimelineItem =
 const forMember = (entry: TimelineRow): entry is PageFailed =>
   entry.kind === "page_failed" && entry.userId !== null && entry.reason !== "dead_lettered";
 
-/** `entries` in the order given, with runs of two or more of the same page failure grouped. */
+/** `entries` in the order given, with runs of more than `PAGE_FAILURES_SUMMARY_OVER` of the same page failure grouped. */
 export function timelineItems(entries: readonly TimelineRow[]): TimelineItem[] {
   const items: TimelineItem[] = [];
   let run: PageFailed[] = [];
   const flush = () => {
     const [first, ...rest] = run;
-    if (first && rest.length === 0) items.push({ kind: "entry", entry: first });
-    else if (first) {
+    if (run.length <= PAGE_FAILURES_SUMMARY_OVER) {
+      for (const entry of run) items.push({ kind: "entry", entry });
+    } else if (first) {
       items.push({
         kind: "pages_failed",
         key: first.id,

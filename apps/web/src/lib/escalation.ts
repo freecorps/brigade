@@ -21,6 +21,7 @@ import {
   type OverrideRow,
   type PageFailure,
   type ScheduleRow,
+  type Severity,
   type TimelineRow,
 } from "@freecorps/brigade-schema";
 
@@ -34,6 +35,8 @@ export type PolicyDraft = {
   levels: LevelDraft[];
   repeat: number;
   isDefault: boolean;
+  /** From which severity it escalates; null: every severity. */
+  minSeverity: Severity | null;
 };
 export type PolicyErrors = {
   name: boolean;
@@ -45,6 +48,7 @@ export type PolicyArgs = {
   levels: { id: string; targets: EscalationTarget[]; timeoutMinutes: number }[];
   repeat: number;
   isDefault: boolean;
+  minSeverity: Severity | null;
 };
 export type CheckedPolicy = { ok: true; args: PolicyArgs } | { ok: false; errors: PolicyErrors };
 
@@ -59,7 +63,13 @@ export const canAddLevel = (count: number) => count < MAX_POLICY_LEVELS;
 
 /** A new policy: one level, the default when the workspace has none yet. */
 export function emptyPolicy(now: number, hasDefault: boolean): PolicyDraft {
-  return { name: "", levels: [newLevel(now)], repeat: 0, isDefault: !hasDefault };
+  return {
+    name: "",
+    levels: [newLevel(now)],
+    repeat: 0,
+    isDefault: !hasDefault,
+    minSeverity: null,
+  };
 }
 
 export function draftFromPolicy(row: EscalationPolicyRow): PolicyDraft {
@@ -72,8 +82,22 @@ export function draftFromPolicy(row: EscalationPolicyRow): PolicyDraft {
     })),
     repeat: row.repeat,
     isDefault: row.isDefault,
+    minSeverity: row.minSeverity ?? null,
   };
 }
+
+/**
+ * The choices for "Escalate from": every severity, or SEV1, SEV2 or SEV3 and anything more severe. SEV4 would mean
+ * every severity, so it is not offered.
+ */
+export const MIN_SEVERITY_CHOICES = ["every", "sev1", "sev2", "sev3"] as const;
+export type MinSeverityChoice = (typeof MIN_SEVERITY_CHOICES)[number];
+
+export const minSeverityChoice = (minSeverity: Severity | null): MinSeverityChoice =>
+  minSeverity === null || minSeverity === "sev4" ? "every" : minSeverity;
+
+export const minSeverityOf = (choice: MinSeverityChoice): Severity | null =>
+  choice === "every" ? null : choice;
 
 /**
  * Drops targets that can no longer be saved (a deleted schedule, a member who left or became a viewer), so the save
@@ -130,6 +154,7 @@ export function checkPolicy(id: string, draft: PolicyDraft): CheckedPolicy {
       })),
       repeat: draft.repeat,
       isDefault: draft.isDefault,
+      minSeverity: draft.minSeverity,
     },
   };
 }
@@ -237,6 +262,8 @@ export type RunStatus =
   | { kind: "acknowledged"; by: string; at: number }
   | { kind: "running" }
   | { kind: "resolved"; at: number }
+  /** Below its policy's `minSeverity`: the run paged once and ended (RFC 0006 "Who is paged"). */
+  | { kind: "once"; minSeverity: Severity; at: number }
   | {
       kind: "fallback";
       reason: "unreachable" | "exhausted" | "stalled";
@@ -258,6 +285,9 @@ export function runStatus(
   }
   const at = run.endedAt ?? run.startedAt;
   if (run.status === "running") return { kind: "running" };
+  if (run.status === "paged_once" && run.once) {
+    return { kind: "once", minSeverity: run.once, at };
+  }
   if (run.status === "exhausted") {
     const last = run.pages[run.pages.length - 1];
     const reason =

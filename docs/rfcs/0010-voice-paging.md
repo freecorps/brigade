@@ -93,8 +93,11 @@ at most 5 minutes after it was sent, so a copy sent before the call ended arrive
 page sent later is a deliberate new attempt and rings. The memory is in RAM: a killed app treats a repeat as new
 and rings, the safe direction. On iOS CallKit reports a person's decline and the system ending a call it accepted
 the same way; an unanswered call ending within 2 seconds of ringing counts as `failed` (no person declines that
-fast; seen on the Simulator), so its repeat rings. **Decided (Q14), to build:** such a call also posts the
-time-sensitive fallback notification at once, so the person is told without waiting for a repeat. The step-1 alert push (RFC 0006) is always sent before the call, so a phone
+fast; seen on the Simulator), so its repeat rings, and it also posts the time-sensitive fallback notification at
+once (decided, Q14): the page shows now rather than at the repeat, which may be minutes away or never come once the
+run moved on. A decline, a missed call (it rang its full minute) or a hang-up posts nothing. The decision is
+`postsPageOnEnd` in `apps/mobile/src/lib/call-route.ts`, mirrored in `CallCenter.postsPageOnEnd` (Swift) and tested
+there (`call-route.test.ts`). The step-1 alert push (RFC 0006) is always sent before the call, so a phone
 whose call cannot ring has already been notified.
 
 ### When a page rings

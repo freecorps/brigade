@@ -239,6 +239,13 @@ Validate the risky assumptions before writing product code. Each spike produces 
     may be undelivered, RFC 0006 "Offline phones"); a member removed or demoted in D1 outside Brigade stops being
     paged without anyone opening Brigade (a periodic reconcile from the shard's alarm and a check before a page that
     fails open, RFC 0006 "Who is paged", Q18).
+  - Done since (Q18 decided): a policy may escalate only from a severity (`minSeverity`, "Escalate from" in the policy
+    editor): below it a run pages its first level once and ends (`paged_once`: no later level, repeat or page to
+    everyone; its page reaching nobody emails the owners and admins); a member declaring by hand may pick the policy
+    (dashboard, app, `POST /workspaces/:id/incidents`), first in the order, a deleted one falling back to the usual
+    order; the "a page reached nobody" email goes to owners and admins; more than five members a page missed for the
+    same reason read as one timeline line (RFC 0006 "Who is paged", RFC 0003 "Escalation policies"). Left: picking the
+    policy from Slack's form and changing it after the declare (`PATCH`).
 - [x] External dead-man switch
   - A Cron Trigger beats once a minute into the `WatchdogDO`'s outbox; the beat goes through the alarm, the outbox
     drain, the `brigade-events` Queue and the consumer, which checks the relay takes its send token; only a beat proved
@@ -247,12 +254,14 @@ Validate the risky assumptions before writing product code. Each spike produces 
     notice show `degraded` (no beat, nothing proved for 3 minutes, proofs late, relay refusing the token, down or not
     configured; reasons only to members); status changes are
     `brigade.status_changed` events. Local double: `scripts/dead-man-double.mjs` (RFC 0007 "Watching the watcher").
+  - Done since (Q19 decided): the relay's `GET /health?deep=1` (send token only) asks APNs to take its provider token
+    and FCM for an access token without a push, and the beat uses it (any failing check stops the pings); one D1 read
+    per beat; `apns_failing`, `fcm_failing` and `d1_failing` on `/health/paging`; each `brigade.status_changed` emailed to
+    `OPERATOR_EMAILS` (capped at 6 an hour, never in a page's way).
   - Left: deploying it (the `WatchdogDO` migration `v3` and the cron ship with the next API deploy) and setting
-    `DEAD_MAN_URL` on `brigade-api-dev` and later environments (owner's call, an account outside Cloudflare).
-  - Left (decided, Q19; RFC 0007 "Watching the watcher"): a relay `GET /health?deep=1` that asks APNs and FCM for a
-    provider or access token (no push), checked by each heartbeat's proof; one D1 read per beat; an email to the
-    operators in `OPERATOR_EMAILS` on `brigade.status_changed`. Still open in Q19: each shard's own drain and an
-    instance-operator view of `/health/paging`'s `external`.
+    `DEAD_MAN_URL` and `OPERATOR_EMAILS` on `brigade-api-dev` and later environments (owner's call, an account outside
+    Cloudflare). Still open in Q19: each shard's own drain and an instance-operator view of `/health/paging`'s
+    `external`.
 - [x] i18n plumbing (en, pt-BR)
   - Paraglide messages in `packages/i18n` with `en` and `pt-BR` for every user-facing string on the dashboard and
     the mobile app, a language switch, and wording shared between them (RFC 0008).
@@ -324,8 +333,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     reset and invitations (RFC 0005 "Email", "Abuse").
   - Left: onboarding a sending domain and setting `EMAIL_FROM` (and `DASHBOARD_URL`) per environment, and applying
     migrations 0003, 0004 and 0005 to the deployed databases (owner's call, apps/api/README.md "Email"); verification no
-    longer blocks it. Next on the same sender (decided): an email to operators
-    when the paging pipeline degrades (Q19) and to owners when rotations change (Q20). The PSTN notifier is deferred
+    longer blocks it. Next on the same sender (decided): an email to owners when rotations change (Q20); the
+    operators' email when the paging pipeline degrades is done (Q19, `OPERATOR_EMAILS`). The PSTN notifier is deferred
     (Q13).
   - Left (decided, Q21; RFC 0005 "Abuse"): 5 invitation emails a day per invited address (was 3); a Brigade-wide
     daily email ceiling before open sign-up on a shared instance.
@@ -350,8 +359,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
     reads it aloud and 1 acknowledges, and "Never" in Account → Calls leaves only the push.
   - Done since: Android calls: an FCM data message of `kind: "call"` that the app rings through its
     `ConnectionService`, following the member's choice like iOS (RFC 0010).
-  - Left: a per-phone choice of calls; Android calls tried on a real phone; the time-sensitive fallback notification
-    at once when CallKit ends a call on its own within 2 s of ringing (decided, Q14, RFC 0010).
+  - Done since (Q14 decided): a call CallKit ends on its own within 2 s of ringing (`failed`) also posts the
+    time-sensitive page notification at once on the phone (RFC 0010); still to see on a device which real cases do it.
+  - Left: a per-phone choice of calls; Android calls tried on a real phone.
 - [ ] Mobile: on-call view, "I'm on call" widget, critical/time-sensitive notification setup
   - Done: the on-call screen (shifts, overrides, who each schedule has now, covering a shift); pages are
     time-sensitive. The iOS "I'm on call" widget (home screen small, lock screen rectangular and inline): on call

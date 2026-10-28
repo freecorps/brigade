@@ -150,6 +150,7 @@ async function withPolicy(
     { targets: [{ kind: "member", id: eva.id }] },
   ],
   repeat = 0,
+  extra: Record<string, unknown> = {},
 ) {
   await ws.run(
     ana,
@@ -185,6 +186,7 @@ async function withPolicy(
       })),
       repeat,
       isDefault: true,
+      ...extra,
     },
     false,
   );
@@ -430,6 +432,55 @@ describe("paging through the default policy", () => {
       status: "running",
       pages: [expect.objectContaining({ level: 1, userIds: [caio.id] })],
     });
+  });
+});
+
+describe("escalating from a severity", () => {
+  test("below the policy's severity, level 1 is paged once and no later level, repeat or fallback ever fires", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws, undefined, 2, { minSeverity: "sev2" });
+    const { event, incident } = await ws.declare(MONITOR_ACTOR, "sev3");
+    const { tokens, send } = relay();
+    await deliver(event, send);
+    expect(await pagedMembers(ws, tokens)).toEqual([caio.id]);
+    expect(await ws.escalation(incident)).toMatchObject({
+      status: "paged_once",
+      once: "sev2",
+      nextAt: null,
+    });
+    expect(
+      await ws.withShard((shard) => shard.store.get("escalation_timers", incident)),
+    ).toBeUndefined();
+    expect((await ws.timeline(incident)).at(-1)).toMatchObject({
+      kind: "escalation_once",
+      minSeverity: "sev2",
+    });
+    // The alarm, however late, fires nothing for it.
+    await runDurableObjectAlarm(ws.stub);
+    expect(await ws.levels(incident)).toHaveLength(1);
+  });
+
+  test("a SEV1 on the same policy escalates fully, and with it unset a SEV4 does too", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws, undefined, 0, { minSeverity: "sev2" });
+    const { event, incident } = await ws.declare(MONITOR_ACTOR, "sev1");
+    await deliver(event, relay().send);
+    expect(await ws.escalation(incident)).toMatchObject({ status: "running" });
+    await ws.due(incident);
+    expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
+    expect((await ws.levels(incident)).map((one) => one.level)).toEqual([1, 2]);
+
+    const unset = await workspace();
+    for (const member of [caio, eva]) await unset.device(member);
+    await withPolicy(unset);
+    const low = await unset.declare(MONITOR_ACTOR, "sev4");
+    await deliver(low.event, relay().send);
+    expect(await unset.escalation(low.incident)).toMatchObject({ status: "running" });
+    await unset.due(low.incident);
+    expect(await runDurableObjectAlarm(unset.stub)).toBe(true);
+    expect((await unset.levels(low.incident)).map((one) => one.level)).toEqual([1, 2]);
   });
 });
 

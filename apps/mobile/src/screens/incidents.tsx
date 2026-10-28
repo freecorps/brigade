@@ -76,6 +76,7 @@ function IncidentList({ onReload }: { onReload: () => void }) {
   const { role } = useMember();
   const editable = can(role, "incident:update");
   const { rows, status, error } = useQuery("incidents.active", {});
+  const policies = useQuery("escalationPolicies.all", {}).rows;
   const connection = useConnectionState();
   const [failed, setFailed] = useState(false);
   const latched = nextFailed(failed, status, connection);
@@ -169,16 +170,21 @@ function IncidentList({ onReload }: { onReload: () => void }) {
   }, []);
 
   const [severity, setSeverityChoice] = useState<Severity>("sev3");
+  /** A policy picked by hand (first in the order, RFC 0006 "Who is paged"); "" for the usual one. */
+  const [policyId, setPolicyId] = useState("");
+  const policy = policies.find((one) => one.id === policyId);
   const [invalid, setInvalid] = useState<"empty" | "invalid" | null>(null);
   const onDeclare = () => {
     const id = client.newId("inc");
     const checked = checkDeclare(id, title, severity);
     if (!checked.ok) return setInvalid(title.trim() === "" ? "empty" : "invalid");
-    const { args } = checked;
+    // A policy deleted meanwhile is left out by the shard: the declare still goes through.
+    const args = { ...checked.args, ...(policy && { escalationPolicyId: policy.id }) };
     setInvalid(null);
     setTitle("");
     // Back to the default each time, so a SEV1 chosen once cannot page people again by accident.
     setSeverityChoice("sev3");
+    setPolicyId("");
     track(declare(args), { kind: "declare", incidentId: id, number: null, title: args.title });
   };
 
@@ -291,6 +297,26 @@ function IncidentList({ onReload }: { onReload: () => void }) {
               >
                 <SeverityBadge severity={severity} />
               </Choice>
+              {policies.length > 0 ? (
+                <Choice
+                  label={m.declare_policy_label()}
+                  value={policy?.name ?? m.declare_policy_usual()}
+                  onPress={() =>
+                    choose(
+                      m.declare_policy_label(),
+                      [
+                        { value: "", label: m.declare_policy_usual() },
+                        ...policies.map((one) => ({ value: one.id, label: one.name })),
+                      ],
+                      setPolicyId,
+                    )
+                  }
+                >
+                  <ThemedText variant="caption" numberOfLines={1} style={{ flexShrink: 1 }}>
+                    {policy?.name ?? m.declare_policy_usual()}
+                  </ThemedText>
+                </Choice>
+              ) : null}
               <Pressable
                 accessibilityRole="button"
                 onPress={onDeclare}

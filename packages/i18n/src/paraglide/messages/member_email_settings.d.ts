@@ -14,7 +14,7 @@ export type Member_Email_SettingsInputs = {
 * | "missed_workspace_off" | "Your workspace has turned these emails off for everyone." |
 * | "reminders" | "Follow-up reminders" |
 * | "reminders_hint" | "Each morning at 9:00 in your time zone, a list of your open follow-ups due that day or overdue. At most one email a day." |
-* | "owners_note" | "Owners always get the email when a page reached nobody, whatever they choose here: it's the fallback when paging fails." |
+* | "owners_note" | "Owners and admins always get the email when a page reached nobody, whatever they choose here: it's the fallback when paging fails." |
 * | "saving" | "Saving…" |
 * | "saved" | "Saved" |
 * | "failed" | "Couldn't save your choice. Try again." |

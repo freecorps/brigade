@@ -33,19 +33,34 @@ export const BEAT_STALE_MS = 3 * 60 * 1000;
 export const MAX_PROOF_LATENCY_MS = 2 * 60 * 1000;
 /** How long the external check gets per ping. */
 export const PING_TIMEOUT_MS = 5000;
+/**
+ * At most this many `brigade.status_changed` events an hour email the operators (`OPERATOR_EMAILS`), so a status that
+ * flaps does not flood their inboxes; the rest are only logged.
+ */
+export const OPERATOR_EMAIL_HOURLY_CAP = 6;
 
 /**
  * What the consumer found at the relay: `ok` when it took the send token (src/notify.ts), `unauthorized` when it
  * refused it, `unreachable` for anything else.
  */
 export type RelayHealth = "ok" | "unauthorized" | "unreachable" | "not_configured";
+/**
+ * What the beat's deeper checks found (Q19): the push providers through the relay's `GET /health?deep=1` (APNs took
+ * the relay's provider token; FCM gave it an access token), and one cheap D1 read. `unknown`: not checked (an older
+ * relay without the deep check, or no relay to ask).
+ */
+export type CheckHealth = "ok" | "error" | "not_configured" | "unknown";
+export type BeatChecks = { apns: CheckHealth; fcm: CheckHealth; d1: CheckHealth };
 export type DegradedReason =
   | "no_beat"
   | "pipeline_stalled"
   | "pipeline_slow"
   | "relay_unauthorized"
   | "relay_unreachable"
-  | "relay_not_configured";
+  | "relay_not_configured"
+  | "apns_failing"
+  | "fcm_failing"
+  | "d1_failing";
 
 /**
  * `GET /health/paging`, as the watchdog knows it. Coarse on purpose: no URLs, ids or error text. The route
@@ -74,6 +89,7 @@ export type WatchdogEnv = {
 
 const STATE_SCHEMA = `
   create table if not exists watchdog_state (key text primary key, value text not null) without rowid;
+  create table if not exists operator_emails (event_id text primary key, at integer not null) without rowid;
 `;
 
 type Keys =
@@ -83,6 +99,9 @@ type Keys =
   | "last_proved_at"
   | "last_ok_at"
   | "relay"
+  | "apns"
+  | "fcm"
+  | "d1"
   | "status"
   | "reasons"
   | "last_ping_at"
@@ -131,13 +150,19 @@ export class WatchdogDO extends DurableObject<Env> {
   }
 
   /**
-   * A heartbeat came out of the Queue (RPC from the consumer), with what the consumer found at the relay. Records it,
-   * and pings the external check when the beat is the newest yet, came through within `MAX_PROOF_LATENCY_MS` and the
-   * relay took the token. A redelivery, or a beat older than one already proved, changes nothing. The ping runs in
+   * A heartbeat came out of the Queue (RPC from the consumer), with what the consumer found at the relay and, from
+   * its deeper checks, at APNs, FCM and D1 (`checks`; absent from an older consumer). Records it, and pings the
+   * external check when the beat is the newest yet, came through within `MAX_PROOF_LATENCY_MS`, the relay took the
+   * token and none of the deeper checks failed (APNs, FCM, D1; `not_configured` and `unknown` are not failures). A redelivery, or a beat older than one already proved, changes nothing. The ping runs in
    * `waitUntil` (it keeps the object from being evicted, not the RPC from returning), so an external check that
    * hangs never holds up the consumer, and with it the pages in the same batch.
    */
-  async proved(beatTime: string, relay: RelayHealth, now = Date.now()): Promise<PagingHealth> {
+  async proved(
+    beatTime: string,
+    relay: RelayHealth,
+    now = Date.now(),
+    checks?: BeatChecks,
+  ): Promise<PagingHealth> {
     const beatAt = Date.parse(beatTime);
     const known = Number(this.get("proved_beat_at") ?? Number.NEGATIVE_INFINITY);
     if (!Number.isFinite(beatAt) || beatAt <= known) return this.health(now);
@@ -145,13 +170,41 @@ export class WatchdogDO extends DurableObject<Env> {
       this.set("proved_beat_at", String(beatAt));
       this.set("last_proved_at", String(now));
       this.set("relay", relay);
+      this.set("apns", checks?.apns ?? "unknown");
+      this.set("fcm", checks?.fcm ?? "unknown");
+      this.set("d1", checks?.d1 ?? "unknown");
       if (relay === "ok") this.set("last_ok_at", String(now));
       this.settle(now);
     });
     await this.armDrain(now);
-    if (relay === "ok" && now - beatAt <= MAX_PROOF_LATENCY_MS) this.ctx.waitUntil(this.ping(now));
-    else if (relay === "ok") log("heartbeat too late to ping", { latencyMs: now - beatAt });
+    const failing = checks && [checks.apns, checks.fcm, checks.d1].includes("error");
+    const pages = relay === "ok" && !failing;
+    if (pages && now - beatAt <= MAX_PROOF_LATENCY_MS) this.ctx.waitUntil(this.ping(now));
+    else if (pages) log("heartbeat too late to ping", { latencyMs: now - beatAt });
     return this.health(now);
+  }
+
+  /**
+   * Whether the consumer may email the operators about the status change `eventId` (RPC): once per event (a
+   * redelivery is refused) and at most `OPERATOR_EMAIL_HOURLY_CAP` events an hour.
+   */
+  async claimOperatorEmail(eventId: string, now = Date.now()): Promise<boolean> {
+    const sql = this.ctx.storage.sql;
+    return this.ctx.storage.transactionSync(() => {
+      sql.exec("delete from operator_emails where at < ?", now - 24 * 60 * 60 * 1000);
+      if (sql.exec("select 1 from operator_emails where event_id = ?", eventId).toArray().length) {
+        return false;
+      }
+      const { sent } = sql
+        .exec<{ sent: number }>(
+          "select count(*) as sent from operator_emails where at > ?",
+          now - 60 * 60 * 1000,
+        )
+        .one();
+      if (sent >= OPERATOR_EMAIL_HOURLY_CAP) return false;
+      sql.exec("insert into operator_emails (event_id, at) values (?, ?)", eventId, now);
+      return true;
+    });
   }
 
   /** `GET /health/paging`: the state now, with the cron's silence counted too. */
@@ -169,6 +222,9 @@ export class WatchdogDO extends DurableObject<Env> {
           provedBeatAt: num(this.get("proved_beat_at")),
           lastProvedAt: num(this.get("last_proved_at")),
           relay: this.get("relay") as RelayHealth | null,
+          apns: this.get("apns") as CheckHealth | null,
+          fcm: this.get("fcm") as CheckHealth | null,
+          d1: this.get("d1") as CheckHealth | null,
         },
         now,
       ),
@@ -284,7 +340,9 @@ export class WatchdogDO extends DurableObject<Env> {
  *   the Queue is backed up);
  * - `pipeline_slow`: the last proof took longer than `MAX_PROOF_LATENCY_MS`, which pings nothing;
  * - `relay_unauthorized` / `relay_unreachable` / `relay_not_configured`: what the consumer found at the relay on the
- *   last proof.
+ *   last proof;
+ * - `apns_failing` / `fcm_failing` / `d1_failing`: the last proof's deeper checks (Q19): APNs refused the relay's
+ *   provider token or did not answer, FCM gave no access token, or the D1 read failed.
  * With no beat yet, or beats but none proved and none overdue, it is `unknown`.
  */
 export function pagingStatus(
@@ -295,6 +353,9 @@ export function pagingStatus(
     provedBeatAt: number | null;
     lastProvedAt: number | null;
     relay: RelayHealth | null;
+    apns?: CheckHealth | null;
+    fcm?: CheckHealth | null;
+    d1?: CheckHealth | null;
   },
   now: number,
 ): Pick<PagingHealth, "status" | "reasons"> {
@@ -309,6 +370,9 @@ export function pagingStatus(
   if (relay === "unauthorized") reasons.push("relay_unauthorized");
   if (relay === "unreachable") reasons.push("relay_unreachable");
   if (relay === "not_configured") reasons.push("relay_not_configured");
+  if (times.apns === "error") reasons.push("apns_failing");
+  if (times.fcm === "error") reasons.push("fcm_failing");
+  if (times.d1 === "error") reasons.push("d1_failing");
   if (reasons.length > 0) return { status: "degraded", reasons };
   return { status: lastProvedAt === null ? "unknown" : "ok", reasons };
 }

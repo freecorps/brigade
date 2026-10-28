@@ -203,6 +203,8 @@ export function entryText(entry: TimelineRow, who: People): string {
       );
     case "escalation_exhausted":
       return say("escalation_exhausted");
+    case "escalation_once":
+      return say("escalation_once", severityName(entry.minSeverity));
     case "email_failed":
       // Written by the notifier, like a failed page: about who was not emailed.
       return say(

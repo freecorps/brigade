@@ -102,8 +102,9 @@ export function formatIncidentNumber(number: number | null): string | null {
  * Stops the incident's escalation run, if one is under way (RFC 0003 "Escalation run"): `acknowledged` by
  * `incident.ack`, `resolved` when the incident leaves the active statuses. In the same transaction as the change, so
  * no level fires after it, whichever route ran the mutation. The timer is server-only; clients only see the run stop.
- * A run that ended on paging everyone (`exhausted`) is closed the same way, keeping when it ended: its pages still
- * send while it is the incident's last word, and must not once the incident is reopened.
+ * A run that ended on paging everyone (`exhausted`) or on its one page below its policy's severity (`paged_once`) is
+ * closed the same way, keeping when it ended: its pages still send while it is the incident's last word, and must not
+ * once the incident is reopened.
  */
 function stopEscalation(
   store: MutationStore,
@@ -113,7 +114,7 @@ function stopEscalation(
 ): void {
   const run = incident.escalation;
   if (!run) return;
-  if (run.status === "exhausted") {
+  if (run.status === "exhausted" || run.status === "paged_once") {
     store.update("incidents", incident.id, { escalation: { ...run, status } });
     return;
   }
@@ -194,6 +195,8 @@ export const declareIncident = defineMutation({
     // RFC 0003 "Incident types", "Service catalog". Left out by clients from before them.
     typeId: v.optional(v.id("typ")),
     serviceIds: v.optional(v.array(v.id("svc"), { max: MAX_INCIDENT_SERVICES, unique: true })),
+    // RFC 0006 "Who is paged": a policy picked by hand, first in the order. Left out: none.
+    escalationPolicyId: v.optional(v.id("esc")),
   }),
   permission: "incident:declare",
   apply(store, args, ctx) {
@@ -205,10 +208,13 @@ export const declareIncident = defineMutation({
       ]);
     }
     if (store.get("incidents", args.id)) return fail("conflict", "Incident already exists");
-    // A type or a service deleted while the declare waited (offline, queued) is left out rather than refused:
+    // A type, a service or a policy deleted while the declare waited (offline, queued) is left out rather than refused:
     // declaring must not fail on the catalog.
     const type = args.typeId ? store.get("incident_types", args.typeId) : undefined;
     const serviceIds = (args.serviceIds ?? []).filter((id: string) => store.get("services", id));
+    const policy = args.escalationPolicyId
+      ? store.get("escalation_policies", args.escalationPolicyId)
+      : undefined;
     const row: IncidentRow = {
       id: args.id,
       number: ctx.server ? allocateIncidentNumber(store) : null,
@@ -223,6 +229,7 @@ export const declareIncident = defineMutation({
       timelineSeq: 0,
       ...(type && { typeId: type.id }),
       ...(serviceIds.length > 0 && { serviceIds }),
+      ...(policy && { escalationPolicyId: policy.id }),
       updatedAt: ctx.now,
     };
     store.insert("incidents", row);

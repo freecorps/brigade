@@ -6,6 +6,7 @@
 import type { Locale } from "@freecorps/brigade-i18n";
 import {
   email_invite,
+  email_operator_status,
   email_reminder,
   email_reminder_intro,
   email_reminder_more,
@@ -16,6 +17,15 @@ import {
   email_verify,
   email_webhook_disabled,
   member_role,
+  paging_reason_apns_failing,
+  paging_reason_d1_failing,
+  paging_reason_fcm_failing,
+  paging_reason_no_beat,
+  paging_reason_pipeline_slow,
+  paging_reason_pipeline_stalled,
+  paging_reason_relay_not_configured,
+  paging_reason_relay_unauthorized,
+  paging_reason_relay_unreachable,
   severity_named,
   severity_sev1,
   severity_sev2,
@@ -320,6 +330,49 @@ export function renderInvitationEmail(
       lines: [text("intro"), text("how")],
       link: { label: text("open"), url },
       after: [text("expires")],
+      footer: text("footer"),
+    },
+    to,
+    locale,
+  );
+}
+
+const PAGING_REASONS: Record<string, typeof paging_reason_no_beat> = {
+  no_beat: paging_reason_no_beat,
+  pipeline_stalled: paging_reason_pipeline_stalled,
+  pipeline_slow: paging_reason_pipeline_slow,
+  relay_unauthorized: paging_reason_relay_unauthorized,
+  relay_unreachable: paging_reason_relay_unreachable,
+  relay_not_configured: paging_reason_relay_not_configured,
+  apns_failing: paging_reason_apns_failing,
+  fcm_failing: paging_reason_fcm_failing,
+  d1_failing: paging_reason_d1_failing,
+};
+
+/**
+ * The email that tells the instance's operators (`OPERATOR_EMAILS`) the paging self-check changed status
+ * (`brigade.status_changed`, RFC 0007 "Watching the watcher"): degraded with each reason, back to ok, or unknown.
+ * Nothing in it is user content, a URL or an id.
+ */
+export function renderOperatorStatusEmail(
+  facts: { status: "ok" | "degraded" | "unknown"; reasons: readonly string[] },
+  to: { email: string; name?: string },
+  locale: Locale,
+): OutgoingEmail {
+  const text = (part: string) => email_operator_status({ part }, { locale });
+  const reasons =
+    facts.status === "degraded"
+      ? facts.reasons.flatMap((reason) => {
+          const say = PAGING_REASONS[reason];
+          return say ? [say({}, { locale })] : [];
+        })
+      : [];
+  return renderMessage(
+    {
+      subject: text(`subject_${facts.status}`),
+      lines: [text(`intro_${facts.status}`)],
+      list: reasons,
+      after: [text("how")],
       footer: text("footer"),
     },
     to,

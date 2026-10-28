@@ -14,6 +14,8 @@ export type Escalation_FieldInputs = {
 * | "repeat" | "label" | "Repeat the levels" |
 * | "targets" | "label" | "Who is paged" |
 * | "default" | "label" | "Use for every page (default policy)" |
+* | "min_severity" | "label" | "Escalate from" |
+* | "min_severity" | "hint" | "Less severe incidents page the first level once and don't escalate." |
 * | "add_target" | "label" | "Add a schedule or a person" |
 * | "name" | "invalid" | "Enter a name." |
 * | "timeout" | "invalid" | "Enter a whole number of minutes from 1 to 1440." |

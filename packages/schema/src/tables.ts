@@ -59,6 +59,11 @@ export type IncidentRow = {
   typeId?: string | null;
   /** The services it affects, in the order picked; may name deleted ones, which readers skip. */
   serviceIds?: string[];
+  /**
+   * The escalation policy whoever declared it picked, first in the order (RFC 0006 "Who is paged"); absent or null:
+   * none. May name a deleted policy, which the order skips.
+   */
+  escalationPolicyId?: string | null;
   /** Custom field values by field id (RFC 0003 "Custom fields"); a field never set is absent. */
   fields?: { [fieldId: string]: FieldValue };
   updatedAt: number;
@@ -195,7 +200,11 @@ export type EscalationPage = {
   unreached?: number;
 };
 
-export type EscalationStatus = "running" | "acknowledged" | "resolved" | "exhausted";
+/**
+ * `paged_once`: the run started below its policy's `minSeverity`, paged its first level that reaches someone and
+ * ended there (no timeout to a later level, no repeat, no page to everyone after it; RFC 0006 "Who is paged").
+ */
+export type EscalationStatus = "running" | "acknowledged" | "resolved" | "exhausted" | "paged_once";
 
 /**
  * An escalation run (RFC 0003 "Escalation run"): the policy as it was when the run started, where it is, and every
@@ -213,6 +222,13 @@ export type Escalation = {
   route?: { id: string; name: string } | null;
   /** Likewise the service whose policy this is (its name when the run started), the first of the incident's that has one. */
   service?: { id: string; name: string } | null;
+  /** The policy was picked by whoever declared the incident (`IncidentRow.escalationPolicyId`). */
+  picked?: boolean;
+  /**
+   * The policy's `minSeverity` when the run started below it: the run pages once and ends (`paged_once`). Absent on a
+   * run that escalates.
+   */
+  once?: Severity;
   levels: EscalationLevel[];
   repeat: number;
   /** The event whose page started the run: a redelivery of it pages the same level again, never a new run. */
@@ -248,6 +264,11 @@ export type EscalationPolicyRow = {
   levels: EscalationLevel[];
   /** How many more times the levels run when nobody acknowledges. */
   repeat: number;
+  /**
+   * The least severe incident the policy escalates for (`sev2`: SEV1 and SEV2). Below it a run pages its first level
+   * once and stops (RFC 0006 "Who is paged"). Absent or null: every severity escalates.
+   */
+  minSeverity?: Severity | null;
   /** Pages use the default policy; at most one is. */
   isDefault: boolean;
   createdAt: number;
@@ -375,6 +396,12 @@ export type TimelineEntry =
       userIds: string[];
       everyone: boolean;
       auto?: boolean;
+    }
+  /** The run started below its policy's `minSeverity`: its first level was paged once, and it escalates no further. */
+  | {
+      kind: "escalation_once";
+      /** The policy's `minSeverity`: the incident was below it, so the run paged once and ended. */
+      minSeverity: Severity;
     }
   /** Every level and repeat was paged and nobody acknowledged, so everyone who can respond was paged. */
   | {

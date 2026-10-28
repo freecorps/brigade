@@ -12,6 +12,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | --- | --- |
 * | "running" | "Escalating" |
 * | "resolved" | "Stopped: resolved {time}" |
+* | "once" | "Paged once, not escalated: this policy escalates from {level}" |
 * | "next_level" | "Level {level} at {time}" |
 * | "next_repeat" | "Level 1 again at {time}" |
 * | "next_end" | "Everyone who can respond at {time}" |
@@ -34,6 +35,7 @@ export const escalation_progress = /** @type {((inputs: Escalation_ProgressInput
 	if (locale === "pt-BR") {
 		if (i?.part === "running") return /** @type {LocalizedString} */ (`Escalonando`);
 		if (i?.part === "resolved") return /** @type {LocalizedString} */ (`Parado: resolvido ${i?.time}`);
+		if (i?.part === "once") return /** @type {LocalizedString} */ (`Chamado uma vez, sem escalonamento: esta política só escala a partir de ${i?.level}`);
 		if (i?.part === "next_level") return /** @type {LocalizedString} */ (`Nível ${i?.level} às ${i?.time}`);
 		if (i?.part === "next_repeat") return /** @type {LocalizedString} */ (`Nível 1 de novo às ${i?.time}`);
 		if (i?.part === "next_end") return /** @type {LocalizedString} */ (`Todos que podem responder às ${i?.time}`);
@@ -50,6 +52,7 @@ export const escalation_progress = /** @type {((inputs: Escalation_ProgressInput
 	{
 		if (i?.part === "running") return /** @type {LocalizedString} */ (`Escalating`);
 		if (i?.part === "resolved") return /** @type {LocalizedString} */ (`Stopped: resolved ${i?.time}`);
+		if (i?.part === "once") return /** @type {LocalizedString} */ (`Paged once, not escalated: this policy escalates from ${i?.level}`);
 		if (i?.part === "next_level") return /** @type {LocalizedString} */ (`Level ${i?.level} at ${i?.time}`);
 		if (i?.part === "next_repeat") return /** @type {LocalizedString} */ (`Level 1 again at ${i?.time}`);
 		if (i?.part === "next_end") return /** @type {LocalizedString} */ (`Everyone who can respond at ${i?.time}`);

@@ -818,6 +818,7 @@ const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, Lucide
   escalated: BellRingIcon,
   paged_again: PhoneCallIcon,
   escalation_exhausted: TimerOffIcon,
+  escalation_once: TimerOffIcon,
   type_changed: TagIcon,
   services_changed: LayersIcon,
   field_changed: SquarePenIcon,

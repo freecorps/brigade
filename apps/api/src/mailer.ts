@@ -69,7 +69,7 @@ const SCHEMA = `
 `;
 
 /**
- * One email the consumer should send: to members by id (the one a page missed), or to the workspace's owners, read
+ * One email the consumer should send: to members by id (the one a page missed), or to the workspace's owners and admins, read
  * from D1 (the shard's member list holds only those who opened Brigade). `key` names the email in the ledger:
  * `unpaged:<incident>:<member>` (once per incident) or `nobody:<page event>` (once per page that reached nobody).
  */
@@ -181,7 +181,7 @@ export class Mailer {
   /**
    * The emails a failed page asks for (RFC 0005 "Email"), claimed for the caller until `EMAIL_CLAIM_MS` from `now`:
    * - **unpaged**: the member it missed, when the incident is SEV1 or SEV2, once per incident;
-   * - **nobody_paged**: the owners, when the page settled having reached nobody and nothing else will page on its
+   * - **nobody_paged**: the owners and admins (whoever declared it too: no exception), when the page settled having reached nobody and nothing else will page on its
    *   own: no escalation run (the interim rule was the page), or the page was the last of a run that ended
    *   (everyone who can respond, after nobody acknowledged). A level that missed everyone is not it: the next level
    *   fires (at once when it was unreachable, at its timeout when its pushes failed).
@@ -478,8 +478,9 @@ export class Mailer {
     if (reached) return false;
     const run = store.get("incidents", data.incidentId)?.escalation;
     if (!run) return true;
+    // A run that paged once below its policy's severity escalates no further: its page reaching nobody is it too.
     return (
-      run.status === "exhausted" &&
+      (run.status === "exhausted" || run.status === "paged_once") &&
       data.page !== undefined &&
       data.page.run === run.eventId &&
       data.page.step === run.paged

@@ -182,10 +182,13 @@ An incident pages through an escalation policy picked in a fixed order, below; w
 unchanged since Phase 1. The policy is read when a run starts: changing an incident's type mid-run changes nothing
 until its next run.
 
-**Which policy (decided).** A run takes the first of these that names a policy that still exists (`incidentPolicy`).
-Decided (Q18), to build: a policy a member picked when **declaring by hand** (an optional field, RFC 0003 "Escalation
-policies") comes before all of these.
+**Which policy (decided).** A run takes the first of these that names a policy that still exists (`incidentPolicy`):
 
+0. the policy **picked by hand** when the incident was declared (`escalationPolicyId` on `incident.declare`, from the
+   dashboard, the app or `POST /workspaces/:id/incidents`; the run records `picked`, and the incident page says
+   "picked when the incident was declared"). Decided with Q18. One deleted since, or never there (a declare naming
+   a policy that does not exist leaves it out), falls through to the order below. Tests:
+   `packages/schema/tests/escalation.test.ts` ("a policy picked when declaring"), `apps/api/test/rest.test.ts`;
 1. the **alert route** an alert source opened the incident through (RFC 0005 "Alert sources"; the run records it as
    `route`, and the incident page says "set on the alert route …");
 2. the incident's **type** (RFC 0003 "Incident types");
@@ -214,6 +217,27 @@ the incident, not from its alert rows, which `MAX_ALERT_ROWS` prunes, and replac
 matches the alert then, not the one that first opened it. Tests: `packages/schema/tests/alert-sources.test.ts`
 ("the route's policy pages the incident", "the route's policy outlives its alert rows", "a flap reopens through the
 route that matches now").
+
+**Escalating from a severity (decided, Q18).** A policy may say from which severity it escalates (`minSeverity`,
+RFC 0003 "Escalation policies"; unset, every severity does, as before). A run whose incident is less severe than that
+when it starts (`escalatesAt`) **pages once and does not escalate**, which means precisely:
+
+- it pages the first level that reaches someone, as any run does: a level nobody on it can be reached at is skipped
+  ("Couldn't page …"), and with no level reaching anyone everyone who can respond is paged and the run ends as
+  `exhausted`, as before, so a page below the threshold is never silently dropped;
+- then the run ends at once as `paged_once` (`once`: the policy's `minSeverity`), with an `escalation_once` timeline
+  entry ("Not escalated further: this policy escalates from SEV2"): no timer, so **no later level at a timeout, no
+  repeat, no page to everyone when nobody acknowledges**, no early escalation when every push of the level fails
+  (`escalation.unreached` is refused), no stall fallback and no `/inc escalate`;
+- a page of it the Queue loses is still paged again once (`escalation.repage` takes a `paged_once` run), and its page
+  reaching nobody on any device emails the owners and admins at once (RFC 0005 "Email"), since nothing else will page;
+- an ack or a resolve closes it like an ended run; a severity raised into SEV1 or SEV2 afterwards starts a new run,
+  which escalates fully if the new severity is at or above the threshold. A raise that stays below SEV2 pages nothing,
+  as before.
+
+Tests: `packages/schema/tests/escalation.test.ts` ("escalating from a severity"), `apps/api/test/escalation.test.ts`
+("escalating from a severity": below it level 1 once and the alarm fires nothing; SEV1 on the same policy and SEV4
+with it unset escalate fully), `apps/api/test/email.test.ts`.
 
 **Alerts that page again (decided).** Besides a declared incident, two things alert sources do page (RFC 0005 "Alert
 sources"). An alert that comes back more urgent raises its incident's severity as `sys_alerts`
@@ -322,9 +346,10 @@ can respond (owners, admins, responders; viewers only read), except whoever caus
 registered device. A commander without a device does not leave the incident unpaged: everyone who can respond is
 paged instead. Every member the page was for who has no device (the commander included) is recorded as not paged
 (`no_devices`, "Couldn't page Ana: no registered device"), and so is one none of whose devices fit in a page's 200
-(`over_limit`); RFC 0005 "Notifiers". **Decided (Q18), to build:** when more than 5 members of one page have no
-device, their lines collapse into one summary line ("Couldn't page 12 members: no registered device"), which lists
-them when opened; each is still recorded and emailed as before.
+(`over_limit`); RFC 0005 "Notifiers". On the timeline (decided, Q18), more than five such members of one page for the
+same reason read as one summary line ("Couldn't page 12 people: no registered device", `PAGE_FAILURES_SUMMARY_OVER`
+in `packages/sync`), with the names behind Show names; five or fewer read one line each. Each member's own entry, event
+and email are unchanged, so why-wasn't-I-paged still says it per member. Test: `apps/web/test/timeline.test.ts`.
 
 Members are the shard's member list (RFC 0003), a copy of D1's that `member.sync` fills when a member opens a sync
 socket, so someone who never opened Brigade is not paged (they have no device either). A D1 outage must never become

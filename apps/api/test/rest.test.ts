@@ -333,6 +333,39 @@ describe("declaring through the API", () => {
     expect(unknownKey.status).toBe(400);
     expect(await declares(t)).toHaveLength(0);
   });
+  test("a declare may pick its escalation policy, stored on the incident; one that does not exist is left out", async () => {
+    const t = await team();
+    await onCall(t);
+    const policy = newId("esc", Date.now(), random);
+    await t.run("escalation.createPolicy", {
+      id: policy,
+      name: "Payments",
+      levels: [
+        {
+          id: newId("lvl", Date.now(), random),
+          targets: [{ kind: "member", id: t.ana.id }],
+          timeoutMinutes: 5,
+        },
+      ],
+      repeat: 0,
+      isDefault: false,
+    });
+    const declare = (escalationPolicyId: string) =>
+      call(`/workspaces/${t.id}/incidents`, t.caio, {
+        method: "POST",
+        body: { title: "Payments down", severity: "sev2", escalationPolicyId },
+      });
+    const picked = (await (await declare(policy)).json()) as { incident: PublicIncident };
+    const missing = (await (await declare(newId("esc", Date.now(), random))).json()) as {
+      incident: PublicIncident;
+    };
+    const stored = await t.withShard((shard) => [
+      shard.store.get("incidents", picked.incident.id)?.escalationPolicyId,
+      shard.store.get("incidents", missing.incident.id)?.escalationPolicyId,
+    ]);
+    expect(stored).toEqual([policy, undefined]);
+    expect((await declare("not-a-policy")).status).toBe(400);
+  });
 });
 
 describe("API tokens on these routes", () => {

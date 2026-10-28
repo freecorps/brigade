@@ -345,16 +345,18 @@ How a page uses them is RFC 0006 "Who is paged".
   `monitor.updated`. Changing it never starts the checks over. An incident a monitor opened starts its run on that
   policy (`incidentPolicy`: the monitor still firing on the incident, else the one whose alert opened it); a monitor
   that names none, or one since deleted, goes to the default, then to the interim rule. The run records which and why
-  (`monitor`: the monitor's id and name, null for the default), and the incident page says it. A member's own
-  declaration uses the default today; **decided (Q18), to build:** a member declaring by hand may pick a policy (an
-  optional field of `incident.declare`, checked against the shard's policies), which then comes first in the order
-  (RFC 0006 "Who is paged"); left out, nothing changes.
-- **Escalate from severity (decided, Q18; to build).** A policy has an "escalate from severity" setting
-  (`sev1` to `sev4`; default every severity, today's behaviour, so existing policies keep paging as they do). An
-  incident below it does not escalate: no levels fire after its first page (whom that page reaches is settled with
-  the build). An alert route picks a policy the same way, and comes first (RFC 0006 "Who is
+  (`monitor`: the monitor's id and name, null for the default), and the incident page says it. A member declaring by
+  hand may pick a policy (`escalationPolicyId` on `incident.declare` and on `POST /workspaces/:id/incidents`; the
+  dashboard's and the app's declare forms offer it once the workspace has policies): stored on the incident, first in
+  the order, and the run says "picked when the incident was declared" (`picked`); one deleted since falls through to
+  the usual order. Changing it after the declare, and the Slack form, are not offered yet. An alert route picks a policy the same way, and comes first (RFC 0006 "Who is
   paged"); deleting a policy a route names puts the route back on the default (`alert_route.updated`,
   `reason: policy_deleted`).
+- **Escalate from a severity** (`minSeverity`, Q18 decided): `sev1` to `sev3`, or null (the default, and what a
+  policy from before it reads as): every severity escalates, as before. Set with the policy's other fields by
+  `escalation.createPolicy` / `escalation.updatePolicy` (`escalation:manage`; left out of an update, kept), shown in
+  the policy's events, and in the dashboard's policy editor ("Escalate from"). A run that starts below it pages once
+  and stops (RFC 0006 "Who is paged", `paged_once`).
 - **Deleting a policy a monitor names** is not refused: the monitor goes back to the default in the same transaction
   (`monitor.updated`, `reason: policy_deleted`), so a monitor never names a policy that is gone and a delete never
   needs the monitors edited first. Falling back is the safe side: the default pages (or the interim rule), never
@@ -373,7 +375,7 @@ How a page uses them is RFC 0006 "Who is paged".
 - **State** lives on the incident (`escalation` on its row, synced with it, so every client can show "Level 2 paged
   at 14:05 · next level at 14:20"): the policy's id, name, levels and repeat as they were when the run started, and
   the monitor whose policy it is, if any (a snapshot, so an edit or a delete mid-run changes nothing for a run under
-  way; the next run reads the policy again), the level and round paged last, `status` (`running`, `acknowledged`, `resolved`, `exhausted`), when it
+  way; the next run reads the policy again), the level and round paged last, `status` (`running`, `acknowledged`, `resolved`, `exhausted`, `paged_once`), when it
   started, when the next level fires (`nextAt`), how many pages it made (`paged`) and the last 20 of them (`pages`:
   level, round, when, whom, why, and the first 20 targets that could not be paged with their count; the timeline and
   the events keep everything, the row stays small). A server-only `escalation_timers` row per running run (incident id, `nextAt`) is what the shard's alarm

@@ -46,12 +46,12 @@ function member(value: Partial<MemberEmail> = {}, workspaceUnpaged = true, saves
   return { container, sent };
 }
 
-test("a member's choices, both on by default, and that owners always get the fallback email", () => {
+test("a member's choices, both on by default, and that owners and admins always get the fallback email", () => {
   const { container } = member();
   const text = container.textContent ?? "";
   expect(text).toContain("Missed pages");
   expect(text).toContain("Follow-up reminders");
-  expect(text).toContain("Owners always get the email when a page reached nobody");
+  expect(text).toContain("Owners and admins always get the email when a page reached nobody");
   expect(switches(container).map((one) => one.checked)).toEqual([true, true]);
   expect(text).not.toContain("turned these emails off for everyone");
 });

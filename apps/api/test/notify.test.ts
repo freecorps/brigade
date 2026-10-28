@@ -2432,7 +2432,14 @@ describe("how the consumer reaches the relay", () => {
     // RELAY_URL is set too: the binding wins.
     const result = await deliverBoth(event, { ...relayEnv, RELAY: binding(bound) }, internet.send);
     expect(result).toEqual({ acked: ["beat", "page"], proofs: ["ok"] });
-    expect(bound.calls).toHaveLength(2);
+    // The deep health check first (this fake relay predates it, so the token check follows), then the page.
+    expect(bound.calls).toHaveLength(3);
+    expect(bound.calls).toContainEqual(
+      expect.objectContaining({
+        url: "https://relay.internal/health?deep=1",
+        auth: "Bearer test-token",
+      }),
+    );
     expect(bound.calls).toContainEqual({
       url: "https://relay.internal/send",
       auth: "Bearer test-token",
@@ -2475,7 +2482,13 @@ describe("how the consumer reaches the relay", () => {
     const internet = fakeRelay();
     const result = await deliverBoth(event, relayEnv, internet.send);
     expect(result).toEqual({ acked: ["beat", "page"], proofs: ["ok"] });
-    expect(internet.calls).toHaveLength(2);
+    expect(internet.calls).toHaveLength(3);
+    expect(internet.calls).toContainEqual(
+      expect.objectContaining({
+        url: "https://relay.test/health?deep=1",
+        auth: "Bearer test-token",
+      }),
+    );
     for (const deviceToken of [undefined, phone.pushToken]) {
       expect(internet.calls).toContainEqual({
         url: "https://relay.test/send",

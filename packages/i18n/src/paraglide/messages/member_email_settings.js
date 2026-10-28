@@ -17,7 +17,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "missed_workspace_off" | "Your workspace has turned these emails off for everyone." |
 * | "reminders" | "Follow-up reminders" |
 * | "reminders_hint" | "Each morning at 9:00 in your time zone, a list of your open follow-ups due that day or overdue. At most one email a day." |
-* | "owners_note" | "Owners always get the email when a page reached nobody, whatever they choose here: it's the fallback when paging fails." |
+* | "owners_note" | "Owners and admins always get the email when a page reached nobody, whatever they choose here: it's the fallback when paging fails." |
 * | "saving" | "Saving…" |
 * | "saved" | "Saved" |
 * | "failed" | "Couldn't save your choice. Try again." |
@@ -41,7 +41,7 @@ export const member_email_settings = /** @type {((inputs: Member_Email_SettingsI
 		if (i?.part === "missed_workspace_off") return /** @type {LocalizedString} */ (`Seu workspace desativou estes emails para todos.`);
 		if (i?.part === "reminders") return /** @type {LocalizedString} */ (`Lembretes de ações`);
 		if (i?.part === "reminders_hint") return /** @type {LocalizedString} */ (`Toda manhã às 9:00 no seu fuso horário, a lista das suas ações de acompanhamento abertas com prazo no dia ou atrasadas. No máximo um email por dia.`);
-		if (i?.part === "owners_note") return /** @type {LocalizedString} */ (`Proprietários sempre recebem o email quando um acionamento não chegou a ninguém, seja qual for a escolha aqui: é o último recurso quando o acionamento falha.`);
+		if (i?.part === "owners_note") return /** @type {LocalizedString} */ (`Proprietários e administradores sempre recebem o email quando um acionamento não chegou a ninguém, seja qual for a escolha aqui: é o último recurso quando o acionamento falha.`);
 		if (i?.part === "saving") return /** @type {LocalizedString} */ (`Salvando…`);
 		if (i?.part === "saved") return /** @type {LocalizedString} */ (`Salvo`);
 		if (i?.part === "failed") return /** @type {LocalizedString} */ (`Não foi possível salvar sua escolha. Tente de novo.`);
@@ -59,7 +59,7 @@ export const member_email_settings = /** @type {((inputs: Member_Email_SettingsI
 		if (i?.part === "missed_workspace_off") return /** @type {LocalizedString} */ (`Your workspace has turned these emails off for everyone.`);
 		if (i?.part === "reminders") return /** @type {LocalizedString} */ (`Follow-up reminders`);
 		if (i?.part === "reminders_hint") return /** @type {LocalizedString} */ (`Each morning at 9:00 in your time zone, a list of your open follow-ups due that day or overdue. At most one email a day.`);
-		if (i?.part === "owners_note") return /** @type {LocalizedString} */ (`Owners always get the email when a page reached nobody, whatever they choose here: it's the fallback when paging fails.`);
+		if (i?.part === "owners_note") return /** @type {LocalizedString} */ (`Owners and admins always get the email when a page reached nobody, whatever they choose here: it's the fallback when paging fails.`);
 		if (i?.part === "saving") return /** @type {LocalizedString} */ (`Saving…`);
 		if (i?.part === "saved") return /** @type {LocalizedString} */ (`Saved`);
 		if (i?.part === "failed") return /** @type {LocalizedString} */ (`Couldn't save your choice. Try again.`);

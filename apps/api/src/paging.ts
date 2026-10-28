@@ -379,14 +379,14 @@ type Recipients = { targets: PageTarget[]; noDevices: string[]; skipped: Skipped
 /**
  * Whether an `escalation.paged` event belongs to the incident's run as it is now: any page of the run under way, or
  * of the run that ended on paging everyone (a level's event still being retried when a later level ended the run
- * still pages). One from a run since stopped or closed (acknowledged or resolved, an ended run included, then
+ * still pages), or of a run that paged once below its policy's severity (`paged_once`). One from a run since stopped or closed (acknowledged or resolved, an ended run included, then
  * reopened) or replaced pages nobody.
  */
 function current(event: BrigadeEvent, incident: IncidentRow): boolean {
   const data = event.data as Partial<EscalationPaged["data"]> | null;
   const run = incident.escalation;
   if (!run || data?.run !== run.eventId) return false;
-  return run.status === "running" || run.status === "exhausted";
+  return run.status === "running" || run.status === "exhausted" || run.status === "paged_once";
 }
 
 /**
@@ -1601,7 +1601,12 @@ export class Pager {
    */
   private lastPage(event: BrigadeEvent, run: Escalation): number | undefined {
     const last = run.pages[run.pages.length - 1];
-    if (!last || (run.status !== "running" && run.status !== "exhausted")) return undefined;
+    if (
+      !last ||
+      (run.status !== "running" && run.status !== "exhausted" && run.status !== "paged_once")
+    ) {
+      return undefined;
+    }
     // A run ends only on everyone who can respond, and runs on only after a level.
     if ((run.status === "exhausted") !== (last.level === null)) return undefined;
     if (event.type === "escalation.paged") {

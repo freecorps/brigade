@@ -47,6 +47,10 @@ import {
   type LevelDraft,
   type PolicyDraft,
   type PolicyErrors,
+  MIN_SEVERITY_CHOICES,
+  minSeverityChoice,
+  minSeverityOf,
+  type MinSeverityChoice,
 } from "@/lib/escalation";
 import { queryErrorReason } from "@/lib/incidents";
 import { memberLabel, rotationChoices } from "@/lib/oncall";
@@ -361,6 +365,13 @@ function PolicyItem({
       <p className="text-sm text-muted-foreground tabular-nums">
         {m.escalation_count({ kind: "repeat", count: row.repeat })}
       </p>
+      {minSeverityChoice(row.minSeverity ?? null) !== "every" ? (
+        <p className="text-sm text-muted-foreground">
+          {m.escalation_min_severity({
+            choice: `summary_${minSeverityChoice(row.minSeverity ?? null)}`,
+          })}
+        </p>
+      ) : null}
     </>
   );
 }
@@ -448,6 +459,8 @@ function PolicyForm({
   const titleId = useId();
   const repeatId = useId();
   const defaultId = useId();
+  const minSeverityId = useId();
+  const minSeverityHintId = useId();
   const nameRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const deleteRef = useRef<HTMLButtonElement>(null);
@@ -570,7 +583,7 @@ function PolicyForm({
           {m.escalation_action({ action: "add_level" })}
         </Button>
       ) : null}
-      <div className="grid items-end gap-4 sm:grid-cols-2">
+      <div className="grid items-start gap-4 sm:grid-cols-2">
         <div className="flex min-w-0 flex-col gap-1.5">
           <label htmlFor={repeatId} className="text-sm font-medium">
             {m.escalation_field({ field: "repeat", form: "label" })}
@@ -587,6 +600,32 @@ function PolicyForm({
               </option>
             ))}
           </select>
+        </div>
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <label htmlFor={minSeverityId} className="text-sm font-medium">
+            {m.escalation_field({ field: "min_severity", form: "label" })}
+          </label>
+          <select
+            id={minSeverityId}
+            className={SELECT}
+            aria-describedby={minSeverityHintId}
+            value={minSeverityChoice(draft.minSeverity)}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                minSeverity: minSeverityOf(event.target.value as MinSeverityChoice),
+              })
+            }
+          >
+            {MIN_SEVERITY_CHOICES.map((choice) => (
+              <option key={choice} value={choice}>
+                {m.escalation_min_severity({ choice })}
+              </option>
+            ))}
+          </select>
+          <p id={minSeverityHintId} className="text-sm text-muted-foreground">
+            {m.escalation_field({ field: "min_severity", form: "hint" })}
+          </p>
         </div>
         <label
           htmlFor={defaultId}

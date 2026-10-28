@@ -236,7 +236,7 @@ export function DeclareForm({
               <label
                 key={option}
                 className={cn(
-                  "flex h-full min-w-0 cursor-pointer flex-col items-center justify-center rounded-sm px-1.5 text-center text-xs leading-[1.1] select-none md:px-2.5",
+                  "relative flex h-full min-w-0 cursor-pointer flex-col items-center justify-center rounded-sm px-1.5 text-center text-xs leading-[1.1] select-none md:px-2.5",
                   "transition-colors duration-(--brigade-duration-fast) ease-out",
                   // Focus: the opaque ring around the segment, outside its fill, so it holds 3:1 on every colour.
                   "has-focus-visible:ring-3 has-focus-visible:ring-ring",

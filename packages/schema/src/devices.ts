@@ -267,8 +267,9 @@ export const registerDevice = defineMutation({
 
 /**
  * Server only, as the member, right after their `device.register` went through or changed nothing (`conflict`):
- * records that they registered it now (`updatedAt`), so a sign-out acted on late (`device.signOut` with `before`)
- * never drops the phone they just registered again, and with `sessionId` the session they registered it with. Not a
+ * records that they registered it now (`updatedAt`, and its summary's `lastSeenAt`, so "last heard from" and the
+ * order replacement goes by agree), so a sign-out acted on late (`device.signOut` with `before`) never drops the
+ * phone they just registered again, and with `sessionId` the session they registered it with. Not a
  * change to the workspace: `silent`, no event (RFC 0005). Another member's device, or none, is `not_found`.
  */
 export const touchDevice = defineMutation({
@@ -288,11 +289,20 @@ export const touchDevice = defineMutation({
       updatedAt: Math.max(ctx.now, current.updatedAt),
       ...(args.sessionId !== undefined ? { sessionId: args.sessionId } : {}),
     });
+    // The phone just spoke to the shard: what the dashboard shows as "last heard from", and what replacement counts.
+    const summary = store.get("member_devices", args.id);
+    if (summary && summary.lastSeenAt < ctx.now) {
+      store.update("member_devices", args.id, { lastSeenAt: ctx.now });
+    }
     return ok();
   },
 });
 
-/** Stops paging one of the actor's devices (signing out, turning paging off). Another member's is `not_found`. */
+/**
+ * Stops paging one of the actor's devices (signing out, removing it from the dashboard's "Your phones"). Another
+ * member's is `not_found`. A client's optimistic run drops the synced summary of its own device, so the phone leaves
+ * the member's list at once.
+ */
 export const unregisterDevice = defineMutation({
   name: "device.unregister",
   args: v.object({ id: v.id("dev") }),
@@ -303,6 +313,9 @@ export const unregisterDevice = defineMutation({
       // Another member's device is indistinguishable from none: ids are not a way to probe.
       if (!current || current.userId !== ctx.actor.id) return fail("not_found", "Device not found");
       forgetDevice(store, args.id);
+    } else {
+      const summary = store.get("member_devices", args.id);
+      if (summary?.userId === ctx.actor.id) store.delete("member_devices", args.id);
     }
     const event: DeviceUnregistered = {
       type: "device.unregistered",

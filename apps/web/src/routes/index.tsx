@@ -2,6 +2,7 @@ import { m } from "@freecorps/brigade-i18n";
 import { createFileRoute } from "@tanstack/react-router";
 import { AlertsCard } from "@/components/alerts-card";
 import { CallsCard } from "@/components/calls-card";
+import { DevicesCard } from "@/components/devices-card";
 import { EmailCard, TimeZoneSync, WorkspaceEmailCard } from "@/components/email-cards";
 import { WorkspaceLanguageCard } from "@/components/workspace-language-card";
 import { EscalationCard } from "@/components/escalation-card";
@@ -64,6 +65,7 @@ function Overview() {
       <IncidentsCard />
       <OpenFollowUpsCard />
       <OnCallCard />
+      <DevicesCard />
       <CallsCard />
       <EmailCard />
       <TimeZoneSync />

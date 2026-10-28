@@ -16,6 +16,10 @@ import {
   TOKEN_FETCH_WAIT_MS,
   retryDelay,
   RETRY_JITTER,
+  REMOVAL_TRIES,
+  REMOVAL_WINDOW_MS,
+  removalWatch,
+  devicePresent,
   type PagingDeps,
 } from "./paging";
 import type { FinishResult } from "./sign-out";
@@ -487,4 +491,94 @@ test("a return to the foreground is the member's unless it is the end of the app
       expect(nudges).toBe(2);
     });
   });
+});
+
+test("the phone's device gone from the shard while registered registers again, no sooner than the gap", async () => {
+  const time = clock();
+  const p = phone({ finish: ["none"], register: ["on"] });
+  const cycle = pagingCycle({ ...p, setTimer: time.setTimer, now: time.now, random: time.random });
+  const watch = removalWatch(time.now);
+  await time.settle();
+  expect(p.log.filter((step) => step === "register")).toHaveLength(1);
+  // Registered, its summary synced, then removed from the dashboard a second later.
+  expect(watch.see(true, true)).toBeUndefined();
+  await time.elapse(1_000);
+  expect(watch.see(false, true)).toBe("again");
+  cycle.nudge();
+  expect(time.pending()).toEqual([MIN_TRY_GAP_MS - 1_000]);
+  await time.elapse(MIN_TRY_GAP_MS);
+  expect(p.log.filter((step) => step === "register")).toHaveLength(2);
+  // The same view again (the row still missing until the registration's lands) asks for nothing more.
+  expect(watch.see(false, true)).toBeUndefined();
+  await cycle.stop();
+});
+
+test("a device registered before its row synced is not taken as removed, nor one the app holds unregistered", () => {
+  const watch = removalWatch(() => 0);
+  expect(watch.see(undefined, true)).toBeUndefined();
+  expect(watch.see(false, true)).toBeUndefined();
+  expect(watch.see(true, false)).toBeUndefined();
+  expect(watch.see(false, false)).toBeUndefined();
+  expect(watch.see(true, true)).toBeUndefined();
+  // Loading again (a reconnect) is not a removal either.
+  expect(watch.see(undefined, true)).toBeUndefined();
+  expect(watch.see(false, true)).toBe("again");
+});
+
+test("a device the server keeps removing is chased a few times an hour, then left to the member", () => {
+  let now = 0;
+  const watch = removalWatch(() => now);
+  const remove = () => {
+    expect(watch.see(true, true)).toBeUndefined();
+    now += 60_000;
+    return watch.see(false, true);
+  };
+  for (let n = 0; n < REMOVAL_TRIES; n++) expect(remove()).toBe("again");
+  expect(remove()).toBe("gave_up");
+  expect(remove()).toBe("gave_up");
+  // An hour after the first try, one more is allowed.
+  now = REMOVAL_WINDOW_MS + 60_000;
+  expect(remove()).toBe("again");
+});
+
+test("a device seen, then unregistered by the app itself, is not removed when its row goes before it is on again", () => {
+  const watch = removalWatch(() => 0);
+  expect(watch.see(true, true)).toBeUndefined();
+  // Not on any more (signing out, a failed registration): what it saw no longer counts.
+  expect(watch.see(true, false)).toBeUndefined();
+  // On again, its row not synced back yet: not a removal.
+  expect(watch.see(false, true)).toBeUndefined();
+});
+
+test("Try again, or registering again after giving up, starts the count over", () => {
+  let now = 0;
+  const watch = removalWatch(() => now);
+  const remove = () => {
+    expect(watch.see(true, true)).toBeUndefined();
+    now += 60_000;
+    return watch.see(false, true);
+  };
+  const giveUp = () => {
+    for (let n = 0; n < REMOVAL_TRIES; n++) expect(remove()).toBe("again");
+    expect(remove()).toBe("gave_up");
+  };
+  giveUp();
+  // The member taps Try again.
+  watch.reset();
+  expect(remove()).toBe("again");
+  for (let n = 1; n < REMOVAL_TRIES; n++) expect(remove()).toBe("again");
+  expect(remove()).toBe("gave_up");
+  // The app shows it failed (not registered); the member comes back to the app and it registers on its own.
+  expect(watch.see(false, false)).toBeUndefined();
+  expect(remove()).toBe("again");
+});
+
+test("the phone's device counts as present or gone only once its id and the summaries are in", () => {
+  const rows = [{ id: "dev_a" }, { id: "dev_b" }];
+  expect(devicePresent(undefined, { status: "ready", rows })).toBeUndefined();
+  expect(devicePresent("dev_a", { status: "loading", rows: [] })).toBeUndefined();
+  expect(devicePresent("dev_a", { status: "error", rows: [] })).toBeUndefined();
+  expect(devicePresent("dev_a", { status: "ready", rows })).toBe(true);
+  expect(devicePresent("dev_c", { status: "ready", rows })).toBe(false);
+  expect(devicePresent("dev_a", { status: "ready", rows: [] })).toBe(false);
 });

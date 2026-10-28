@@ -56,7 +56,14 @@ the fallback the bot keeps when the audio session cannot start.
   session; Android `TextToSpeech` on the voice-call stream), in the app's language. The script is built from the
   decrypted title and body with `packages/i18n` messages.
 - **Acknowledging: press 1**, not speech recognition. On iOS, 1 on CallKit's own keypad (a `CXPlayDTMFCallAction`,
-  available on the lock screen) acknowledges; on both platforms the call screen has a "1 Acknowledge" button.
+  available on the lock screen) acknowledges; on both platforms the call screen has a "1 Acknowledge" button. On
+  Android, 1 on a hardware keyboard (the number row's or the numeric keypad's) acknowledges like the button while a
+  call is answered and the call screen is focused: the call module hands the key to JavaScript (`onKey`, through
+  Expo's `ReactActivityHandler.onKeyUp`), never while a text field has focus, and `CallSession.keyPressed`
+  (apps/mobile/src/lib/call-session.ts) decides which keys count, only while the call screen says it is focused
+  (`CallSession.focused`, set on focus and cleared on blur): a 1 typed elsewhere in the app is text. An ended call
+  takes none. Once the call is over the screen says "Acknowledged. The call ended." when
+  it was acknowledged, not only "The call ended." (`callStatus`).
   On-device speech recognition would need the microphone and speech permissions, behaves differently per platform
   and language, and is what the voice bot's server-side STT replaces; a key press works in a noisy room and for
   someone who cannot speak at that moment. Saying "acknowledge" arrives with the bot.

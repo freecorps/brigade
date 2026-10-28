@@ -341,6 +341,7 @@
   "call_no_incident": "Este acionamento não indica um incidente, então não dá para confirmar aqui.",
   "call_hang_up": "Desligar",
   "call_ended": "A chamada terminou.",
+  "call_ended_acknowledged": "Confirmado. A chamada terminou.",
   "call_test_title": "Tela de chamada",
   "call_test_ring": "Tocar em 10 segundos",
   "call_test_ringing": "Bloqueie o telefone agora: ele toca em 10 segundos.",
@@ -3551,6 +3552,37 @@
         "part=load_failed": "Não foi possível carregar sua escolha.",
         "part=sheet_title": "Quais acionamentos tocam como chamada?",
         "part=*": "Chamadas"
+      }
+    }
+  ],
+  "devices_card": [
+    {
+      "declarations": ["input part", "input max", "input suffix", "input when", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Seus celulares",
+        "part=description": "Os celulares em que o app do Brigade aciona você neste workspace, até {max}. Um celular novo além disso substitui o que deu sinal há mais tempo. Todos no workspace veem esta lista, para entender por que alguém foi ou não acionado.",
+        "part=loading": "Carregando seus celulares…",
+        "part=load_failed": "Não foi possível carregar seus celulares.",
+        "part=empty": "Nenhum celular aciona você aqui ainda. Entre no app do Brigade no seu celular para receber acionamentos.",
+        "part=platform_ios": "iPhone",
+        "part=platform_android": "Celular Android",
+        "part=env_production": "Versão da App Store ou TestFlight",
+        "part=env_sandbox": "Versão de desenvolvimento",
+        "part=id": "ID terminado em {suffix}",
+        "part=registered": "Registrado {when}",
+        "part=seen": "Último sinal {when}",
+        "part=seen_hint": "A última vez que o app registrou este celular, mesmo sem nada novo a enviar, ou que o celular confirmou ter mostrado um acionamento",
+        "part=calls_on": "Toca como chamada",
+        "part=calls_off": "Só notificações",
+        "part=remove": "Remover",
+        "part=remove_label": "Remover {name}",
+        "part=remove_confirm": "Parar de acionar você neste celular? Se o app do Brigade ainda estiver conectado nele, ele se registra de novo assim que o app estiver aberto: saia da conta no app para parar de vez.",
+        "part=remove_go": "Remover celular",
+        "part=removing": "Removendo…",
+        "part=keep": "Manter",
+        "part=remove_failed": "Não foi possível remover este celular. Tente de novo.",
+        "part=*": "Seus celulares"
       }
     }
   ],

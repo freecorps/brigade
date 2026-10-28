@@ -45,8 +45,34 @@ export function callScript(call: Pick<ActiveCall, "title" | "body">, locale: Loc
 
 const trimStop = (text: string) => text.trim().replace(/[.!?。]+$/u, "");
 
+/**
+ * Android's key codes for 1: the number row's (`KEYCODE_1`) and the numeric keypad's (`KEYCODE_NUMPAD_1`). A
+ * hardware keyboard's 1 on the call screen acknowledges, as 1 on CallKit's keypad does on iOS.
+ */
+export const ACK_KEY_CODES: readonly number[] = [8, 145];
+
+/** What the call screen says under the incident: how the ack went and, once over, that the call ended. */
+export function callStatus(state: NonNullable<CallState>): string {
+  const { ack, ended } = state;
+  if (ended) return ack.kind === "acknowledged" ? m.call_ended_acknowledged() : m.call_ended();
+  switch (ack.kind) {
+    case "sending":
+      return m.call_acknowledging();
+    case "acknowledged":
+      return m.call_acknowledged();
+    case "failed":
+      return m.call_ack_failed({ reason: ack.reason });
+    case "unavailable":
+      return m.call_no_incident();
+    case "idle":
+      return m.call_speaking();
+  }
+}
+
 export class CallSession {
   #state: CallState = null;
+  /** Whether the call screen is the focused screen (`focused`): the only place a hardware key acknowledges. */
+  #screenFocused = false;
   readonly #listeners = new Set<() => void>();
 
   constructor(
@@ -101,6 +127,22 @@ export class CallSession {
     } else {
       this.#update({ kind: "failed", reason: mutationErrorReason(outcome.error.code) });
     }
+  }
+
+  /** The call screen gained (true) or lost (false) focus: set on focus, cleared on blur. */
+  focused(focused: boolean): void {
+    this.#screenFocused = focused;
+  }
+
+  /**
+   * Android: a hardware key released while the call is answered (`keyCode`, Android's `KeyEvent` code). 1
+   * acknowledges, as the screen's button does, while the call lasts and only while the call screen is focused: a 1
+   * typed anywhere else in the app (an incident note, say) is the member's text, never an acknowledgement. Every
+   * other key does nothing.
+   */
+  keyPressed(callId: string, keyCode: number): void {
+    if (!ACK_KEY_CODES.includes(keyCode) || !this.#screenFocused || this.#state?.ended) return;
+    void this.acknowledge(callId);
   }
 
   hangUp(): void {

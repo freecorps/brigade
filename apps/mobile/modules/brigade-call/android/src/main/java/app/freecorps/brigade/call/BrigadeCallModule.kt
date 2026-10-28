@@ -18,13 +18,15 @@ class BrigadeCallModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("BrigadeCall")
 
-    Events("onAnswer", "onEnd", "onAcknowledgeKey", "onSpoken", "onVoipToken")
+    Events("onAnswer", "onEnd", "onAcknowledgeKey", "onKey", "onSpoken", "onVoipToken")
 
     OnCreate {
       Calls.listener = object : Calls.Listener {
         override fun onAnswer(call: IncomingCall) = sendEvent("onAnswer", call.toMap())
         override fun onEnd(call: IncomingCall, reason: String) =
           sendEvent("onEnd", mapOf("id" to call.id, "reason" to reason))
+        override fun onKey(call: IncomingCall, keyCode: Int) =
+          sendEvent("onKey", mapOf("id" to call.id, "keyCode" to keyCode))
       }
       CallSpeech.onDone = { sendEvent("onSpoken", emptyMap<String, Any>()) }
     }

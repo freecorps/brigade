@@ -712,8 +712,8 @@ export type DeviceRow = {
 
 /**
  * A member's device as every member of the workspace sees it (RFC 0006 "Delivery receipts"): written with `devices`
- * by `device.register` (no token, no key) and dropped with it. `lastSeenAt`: when the device last registered or
- * sent a delivery receipt, the latest sign that it was online.
+ * by `device.register` (no token, no key) and dropped with it. `lastSeenAt`: when the device last registered (one
+ * that changed nothing included, `device.touch`) or sent a delivery receipt, the latest sign that it was online.
  */
 export type DeviceSummaryRow = {
   id: string; // the device's id (dev_<ULID>)

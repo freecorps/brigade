@@ -53,6 +53,8 @@ object Calls {
   interface Listener {
     fun onAnswer(call: IncomingCall)
     fun onEnd(call: IncomingCall, reason: String)
+    /** A hardware key released in the app while [call] is answered (Android's `KeyEvent` code). */
+    fun onKey(call: IncomingCall, keyCode: Int)
   }
 
   private class State(val call: IncomingCall) {

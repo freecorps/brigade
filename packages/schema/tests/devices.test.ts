@@ -275,6 +275,19 @@ describe("device.unregister and device.expire", () => {
     expect(store.get("devices", id)).toBeUndefined();
   });
 
+  test("a client's optimistic run takes only the member's own phone off their list", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const mine = deviceId();
+    const theirs = deviceId();
+    run(store, ana, "device.register", args(mine));
+    run(store, bia, "device.register", args(theirs, { pushToken: "c".repeat(64) }));
+    expect(run(store, ana, "device.unregister", { id: mine }, false)).toMatchObject({ ok: true });
+    expect(store.get("member_devices", mine)).toBeUndefined();
+    // The server answers for another member's phone (`not_found`); the client leaves their summary alone.
+    run(store, ana, "device.unregister", { id: theirs }, false);
+    expect(store.get("member_devices", theirs)).toMatchObject({ userId: "usr_bia" });
+  });
+
   test("device.expire is server-only and records why", () => {
     const store = createMemoryStore<BrigadeTables>();
     const id = deviceId();
@@ -589,5 +602,18 @@ describe("device.touch", () => {
     });
     expect(touch(store, ana, { id }, T - 10).ok).toBe(true);
     expect(store.get("devices", id)?.updatedAt).toBe(T);
+    expect(store.get("member_devices", id)?.lastSeenAt).toBe(T);
+  });
+
+  test("moves the summary's `lastSeenAt`, so the dashboard's \"last heard from\" is the registration that changed nothing", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const id = deviceId();
+    run(store, ana, "device.register", args(id));
+    expect(store.get("member_devices", id)?.lastSeenAt).toBe(T);
+    expect(touch(store, ana, { id }, T + 60_000).ok).toBe(true);
+    expect(store.get("member_devices", id)?.lastSeenAt).toBe(T + 60_000);
+    // Another member's touch moves nothing.
+    expect(touch(store, bia, { id }, T + 120_000).ok).toBe(false);
+    expect(store.get("member_devices", id)?.lastSeenAt).toBe(T + 60_000);
   });
 });

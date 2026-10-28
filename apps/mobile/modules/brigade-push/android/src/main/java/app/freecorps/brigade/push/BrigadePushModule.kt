@@ -44,11 +44,21 @@ class BrigadePushModule : Module() {
     OnNewIntent { intent -> takePage(intent)?.let { sendEvent("onOpenPage", it) } }
   }
 
+  /**
+   * The page a tap opens, only from this app's own notification: the launcher activity is exported, so any app can
+   * start it with these extras, but not with their proof (PageTap). Taken once.
+   */
   private fun takePage(intent: Intent): Map<String, String>? {
-    val incident = intent.getStringExtra(Pages.EXTRA_INCIDENT) ?: return null
-    val workspace = intent.getStringExtra(Pages.EXTRA_WORKSPACE) ?: return null
-    intent.removeExtra(Pages.EXTRA_INCIDENT)
-    intent.removeExtra(Pages.EXTRA_WORKSPACE)
+    val incident = intent.getStringExtra(Pages.EXTRA_INCIDENT)
+    val workspace = intent.getStringExtra(Pages.EXTRA_WORKSPACE)
+    val issuedAt = intent.getLongExtra(Pages.EXTRA_ISSUED_AT, -1)
+    val proof = intent.getStringExtra(Pages.EXTRA_PROOF)
+    for (extra in listOf(Pages.EXTRA_INCIDENT, Pages.EXTRA_WORKSPACE, Pages.EXTRA_ISSUED_AT, Pages.EXTRA_PROOF)) {
+      intent.removeExtra(extra)
+    }
+    if (incident == null || workspace == null) return null
+    val key = Pages.tapKey(context)
+    if (!PageTap.verify(key, incident, workspace, issuedAt, proof, System.currentTimeMillis())) return null
     return mapOf("incident" to incident, "workspace" to workspace)
   }
 }

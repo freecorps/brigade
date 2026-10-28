@@ -36,12 +36,17 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   `group.app.freecorps.brigade` (which is also its Keychain access group), readable after first unlock, this device
   only, so the extension can read it while the phone is locked. On Android (decided with FCM, `DeviceKey.kt`), the
   same P-256 key: from Android 12 (API 31) it is made inside the Android Keystore with `PURPOSE_AGREE_KEY` and the
-  Keystore does the ECDH, so the private key never leaves it. Android 7 to 11 cannot agree keys with a Keystore key,
+  Keystore does the ECDH, so the private key never leaves it. It is kept only once it has done one ECDH with a
+  throwaway key: some Keystores make the key and then fail every agreement with it, and those phones get the software
+  key below instead. Android 7 to 11 cannot agree keys with a Keystore key,
   so there (the closest safe option) the key pair is made in software and its private key kept encrypted with
   AES-256-GCM under a Keystore key, in the app's no-backup directory, decrypted in memory only to open a page. Neither
   needs the user to authenticate or the phone to be unlocked (after the first unlock), so pages decrypt on a locked
   phone; neither is in a backup, so a restored phone registers a new device. A phone updated from 11 to 12 keeps the
-  key it has. StrongBox is not asked for yet (not every StrongBox agrees keys).
+  key it has. A wrapped key its Keystore key no longer opens (the tag does not match, or it is not a key) is deleted
+  with that Keystore key, so the next registration (the app registers when it comes to the foreground) makes and
+  registers a new one instead of every page falling back. StrongBox is not asked for yet (not every StrongBox
+  agrees keys).
 - **What the relay can still do.** It cannot read content, but in the spike's base-mode envelope it could replay
   an old push or raise its urgency (`interruption-level` is in clear), and anyone with a device public key and
   relay access could forge one. Before production: seal `iat`, the instance id and the urgency inside the
@@ -491,7 +496,9 @@ so a page shows with the app killed and before JavaScript loads, as the iOS exte
   ask for it.
 - **A tap opens the incident**, in its workspace: the notification's intent carries the decrypted incident and
   workspace ids, and the app switches to that workspace when another is open, then opens the incident
-  (`src/hooks/use-page-taps.ts`, `src/lib/page-taps.ts`).
+  (`src/hooks/use-page-taps.ts`, `src/lib/page-taps.ts`). The launcher activity is exported, so any app could start
+  it with the same extras; they are honoured only with their proof (`PageTap.kt`): an HMAC-SHA256 over the ids and
+  when the notification was made, under a random key in the app's private preferences, for a day.
 - **A call** (`kind: "call"`) rings through the existing ring (`Calls.ring` in `modules/brigade-call`), with its
   fallbacks (RFC 0010).
 - **Unreadable** (malformed, another version, not for this key): the fallback text from `packages/i18n`
@@ -503,7 +510,7 @@ so a page shows with the app killed and before JavaScript loads, as the iOS exte
   token and says pages are not set up on the phone (`unsupported`), as before.
 
 Tests: the Kotlin crypto and parsing on the JVM (`HpkeTest.kt`: RFC 9180 vector A.3.1 and a page sealed by
-`packages/push`), the JavaScript in Node (`device.test.ts`, `page-taps.test.ts`).
+`packages/push`; `KeyChecksTest.kt`, `PageTapTest.kt`), the JavaScript in Node (`device.test.ts`, `page-taps.test.ts`).
 
 ## Delivery receipts
 

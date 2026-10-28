@@ -27,6 +27,8 @@ object Hpke {
   private val HPKE_SUITE = "HPKE".toByteArray() + byteArrayOf(0x00, 0x10, 0x00, 0x01, 0x00, 0x01)
   private const val MODE_BASE: Byte = 0x00
   const val POINT_LENGTH = 65
+  /** P-256's ECDH shared secret: the x coordinate. */
+  const val SECRET_LENGTH = 32
 
   /**
    * Opens a ciphertext sealed to [recipientPublicKey] (uncompressed, 65 bytes). [dh] computes the shared x coordinate

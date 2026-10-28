@@ -32,8 +32,11 @@ object Pages {
   const val UPDATES_CHANNEL = "brigade_updates"
   const val EXTRA_INCIDENT = "app.freecorps.brigade.push.INCIDENT"
   const val EXTRA_WORKSPACE = "app.freecorps.brigade.push.WORKSPACE"
+  const val EXTRA_ISSUED_AT = "app.freecorps.brigade.push.ISSUED_AT"
+  const val EXTRA_PROOF = "app.freecorps.brigade.push.PROOF"
   private const val PREFS = "brigade_push"
   private const val RECEIPT_ORIGIN = "receipt-origin-v1"
+  private const val TAP_KEY = "tap-key-v1"
   /** How long a receipt may take; the page is already on screen. Matches the iOS extension. */
   private const val RECEIPT_TIMEOUT_MS = 5_000
 
@@ -96,8 +99,12 @@ object Pages {
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
       // Tapping opens this incident (the app reads them, src/hooks/use-page-taps.ts).
       if (content?.incident != null && content.workspace != null) {
+        val issuedAt = System.currentTimeMillis()
         putExtra(EXTRA_INCIDENT, content.incident)
         putExtra(EXTRA_WORKSPACE, content.workspace)
+        // The launcher activity is exported: the proof says this notification put them there (PageTap).
+        putExtra(EXTRA_ISSUED_AT, issuedAt)
+        putExtra(EXTRA_PROOF, PageTap.sign(tapKey(context), content.incident, content.workspace, issuedAt))
       }
     }
     val key = tag ?: "brigade"
@@ -156,6 +163,16 @@ object Pages {
     val origin = PushReceipt.originOf(value) ?: return false
     context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(RECEIPT_ORIGIN, origin).apply()
     return true
+  }
+
+  /** The key tap proofs are made with ([PageTap]), created on first use, in the app's private preferences. */
+  @Synchronized
+  fun tapKey(context: Context): ByteArray {
+    val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    prefs.getString(TAP_KEY, null)?.let(Base64url::decode)?.takeIf { it.size == PageTap.KEY_LENGTH }?.let { return it }
+    val key = PageTap.newKey()
+    prefs.edit().putString(TAP_KEY, Base64url.encode(key)).commit()
+    return key
   }
 
   private fun receiptOrigin(context: Context): String? =

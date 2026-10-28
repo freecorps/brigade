@@ -45,7 +45,8 @@ kind, urgency, callId?, tag? }` (`tag` is `collapseId`, the app's notification t
 service account's key and exchanges it at Google's token endpoint for an access token, kept until 5 minutes before it
 expires (and fetched again if FCM answers 401). Answers: `200 { status, fcmId, ms }`; `502 { status, reason,
 tokenInvalid? }` with FCM's error code (`UNREGISTERED`, `QUOTA_EXCEEDED`, `UNAVAILABLE`, …), `tokenInvalid: true`
-when the token is gone (the instance drops the device); `502 {"error":"fcm_unreachable"}` when FCM or the token
+when the token is gone (the instance drops the device; never for `SENDER_ID_MISMATCH`, which is logged as an error:
+`FCM_SERVICE_ACCOUNT` is not the app's Firebase project); `502 {"error":"fcm_unreachable"}` when FCM or the token
 endpoint cannot be reached; `500 {"error":"relay_misconfigured"}` without a usable `FCM_SERVICE_ACCOUNT`. FCM speaks
 HTTP/1.1, so unlike APNs it also works from `vp dev`.
 

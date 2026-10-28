@@ -8,9 +8,11 @@ import android.util.AtomicFile
 import android.util.Log
 import java.io.File
 import java.security.KeyFactory
+import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.PrivateKey
+import java.security.PublicKey
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
 import java.security.spec.PKCS8EncodedKeySpec
@@ -33,6 +35,8 @@ import javax.crypto.spec.GCMParameterSpec
  *   in RFC 0006.
  *
  * A phone that moves from 11 to 12 keeps the key it has (a new key is a new device id). Neither key is in a backup.
+ * A Keystore key is kept only once it has done one ECDH; a wrapped key that no longer opens is dropped
+ * ([KeyChecks]), so the app registers a new one instead of every page falling back.
  */
 object DeviceKey {
   private const val TAG = "BrigadePush"
@@ -56,14 +60,20 @@ object DeviceKey {
   @Synchronized
   fun agree(context: Context, ephemeral: ByteArray): ByteArray {
     val peer = P256.publicKey(ephemeral)
-    keystoreKey()?.let { (privateKey, _) ->
-      val agreement = KeyAgreement.getInstance("ECDH", KEYSTORE)
-      agreement.init(privateKey)
-      agreement.doPhase(peer, true)
-      return agreement.generateSecret()
-    }
+    keystoreKey()?.let { (privateKey, _) -> return keystoreAgree(privateKey, peer) }
     val stored = wrapped(context) ?: throw IllegalStateException("no device key")
-    val privateKey = unwrap(stored.sealed)
+    val privateKey = try {
+      unwrap(stored.sealed)
+    } catch (error: Exception) {
+      if (KeyChecks.unwrapLost(error)) {
+        // It will never open again: without this, every page falls back while the instance keeps sealing to it. The
+        // app registers again when it next comes to the foreground, with a new key (a new device id; the instance
+        // drops this one by its push token).
+        Log.w(TAG, "wrapped device key unreadable: dropped")
+        forget(context)
+      }
+      throw error
+    }
     val agreement = KeyAgreement.getInstance("ECDH")
     agreement.init(privateKey)
     agreement.doPhase(peer, true)
@@ -83,28 +93,49 @@ object DeviceKey {
     return privateKey to P256.encode(publicKey.w)
   }
 
+  private fun keystoreAgree(privateKey: PrivateKey, peer: PublicKey): ByteArray {
+    val agreement = KeyAgreement.getInstance("ECDH", KEYSTORE)
+    agreement.init(privateKey)
+    agreement.doPhase(peer, true)
+    return agreement.generateSecret()
+  }
+
+  /** Drops the wrapped key and its wrapping key, so the next [publicKey] makes a new one. */
+  private fun forget(context: Context) {
+    File(context.noBackupFilesDir, WRAPPED_FILE).delete()
+    try {
+      keyStore().deleteEntry(WRAP_ALIAS)
+    } catch (_: Exception) {}
+  }
+
+  private fun softwarePair(): KeyPair =
+    KeyPairGenerator.getInstance("EC").run {
+      initialize(ECGenParameterSpec("secp256r1"))
+      generateKeyPair()
+    }
+
   private fun create(context: Context): ByteArray {
     if (Build.VERSION.SDK_INT >= 31) {
-      try {
-        val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, KEYSTORE)
-        generator.initialize(
-          KeyGenParameterSpec.Builder(AGREE_ALIAS, KeyProperties.PURPOSE_AGREE_KEY)
-            .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-            .build(),
-        )
-        val pair = generator.generateKeyPair()
-        return P256.encode((pair.public as ECPublicKey).w)
-      } catch (error: Exception) {
-        // A Keystore that cannot agree keys (seen on some vendors' builds): the wrapped key below instead.
-        Log.w(TAG, "Keystore key agreement unavailable: $error")
-        try {
-          keyStore().deleteEntry(AGREE_ALIAS)
-        } catch (_: Exception) {}
-      }
+      // A Keystore that cannot agree keys (seen on some vendors' builds), at generation or only at use: the wrapped
+      // key below instead. One ECDH with a throwaway key, read back from the Keystore as pages will, proves it.
+      val publicKey = KeyChecks.provenOrNull(
+        generate = {
+          val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, KEYSTORE)
+          generator.initialize(
+            KeyGenParameterSpec.Builder(AGREE_ALIAS, KeyProperties.PURPOSE_AGREE_KEY)
+              .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+              .build(),
+          )
+          generator.generateKeyPair()
+          keystoreKey() ?: throw IllegalStateException("Keystore key not stored")
+        },
+        agree = { (privateKey, _) -> keystoreAgree(privateKey, softwarePair().public) },
+        delete = { keyStore().deleteEntry(AGREE_ALIAS) },
+        log = { Log.w(TAG, it) },
+      )?.second
+      if (publicKey != null) return publicKey
     }
-    val generator = KeyPairGenerator.getInstance("EC")
-    generator.initialize(ECGenParameterSpec("secp256r1"))
-    val pair = generator.generateKeyPair()
+    val pair = softwarePair()
     val publicKey = P256.encode((pair.public as ECPublicKey).w)
     val sealed = wrap(pair.private.encoded)
     val file = AtomicFile(File(context.noBackupFilesDir, WRAPPED_FILE))

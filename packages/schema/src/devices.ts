@@ -32,15 +32,25 @@ export type PushEnvironment = (typeof PUSH_ENVIRONMENTS)[number];
  */
 export const DEVICE_HEADER = "Brigade-Device";
 
-/** Devices one member may register in one workspace; a page fans out to all of them. */
+/**
+ * Devices one member may register in one workspace; a page fans out to all of them. A new device over it replaces
+ * the member's least recently alive ones (registered, or confirmed a page; `replaced`): reinstalls make new devices, and the newest phone must
+ * never be locked out by phones long gone.
+ */
 export const MAX_DEVICES_PER_MEMBER = 10;
 
 /**
  * Why a device stopped being paged: its member unregistered it, APNs said its token is gone, its member left or
- * was removed from the workspace (`member.remove`, `member.reconcile`), or its member's password was reset
- * (`device.signOut`).
+ * was removed from the workspace (`member.remove`, `member.reconcile`), its member's password was reset
+ * (`device.signOut`), or its member registered a new device over `MAX_DEVICES_PER_MEMBER` and this one was the least
+ * recently registered (`replaced`).
  */
-export type DeviceRemoval = "unregistered" | "token_invalid" | "member_removed" | "password_reset";
+export type DeviceRemoval =
+  | "unregistered"
+  | "token_invalid"
+  | "member_removed"
+  | "password_reset"
+  | "replaced";
 
 export type DeviceRegistered = DomainEvent<
   "device.registered",
@@ -141,7 +151,8 @@ const publicKey: Validator<string> = (input, path = "") =>
  * Registers the actor's device, or refreshes it (a rotated token or key). The id is made by the app; the same push
  * token registered under another id by the same member (a reinstall) replaces that device, so one phone is never
  * paged twice. A device belongs to whoever registered it: another member's id is `forbidden`. No change is a
- * `conflict`, as for every mutation (RFC 0005); a new device over the member's limit is `limit_reached`.
+ * `conflict`, as for every mutation (RFC 0005). A new device over the member's limit replaces their least recently
+ * alive ones (registered, or confirmed a page; `replaced`): only ever the member's own, so the limit still bounds a page's fan-out.
  */
 export const registerDevice = defineMutation({
   name: "device.register",
@@ -218,11 +229,21 @@ export const registerDevice = defineMutation({
       }
       if (current) store.update("devices", args.id, row);
       else {
-        if (
-          mine.filter((device) => device.pushToken !== args.pushToken).length >=
-          MAX_DEVICES_PER_MEMBER
-        ) {
-          return fail("limit_reached", `At most ${MAX_DEVICES_PER_MEMBER} devices per member`);
+        // Least recently alive first: registered, or confirmed a page (`lastSeenAt`, a receipt), whichever is later,
+        // so an on-call phone that pages reach but nobody opens is kept over a dead reinstall.
+        const alive = (device: DeviceRow) =>
+          Math.max(device.updatedAt, store.get("member_devices", device.id)?.lastSeenAt ?? 0);
+        const kept = mine
+          .filter((device) => device.pushToken !== args.pushToken)
+          .sort((a, b) => alive(a) - alive(b) || a.id.localeCompare(b.id));
+        const over = Math.max(0, kept.length - (MAX_DEVICES_PER_MEMBER - 1));
+        for (const stale of kept.slice(0, over)) {
+          forgetDevice(store, stale.id);
+          events.push({
+            type: "device.unregistered",
+            subject: stale.id,
+            data: { id: stale.id, userId, reason: "replaced" },
+          });
         }
         store.insert("devices", row);
       }

@@ -17,6 +17,7 @@ import {
 } from "@/lib/sign-out";
 import { memberActor, neverOpened, type Server } from "@/lib/sync";
 import { createWorkspaceSync, type WorkspaceSync } from "@/lib/sync-client";
+import { knownTokens } from "@/lib/paging";
 import { BrigadeCall } from "../../modules/brigade-call";
 import { BrigadePush } from "../../modules/brigade-push";
 
@@ -68,6 +69,9 @@ export const phoneWorkspaces = phoneWorkspacesStore({
       : SecureStore.setItemAsync(PHONE_WORKSPACES_KEY, raw),
 });
 
+/** The push tokens fetched to register, so the token listener asks for a registration only for a new one. */
+export const pushTokens = knownTokens();
+
 export function phoneDeps(
   sync: WorkspaceSync,
   server?: Server,
@@ -77,7 +81,11 @@ export function phoneDeps(
   const android = process.env.EXPO_OS === "android";
   // Android pages through FCM (RFC 0006): a build without Firebase has no token to give, and says so ("unsupported").
   const pageable = keys !== null && (!android || keys.fcmAvailable === true);
-  const pushToken = async () => String((await Notifications.getDevicePushTokenAsync()).data);
+  const pushToken = async () => {
+    const token = String((await Notifications.getDevicePushTokenAsync()).data);
+    pushTokens.fetched(token);
+    return token;
+  };
   return {
     platform: process.env.EXPO_OS === "ios" ? "ios" : "android",
     apsEnvironment: Constants.expoConfig?.extra?.apsEnvironment,

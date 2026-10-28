@@ -15,7 +15,7 @@ export const DEVICE_REGISTER_LIMIT = { window: 60, max: 30 };
 
 /**
  * Per workspace: `ok` (registered, or already up to date), a `device.register` code (`forbidden`: another member's
- * device has this id and its member's session still exists, `limit_reached`, `invalid_args`, `internal`),
+ * device has this id and its member's session still exists, `invalid_args`, `internal`),
  * `not_a_member` (the member left or was removed: the app forgets the workspace) or `unavailable` (the shard or D1
  * could not be reached: tried again later).
  */
@@ -124,5 +124,13 @@ export async function registerDevices(
       }
     }),
   );
+  // Visible in `wrangler tail`: why a phone is not paged somewhere. Never the device's tokens or key.
+  for (const [workspaceId, code] of Object.entries(answers)) {
+    // `not_a_member`: a workspace the phone still lists after the member left it, routine (the app forgets it).
+    if (code === "ok" || code === "not_a_member") continue;
+    console.warn(
+      JSON.stringify({ message: "device registration refused", workspace: workspaceId, code }),
+    );
+  }
   return json({ workspaces: answers }, 200, { "Cache-Control": "no-store" });
 }

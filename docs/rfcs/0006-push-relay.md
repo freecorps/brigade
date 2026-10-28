@@ -120,7 +120,14 @@ relay's bearer token):
   (`dev_<ULID>`), `platform` (`ios`, `android`), the token's APNs `environment` (`sandbox` for Xcode builds,
   `production` for EAS builds; S1 found the sandbox relay refuses production tokens), the push token, the PushKit
   token for calls (or null) and the HPKE public key. A member registers only their own devices (another member's id
-  is `forbidden`), at most 10 per workspace; the same token under a new id (a reinstall) replaces the old device.
+  is `forbidden`), at most 10 per workspace; the same token under a new id (a reinstall) replaces the old device. A new
+  device over the 10 replaces the member's least recently alive ones in the same mutation (registered, or confirmed a
+  page with a receipt, whichever is later, so an on-call phone pages reach but nobody opens is kept; `device.unregistered`
+  `replaced`, through the outbox), so their newest phone is never locked out by phones long gone: every reinstall is
+  a new device id, and a token that changed with it is not caught by the rule before. Only ever the member's own
+  devices, so it gives nobody a way to drop anyone else's, and a member's session could already unregister them one
+  by one; the limit still bounds a page's fan-out. An instance from before this still answers `limit_reached`, which
+  the app shows as its own message (sign out on a phone no longer used) and does not retry on a timer.
   `device.unregister` removes one's own device; `device.expire` (server only) drops one APNs said is gone, only if
   its token is still the one the push went to (a device registered again with a new token meanwhile is kept).
 - **Server-only.** Devices live in the workspace shard's `devices` table, which is never synced: no member sees
@@ -150,7 +157,14 @@ relay's bearer token):
   APNs or PushKit token, Critical Alerts or notifications turned on in Settings, which the foreground picks up, Try
   again) reaches every workspace, not only the one open: a new token that reached only that one left the others with
   a dead one (`BadDeviceToken`, the device dropped, `no_devices`). A workspace the member left answers
-  `not_a_member` and the app forgets it; a workspace still failing is tried again on the backoff. An instance from
+  `not_a_member` and the app forgets it; a workspace still failing is tried again on the backoff (5 s, 30 s, 2 min,
+  then every 10 min, each give or take a fifth), `taken` every 10 min. The foreground, a reconnect and a new token try
+  again at once, but never within 5 s of the last try (`MIN_TRY_GAP_MS`), so the app stays under the route's 30 a
+  minute; Try again never waits. A token counts as new only if it is not the one the app last fetched:
+  expo-notifications fires its token listener with the token each `getDevicePushTokenAsync` returns, on iOS and
+  Android, and taking that as new made every registration ask for the next, about once a second. The route logs each
+  answer that is not `ok` (workspace and code, never a token or key), so a phone that is not paged shows in the
+  Worker's logs. An instance from
   before the route (404) registers the open workspace over its socket, as before. The account section lists, under
   each workspace, whether this phone gets its pages (on, setting up, a failure, or not opened on the phone yet), and
   the incident list's notice names a workspace whose registration failed.

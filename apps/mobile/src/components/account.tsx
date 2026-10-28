@@ -39,6 +39,7 @@ const PAGING: Record<Paging, Parameters<typeof m.mobile_session>[0]["part"]> = {
   off: "pages_off",
   unsupported: "pages_unsupported",
   taken: "pages_taken",
+  limit: "pages_limit",
   failed: "pages_failed",
 };
 
@@ -59,7 +60,7 @@ export function pagingText(paging: Paging): string {
  * without Firebase (RFC 0006), not something the member can fix, so it is muted and gets no notice.
  */
 function pagingProblem(paging: Paging): boolean {
-  return paging === "off" || paging === "taken" || paging === "failed";
+  return paging === "off" || paging === "taken" || paging === "limit" || paging === "failed";
 }
 
 /**
@@ -79,8 +80,8 @@ function pagingTrouble(
 /**
  * At the top of the incident list when this phone does not page the member and they should know, in the open
  * workspace or another it was opened in: notifications off (with a way to Settings), the phone still another
- * member's, or registering failed. The app keeps trying the last two on its own (src/lib/paging.ts); Try again does
- * it now.
+ * member's, too many phones registered (an older instance), or registering failed. The app keeps trying the phone
+ * still another member's and a failure on its own (src/lib/paging.ts); Try again does any of the three now.
  */
 export function PagingNotice() {
   const member = useMember();

@@ -47,7 +47,9 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "loading" | "Loading follow-ups…" |
 * | "load_failed" | "Couldn't load follow-ups: {reason}" |
 * | "incident_column" | "Incident" |
-* | "mine" | "Mine only" |
+* | "mine_filter" | "Whose follow-ups" |
+* | "all" | "All" |
+* | "mine" | "Mine" |
 * | "back" | "Overview" |
 * | "title_required" | "Say what needs doing." |
 * | * | "Follow-ups" |
@@ -96,7 +98,9 @@ export const followup_text = /** @type {((inputs: Followup_TextInputs, options?:
 		if (i?.text === "loading") return /** @type {LocalizedString} */ (`Carregando ações…`);
 		if (i?.text === "load_failed") return /** @type {LocalizedString} */ (`Não foi possível carregar as ações: ${i?.reason}`);
 		if (i?.text === "incident_column") return /** @type {LocalizedString} */ (`Incidente`);
-		if (i?.text === "mine") return /** @type {LocalizedString} */ (`Só as minhas`);
+		if (i?.text === "mine_filter") return /** @type {LocalizedString} */ (`De quem são as ações`);
+		if (i?.text === "all") return /** @type {LocalizedString} */ (`Todas`);
+		if (i?.text === "mine") return /** @type {LocalizedString} */ (`Minhas`);
 		if (i?.text === "back") return /** @type {LocalizedString} */ (`Visão geral`);
 		if (i?.text === "title_required") return /** @type {LocalizedString} */ (`Diga o que precisa ser feito.`);
 		return /** @type {LocalizedString} */ (`Ações de acompanhamento`)
@@ -139,7 +143,9 @@ export const followup_text = /** @type {((inputs: Followup_TextInputs, options?:
 		if (i?.text === "loading") return /** @type {LocalizedString} */ (`Loading follow-ups…`);
 		if (i?.text === "load_failed") return /** @type {LocalizedString} */ (`Couldn't load follow-ups: ${i?.reason}`);
 		if (i?.text === "incident_column") return /** @type {LocalizedString} */ (`Incident`);
-		if (i?.text === "mine") return /** @type {LocalizedString} */ (`Mine only`);
+		if (i?.text === "mine_filter") return /** @type {LocalizedString} */ (`Whose follow-ups`);
+		if (i?.text === "all") return /** @type {LocalizedString} */ (`All`);
+		if (i?.text === "mine") return /** @type {LocalizedString} */ (`Mine`);
 		if (i?.text === "back") return /** @type {LocalizedString} */ (`Overview`);
 		if (i?.text === "title_required") return /** @type {LocalizedString} */ (`Say what needs doing.`);
 		return /** @type {LocalizedString} */ (`Follow-ups`)

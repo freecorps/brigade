@@ -33,6 +33,7 @@ import { usePreferences } from "@/components/preferences";
 import { FORM, Refusal, SELECT } from "@/components/services-card";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
+import { Segmented } from "@/components/ui/segmented";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Field } from "@/components/ui/field";
@@ -223,6 +224,9 @@ function FollowUpItem({
   const overdue = isOverdue(row, today);
   const link = row.link && isFieldLink(row.link) ? row.link : null;
   const StatusIcon = done ? CircleCheckIcon : CircleIcon;
+  // The check pops in when it is ticked here, not when a list that is already done loads.
+  const [loadedDone] = useState(done);
+  const pop = done && !loadedDone ? "enter-pop" : null;
   return (
     <li className="flex items-start gap-2 px-2 py-2 sm:px-4">
       {editable && onToggle ? (
@@ -239,6 +243,7 @@ function FollowUpItem({
             className={cn(
               "size-5",
               done ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
+              pop,
             )}
           />
         </Button>
@@ -461,15 +466,16 @@ export function OpenFollowUps({ limit }: { limit?: number }) {
             {followUpText("overdue_count", { count: overdue })}
           </Badge>
         ) : null}
-        <label className="ml-auto inline-flex min-h-11 items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            className="size-4 accent-primary"
-            checked={mine}
-            onChange={(event) => setMine(event.target.checked)}
-          />
-          {followUpText("mine")}
-        </label>
+        <Segmented
+          className="ml-auto"
+          label={followUpText("mine_filter")}
+          value={mine ? "mine" : "all"}
+          options={[
+            { value: "all", label: followUpText("all") },
+            { value: "mine", label: followUpText("mine") },
+          ]}
+          onChange={(next) => setMine(next === "mine")}
+        />
       </div>
       {refused ? <Refusal text={refused} onDismiss={() => setRefused(null)} /> : null}
       {open.status === "error" ? (

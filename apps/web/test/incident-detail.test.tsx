@@ -480,7 +480,7 @@ test("back to the list puts focus on the incident's title link", async () => {
   await act(() => view.router.load());
   await view.flush();
   const title = $<HTMLAnchorElement>('[data-incident-link="1"]')!;
-  expect(title.className).toContain("underline ");
+  expect(title.className).toContain("after:inset-0");
   await click(title);
   await act(() => view.router.load());
   await view.flush();

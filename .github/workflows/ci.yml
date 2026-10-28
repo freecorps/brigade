@@ -47,7 +47,7 @@ jobs:
       matrix:
         include:
           - name: packages and apps
-            command: vp run -r --filter "!@freecorps/brigade-api" test
+            command: vp run --filter "@freecorps/*" --filter "!@freecorps/brigade-api" test
           - {
               name: api 1/4,
               command: cd apps/api && vpx wrangler types --check && vp test --shard=1/4,

@@ -14,6 +14,7 @@ import { useId, useState, type FormEvent } from "react";
 import { CONFIRM_DESTRUCTIVE } from "@/components/monitor-form";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
+import { Empty } from "@/components/ui/empty";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Field, FormError } from "@/components/ui/field";
@@ -125,12 +126,12 @@ export function MaintenancePanel(props: PanelProps) {
       </div>
       <CardContent className="flex flex-col gap-4">
         {loading ? null : !ready ? (
-          <p className="text-sm text-muted-foreground">{say("not_set_up")}</p>
+          <Empty>{say("not_set_up")}</Empty>
         ) : (
           <>
             {adding ? <WindowForm {...props} onDone={() => setAdding(false)} /> : null}
             {open.length === 0 && !adding ? (
-              <p className="text-sm text-muted-foreground">{say("empty")}</p>
+              <Empty>{say("empty")}</Empty>
             ) : (
               <ul className="flex flex-col divide-y rounded-md border empty:hidden">
                 {open.map((row) => (

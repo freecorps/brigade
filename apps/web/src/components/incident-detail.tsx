@@ -20,10 +20,8 @@ import {
 } from "@freecorps/brigade-schema";
 import type { MutationOutcome } from "@freecorps/brigade-sync";
 import { useConnectionState, useMutation, useQuery } from "@freecorps/brigade-sync/react";
-import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import {
-  ArrowLeftIcon,
   BellCheckIcon,
   BellPlusIcon,
   BellOffIcon,
@@ -67,6 +65,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
+import { Page } from "@/components/app-shell";
 import { STATUS_ICONS } from "@/components/incident-badges";
 import { SeverityMenu, StatusMenu } from "@/components/incident-item";
 import { ANNOUNCE_MS, useNow } from "@/components/incidents-card";
@@ -156,19 +155,9 @@ function ByNumber({ number, why }: { number: number; why?: string }) {
   return <Loading />;
 }
 
+/** The page at every section's width; the top bar's section name is the way back to the list. */
 function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-10">
-      <Link
-        to="/"
-        className="-ml-1 inline-flex min-h-11 items-center gap-2 self-start rounded-md px-1 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring"
-      >
-        <ArrowLeftIcon aria-hidden className="size-4" />
-        {m.incident_page({ part: "back" })}
-      </Link>
-      {children}
-    </div>
-  );
+  return <Page>{children}</Page>;
 }
 
 function Loading() {

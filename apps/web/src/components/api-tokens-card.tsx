@@ -349,7 +349,7 @@ function TokenForm({
         <div className="grid min-w-0 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
           {SCOPE_GROUPS.map((group) => (
             <div key={group.resource} className="flex min-w-0 flex-col gap-0.5">
-              <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+              <p className="text-xs font-medium text-muted-foreground">
                 {tokenText(`group_${group.resource}`)}
               </p>
               {group.scopes.map((scope) => (

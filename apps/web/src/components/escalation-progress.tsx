@@ -33,7 +33,7 @@ import {
   type RunStatus,
 } from "@/lib/escalation";
 
-const LABEL = "text-xs font-medium tracking-wide text-muted-foreground uppercase";
+const LABEL = "text-xs font-medium text-muted-foreground";
 /** A page younger than this shows its clock time alone: "just now" next to it says nothing more. */
 const FRESH_MS = 2 * 60_000;
 

@@ -3,7 +3,6 @@ import { can, formatIncidentNumber, type ServiceRow } from "@freecorps/brigade-s
 import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
-  ArrowLeftIcon,
   CalendarClockIcon,
   CircleAlertIcon,
   LoaderCircleIcon,
@@ -11,6 +10,7 @@ import {
   UserRoundIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Page } from "@/components/app-shell";
 import { SeverityBadge, StatusBadge } from "@/components/incident-badges";
 import { usePreferences } from "@/components/preferences";
 import { naming, Refusal, ServiceForm, TierBadge } from "@/components/services-card";
@@ -76,19 +76,9 @@ export function ServicePage({ id }: { id: string | null }) {
   );
 }
 
+/** The page at every section's width; the top bar's section name is the way back to the list. */
 function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-10">
-      <Link
-        to="/"
-        className="-ml-1 inline-flex min-h-11 items-center gap-2 self-start rounded-md px-1 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring"
-      >
-        <ArrowLeftIcon aria-hidden className="size-4" />
-        {catalogText("back")}
-      </Link>
-      {children}
-    </div>
-  );
+  return <Page>{children}</Page>;
 }
 
 function Problem({ title, text }: { title: string; text: string }) {

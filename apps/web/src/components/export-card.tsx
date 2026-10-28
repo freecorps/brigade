@@ -169,9 +169,7 @@ function Exports() {
           {refused ? <Refusal text={refused} onDismiss={() => setRefused(null)} /> : null}
         </form>
         <div className="flex flex-col gap-2">
-          <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            {exportText("recent")}
-          </h3>
+          <h3 className="text-xs font-medium text-muted-foreground">{exportText("recent")}</h3>
           {live.length === 0 ? (
             <p className="text-muted-foreground">{exportText("none")}</p>
           ) : (

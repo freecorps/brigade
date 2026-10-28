@@ -19,6 +19,7 @@ import { useCallback, useEffect, useId, useState, type FormEvent } from "react";
 import { CONFIRM_DESTRUCTIVE } from "@/components/monitor-form";
 import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
+import { Empty } from "@/components/ui/empty";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Field, FormError } from "@/components/ui/field";
 import {
@@ -215,9 +216,7 @@ export function SlackPanel({
             onDisconnect={onDisconnect}
           />
         ) : (
-          <p className="text-sm text-muted-foreground">
-            {slackText(manage ? "not_connected" : "manage_only")}
-          </p>
+          <Empty>{slackText(manage ? "not_connected" : "manage_only")}</Empty>
         )}
       </CardContent>
     </Card>

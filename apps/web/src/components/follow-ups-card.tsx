@@ -16,7 +16,6 @@ import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import {
-  ArrowLeftIcon,
   CalendarClockIcon,
   CircleCheckIcon,
   CircleIcon,
@@ -28,6 +27,7 @@ import {
   UserRoundIcon,
 } from "lucide-react";
 import { useId, useState, type FormEvent } from "react";
+import { Page } from "@/components/app-shell";
 import { useNow } from "@/components/incidents-card";
 import { usePreferences } from "@/components/preferences";
 import { FORM, Refusal, SELECT } from "@/components/services-card";
@@ -127,7 +127,7 @@ export function FollowUpsCard({ incident }: { incident: IncidentRow }) {
           <p className="text-muted-foreground">{followUpText("empty")}</p>
         ) : null}
         {rows.length > 0 ? (
-          <ul className="-mx-4 flex flex-col divide-y border-y sm:-mx-6">
+          <ul className="-mx-4 flex flex-col divide-y border-t sm:-mx-6">
             {rows.map((row) =>
               editing === row.id ? (
                 <li key={row.id} className="px-4 py-3 sm:px-6">
@@ -484,7 +484,7 @@ export function OpenFollowUps({ limit }: { limit?: number }) {
           {followUpText("open_empty")}
         </p>
       ) : (
-        <ul className="-mx-4 flex flex-col divide-y border-y sm:-mx-6">
+        <ul className="-mx-4 flex flex-col divide-y border-t sm:-mx-6">
           {shown.map((row) => (
             <FollowUpItem
               key={row.id}
@@ -544,26 +544,20 @@ export function OpenFollowUpsCard() {
 export function OpenFollowUpsPage() {
   usePreferences();
   usePageTitle(followUpText("open_title"));
+  // The top bar names the page and the sidebar leads back: the card is the page, at every section's width.
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-10">
-      <Link
-        to="/"
-        className="-ml-1 inline-flex min-h-11 items-center gap-2 self-start rounded-md px-1 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring"
-      >
-        <ArrowLeftIcon aria-hidden className="size-4" />
-        {followUpText("back")}
-      </Link>
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold">{followUpText("open_title")}</h1>
-        <p className="max-w-prose text-sm text-muted-foreground">
-          {followUpText("open_description")}
-        </p>
-      </div>
-      <Card>
+    <Page>
+      <Card aria-labelledby="follow-ups-page-title">
+        <div className="flex flex-col gap-1 px-4 sm:px-6">
+          <CardTitle id="follow-ups-page-title">{followUpText("open_title")}</CardTitle>
+          <p className="max-w-prose text-sm text-muted-foreground">
+            {followUpText("open_description")}
+          </p>
+        </div>
         <CardContent>
           <OpenFollowUps />
         </CardContent>
       </Card>
-    </div>
+    </Page>
   );
 }

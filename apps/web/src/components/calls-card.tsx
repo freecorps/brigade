@@ -65,7 +65,26 @@ export function CallsPanel({ value, loading, failed, onChange }: PanelProps) {
   return (
     <Card aria-labelledby={titleId}>
       <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <CardTitle id={titleId}>{text("title")}</CardTitle>
+        {/* "Saving…" / "Saved" beside the title, where it takes no room of its own: the card's foot stays put. */}
+        <div className="flex items-center justify-between gap-4">
+          <CardTitle id={titleId}>{text("title")}</CardTitle>
+          <p
+            role="status"
+            className="flex shrink-0 items-center gap-1.5 text-sm text-muted-foreground"
+          >
+            {state === "saving" ? (
+              <>
+                <LoaderCircleIcon
+                  aria-hidden
+                  className="size-4 animate-spin motion-reduce:animate-none"
+                />
+                {text("saving")}
+              </>
+            ) : state === "saved" ? (
+              text("saved")
+            ) : null}
+          </p>
+        </div>
         <p className="max-w-prose text-sm text-muted-foreground">{text("description")}</p>
       </div>
       <CardContent className="flex flex-col gap-3">
@@ -109,19 +128,6 @@ export function CallsPanel({ value, loading, failed, onChange }: PanelProps) {
         )}
         {failed ? <FormError>{text("load_failed")}</FormError> : null}
         {state === "failed" ? <FormError>{text("failed")}</FormError> : null}
-        <p
-          role="status"
-          className="flex min-h-5 items-center gap-1.5 text-sm text-muted-foreground"
-        >
-          {state === "saving" ? (
-            <>
-              <LoaderCircleIcon aria-hidden className="size-4 animate-spin" />
-              {text("saving")}
-            </>
-          ) : state === "saved" ? (
-            text("saved")
-          ) : null}
-        </p>
       </CardContent>
     </Card>
   );

@@ -52,7 +52,7 @@ export const SELECT =
   "field w-full min-w-0 px-3 focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
 export const TEXTAREA =
   "field h-auto min-h-20 w-full min-w-0 resize-y px-3 py-2 focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
-export const LABEL = "text-xs font-medium tracking-wide text-muted-foreground uppercase";
+export const LABEL = "text-xs font-medium text-muted-foreground";
 /** Forms run edge to edge on phones (the card's padding is room enough) and as a box from `sm` up. */
 export const FORM =
   "-mx-4 flex min-w-0 flex-col gap-4 border-y bg-muted/40 px-4 py-4 sm:mx-0 sm:rounded-md sm:border";

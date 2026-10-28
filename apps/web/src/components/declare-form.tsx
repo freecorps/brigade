@@ -9,7 +9,7 @@ import {
 } from "@freecorps/brigade-schema";
 import { useSyncClient } from "@freecorps/brigade-sync/react";
 import { cn } from "cn";
-import { CheckIcon, CircleAlertIcon, PlusIcon } from "lucide-react";
+import { CircleAlertIcon, PlusIcon } from "lucide-react";
 import { useId, useRef, useState, type FormEvent } from "react";
 import { flushSync } from "react-dom";
 import { Button } from "@/components/ui/button";
@@ -218,14 +218,15 @@ export function DeclareForm({
         >
           {m.declare_severity_label()}
         </span>
-        {/* Native radios (arrow keys, form semantics) drawn as a segmented control of 44px targets: the code over
-            its name. The edge is an outline, so it adds no height; the segments are not positioned, so it paints
-            over them. Four equal columns fit 320px. */}
+        {/* Native radios (arrow keys, form semantics) drawn as a segmented control: a field's inset track, the
+            height of the inputs beside it, with the chosen severity raised on it in its own colour and edged in
+            it, so the choice shows by shape as well as colour. The code over its name, both centred on one axis.
+            Four equal columns fit 320px. */}
         <div
           role="radiogroup"
           aria-labelledby={severityId}
           className={cn(
-            "grid grid-cols-4 divide-x divide-border overflow-hidden rounded-md bg-card outline-1 -outline-offset-1 outline-input md:row-start-2",
+            "field grid grid-cols-4 gap-0.5 p-0.5 md:row-start-2",
             typed ? "md:col-start-3" : "md:col-start-2",
           )}
         >
@@ -235,13 +236,13 @@ export function DeclareForm({
               <label
                 key={option}
                 className={cn(
-                  "flex h-11 cursor-pointer flex-col items-center justify-center pointer-fine:h-9 px-1.5 text-xs leading-tight select-none md:px-2.5",
-                  // Focus: the ring at the edge, then a card-coloured gap before the fill, so it holds 3:1 on
-                  // every severity colour (the inset ring paints over the inset shadow).
-                  "has-focus-visible:shadow-[inset_0_0_0_5px_var(--color-card)] has-focus-visible:ring-3 has-focus-visible:ring-ring has-focus-visible:ring-inset",
+                  "flex h-full min-w-0 cursor-pointer flex-col items-center justify-center rounded-sm px-1.5 text-center text-xs leading-[1.1] select-none md:px-2.5",
+                  "transition-colors duration-(--brigade-duration-fast) ease-out",
+                  // Focus: the opaque ring around the segment, outside its fill, so it holds 3:1 on every colour.
+                  "has-focus-visible:ring-3 has-focus-visible:ring-ring",
                   selected
-                    ? cn(SEGMENT_TONES[option], "ring-2 ring-current ring-inset")
-                    : "text-muted-foreground hover:bg-muted",
+                    ? cn(SEGMENT_TONES[option], "shadow-raised ring-1 ring-current ring-inset")
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 )}
               >
                 <input
@@ -255,15 +256,8 @@ export function DeclareForm({
                   }}
                   className="sr-only"
                 />
-                <span className="flex items-center gap-0.5 font-bold">
-                  {/* Always there, so choosing a segment never changes its width. */}
-                  <CheckIcon
-                    aria-hidden
-                    className={cn("size-3 shrink-0", !selected && "invisible")}
-                  />
-                  {option.toUpperCase()}
-                </span>
-                <span className="whitespace-nowrap">{severityLabels[option]()}</span>
+                <span className="font-bold">{option.toUpperCase()}</span>
+                <span className="max-w-full truncate">{severityLabels[option]()}</span>
               </label>
             );
           })}

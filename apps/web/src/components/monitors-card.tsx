@@ -341,27 +341,30 @@ export function MonitorsCard() {
             ) : null}
           </div>
         </div>
-        <div className="flex h-6 items-center gap-2 text-sm whitespace-nowrap text-muted-foreground tabular-nums">
-          {status === "ready" ? (
-            rows.length > 0 ? (
-              <>
-                <span>{m.monitors_count({ count: rows.length })}</span>
-                <span aria-hidden>·</span>
-                <span>
-                  {m.monitor_cap({ part: "limit", count: "", max: formatNumber(cap, locale) })}
-                </span>
-                {down > 0 ? (
-                  <Badge variant="sev1">
-                    <OctagonAlertIcon aria-hidden />
-                    {m.monitors_down_count({ count: down })}
-                  </Badge>
-                ) : null}
-              </>
-            ) : null
-          ) : status === "error" ? null : (
-            <span aria-hidden className="block h-4 w-24 rounded-sm bg-muted" />
-          )}
-        </div>
+        {/* The summary line, held while the list loads; with nothing monitored it is left out, not left blank. */}
+        {status === "ready" && rows.length === 0 ? null : (
+          <div className="flex h-6 items-center gap-2 text-sm whitespace-nowrap text-muted-foreground tabular-nums">
+            {status === "ready" ? (
+              rows.length > 0 ? (
+                <>
+                  <span>{m.monitors_count({ count: rows.length })}</span>
+                  <span aria-hidden>·</span>
+                  <span>
+                    {m.monitor_cap({ part: "limit", count: "", max: formatNumber(cap, locale) })}
+                  </span>
+                  {down > 0 ? (
+                    <Badge variant="sev1">
+                      <OctagonAlertIcon aria-hidden />
+                      {m.monitors_down_count({ count: down })}
+                    </Badge>
+                  ) : null}
+                </>
+              ) : null
+            ) : status === "error" ? null : (
+              <span aria-hidden className="block h-4 w-24 rounded-sm bg-muted" />
+            )}
+          </div>
+        )}
       </div>
 
       <CardContent className="flex flex-col gap-5">

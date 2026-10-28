@@ -26,6 +26,10 @@ import { formatAge, nextStatuses, rememberOpened } from "@/lib/incidents";
 
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+/** The row's columns from `md`: number, title, severity, status. The incidents card names them with the same grid. */
+export const INCIDENT_COLUMNS =
+  "md:grid-cols-[--spacing(20)_minmax(0,1fr)_--spacing(40)_--spacing(40)]";
+
 /** A badge whose value the shard has not confirmed yet: a dashed outline marks which field is pending. */
 const UNSAVED = "rounded-sm outline-1 outline-offset-2 outline-current outline-dashed";
 
@@ -69,7 +73,8 @@ export function IncidentItem({
       data-incident={row.id}
       className={cn(
         "relative scroll-mt-4 outline-none focus-visible:ring-3 focus-visible:ring-ring focus-visible:ring-inset grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 px-4 py-3 sm:px-6",
-        "md:grid-cols-[--spacing(20)_minmax(0,1fr)_--spacing(40)_--spacing(40)] md:items-start",
+        INCIDENT_COLUMNS,
+        "md:items-start",
         row.severity === "sev1" &&
           "before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-sev1",
       )}

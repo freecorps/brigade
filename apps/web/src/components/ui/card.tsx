@@ -30,11 +30,18 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
+/**
+ * As tall as the buttons that sit beside it (44px on touch, 36px under a fine pointer), so a card's description
+ * starts at the same height whether or not its header has an action.
+ */
 function CardTitle({ className, ...props }: React.ComponentProps<"h2">) {
   return (
     <h2
       data-slot="card-title"
-      className={cn("text-base font-semibold text-card-foreground", className)}
+      className={cn(
+        "py-2.5 text-base font-semibold text-card-foreground pointer-fine:py-1.5",
+        className,
+      )}
       {...props}
     />
   );

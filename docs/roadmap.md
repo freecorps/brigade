@@ -117,8 +117,13 @@ Validate the risky assumptions before writing product code. Each spike produces 
     Worker; repairing a workspace whose shard was never provisioned because the Worker died between the D1 write and
     the RPC, or whose undo failed, and a shard that committed `workspace.create` before its RPC failed and was undone
     (it would announce a workspace D1 no longer has: tombstone it with a compensating event); an admin route to
-    revoke another user's sessions (the session hook already closes their sockets once it exists); and whether
-    sign-in should require a verified address where email is set up (Q21).
+    revoke another user's sessions (the session hook already closes their sockets once it exists).
+  - Done: sign-up locked per environment and closed by default (`SIGNUP`: `open`, `invite`, `closed`; `dev` open;
+    an invitation still creates its account), and the first owner from `vp run setup:first-user` with a one-time
+    `BOOTSTRAP_TOKEN` (RFC 0002 "Sign-up modes", "The first owner").
+  - Left (decided, Q21; RFC 0002 "Auth"): sign-up always closed on an instance without email; "require a verified
+    email before sign-in" as an instance
+    setting, off by default; a workspace locale set at sign-up and editable by owners (Q15, RFC 0008).
 - [ ] Monitors (HTTP/TCP/heartbeat) with quorum → alerts → incidents
   - Done: HTTP, TCP and heartbeat monitors as mutations in `packages/schema` (owners and admins manage, everyone reads),
     one `ProbeDO` per workspace and region with `locationHint` (only the six regions where objects spawn, S2), each
@@ -149,7 +154,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Left: whether "No data" pages (Q17); TLS expiry, which Workers cannot read (RFC 0007 "Check types": neither
     `fetch` nor the Sockets API exposes the peer certificate); paging, not only a notice, on a stalled probe (RFC 0007
     "Watching the watcher"); `AlertGroupDO`, which waits for alert volume (RFC 0007);
-    `apac-ne` and `apac-se` as further regions (S2); the workspace default locale for the incident title (Q15).
+    `apac-ne` and `apac-se` as further regions (S2); the incident title in the workspace locale (decided, Q15, RFC
+    0008).
 - [x] Incidents: declare, severity, status, roles, timeline, updates
   - Timeline as its own synced table written by every incident mutation (and the monitor recovery note), written
     updates, three incident roles checked against the shard's member list, and an incident page in the dashboard
@@ -168,7 +174,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     is done (Phase 3 item). Members who join by invitation are in the shard's member list from the moment they accept. The mobile incident screen is done (Mobile item).
 - [ ] Brigade Sync in production for web + mobile
   - Done so far: D1 `brigade-db` and `brigade-db-staging` exist with the migrations applied. Left: production and
-    staging queues, the first deploy, and the relay's production secrets.
+    staging queues, the first deploy, and the relay's production secrets. The hosted instance runs at
+    `brigade.freecorps.com.br` (RFC 0002 "Environments").
 - [x] Web dashboard: incident list/detail, monitors
   - The incident list, the incident page (`/incidents/<number>`), the Monitors card (create, edit, pause, delete;
     HTTP, TCP and heartbeat) and the Members card.
@@ -225,7 +232,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
     VoIP call pages on a real iPhone (sent since Phase 2, RFC 0010); `FCM_SERVICE_ACCOUNT` on the deployed relays
     (Android pages go out through FCM since the relay's FCM sender, RFC 0006); a lower-urgency push for another incident can still replace a
     page stored for an offline phone (the app re-syncing open pages is the fallback, RFC 0006 "Offline phones");
-    what is left of who is paged (Q18).
+    the "a page reached nobody" email to admins as well as owners, with no exception for whoever declared (decided,
+    Q18, RFC 0005 "Email"); one summary line instead of a "Couldn't page …" line each when more than 5 members of a
+    page have no device (decided, Q18, RFC 0006 "Who is paged"); the rest of Q18.
   - Done: "Page again" for a failed page (owners and admins, `incident.pageAgain`, a new page through the outbox, never
     the old event) and a lost SEV1 or SEV2 declaration paged again once on its own (RFC 0005 "Notifiers"); a
     lower-urgency push never replaces a page of the same incident (its own collapse id, and held back while the page
@@ -241,9 +250,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
     configured; reasons only to members); status changes are
     `brigade.status_changed` events. Local double: `scripts/dead-man-double.mjs` (RFC 0007 "Watching the watcher").
   - Left: deploying it (the `WatchdogDO` migration `v3` and the cron ship with the next API deploy) and setting
-    `DEAD_MAN_URL` on `brigade-api-dev` and later environments (owner's call, an account outside Cloudflare); proving
-    each shard's own drain, APNs and D1, telling someone inside Brigade when it degrades, and an instance-operator
-    role for `/health/paging`'s `external` (Q19).
+    `DEAD_MAN_URL` on `brigade-api-dev` and later environments (owner's call, an account outside Cloudflare).
+  - Left (decided, Q19; RFC 0007 "Watching the watcher"): a relay `GET /health?deep=1` that asks APNs and FCM for a
+    provider or access token (no push), checked by each heartbeat's proof; one D1 read per beat; an email to the
+    operators in `OPERATOR_EMAILS` on `brigade.status_changed`. Still open in Q19: each shard's own drain and an
+    instance-operator view of `/health/paging`'s `external`.
 - [x] i18n plumbing (en, pt-BR)
   - Paraglide messages in `packages/i18n` with `en` and `pt-BR` for every user-facing string on the dashboard and
     the mobile app, a language switch, and wording shared between them (RFC 0008).
@@ -268,7 +279,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Left: a policy per alert route (Phase 3); the mobile on-call
     view and "I'm on call" (the Mobile item); schedules on teams (Better Auth teams); layer
     restrictions (only some hours or days); a calendar view and export (iCal); telling someone their shift starts;
-    Q20.
+    shift swaps (later, Q20).
+  - Left (decided, Q20; RFC 0003 "Schedules"): emailing the owners when a removed member changes a rotation; a
+    dashboard warning for an empty schedule; at most 20 overrides not yet ended per member.
+  - Left (decided, Q18; RFC 0003 "Escalation policies", RFC 0006 "Who is paged"): an "escalate from severity" setting
+    per policy (default every severity); an optional policy picked when declaring by hand.
 - [ ] Slack app: `/inc`, incident channels, timeline mirror, ack buttons
   - Done (RFC 0011): the Slack Worker (`integrations/slack`, `brigade-slack-dev`) behind the dashboard's origin, every
     request verified (signing secret, 5-minute window, raw-body HMAC, constant-time check) and answered within 3 s
@@ -294,8 +309,10 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Done on `dev`: the Slack app created from the manifest, its secrets set, the Slack Worker deployed and bound to the
     dashboard, and a real Slack workspace connected. Tried there: `/inc declare` (the incident, its channel and the
     people invited), the Acknowledge button, `!update`, `/inc sev`, `/inc resolve` and the message shortcut.
-  - Left: the app and secrets for staging and production (owner's call, integrations/slack/README.md, Q22); App Home;
-    Enterprise Grid and distribution beyond one app per instance.
+  - Left: the app and secrets for staging and production (owner's call, integrations/slack/README.md; Freecorps
+    creates the hosted app, Q22); App Home; Enterprise Grid and distribution beyond one app per instance.
+  - Left (decided, Q22; RFC 0011): an incident channel for a severity raised to SEV1 or SEV2 after declaring; channel
+    messages in the workspace locale once it exists (Q15).
 - [ ] Email notifier; in-app VoIP call paging (RFC 0010); optional PSTN notifier (provider-agnostic)
   - Done: the email notifier (RFC 0005 "Email"): a provider-agnostic `EmailSender`, Cloudflare Email Sending through
     the `send_email` binding (every environment; the sender is the secret `EMAIL_FROM`, so no domain is in the repo),
@@ -309,9 +326,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
     reset and invitations (RFC 0005 "Email", "Abuse").
   - Left: onboarding a sending domain and setting `EMAIL_FROM` (and `DASHBOARD_URL`) per environment, and applying
     migrations 0003, 0004 and 0005 to the deployed databases (owner's call, apps/api/README.md "Email"); verification no
-    longer blocks it. Next on the same sender: an email to operators
-    when the paging pipeline degrades (Q19) and to owners when rotations change (Q20). The PSTN notifier is still to
-    come.
+    longer blocks it. Next on the same sender (decided): an email to operators
+    when the paging pipeline degrades (Q19) and to owners when rotations change (Q20). The PSTN notifier is deferred
+    (Q13).
+  - Left (decided, Q21; RFC 0005 "Abuse"): 5 invitation emails a day per invited address (was 3); a Brigade-wide
+    daily email ceiling before open sign-up on a shared instance.
   - Done since: the dashboard's switch for the two workspace settings (owners and admins); a per-member opt-out of
     the missed-page email (`member.setEmail`, dashboard and app), while the owners' "a page reached nobody" email stays
     on for owners as the fallback; the mobile app sending the user's language (RFC 0005 "Email", RFC 0008).
@@ -333,7 +352,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     reads it aloud and 1 acknowledges, and "Never" in Account → Calls leaves only the push.
   - Done since: Android calls: an FCM data message of `kind: "call"` that the app rings through its
     `ConnectionService`, following the member's choice like iOS (RFC 0010).
-  - Left: a per-phone choice of calls; Android calls tried on a real phone.
+  - Left: a per-phone choice of calls; Android calls tried on a real phone; the time-sensitive fallback notification
+    at once when CallKit ends a call on its own within 2 s of ringing (decided, Q14, RFC 0010).
 - [ ] Mobile: on-call view, "I'm on call" widget, critical/time-sensitive notification setup
   - Done: the on-call screen (shifts, overrides, who each schedule has now, covering a shift); pages are
     time-sensitive. The iOS "I'm on call" widget (home screen small, lock screen rectangular and inline): on call
@@ -354,8 +374,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     The incident page lists who was paged; `?why=<member>` explains it step by step (RFC 0006 "Delivery receipts").
   - Done since: call rows (RFC 0010), each up to accepted by APNs (a call has no receipt), shown apart from the page's.
   - Done since: receipts from Android, posted by its `FirebaseMessagingService` like the iOS extension.
-  - Left: "shown" and "opened by the person" stages;
-    escalating early when every push of a level is refused (Q18).
+  - Left: "shown" and "opened by the person" stages. A missing receipt never escalates early (decided, Q18).
   - Done since: the mobile app's own why-not-paged screen: "Who was paged" on the incident screen (the member's own
     first), each row opening the step-by-step explanation, call lines included, from the same `whyPaged` and the
     wording now shared in `@freecorps/brigade-i18n/why-paged`.
@@ -419,7 +438,10 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - `dev` has the `brigade-exports-dev` bucket (with its lifecycle rule) and the `AI` binding, so exports and "Draft
     with AI" work there.
   - Left: staging and production buckets and their `AI` bindings (owner's call); the mobile app's follow-ups and
-    postmortem; revision history (Q24); issue-tracker sync.
+    postmortem; issue-tracker sync.
+  - Left (decided, Q24; RFC 0013): the last 20 postmortem revisions with restore from the dashboard; owners turning
+    AI drafts off per workspace; the draft in the workspace locale (Q15); reminders stopping once a follow-up is 14
+    days overdue; a still-blank postmortem following its incident's new type.
 - [ ] Public status page with email subscriptions
   - Done (RFC 0012): one page per workspace with a name, an address (`/status/<slug>`, unique across the instance,
     claimed in D1) and a language (en, pt-BR), public or a draft; components in optional groups with a status set by
@@ -453,8 +475,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
     subscriber whose components are all gone hears of everything; per-component counts on the dashboard and a
     `follows` column in the CSV.
   - Left: staging's and production's KV namespaces (`dev` binds `brigade-status-dev`), applying migrations 0008 to 0010 and
-    0013 to staging's and production's databases, and 0013 to `dev`'s (owner's call, apps/api README "Status page"); custom domains;
-    the mobile app's publish and maintenance actions; Q23.
+    0013 to staging's and production's databases, and 0013 to `dev`'s (owner's call, apps/api README "Status page");
+    the mobile app's publish and maintenance actions; the rest of Q23 (uptime choices, the large-provider list).
+  - Left (decided, Q23; RFC 0012): custom domains (Cloudflare for SaaS custom hostnames), configurable from the setup
+    script; "this page may be out of date" past 48 hours; a per-IP rate limit on `/status/*` misses; a draft's slug
+    claimed only when the page first goes public; maintenance that marks a component down (planned outage).
 - [ ] Outbound webhooks; OpenAPI reference; `packages/sdk` published
   - Done: outbound webhooks (RFC 0005 "Outbound webhooks"): owners and admins register up to 20 endpoints per
     workspace on the dashboard's Webhooks card (URL, description, event filter from the public catalog, on and off),
@@ -500,14 +525,16 @@ Validate the risky assumptions before writing product code. Each spike produces 
     (`status:manage`), making and downloading exports (`data:export`) and AI postmortem drafts (`incident:update`),
     each as the creator's current role, re-checked in the shard (RFC 0014 "Using one").
   - Left: GitHub secret scanning partner registration for `brg_` (owner); setting `API_TOKEN_KEY` on deployed
-    environments (owner); tokens on the status page's subscriber list (the public's addresses: a person's call).
+    environments (owner); tokens on the status page's subscriber list (the public's addresses: a person's call); the
+    token list synced to owners and admins only (decided, Q25, RFC 0014).
 
 ## Phase 4 — Open source launch (ongoing)
 
 - [ ] One-command self-host deploy + setup wizard (Slack manifest, relay registration)
-  - [x] Sign-up closed by default per environment (`SIGNUP`: `open`, `invite`, `closed`; `dev` open) and the first
-        owner from `vp run setup:first-user` with a one-time `BOOTSTRAP_TOKEN` (RFC 0002 "Sign-up modes", "The first
-        owner")
+  - [x] Sign-up closed by default per environment and the first owner from `vp run setup:first-user` with a
+        one-time `BOOTSTRAP_TOKEN` (RFC 0002 "Sign-up modes", "The first owner")
+  - Left (decided, Q23; RFC 0002 "Environments"): the setup wizard calling it, creating the `STATUS` KV namespace;
+    optional custom domains for status pages.
 - [ ] Hosted push relay with terms of service
 - [ ] App Store / Play Store release (after CLA is in place)
 - [ ] Public site + docs (en, pt-BR); contribution guide; community translations

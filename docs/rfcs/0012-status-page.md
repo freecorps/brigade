@@ -66,8 +66,7 @@ Visitor ──GET /status/:slug[/feed.atom|/feed.json]──▶ web Worker (forw
 - **The timeline** gets a `status_published` entry (status and text) in the same transaction, so the team sees what
   the public was told and by whom; the event is `incident.update_published`.
 - **Who** (`status:publish`): owners, admins and responders. Whoever runs an incident tells the public about it,
-  as they already post updates; an organisation that wants only the communications role to publish can ask for it
-  later (role definitions, Phase 3). Viewers read.
+  as they already post updates (decided, Q23: responders keep publishing). Viewers read.
 - **The page must be set up** (enabled or not): publishing to a draft lets a team prepare before going public.
 
 ## Corrections
@@ -152,8 +151,12 @@ the same kind of decision as what monitors watch, so it is an admin's call.
   workspace already holds rewrites it), and a release deletes only a row stamped no later than the claim it undoes,
   or stamped before the slug was given up (strictly: a claim in the same millisecond is a claim made since). A release that lands late, after the slug was taken back, finds
   a newer stamp and leaves it. So `configure` never waits on a push, and a push stuck on KV never holds it.
-- **Custom domains are later**: a domain would map to a slug (Cloudflare for SaaS custom hostnames) and the same
-  route would serve it.
+- **Claimed when it first goes public (decided, Q23; to build).** Today saving a slug claims it, drafts included, so
+  a `slug_taken` tells any workspace admin which addresses are in use. A draft's slug will be claimed only when the
+  page is first made public; until then it is kept on the page alone, and a taken slug is refused at that point.
+- **Custom domains (decided, Q23; to build)**: a domain maps to a slug through Cloudflare for SaaS custom hostnames,
+  and the same route serves it. The self-host setup script can configure them, so an operator sets up a page's
+  domain without opening Cloudflare's dashboard.
 
 ## The snapshot
 
@@ -205,7 +208,8 @@ reader skips fields it does not check, so they need no new version ("Feeds").
   so a visitor can tell how fresh it is; while KV or the shard is down, visitors keep reading the last snapshot,
   which is the honest answer (the last thing the team said). Without a `STATUS` binding nothing is pushed and every
   address answers 404, while the dashboard still sets the page up; adding the binding later publishes on the next
-  change. Q23 asks whether the page should also say when its snapshot is older than a threshold.
+  change. Decided (Q23), to build: past 48 hours the page also says "this page may be out of date", since a page
+  that is rebuilt daily and is older than that means the shard or KV is stuck.
 
 ## The public page
 
@@ -226,8 +230,9 @@ reader skips fields it does not check, so they need no new version ("Feeds").
 - **Caching and abuse.** The response is kept in the edge cache (the Cache API, keyed by slug alone, so headers and
   hosts never split it; a no-op on workers.dev) and the KV read uses `cacheTtl: 30`, so a busy page costs about one
   KV read per location every 30 s, and a flood of made-up addresses one cached 404 per address. Nothing on the read
-  path touches D1 or a shard, so there is nothing per request to rate-limit; a rate limit and Cloudflare's own DDoS
-  protection on the custom hostname are for the custom-domain slice. Subscribing is the one write a visitor makes, and
+  path touches D1 or a shard, so there is nothing per request to rate-limit. Decided (Q23), to build: a rate limit per
+  IP on `/status/*` misses (the Workers rate limiting binding), so a flood of distinct addresses is bounded before
+  custom hostnames bring Cloudflare's own protection. Subscribing is the one write a visitor makes, and
   it is rate-limited before it touches either ("Email subscriptions").
 
 ## Local times
@@ -243,7 +248,7 @@ reader skips fields it does not check, so they need no new version ("Feeds").
   library, nothing read but the page and nothing sent anywhere, so the cached document stays the same for everyone.
 - **Allowed by its hash, nothing else.** The Content-Security-Policy lists the script's SHA-256 (`script-src
   'sha256-…'`, `LOCAL_TIMES_SCRIPT_HASH`, tested against the script), not `'unsafe-inline'`: a script injected through
-  a published text, were escaping ever to fail, still would not run. The uptime bars' days stay UTC days, which is
+  a published text, were escaping ever to fail, still would not run. Keeping the script is decided (Q23). The uptime bars' days stay UTC days, which is
   how they are counted.
 
 ## Feeds
@@ -265,7 +270,7 @@ reader skips fields it does not check, so they need no new version ("Feeds").
   change): one written before them dates an incident by its newest update and a window by the earlier of its start
   and the snapshot's build.
 - **Headers**: the page's caching (`max-age=30`, the edge cache keyed by slug, format and origin),
-  `Access-Control-Allow-Origin: *` (it is public, and a widget on another site may read it), `nosniff`. Addresses in
+  `Access-Control-Allow-Origin: *` (it is public, and a widget on another site may read it; decided, Q23), `nosniff`. Addresses in
   a feed are absolute, from `DASHBOARD_URL` (the page's origin), else the request's.
 
 ## Uptime
@@ -306,7 +311,8 @@ reader skips fields it does not check, so they need no new version ("Feeds").
 - **On the page**: windows under way first (with the component chip "Under maintenance"), upcoming ones after the
   components, at most 10, soonest first, in UTC (the visitor's zone with script, "Local times"). A component under maintenance shows it only while nothing worse (an
   incident, its own status) does, and the banner says "Scheduled maintenance in progress" when everything else is
-  operational. The page's overall status is unchanged: maintenance is not an outage.
+  operational. The page's overall status is unchanged: maintenance is not an outage. Decided (Q23), to build: a
+  window may say it takes a component down (a planned outage), shown as down for its components while it runs.
 - **The dashboard's Scheduled maintenance card** lists open and recent windows with their times in the viewer's time
   zone, and plans, edits, ends and calls them off (asking first).
 
@@ -356,7 +362,7 @@ Visitors subscribe on the page to hear of incidents and maintenance by email, in
   (`STATUS_SUBSCRIBERS_MAX`) and, apart from them, 200 pending (`STATUS_PENDING_MAX`). A pending subscriber is
   deleted once its link has expired, 48 hours after it was last asked for, by the API's cron once an hour
   (`sweepSubscribers`, each with its `expired` event), which also drops the daily counts of days gone. Nothing but
-  that one confirmation ever goes to an unconfirmed address. Q21 and Q23 have the numbers.
+  that one confirmation ever goes to an unconfirmed address. These numbers stay as they are (decided, Q23).
 - **Double opt-in.** The confirmation email links `/status/:slug/confirm?t=…`, signed (HMAC-SHA256 under a key
   derived from `BETTER_AUTH_SECRET`; the token carries the kind, workspace, subscriber and expiry) and valid until 48
   hours after the subscribe it answers, when the row is swept. The sweep deletes only rows still as it read them
@@ -474,7 +480,7 @@ email notifier acts on `incident.update_published`, the maintenance events, `sta
 
 ## Not yet
 
-- Custom domains, embedding, pruning history past 90 days, showing who published (choice per page), maintenance and subscriber
+- Custom domains (decided, above), embedding, pruning history past 90 days, showing who published (choice per page), maintenance and subscriber
   events in the webhook catalog, the mobile app's publish and maintenance actions.
 - KV namespaces for staging and production: `STATUS` is bound for local runs and the tests and, in `dev`, to
-  `brigade-status-dev` (apps/api README "Status page").
+  `brigade-status-dev` (apps/api README "Status page"). Self-host setup creates it (decided, Q23; to build).

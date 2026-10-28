@@ -272,7 +272,7 @@ or dependencies should not share the API's.
 - **Delivery receipts.** Each page records a row per device, from planned to accepted by APNs, and the phone reports
   when it opened it (RFC 0006 "Delivery receipts"); the dashboard explains from them why someone was or was not
   paged. None of it is in a page's way: recording fails open. A level whose pushes all fail escalates to the next
-  level of its round at once (RFC 0006 "Who is paged"; what else should count is Q18). Outside the incident, a failed page reaches people by email
+  level of its round at once (RFC 0006 "Who is paged"; a missing receipt never counts, decided in Q18). Outside the incident, a failed page reaches people by email
   (below).
 
 ## Email
@@ -300,7 +300,8 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
     page was the last of a run that ended (everyone who can respond). A level that missed everyone is not it: the
     next level fires. Neither is a dead-lettered page (paged again on its own event), a stalled level (everyone is
     paged after it) or a page only its declarer could answer. Owners come from D1, so one who never opened Brigade
-    is told too; at most 50. Once per page.
+    is told too; at most 50. Once per page. **Decided (Q18), to build:** it goes to the owners and the admins, with
+    no exception for whoever declared the incident.
   - Neither once the incident is acknowledged or no longer active, or when the workspace turned it off. The
     member's email neither when they turned it off themselves (below).
 - **Workspace settings.** `workspace.setEmail` (`workspace:manage`: owners and admins) sets both on or off; both are
@@ -362,12 +363,14 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   Invitations are the one email to an address nobody proved, so they have their own bounds (RFC 0003
   "Invitations"): only a verified member may invite; per workspace, 30 invitation emails a day, 50 pending and one
   send per invitation per 5 minutes; and across every workspace, counted in D1, 3 a day to one address (its `+tags` counted as one), 50 a day
-  from one inviter and 5 per invitation ever, so many workspaces cannot add up to flood one inbox. The verification
+  from one inviter and 5 per invitation ever (5 a day per address decided, Q21; to build), so many workspaces cannot add up to flood one inbox. The verification
   email goes only to one's own address and never carries the name typed at sign-up: at most 3 per user in 15
   minutes and 5 a day. The password reset email goes to an address that has an account (the same answer either
   way) and carries no name: at most 3 per address and IP an hour and 10 per address a day, counted for any address, and 3 per IP a
   minute. An address someone else signed up with and never verified stays taken until its owner resets the
-  password, which takes the account back (RFC 0002 "Auth"). Whether these caps are right in production is Q21's.
+  password, which takes the account back (RFC 0002 "Auth"). **Decided (Q21):** these caps stay as they are, except
+  invitations per address (5 a day). To build: a Brigade-wide daily ceiling on email, below the sender's own quota
+  (Cloudflare Email Sending answers `E_RATE_LIMIT_EXCEEDED` past it), before open sign-up on a shared instance.
 - **Push first.** Email only acts on failures push already recorded, so it can never delay or stop a page. The
   consumer handles a batch's messages in parallel and acks each on its own: a page in the same batch as an email
   goes to the relay without waiting for it (tested). Every wait on the email side is bounded (10 s a send, 5 s the
@@ -382,8 +385,9 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   an address nobody proved, counted per inbox (`+tag` dropped, and Gmail's dots): at most 3 per inbox and page while it
   is pending, 5 per inbox and 200 per recipient domain a day across pages, and 200 a day per page, apart from the
   page's notifications.
-- **Not yet.** No email to Brigade's operators when the paging pipeline degrades (Q19), to owners when a rotation
-  changes (Q20); each can build on the `EmailSender`.
+- **Not yet (decided, to build).** An email to Brigade's operators (`OPERATOR_EMAILS`) on `brigade.status_changed`
+  (Q19, RFC 0007 "Watching the watcher") and to owners when a removed member changes a rotation (Q20, RFC 0003
+  "Schedules"); both build on the `EmailSender`.
 
 ## Alert sources
 

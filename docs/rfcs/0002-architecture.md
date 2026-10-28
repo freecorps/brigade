@@ -241,7 +241,13 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     account (`SIGN_UP_NOTICE_LIMIT`), after the response. What it does not close: whoever signs up with a free
     address and then signs in learns it was free, and holds an unverified account at it until its owner takes it back
     with a password reset (below); requiring verification before sign-in would close that, at the cost of instances
-    without email (Q21).
+    without email (an instance setting, decided below).
+  - **Sign-up and the first user (decided, Q21).** Sign-up is locked per environment and **closed by default**
+    (self-host first), and the setup script creates the first user; both are built, below. Still to build: an
+    instance without email always has closed sign-up, since nobody there could verify or reset (today only the
+    default keeps it closed); the hosted instance opens it once a Brigade-wide daily email ceiling is in place (RFC
+    0005 "Abuse"); "Require a verified email before sign-in" is an instance setting, off by default; on an instance
+    with email it closes the "learns the address was free" gap above.
   - **Sign-up modes (built):** who may create an account is the API Worker's `SIGNUP` variable (`src/sign-up.ts`):
     `open` (anyone; the `dev` environment, local runs and the tests), `invite` or `closed`. Unset or misspelled is
     `closed`, so production and staging, and every self-hosted instance that sets nothing, start closed (Q21: no
@@ -401,7 +407,8 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     `monitor.paused` with any firing alert resolved, and `monitor.heartbeat_revoked`, whose hash becomes random
     bytes nobody holds a token for), revokes every alert source URL the same way (`alertSource.takeOver`,
     `alert_source.revoked`; RFC 0005 "Alert sources") and disables the alert routes the account created
-    (`disabled: "takeover"`, `alert_route.updated` with `reason: takeover`, until someone saves them), and the dashboard
+    (`disabled: "takeover"`, `alert_route.updated` with `reason: takeover`, until someone saves them), disconnects a
+    Slack connection the account made (decided, Q21; to build: as Disconnect, the bot token given back), and the dashboard
     tells the owner once which workspaces came with the account and what was paused or disabled, or that a shard could
     not be reached (`takeover_notice` in D1,
     `GET`/`DELETE /account/takeover`, en and pt-BR; two resets at once merge into one notice). The owner resumes what they
@@ -428,8 +435,11 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
 - `dev` — local (`vp dev`, Miniflare for DOs), and a deployable `brigade-<app>-dev` Workers environment for shared
   testing.
 - `staging` — the `brigade-<app>-staging` Workers environment.
-- `production` — the top-level (unsuffixed) Wrangler config, deployed only with owner approval.
+- `production` — the top-level (unsuffixed) Wrangler config, deployed only with owner approval. The hosted instance
+  runs at `brigade.freecorps.com.br`.
 - With the Cloudflare Vite plugin the environment is picked at build time (`CLOUDFLARE_ENV=staging vp build`);
   `wrangler deploy` then deploys what was built and takes no `--env`.
 - The mobile app points at staging or production via build profile.
 - Self-hosted — one Cloudflare account, one `deploy` command, guided setup (Slack app manifest, relay registration).
+  To build (Q21, Q23): the setup script also runs `vp run setup:first-user` (built, "The first owner"; sign-up stays
+  closed), creates the `STATUS` KV namespace, and optionally custom domains for status pages (RFC 0012 "Addresses").

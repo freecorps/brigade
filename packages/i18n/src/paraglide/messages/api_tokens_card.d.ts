@@ -12,7 +12,7 @@ export type Api_Tokens_CardInputs = {
 * | "title" | "API tokens" |
 * | "description" | "Let scripts and integrations call Brigade's API for this workspace. A token acts with your role, never beyond the scopes you give it." |
 * | "add" | "Create token" |
-* | "manage_only" | "Only owners and admins can create and revoke API tokens." |
+* | "manage_only" | "Only owners and admins can see and manage API tokens." |
 * | "empty" | "No tokens yet. Create one for a script, a CI job or an integration." |
 * | "load_failed" | "Couldn't load the API tokens." |
 * | "retry" | "Try again" |

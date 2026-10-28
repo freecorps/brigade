@@ -265,6 +265,74 @@ describe("a postmortem takes its template", () => {
     ).toMatchObject({ ok: true });
   });
 
+  test("a postmortem nobody wrote in follows its incident's new type; one with text keeps its sections", () => {
+    const store = shard();
+    run(store, "postmortemTemplate.set", { id: TYP, sections: payments });
+    run(store, "postmortemTemplate.set", { id: TYP2, sections: fallback });
+    run(store, "incident.setType", { id: INC, typeId: TYP });
+    // A draft that failed made the row: still blank, so it follows the type.
+    server(store, "postmortem.requestDraft", { id: INC, requestId: DRF }, responder);
+    server(
+      store,
+      "postmortem.failDraft",
+      { id: INC, requestId: DRF, reason: "failed" },
+      { actor: AI_ACTOR, now: T, server: true },
+    );
+    expect(store.get("postmortems", INC)).toMatchObject({ revision: 0, layout: payments });
+    const later = ctx("usr_ana", "owner", T + 1000);
+    expect(run(store, "incident.setType", { id: INC, typeId: TYP2 }, later)).toMatchObject({
+      ok: true,
+    });
+    expect(store.get("postmortems", INC)).toMatchObject({
+      layout: fallback,
+      sections: { summary: "", followUps: "" },
+      updatedAt: T + 1000,
+    });
+    // An editor opened on the old sections is refused as a conflict and offered the new ones.
+    expect(save(store, { summary: "Down.", custom1: "", rootCause: "" })).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    // No type: the built-in sections.
+    run(store, "incident.setType", { id: INC, typeId: null });
+    expect(store.get("postmortems", INC)).toMatchObject({ layout: null });
+    run(store, "incident.setType", { id: INC, typeId: TYP });
+    // Starter text alone is still blank.
+    const starter = { summary: "Customer-facing:\nInternal:", custom1: "", rootCause: "" };
+    store.update("postmortems", INC, { sections: starter });
+    run(store, "incident.setType", { id: INC, typeId: TYP2 });
+    expect(store.get("postmortems", INC)).toMatchObject({ layout: fallback });
+    // Once a member wrote in it, it keeps its sections.
+    const written = store.get("postmortems", INC)!;
+    expect(
+      save(
+        store,
+        { summary: "Down.", followUps: "" },
+        {
+          baseRevision: written.revision,
+          baseUpdatedAt: written.updatedAt,
+        },
+      ),
+    ).toMatchObject({ ok: true });
+    run(store, "incident.setType", { id: INC, typeId: TYP });
+    expect(store.get("postmortems", INC)).toMatchObject({
+      layout: fallback,
+      sections: { summary: "Down.", followUps: "" },
+    });
+    // Emptied again, it still keeps its sections: its kept revisions hold "Down." under them.
+    const kept = store.get("postmortems", INC)!;
+    expect(
+      save(
+        store,
+        { summary: "", followUps: "" },
+        { baseRevision: kept.revision, baseUpdatedAt: kept.updatedAt },
+      ),
+    ).toMatchObject({ ok: true });
+    // (No type: the built-in sections, which it would follow if it had never been saved.)
+    run(store, "incident.setType", { id: INC, typeId: null });
+    expect(store.get("postmortems", INC)).toMatchObject({ layout: fallback });
+  });
+
   test("a section and the whole document have caps", () => {
     const store = shard();
     const all = [

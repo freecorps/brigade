@@ -10,6 +10,7 @@ import {
   mutations,
   nextReminderAt,
   REMINDER_HOUR,
+  REMINDER_OVERDUE_DAYS,
   REMINDERS_PER_RUN,
   remindersDue,
   runMutation,
@@ -226,6 +227,27 @@ describe("reminders of follow-ups due", () => {
         { actor: ana, now: at, server: true },
       ),
     ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+  });
+
+  test(`stops once a follow-up is ${REMINDER_OVERDUE_DAYS} days overdue`, () => {
+    const store = shard();
+    // 2026-10-13 is 14 days overdue on the 27th: left out. 2026-10-14 is 13 days overdue: its last reminder.
+    addFollowUp(store, 1, caio.id, "2026-10-13");
+    const at = T + HOUR;
+    expect(remindersDue(store, at)).toEqual([]);
+    expect(nextReminderAt(store, at)).toBeNull();
+    expect(
+      server(store, "followUp.remind", { userId: caio.id, date: "2026-10-27" }, at),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    addFollowUp(store, 2, caio.id, "2026-10-14");
+    expect(remindersDue(store, at)).toEqual([{ userId: caio.id, date: "2026-10-27" }]);
+    expect(
+      server(store, "followUp.remind", { userId: caio.id, date: "2026-10-27" }, at),
+    ).toMatchObject({ ok: true, events: [{ data: { count: 1 } }] });
+    // The next day it is 14 days overdue too: nothing is reminded until a later due date comes.
+    expect(nextReminderAt(store, at)).toBeNull();
+    addFollowUp(store, 3, caio.id, "2026-11-02");
+    expect(nextReminderAt(store, at)).toBe(Date.UTC(2026, 10, 2, REMINDER_HOUR));
   });
 
   test("a time zone the runtime no longer knows falls back on UTC", () => {

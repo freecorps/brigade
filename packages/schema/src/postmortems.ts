@@ -23,6 +23,7 @@ import { defineQuery } from "./query.ts";
 import type {
   IncidentRow,
   PostmortemDraftFailure,
+  PostmortemRevisionRow,
   PostmortemRow,
   PostmortemSections,
   PostmortemTemplateRow,
@@ -30,6 +31,7 @@ import type {
 } from "./tables.ts";
 import { appendTimeline } from "./timeline.ts";
 import { v, type Issue } from "./validate.ts";
+import { aiDraftsEnabled } from "./workspaces.ts";
 
 export const POSTMORTEM_SECTIONS = [
   "summary",
@@ -67,6 +69,8 @@ export const TEMPLATE_HINT_MAX = 300;
 export const TEMPLATE_STARTER_MAX = 1000;
 /** The workspace's own template, for incidents with no type or a type without one. */
 export const DEFAULT_TEMPLATE_ID = "default";
+/** Revisions of each postmortem the shard keeps (decided, Q24); the oldest is dropped when another is written. */
+export const POSTMORTEM_REVISIONS_KEPT = 20;
 /** AI drafts a workspace may ask for in any 24 hours. */
 export const AI_DRAFTS_PER_DAY = 20;
 export const AI_DRAFT_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -137,6 +141,41 @@ export function isBlankPostmortem(row: Pick<PostmortemRow, "sections"> | undefin
 }
 
 /**
+ * Whether nobody wrote in it beyond its template: every section of its layout empty or still its starter text (RFC
+ * 0013 "Templates"). Such a postmortem follows its incident's new type (`incident.setType`); one with text keeps its
+ * sections.
+ */
+export function isUnwrittenPostmortem(row: Pick<PostmortemRow, "sections" | "layout">): boolean {
+  return (row.layout ?? BUILTIN_LAYOUT).every(
+    ({ key, starter }) => !row.sections[key] || row.sections[key] === starter,
+  );
+}
+
+/**
+ * Lays a postmortem nobody wrote in yet out again on the template of incidents of type `typeId` (decided, Q24), as
+ * `incident.setType` changes it. Not while an AI draft is being written: the model was given the sections it had.
+ * Not once anything was saved in it either (`revision > 0`), even if it was emptied since: its kept revisions hold
+ * text under the old sections, which a restore would drop.
+ * Its `updatedAt` moves, so an editor opened on the old sections is refused (`conflict`) and offered the new ones.
+ */
+export function followNewType(
+  store: MutationStore,
+  incidentId: string,
+  typeId: string | null,
+  now: number,
+): void {
+  const row = store.get("postmortems", incidentId);
+  if (!row || row.revision > 0 || !isUnwrittenPostmortem(row) || draftRunning(row, now)) return;
+  const template = templateFor((id) => store.get("postmortem_templates", id), typeId);
+  if (JSON.stringify(template ?? null) === JSON.stringify(row.layout ?? null)) return;
+  store.update("postmortems", row.id, {
+    layout: template,
+    sections: emptySections(template ?? BUILTIN_LAYOUT),
+    updatedAt: now,
+  });
+}
+
+/**
  * The template for incidents of type `typeId` (null: none): the type's, else the workspace's default; null when
  * neither exists, meaning the built-in sections. `get` reads `postmortem_templates` by id.
  */
@@ -189,6 +228,55 @@ export function canDraftPostmortem(row: PostmortemRow | undefined): boolean {
   return isBlankPostmortem(row) || row?.ai != null;
 }
 
+const revisionId = (incidentId: string, revision: number) => `${incidentId}:${revision}`;
+
+/**
+ * Keeps the revision `row` now holds in `postmortem_revisions` and drops the one `POSTMORTEM_REVISIONS_KEPT` before
+ * it. Revisions go up by one per write, so that is always the oldest kept: one read, no scan.
+ */
+function keepRevision(store: MutationStore, row: PostmortemRow, savedBy: string, ai: boolean) {
+  store.insert("postmortem_revisions", {
+    id: revisionId(row.id, row.revision),
+    incidentId: row.id,
+    revision: row.revision,
+    sections: { ...row.sections },
+    savedAt: row.updatedAt,
+    savedBy,
+    ai,
+  });
+  const oldest = revisionId(row.id, row.revision - POSTMORTEM_REVISIONS_KEPT);
+  if (store.get("postmortem_revisions", oldest)) store.delete("postmortem_revisions", oldest);
+}
+
+/** The revisions kept of the incident's postmortem, newest first (at most `POSTMORTEM_REVISIONS_KEPT` reads). */
+export function postmortemRevisions(
+  store: Pick<MutationStore, "get">,
+  incidentId: string,
+): PostmortemRevisionRow[] {
+  const latest = store.get("postmortems", incidentId)?.revision ?? 0;
+  const kept: PostmortemRevisionRow[] = [];
+  for (
+    let revision = latest;
+    revision > 0 && revision > latest - POSTMORTEM_REVISIONS_KEPT;
+    revision--
+  ) {
+    const row = store.get("postmortem_revisions", revisionId(incidentId, revision));
+    if (row) kept.push(row);
+  }
+  return kept;
+}
+
+/**
+ * A kept revision's text laid over `layout`, the postmortem's sections now: what restoring it saves. A section the
+ * revision did not have is empty.
+ */
+export function restoredSections(
+  revision: Pick<PostmortemRevisionRow, "sections">,
+  layout: readonly PostmortemTemplateSection[],
+): PostmortemSections {
+  return Object.fromEntries(layout.map(({ key }) => [key, revision.sections[key] ?? ""]));
+}
+
 // ---- Validation ---------------------------------------------------------------------------------------------------
 
 const section = v.omittable(
@@ -214,7 +302,9 @@ const requestId = v.id("drf");
 
 /**
  * Saves the whole document over `baseRevision` and `baseUpdatedAt`, the revision the editor opened and when the server
- * wrote it (0 and 0: none yet). Saving clears the AI marker: a member who saves has read it.
+ * wrote it (0 and 0: none yet). Saving clears the AI marker: a member who saves has read it. Each save is kept as a
+ * revision (`postmortem_revisions`, the last `POSTMORTEM_REVISIONS_KEPT`); restoring one from the dashboard is a save
+ * of its text, with the same check.
  */
 export const savePostmortem = defineMutation({
   name: "postmortem.save",
@@ -242,7 +332,8 @@ export const savePostmortem = defineMutation({
       : templateFor((id) => store.get("postmortem_templates", id), incident.typeId);
     const layout = row ? (row.layout ?? BUILTIN_LAYOUT) : (template ?? BUILTIN_LAYOUT);
     if (!fitsLayout(sections, layout)) {
-      return row
+      // A postmortem nobody wrote in may have followed a new type since the editor opened.
+      return row && !isUnwrittenPostmortem(row)
         ? fail("invalid_args", "Expected the postmortem's own sections", [
             { path: "sections", message: "Expected the postmortem's own sections" },
           ])
@@ -273,6 +364,7 @@ export const savePostmortem = defineMutation({
         updatedBy: ctx.actor.id,
       });
     }
+    keepRevision(store, store.get("postmortems", args.id)!, ctx.actor.id, false);
     // The first save starts it on the timeline; later saves are edits of a document, not incident changes.
     if (isBlankPostmortem(row)) {
       appendTimeline(store, incident, { kind: "postmortem", change: "started" }, ctx);
@@ -287,8 +379,8 @@ export const savePostmortem = defineMutation({
 });
 
 /**
- * Server only (`WorkspaceDO.requestPostmortemDraft`, as the member who asked): marks a draft as pending. Refused while
- * one runs (`conflict`), over a member's own text (`conflict`), and past `AI_DRAFTS_PER_DAY` (`limit_reached`), counted
+ * Server only (`WorkspaceDO.requestPostmortemDraft`, as the member who asked): marks a draft as pending. Refused when
+ * an owner turned AI drafts off for the workspace (`forbidden`), while one runs (`conflict`), over a member's own text (`conflict`), and past `AI_DRAFTS_PER_DAY` (`limit_reached`), counted
  * in the server-only `ai_drafts` ledger.
  */
 export const requestPostmortemDraft = defineMutation({
@@ -298,6 +390,9 @@ export const requestPostmortemDraft = defineMutation({
   apply(store, args, ctx) {
     const incident = store.get("incidents", args.id);
     if (!incident) return fail("not_found", "Incident not found");
+    if (!aiDraftsEnabled(store.scan("workspace")[0])) {
+      return fail("forbidden", "AI drafts are off for this workspace");
+    }
     const row = store.get("postmortems", args.id);
     if (draftRunning(row, ctx.now)) return fail("conflict", "A draft is already being written");
     if (!canDraftPostmortem(row)) {
@@ -397,6 +492,7 @@ export const writePostmortemDraft = defineMutation({
       updatedAt: ctx.now,
       updatedBy: ctx.actor.id,
     });
+    keepRevision(store, store.get("postmortems", args.id)!, draft.requestedBy, true);
     appendTimeline(store, incident, { kind: "postmortem", change: "ai_drafted" }, ctx);
     const event: PostmortemDrafted = {
       type: "postmortem.drafted",

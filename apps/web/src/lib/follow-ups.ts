@@ -3,7 +3,13 @@
 // from `fetch`; tested in test/follow-ups.test.tsx.
 import { m } from "@freecorps/brigade-i18n";
 import { formatDateTime, type Locale } from "@freecorps/brigade-i18n";
-import { isFieldLink, newId, type ExportScope, type StatusLocale } from "@freecorps/brigade-schema";
+import {
+  isFieldLink,
+  newId,
+  type ExportScope,
+  type PostmortemSections,
+  type StatusLocale,
+} from "@freecorps/brigade-schema";
 import { useEffect, useState } from "react";
 
 const random = (length: number) => crypto.getRandomValues(new Uint8Array(length));
@@ -138,6 +144,34 @@ export async function requestDraft(
       },
     );
     return response.ok ? { ok: true } : { ok: false, error: await errorCode(response) };
+  } catch {
+    return { ok: false, error: "network" };
+  }
+}
+
+/** One kept revision of a postmortem, as `GET …/postmortem/revisions` answers it (RFC 0013 "Revision history"). */
+export type PostmortemRevision = {
+  revision: number;
+  sections: PostmortemSections;
+  savedAt: number;
+  savedBy: string;
+  ai: boolean;
+};
+
+/** `GET /api/workspaces/:id/incidents/:incidentId/postmortem/revisions`: the kept revisions, newest first. */
+export async function loadRevisions(
+  workspaceId: string,
+  incidentId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<{ ok: true; revisions: PostmortemRevision[] } | { ok: false; error: string }> {
+  try {
+    const response = await fetcher(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/incidents/${encodeURIComponent(incidentId)}/postmortem/revisions`,
+      { headers: { Accept: "application/json" } },
+    );
+    if (!response.ok) return { ok: false, error: await errorCode(response) };
+    const body = (await response.json()) as { revisions: PostmortemRevision[] };
+    return { ok: true, revisions: body.revisions };
   } catch {
     return { ok: false, error: "network" };
   }

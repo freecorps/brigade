@@ -1136,7 +1136,10 @@ describe("reminders of follow-ups due", () => {
         );
       }
     });
-  /** A workspace where Bia (pt-BR) owns a follow-up due today and an overdue one, on a clock past 09:00. */
+  /**
+   * A workspace where Bia (pt-BR) owns a follow-up due today, one 3 days overdue and one 14 days overdue (no longer
+   * reminded, Q24), on a clock past 09:00.
+   */
   async function setUp() {
     const ws = await workspace({ [bia.id]: "pt-BR" });
     const zone = noonZone();
@@ -1155,7 +1158,9 @@ describe("reminders of follow-ups due", () => {
         link: null,
       });
     await add(ws.people.bia.id, "<b>Rotate</b> the keys", today);
-    await add(ws.people.bia.id, "Add a retry budget", "2000-01-03");
+    const daysAgo = (days: number) => localDate(Date.now() - days * 24 * 60 * 60 * 1000, zone);
+    await add(ws.people.bia.id, "Add a retry budget", daysAgo(3));
+    await add(ws.people.bia.id, "Forgotten since long ago", daysAgo(14));
     await add(ws.people.ana.id, "Write the runbook", today);
     return { ws, today };
   }
@@ -1186,9 +1191,8 @@ describe("reminders of follow-ups due", () => {
     expect(bias.subject).toBe("Ações de acompanhamento com prazo em Acme");
     expect(bias.text).toContain("Você tem 2 ações de acompanhamento abertas");
     // Overdue first, with the incident it came from.
-    expect(bias.text).toMatch(
-      /- Add a retry budget \(INC-1 Checkout is down\), atrasada desde .*2000/,
-    );
+    expect(bias.text).toMatch(/- Add a retry budget \(INC-1 Checkout is down\), atrasada desde /);
+    expect(bias.text).not.toContain("Forgotten since long ago");
     expect(bias.text).toContain("- <b>Rotate</b> the keys (INC-1 Checkout is down), prazo");
     expect(bias.text).toContain("https://brigade.example.com/follow-ups");
     expect(bias.text).toContain("Ajustes de email: https://brigade.example.com/#email");

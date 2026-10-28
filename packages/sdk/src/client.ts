@@ -134,6 +134,17 @@ export type ExportCreated = { id: string; expiresAt: number; incidents: number; 
 /** An export file (`format: "brigade.export"`, RFC 0013): its incidents with their timelines and follow-ups. */
 export type ExportFile = { format: string; incidents: unknown[]; [key: string]: unknown };
 
+/** One kept revision of a postmortem (`listPostmortemRevisions`): its text by section key, when and by whom. */
+export type PostmortemRevision = {
+  revision: number;
+  sections: Record<string, string>;
+  savedAt: number;
+  /** A user id, or an API token's `tok_` id. */
+  savedBy: string;
+  /** Written by Workers AI, not typed by a member. */
+  ai: boolean;
+};
+
 /** Options of the webhook writes. */
 export type WebhookWriteOptions = {
   /**
@@ -337,7 +348,9 @@ export const OPERATION_ERRORS = {
     "conflict",
     "limit_reached",
     "ai_unavailable",
+    "ai_disabled",
   ],
+  listPostmortemRevisions: [...MEMBER_CHECK, "forbidden", "not_found"],
 } as const satisfies Record<string, readonly string[]>;
 
 export type Operation = keyof typeof OPERATION_ERRORS;
@@ -947,6 +960,17 @@ export function createClient(options: ClientOptions) {
         "POST",
         () => `${ws(workspaceId)}/incidents/${segment(incidentId)}/postmortem/draft`,
         { body },
+      ),
+
+    /**
+     * `GET /workspaces/:id/incidents/:incidentId/postmortem/revisions`: the kept revisions of the incident's
+     * postmortem, newest first. Restoring one is a `postmortem.save` of its text over Brigade Sync.
+     */
+    listPostmortemRevisions: (workspaceId: string, incidentId: string) =>
+      call<{ revisions: PostmortemRevision[] }, "listPostmortemRevisions">(
+        "listPostmortemRevisions",
+        "GET",
+        () => `${ws(workspaceId)}/incidents/${segment(incidentId)}/postmortem/revisions`,
       ),
   };
 }

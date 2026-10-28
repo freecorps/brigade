@@ -297,6 +297,26 @@ describe("drafting a postmortem with Workers AI", () => {
     expect((await draft(t, t.caio, never)).status).toBe(409);
   });
 
+  test("refused with 403 ai_disabled while an owner has AI drafts off, before the model or a slot", async () => {
+    const t = await team();
+    const owner: Actor = { kind: "user", id: t.ana.id, role: "owner" };
+    expect(await t.run("workspace.setAiDrafts", { enabled: false }, owner)).toMatchObject({
+      ok: true,
+    });
+    const asked: unknown[] = [];
+    const ai: AiBinding = { run: async (...args) => void asked.push(args) };
+    const response = await draft(t, t.caio, ai);
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "ai_disabled" });
+    expect(asked).toEqual([]);
+    expect(
+      await t.withShard((shard) => [
+        shard.store.get("postmortems", INC),
+        shard.store.scan("ai_drafts").length,
+      ]),
+    ).toEqual([undefined, 0]);
+  });
+
   test("the model's text is cleaned of hidden characters and cut to the cap", () => {
     expect(
       cleanSection(
@@ -404,6 +424,46 @@ describe("drafting a postmortem with Workers AI", () => {
     const source = await t.withShard((shard) => draftSource(shard.store, INC, "en"));
     expect(JSON.stringify(source)).not.toContain("no_devices");
     expect(source!.timeline.map((entry) => entry.what)).toContain("made Caio commander");
+  });
+});
+
+describe("postmortem revisions", () => {
+  const revisions = (t: Team, by: Person, incidentId = INC) =>
+    api(`/workspaces/${t.id}/incidents/${incidentId}/postmortem/revisions`, {
+      headers: { Cookie: by.cookie },
+    });
+
+  test("every member reads the kept revisions, newest first, with who saved each; outsiders cannot", async () => {
+    const t = await team();
+    const caio: Actor = { kind: "user", id: t.caio.id, role: "responder" };
+    const empty = await revisions(t, t.duda);
+    expect(empty.status).toBe(200);
+    expect(await empty.json()).toEqual({ revisions: [] });
+    let base = { baseRevision: 0, baseUpdatedAt: 0 };
+    for (const summary of ["First.", "Second."]) {
+      expect(
+        await t.run(
+          "postmortem.save",
+          { id: INC, sections: { ...answer, summary }, ...base },
+          caio,
+        ),
+      ).toMatchObject({ ok: true });
+      const row = await t.withShard((shard) => shard.store.get("postmortems", INC)!);
+      base = { baseRevision: row.revision, baseUpdatedAt: row.updatedAt };
+    }
+    const response = await revisions(t, t.duda);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    const body = (await response.json()) as { revisions: unknown[] };
+    expect(body.revisions).toMatchObject([
+      { revision: 2, savedBy: t.caio.id, ai: false, sections: { summary: "Second." } },
+      { revision: 1, savedBy: t.caio.id, ai: false, sections: { summary: "First." } },
+    ]);
+    expect((await revisions(t, t.eva)).status).toBe(403);
+    expect((await api(`/workspaces/${t.id}/incidents/${INC}/postmortem/revisions`)).status).toBe(
+      401,
+    );
+    expect((await revisions(t, t.ana, newId("inc", Date.now(), random))).status).toBe(404);
   });
 });
 

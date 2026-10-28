@@ -129,6 +129,7 @@ export const EXPORT_STATUS: Record<string, number> = {
 /** `POST /workspaces/:id/incidents/:incidentId/postmortem/draft` (src/postmortem.ts), per refusal from the shard. */
 export const DRAFT_STATUS: Record<string, number> = {
   not_found: 404,
+  ai_disabled: 403,
   forbidden: 403,
   not_a_member: 403,
   conflict: 409,

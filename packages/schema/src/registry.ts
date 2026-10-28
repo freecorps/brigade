@@ -103,6 +103,7 @@ import {
   allMembers,
   createWorkspace,
   currentWorkspace,
+  setAiDrafts,
   setEmailSettings,
   syncMember,
 } from "./workspaces.ts";
@@ -130,6 +131,7 @@ export const mutations = defineRegistry([
   setCalls,
   ...memberEmailMutations,
   setEmailSettings,
+  setAiDrafts,
   configureSlack,
   disconnectSlack,
   ...statusMutations,
@@ -196,6 +198,7 @@ export const serverMutations = defineRegistry([
   setCalls,
   ...memberEmailMutations,
   setEmailSettings,
+  setAiDrafts,
   configureSlack,
   disconnectSlack,
   ...statusMutations,

@@ -16,6 +16,11 @@ import { canonicalTimeZone, localMinute, wallMinute, wallParts, zonedInstant } f
 export const REMINDER_HOUR = 9;
 /** The most follow-ups one reminder lists; the rest are counted ("and 3 more"). */
 export const REMINDER_MAX_LISTED = 20;
+/**
+ * How long an overdue follow-up is still reminded, in days (decided, Q24): from the day it is this many days overdue
+ * on, it is left out of reminders, so a forgotten one does not email its owner every morning for ever.
+ */
+export const REMINDER_OVERDUE_DAYS = 14;
 
 type ReadStore = Pick<Store<BrigadeTables>, "scan" | "get">;
 
@@ -32,12 +37,23 @@ export function localDate(at: number, timeZone: string): string {
   return wallParts(localMinute(at, timeZone)).date;
 }
 
-/** The day after `date` (`YYYY-MM-DD`). */
-function nextDay(date: string): string {
-  return wallParts(wallMinute(date, "00:00")! + 24 * 60).date;
+/** `days` days after `date` (`YYYY-MM-DD`; before it when negative). */
+function addDays(date: string, days: number): string {
+  return wallParts(wallMinute(date, "00:00")! + days * 24 * 60).date;
 }
 
-/** A member's open follow-ups due on `date` or before it, soonest due first. */
+/** The day after `date` (`YYYY-MM-DD`). */
+const nextDay = (date: string) => addDays(date, 1);
+
+/** Whether a follow-up due on `dueDate` is reminded on `date`: due by then, and not yet `REMINDER_OVERDUE_DAYS` overdue. */
+function remindedOn(dueDate: string, date: string): boolean {
+  return dueDate <= date && addDays(dueDate, REMINDER_OVERDUE_DAYS) > date;
+}
+
+/**
+ * A member's open follow-ups due on `date` or before it, soonest due first; none `REMINDER_OVERDUE_DAYS` overdue or
+ * more.
+ */
 export function followUpsDue(
   rows: readonly FollowUpRow[],
   userId: string,
@@ -49,7 +65,7 @@ export function followUpsDue(
         row.status === "open" &&
         row.ownerId === userId &&
         row.dueDate !== null &&
-        row.dueDate <= date,
+        remindedOn(row.dueDate, date),
     )
     .sort(byDue);
 }
@@ -61,44 +77,55 @@ export const REMINDERS_PER_RUN = 50;
 const choicesOf = (settings: MemberSettingsRow | undefined, userId: string) =>
   memberEmailOf(settings ? [settings] : [], userId);
 
+type Owner = { dueDates: string[]; settings: MemberSettingsRow | undefined };
+
 /**
- * Per owner of an open follow-up with a due date who is still a member and wants reminders, the earliest due date
- * among theirs and their settings row. A removed member's follow-ups remind nobody until someone takes them over.
+ * Per owner of an open follow-up with a due date who is still a member and wants reminders, the due dates of theirs
+ * and their settings row. A removed member's follow-ups remind nobody until someone takes them over.
  */
-function owners(
-  store: ReadStore,
-): Map<string, { earliest: string; settings: MemberSettingsRow | undefined }> {
-  const earliest = new Map<string, string>();
+function owners(store: ReadStore): Map<string, Owner> {
+  const dueDates = new Map<string, string[]>();
   for (const row of store.scan("follow_ups")) {
     if (row.status !== "open" || row.ownerId === null || row.dueDate === null) continue;
-    const known = earliest.get(row.ownerId);
-    if (known === undefined || row.dueDate < known) earliest.set(row.ownerId, row.dueDate);
+    const known = dueDates.get(row.ownerId);
+    if (known) known.push(row.dueDate);
+    else dueDates.set(row.ownerId, [row.dueDate]);
   }
-  const wanted = new Map<string, { earliest: string; settings: MemberSettingsRow | undefined }>();
-  for (const [userId, date] of earliest) {
+  const wanted = new Map<string, Owner>();
+  for (const [userId, dates] of dueDates) {
     if (store.get("members", userId) === undefined) continue;
     const settings = store.get("member_settings", userId);
     if (!choicesOf(settings, userId).followUpReminders) continue;
-    wanted.set(userId, { earliest: date, settings });
+    wanted.set(userId, { dueDates: dates, settings });
   }
   return wanted;
 }
 
 /**
- * When the member's next reminder is due: `REMINDER_HOUR` on the first day that is today or later, not before their
- * earliest due date, and after the last day they were reminded. With the calendar day it is for.
+ * When the member's next reminder is due: `REMINDER_HOUR` on the first day, today or later and after the last day
+ * they were reminded, on which one of their follow-ups is due or overdue by less than `REMINDER_OVERDUE_DAYS`. With
+ * the calendar day it is for; null when every one of theirs is past that.
  */
 function reminderAt(
   store: ReadStore,
   userId: string,
-  owner: { earliest: string; settings: MemberSettingsRow | undefined },
+  owner: Owner,
   now: number,
-): { at: number; zone: string } {
+): { at: number; zone: string } | null {
   const zone = reminderTimeZone(owner.settings);
   const today = localDate(now, zone);
   const last = store.get("follow_up_reminders", userId)?.date;
-  let day = owner.earliest > today ? owner.earliest : today;
-  if (last !== undefined && last >= day) day = nextDay(last);
+  const from = last !== undefined && last >= today ? nextDay(last) : today;
+  // `from` if a follow-up is reminded on it, else the first due date after it.
+  let day: string | null = null;
+  for (const dueDate of owner.dueDates) {
+    if (remindedOn(dueDate, from)) {
+      day = from;
+      break;
+    }
+    if (dueDate > from && (day === null || dueDate < day)) day = dueDate;
+  }
+  if (day === null) return null;
   const hour = `${String(REMINDER_HOUR).padStart(2, "0")}:00`;
   return { at: zonedInstant(wallMinute(day, hour)!, zone), zone };
 }
@@ -114,9 +141,9 @@ export function remindersDue(
 ): { userId: string; date: string }[] {
   const due: { userId: string; date: string; at: number }[] = [];
   for (const [userId, owner] of owners(store)) {
-    const { at, zone } = reminderAt(store, userId, owner, now);
-    if (at > now) continue;
-    due.push({ userId, date: localDate(now, zone), at });
+    const next = reminderAt(store, userId, owner, now);
+    if (!next || next.at > now) continue;
+    due.push({ userId, date: localDate(now, next.zone), at: next.at });
   }
   return due
     .sort((a, b) => a.at - b.at || (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0))
@@ -128,8 +155,8 @@ export function remindersDue(
 export function nextReminderAt(store: ReadStore, now: number): number | null {
   let next: number | null = null;
   for (const [userId, owner] of owners(store)) {
-    const { at } = reminderAt(store, userId, owner, now);
-    if (next === null || at < next) next = at;
+    const at = reminderAt(store, userId, owner, now)?.at;
+    if (at !== undefined && (next === null || at < next)) next = at;
   }
   return next;
 }

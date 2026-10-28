@@ -136,7 +136,8 @@ a page (RFC 0006 "Offline phones") goes out on `notification.released` (`inciden
 email notifier's own failures are `notification.failed` with `channel: "email"` (`incidentId`, `eventId`: the push
 failure the email was about, `userId`, `reason`: `undelivered`, or `capped` when a cap dropped it, `about`: `unpaged` or `nobody_paged`), with an
 `email_failed` entry ("Couldn't email Ana that nobody could be paged"). Changing who is emailed emits
-`workspace.email_changed` (`unpaged`, `nobodyPaged`).
+`workspace.email_changed` (`unpaged`, `nobodyPaged`); turning AI drafts of postmortems off or on emits
+`workspace.ai_drafts_changed` (`enabled`, RFC 0013).
 
 Outbound webhooks ("Outbound webhooks" below) emit `webhook.created` (`id`, `events`, `enabled`), `webhook.updated`
 (`id`, `events`, `urlChanged`, `headersCleared`), `webhook.enabled` (`id`), `webhook.disabled` (`id`, `reason`: `manual`, or `failing`

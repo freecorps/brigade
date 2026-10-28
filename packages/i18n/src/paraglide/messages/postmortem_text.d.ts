@@ -49,6 +49,19 @@ export type Postmortem_TextInputs = {
 * | "read_only" | "Only responders, admins and owners edit the postmortem." |
 * | "template_changed" | "The postmortem template for this incident changed while you were writing. Your text is still here: copy what you need, then load the new sections." |
 * | "total" | "{count} left in the whole postmortem" |
+* | "ai_refused_ai_disabled" | "An owner turned AI drafts off for this workspace." |
+* | "history" | "Revision history" |
+* | "history_hide" | "Hide revision history" |
+* | "history_loading" | "Loading revisions…" |
+* | "history_failed" | "Couldn't load the revisions: {reason}" |
+* | "history_note" | "The last {count} revisions are kept. Restoring one opens it in the editor; saving it adds a new revision." |
+* | "revision" | "Revision {count}" |
+* | "revision_meta" | "{time} by {name}" |
+* | "revision_ai" | "AI draft" |
+* | "revision_current" | "Current" |
+* | "restore" | "Restore" |
+* | "restore_label" | "Restore revision {count}" |
+* | "restoring" | "Restoring revision {count}. Save to keep it as the latest version, or cancel." |
 * | * | "Postmortem" |
 *
 * @param {Postmortem_TextInputs} inputs

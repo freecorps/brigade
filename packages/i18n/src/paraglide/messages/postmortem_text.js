@@ -48,6 +48,19 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "read_only" | "Only responders, admins and owners edit the postmortem." |
 * | "template_changed" | "The postmortem template for this incident changed while you were writing. Your text is still here: copy what you need, then load the new sections." |
 * | "total" | "{count} left in the whole postmortem" |
+* | "ai_refused_ai_disabled" | "An owner turned AI drafts off for this workspace." |
+* | "history" | "Revision history" |
+* | "history_hide" | "Hide revision history" |
+* | "history_loading" | "Loading revisions…" |
+* | "history_failed" | "Couldn't load the revisions: {reason}" |
+* | "history_note" | "The last {count} revisions are kept. Restoring one opens it in the editor; saving it adds a new revision." |
+* | "revision" | "Revision {count}" |
+* | "revision_meta" | "{time} by {name}" |
+* | "revision_ai" | "AI draft" |
+* | "revision_current" | "Current" |
+* | "restore" | "Restore" |
+* | "restore_label" | "Restore revision {count}" |
+* | "restoring" | "Restoring revision {count}. Save to keep it as the latest version, or cancel." |
 * | * | "Postmortem" |
 *
 * @param {Postmortem_TextInputs} inputs
@@ -95,6 +108,19 @@ export const postmortem_text = /** @type {((inputs: Postmortem_TextInputs, optio
 		if (i?.part === "read_only") return /** @type {LocalizedString} */ (`Só responders, admins e owners editam o postmortem.`);
 		if (i?.part === "template_changed") return /** @type {LocalizedString} */ (`O modelo de postmortem deste incidente mudou enquanto você escrevia. Seu texto continua aqui: copie o que precisar e carregue as novas seções.`);
 		if (i?.part === "total") return /** @type {LocalizedString} */ (`${i?.count} restantes no postmortem inteiro`);
+		if (i?.part === "ai_refused_ai_disabled") return /** @type {LocalizedString} */ (`Um proprietário desativou os rascunhos de IA neste workspace.`);
+		if (i?.part === "history") return /** @type {LocalizedString} */ (`Histórico de revisões`);
+		if (i?.part === "history_hide") return /** @type {LocalizedString} */ (`Ocultar histórico de revisões`);
+		if (i?.part === "history_loading") return /** @type {LocalizedString} */ (`Carregando revisões…`);
+		if (i?.part === "history_failed") return /** @type {LocalizedString} */ (`Não foi possível carregar as revisões: ${i?.reason}`);
+		if (i?.part === "history_note") return /** @type {LocalizedString} */ (`As últimas ${i?.count} revisões ficam guardadas. Restaurar uma abre o texto no editor; salvar cria uma nova revisão.`);
+		if (i?.part === "revision") return /** @type {LocalizedString} */ (`Revisão ${i?.count}`);
+		if (i?.part === "revision_meta") return /** @type {LocalizedString} */ (`${i?.time} por ${i?.name}`);
+		if (i?.part === "revision_ai") return /** @type {LocalizedString} */ (`Rascunho de IA`);
+		if (i?.part === "revision_current") return /** @type {LocalizedString} */ (`Atual`);
+		if (i?.part === "restore") return /** @type {LocalizedString} */ (`Restaurar`);
+		if (i?.part === "restore_label") return /** @type {LocalizedString} */ (`Restaurar a revisão ${i?.count}`);
+		if (i?.part === "restoring") return /** @type {LocalizedString} */ (`Restaurando a revisão ${i?.count}. Salve para mantê-la como a versão mais recente, ou cancele.`);
 		return /** @type {LocalizedString} */ (`Postmortem`)
 	}
 	{
@@ -136,6 +162,19 @@ export const postmortem_text = /** @type {((inputs: Postmortem_TextInputs, optio
 		if (i?.part === "read_only") return /** @type {LocalizedString} */ (`Only responders, admins and owners edit the postmortem.`);
 		if (i?.part === "template_changed") return /** @type {LocalizedString} */ (`The postmortem template for this incident changed while you were writing. Your text is still here: copy what you need, then load the new sections.`);
 		if (i?.part === "total") return /** @type {LocalizedString} */ (`${i?.count} left in the whole postmortem`);
+		if (i?.part === "ai_refused_ai_disabled") return /** @type {LocalizedString} */ (`An owner turned AI drafts off for this workspace.`);
+		if (i?.part === "history") return /** @type {LocalizedString} */ (`Revision history`);
+		if (i?.part === "history_hide") return /** @type {LocalizedString} */ (`Hide revision history`);
+		if (i?.part === "history_loading") return /** @type {LocalizedString} */ (`Loading revisions…`);
+		if (i?.part === "history_failed") return /** @type {LocalizedString} */ (`Couldn't load the revisions: ${i?.reason}`);
+		if (i?.part === "history_note") return /** @type {LocalizedString} */ (`The last ${i?.count} revisions are kept. Restoring one opens it in the editor; saving it adds a new revision.`);
+		if (i?.part === "revision") return /** @type {LocalizedString} */ (`Revision ${i?.count}`);
+		if (i?.part === "revision_meta") return /** @type {LocalizedString} */ (`${i?.time} by ${i?.name}`);
+		if (i?.part === "revision_ai") return /** @type {LocalizedString} */ (`AI draft`);
+		if (i?.part === "revision_current") return /** @type {LocalizedString} */ (`Current`);
+		if (i?.part === "restore") return /** @type {LocalizedString} */ (`Restore`);
+		if (i?.part === "restore_label") return /** @type {LocalizedString} */ (`Restore revision ${i?.count}`);
+		if (i?.part === "restoring") return /** @type {LocalizedString} */ (`Restoring revision ${i?.count}. Save to keep it as the latest version, or cancel.`);
 		return /** @type {LocalizedString} */ (`Postmortem`)
 	}
 });

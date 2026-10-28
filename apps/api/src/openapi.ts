@@ -35,6 +35,7 @@ import {
   WEBHOOK_PAYLOADS,
   MAX_EXPORT_RANGE_DAYS,
   MONITOR_URL_MAX,
+  POSTMORTEM_REVISIONS_KEPT,
   STATUS_LOCALES,
   STATUS_PAGE_TITLE_MAX,
   STATUS_SLUG,
@@ -1373,7 +1374,8 @@ const LISTED: readonly Operation[] = [
       "Responders and up (`incident:update`). Runs `postmortem.requestDraft` (RFC 0013): the draft is written by the " +
       "model in the background and arrives over Brigade Sync, in the status page's language when there is one, else " +
       "`locale`. `409 conflict`: a draft is being written, or the postmortem has text a member wrote; `429 " +
-      "limit_reached`: too many drafts lately. `503 ai_unavailable`: the server has no Workers AI.",
+      "limit_reached`: too many drafts lately. `403 ai_disabled`: an owner turned AI drafts off for the workspace. " +
+      "`503 ai_unavailable`: the server has no Workers AI.",
     auth: "session",
     bearer: "incident:update",
     parameters: [workspaceId, incidentId],
@@ -1397,6 +1399,61 @@ const LISTED: readonly Operation[] = [
         { 401: ["unauthenticated"], 404: ["not_found"], 503: ["ai_unavailable", "unavailable"] },
         codesBy(DRAFT_STATUS),
       ),
+    ),
+  },
+  {
+    method: "get",
+    path: "/workspaces/{workspaceId}/incidents/{incidentId}/postmortem/revisions",
+    operationId: "listPostmortemRevisions",
+    tag: "Postmortems",
+    summary: "List the kept revisions of an incident's postmortem",
+    description:
+      `Every member who reads incidents (\`incident:read\`). The last ${POSTMORTEM_REVISIONS_KEPT} revisions ` +
+      '(RFC 0013 "Revision history"), newest first, each with its text by section, when and by whom it was saved, ' +
+      "and whether Workers AI wrote it. Restoring one is a `postmortem.save` of its text over Brigade Sync. Empty for " +
+      "an incident with no postmortem yet.",
+    auth: "session",
+    bearer: "incident:read",
+    parameters: [workspaceId, incidentId],
+    responses: answers(
+      {
+        200: {
+          description: "The kept revisions, newest first.",
+          body: {
+            type: "object",
+            properties: {
+              revisions: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    revision: { type: "integer", minimum: 1 },
+                    sections: {
+                      type: "object",
+                      additionalProperties: { type: "string" },
+                      description: "The text of each section, by key.",
+                    },
+                    savedAt: { type: "integer", description: "Unix time in milliseconds." },
+                    savedBy: {
+                      type: "string",
+                      description: "A user id, or an API token's `tok_` id.",
+                    },
+                    ai: { type: "boolean" },
+                  },
+                  required: ["revision", "sections", "savedAt", "savedBy", "ai"],
+                },
+              },
+            },
+            required: ["revisions"],
+          },
+        },
+      },
+      refusals(MEMBER_CHECK, {
+        401: ["unauthenticated"],
+        403: ["forbidden"],
+        404: ["not_found"],
+        503: ["unavailable"],
+      }),
     ),
   },
   {

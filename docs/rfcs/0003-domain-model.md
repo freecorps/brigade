@@ -560,7 +560,8 @@ server-only mutations (`postmortem.requestDraft` as the member, `.writeDraft` an
 - Exports (`data:export`; RFC 0013): owners and admins take incidents out as a file and read the list of exports.
 - Workspace settings (`workspace:manage`): owners and admins. The first is who is emailed when paging fails
   (`workspace.setEmail`, `workspace.email_changed`; kept on the `workspace` row as `email`, absent meaning both on;
-  RFC 0005 "Email"). A failed email is an `email_failed` timeline entry, written by `sys_notifier` like
+  RFC 0005 "Email"). The second is whether members may ask for AI postmortem drafts (`workspace.setAiDrafts`,
+  `workspace.ai_drafts_changed`; kept as `aiDrafts`, absent meaning on; RFC 0013), which only owners change. A failed email is an `email_failed` timeline entry, written by `sys_notifier` like
   `page_failed`.
 - **System actors** (RFC 0004 "Server-side writes") carry a role like members and pass the same check. Monitors run
   as `{ kind: "system", id: "sys_monitors", role: "admin" }` (`MONITOR_ACTOR`); incidents they open are declared by
@@ -571,7 +572,8 @@ server-only mutations (`postmortem.requestDraft` as the member, `.writeDraft` an
   secret are never in a synced row.
 - API tokens (`token:manage`; RFC 0014): owners and admins mint and revoke them. A token acts as a `token` actor
   with its creator's current role and its own scopes (`allows`: both must grant a permission), never `token:manage`,
-  `workspace:create` or `device:register`. Every role reads the list (`apiToken.all`, `workspace:read`).
+  `workspace:create` or `device:register`. Only owners and admins read the list (`apiToken.all`, `token:manage`;
+  decided, Q25): to everyone else a token's timeline entries read "An API token".
 - Workspace-defined custom roles can come later via Better Auth dynamic access control.
 - Every DO key is prefixed by the organization id; a shard never serves data of another workspace.
 

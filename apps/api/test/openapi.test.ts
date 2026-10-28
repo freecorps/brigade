@@ -329,6 +329,15 @@ const CASES: Record<string, () => Promise<Case>> = {
       },
     };
   },
+  listPostmortemRevisions: async () => {
+    const t = await team();
+    const incidentId = await declared(t);
+    return {
+      path: `/workspaces/${t.id}/incidents/${incidentId}/postmortem/revisions`,
+      cookie: t.ana.cookie,
+      status: 200,
+    };
+  },
   getHealth: async () => ({ path: "/health", status: 200 }),
   getPagingHealth: async () => {
     const t = await team();

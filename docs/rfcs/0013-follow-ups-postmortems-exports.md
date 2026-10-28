@@ -62,8 +62,9 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   (`member.setTimeZone`, kept on their `member_settings` row, synced like their call choice; the dashboard and the app
   send the device's own when it differs from the one kept, so the last device used wins), else UTC. The row is synced
   to every member, so every member can see every other member's time zone (RFC 0003 "A member's own settings").
-  The hour stays 09:00 (decided, Q24; a member's own hour may come later). Decided, to build: a follow-up stops
-  being reminded once it is 14 days overdue.
+  The hour stays 09:00 (decided, Q24; a member's own hour may come later). A follow-up stops being reminded once it
+  is 14 days overdue (`REMINDER_OVERDUE_DAYS`, decided, Q24): its last reminder is the day it is 13 days overdue, on
+  the member's calendar, and the email lists only the ones still reminded.
 - **How.** The shard's alarm (after every page it fires and the drain) asks who is due (`remindersDue`, one pass
   over the follow-ups) and runs the server-only `followUp.remind` for each, at most 50 a run
   (`REMINDERS_PER_RUN`; the alarm comes back a minute later for the rest). It writes the day in a server-only ledger
@@ -103,9 +104,14 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   not pass as written over a teammate's. The dashboard opens the editor only on a row the server confirmed (no
   unconfirmed change in it) and saves one at a time. The dashboard keeps the editor's text and offers to load the
   latest version, so nothing is lost and nothing is overwritten unseen. Each save adds one to `revision`.
-- **Revision history (decided, Q24; to build).** The last 20 revisions of each postmortem are kept in a server-only
-  table (not synced, so a save does not copy the document to every client), listed on the dashboard with who saved
-  each and when, and restored from there: a restore is a save of that revision's text over the current one, with
+- **Revision history (decided, Q24).** The last 20 revisions of each postmortem (`POSTMORTEM_REVISIONS_KEPT`) are
+  kept in the server-only `postmortem_revisions` table (not synced, so a save does not copy the document to every
+  client), one row per save or AI draft (`<incident>:<revision>`, its text, when, by whom, and whether the AI wrote
+  it), written by `postmortem.save` and `postmortem.writeDraft` in the same transaction, which drop the one 20
+  before it (one read, no scan). `GET /workspaces/:id/incidents/:incidentId/postmortem/revisions` (`incident:read`,
+  so every member, or an API token with that scope) answers them newest first. The incident page's Postmortem card
+  lists them on demand ("Revision history"), with who saved each and when and the text when opened; responders and
+  up restore one: its text opens in the editor over the current revision, and saving it is a `postmortem.save` with
   the same conflict check, so it is a revision of its own and can be undone. The outbox still never carries the
   text.
 - **Timeline and events.** The first save is a `postmortem` entry (`started`); later saves are edits of a document,
@@ -129,9 +135,13 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   first save, or the first AI draft asked for. From then on the postmortem keeps those sections: editing or resetting
   the template, deleting the type, or changing the incident's type (`incident.setType`) never rewrites one. A
   document already being written in another layout cannot be moved without losing or inventing sections, and the
-  type is often set late, after someone started writing. **Decided (Q24), to build:** a postmortem that is still
-  blank (nothing saved but starter text, or no row yet) follows its incident's new type's template; one with text
-  keeps its sections. Before the row exists, the editor follows the template the
+  type is often set late, after someone started writing. **Decided (Q24):** a postmortem nobody wrote in yet (every
+  section empty or still its starter text, `isUnwrittenPostmortem`; e.g. the row a failed draft made) follows its
+  incident's new type's template when `incident.setType` changes it (`followNewType`, in the same mutation), and its
+  `updatedAt` moves, so an editor opened on the old sections is refused (`conflict`) and offered the new ones; not
+  while an AI draft is being written. One with text keeps its sections, and so does one saved before and emptied
+  since (`revision > 0`): its kept revisions hold text under the old sections, which a restore would otherwise drop.
+  An emptied postmortem still shows its revision history, so that text can be restored from the dashboard. Before the row exists, the editor follows the template the
   incident would take now; if it changed while someone was writing the first version, the save is refused
   (`conflict`) and the editor keeps the text and offers to load the new sections, as for a teammate's save.
 - **Starter text** fills a new postmortem's editor only: a save that changes nothing but the starter text is not
@@ -140,8 +150,7 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   order (move up and down, rename, hint, starter text, remove, add a built-in left out or a custom one), with a
   preview of what a new postmortem's editor shows. The incident page's Postmortem card shows and edits the
   postmortem's own sections, by their titles, with their hints.
-- **Not yet**: revision history (decided, above; to build); sharing one template between types; changing a postmortem's sections after
-  it was made.
+- **Not yet**: sharing one template between types; changing the sections of a postmortem someone wrote in.
 
 ## Drafting with AI
 
@@ -172,8 +181,8 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   it asks for), the model must answer exactly those keys (`response_format`), and the share of `POSTMORTEM_TOTAL_MAX`
   each may use. Titles and hints are given as data, as the team's words about the sections.
 - **Language**: the status page's language when the workspace has one (the closest thing to a workspace language
-  today), else the asker's dashboard language. Decided (Q24), to build: the workspace locale (RFC 0008, Q15) once it
-  exists. The prompt asks for a blameless draft that only uses facts from the
+  today), else the asker's dashboard language. Decided (Q24), still to build: the workspace locale (RFC 0008, Q15)
+  once it exists. The prompt asks for a blameless draft that only uses facts from the
   data and says what is unknown.
 - **Marked until reviewed.** A written draft sets `ai` on the row (the model, when, and who asked) and appends a
   `postmortem` entry (`ai_drafted`). The dashboard shows "AI draft — review before sharing" until a member saves the
@@ -187,8 +196,13 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   answers no usable JSON fails the draft (`timeout`, `failed`). Text the shard's rules would refuse is cleaned first
   (hidden characters, the cap). A draft still pending after 2 minutes (`AI_DRAFT_STALE_MS`: the Worker was stopped
   before it could write a failure) reads as failed and may be asked for again; its late result is refused.
-- **Turned off per workspace (decided, Q24; to build).** Owners can turn AI drafts off for their workspace; the
-  button is hidden and the route refuses, as without the binding.
+- **Turned off per workspace (decided, Q24).** Owners turn AI drafts off (and on) for their workspace with
+  `workspace.setAiDrafts` (`workspace:manage` and the owner role, so also an API token an owner made with that scope,
+  as for `monitor.setCap`; event `workspace.ai_drafts_changed`, kept on the
+  `workspace` row as `aiDrafts`, absent meaning on), from the Incident settings card's "Postmortem templates" part,
+  shown to owners and admins on a server with the binding (admins see it, unchangeable). Off, "Draft with AI" is
+  hidden, `postmortem.requestDraft` refuses (`forbidden`), and the route answers 403 `ai_disabled` before the
+  model is asked or the daily limit counts. A draft already being written still lands.
 - **Without the binding** the route answers 503 `ai_unavailable` and the button is hidden (`GET /features`).
   Enabling it is apps/api/README.md "Postmortem drafts".
 
@@ -233,4 +247,4 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
 
 ## Not in this slice
 
-The mobile app's follow-ups and postmortem screens; push notifications for follow-ups due; revision history (decided, to build); publishing a postmortem to the status page; issue-tracker sync.
+The mobile app's follow-ups and postmortem screens; push notifications for follow-ups due; publishing a postmortem to the status page; issue-tracker sync; the AI draft in the workspace locale (waits for Q15).

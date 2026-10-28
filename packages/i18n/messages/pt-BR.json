@@ -2853,6 +2853,19 @@
         "part=read_only": "Só responders, admins e owners editam o postmortem.",
         "part=template_changed": "O modelo de postmortem deste incidente mudou enquanto você escrevia. Seu texto continua aqui: copie o que precisar e carregue as novas seções.",
         "part=total": "{count} restantes no postmortem inteiro",
+        "part=ai_refused_ai_disabled": "Um proprietário desativou os rascunhos de IA neste workspace.",
+        "part=history": "Histórico de revisões",
+        "part=history_hide": "Ocultar histórico de revisões",
+        "part=history_loading": "Carregando revisões…",
+        "part=history_failed": "Não foi possível carregar as revisões: {reason}",
+        "part=history_note": "As últimas {count} revisões ficam guardadas. Restaurar uma abre o texto no editor; salvar cria uma nova revisão.",
+        "part=revision": "Revisão {count}",
+        "part=revision_meta": "{time} por {name}",
+        "part=revision_ai": "Rascunho de IA",
+        "part=revision_current": "Atual",
+        "part=restore": "Restaurar",
+        "part=restore_label": "Restaurar a revisão {count}",
+        "part=restoring": "Restaurando a revisão {count}. Salve para mantê-la como a versão mais recente, ou cancele.",
         "part=*": "Postmortem"
       }
     }
@@ -2863,7 +2876,7 @@
       "selectors": ["part"],
       "match": {
         "part=title": "Modelos de postmortem",
-        "part=note": "As seções com que um novo postmortem começa, por tipo de incidente. Um postmortem mantém as seções com que foi criado: editar um modelo ou mudar o tipo do incidente depois não o altera.",
+        "part=note": "As seções com que um novo postmortem começa, por tipo de incidente. Depois que alguém escreve em um postmortem, ele mantém as suas seções: editar um modelo ou mudar o tipo do incidente não o altera. Um postmortem em branco segue o novo tipo do incidente.",
         "part=default_name": "Padrão do workspace",
         "part=default_note": "Para incidentes sem tipo, ou de um tipo sem modelo próprio.",
         "part=builtin": "As sete seções padrão",
@@ -2896,6 +2909,10 @@
         "part=reset_default": "Usar as seções padrão",
         "part=reset_confirm": "Deixar de usar este modelo? Novos postmortems passam a usar {name}. Postmortems já escritos mantêm suas seções.",
         "part=reset_confirm_action": "Deixar de usar",
+        "part=ai_title": "Rascunhos de IA",
+        "part=ai_hint": "Os membros podem pedir ao Workers AI um primeiro rascunho de um postmortem em branco. Desativado, o botão some e o servidor recusa.",
+        "part=ai_owner_only": "Só proprietários podem ativar ou desativar os rascunhos de IA.",
+        "part=ai_failed": "Não foi possível mudar os rascunhos de IA: {name}",
         "part=*": "Modelos de postmortem"
       }
     }
@@ -3410,7 +3427,7 @@
         "part=title": "Tokens de API",
         "part=description": "Permita que scripts e integrações chamem a API do Brigade neste workspace. Um token age com o seu papel, nunca além dos escopos que você der a ele.",
         "part=add": "Criar token",
-        "part=manage_only": "Só donos e admins podem criar e revogar tokens de API.",
+        "part=manage_only": "Só donos e admins podem ver e gerenciar tokens de API.",
         "part=empty": "Nenhum token ainda. Crie um para um script, um job de CI ou uma integração.",
         "part=load_failed": "Não foi possível carregar os tokens de API.",
         "part=retry": "Tentar de novo",

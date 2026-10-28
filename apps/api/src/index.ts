@@ -49,7 +49,7 @@ import {
   type SubscriptionAction,
 } from "./status-subscribers.ts";
 import { createExport, downloadExport, features, sweepExports } from "./exports.ts";
-import { requestDraftRoute } from "./postmortem.ts";
+import { postmortemRevisionsRoute, requestDraftRoute } from "./postmortem.ts";
 
 import { readBounded, readBoundedBytes } from "./body.ts";
 import { webhookRequest } from "./webhook-routes.ts";
@@ -95,6 +95,7 @@ const SUBSCRIPTION_PATH = /^\/status\/([^/]+)\/(subscribe|confirm|manage|unsubsc
 /** `/status/<slug>/feed.atom` and `.json`: the page's feeds (RFC 0012 "Feeds"). */
 const STATUS_FEED_PATH = /^\/status\/([^/]+)\/feed\.(atom|json)$/;
 const DRAFT_PATH = /^\/workspaces\/([^/]+)\/incidents\/([^/]+)\/postmortem\/draft$/;
+const REVISIONS_PATH = /^\/workspaces\/([^/]+)\/incidents\/([^/]+)\/postmortem\/revisions$/;
 const EXPORTS_PATH = /^\/workspaces\/([^/]+)\/exports$/;
 const EXPORT_PATH = /^\/workspaces\/([^/]+)\/exports\/([^/]+)$/;
 const API_TOKENS_PATH = /^\/workspaces\/([^/]+)\/api-tokens(?:\/([^/]+))?$/;
@@ -213,6 +214,10 @@ export default {
     // Postmortem drafts and exports (RFC 0013).
     const draft = DRAFT_PATH.exec(pathname);
     if (draft) return requestDraftRoute(request, env, ctx, auth, draft[1]!, draft[2]!);
+    const revisions = REVISIONS_PATH.exec(pathname);
+    if (revisions) {
+      return postmortemRevisionsRoute(request, env, auth, revisions[1]!, revisions[2]!, waitUntil);
+    }
     const exports = EXPORTS_PATH.exec(pathname)?.[1];
     if (exports !== undefined) return createExport(request, env, auth, exports, waitUntil);
     const download = EXPORT_PATH.exec(pathname);

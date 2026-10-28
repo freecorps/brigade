@@ -117,7 +117,7 @@ Devices and paging emit `device.registered` (`id`, `userId`, `platform`, `enviro
 the key), `device.unregistered` (`reason`: `unregistered` by the member, `token_invalid` when APNs said the token is
 gone, `member_removed` when its member left or was removed, `password_reset` when its member's password was reset,
 from `device.signOut`, or from `member.reconcile` when that failed, RFC 0002 "Auth"; `replaced` when its member
-registered a new device over their limit and it was their least recently registered, RFC 0006 "Device registration"), `device.voip_cleared` (`id`,
+registered a new device over their limit and it was their least recently alive: registered, or confirmed a page, whichever is later; RFC 0006 "Device registration"), `device.voip_cleared` (`id`,
 `userId`, `reason: token_invalid`: APNs refused a call to its PushKit token as gone, so it no longer rings; its pushes
 go on, RFC 0010), `member.calls_changed` (`userId`, `calls`: the member's choice of which pages ring them as a call,
 RFC 0010 "Who a call rings") and `notification.failed` (`incidentId`, `eventId` of the event that asked for the page, `channel: "push"`,

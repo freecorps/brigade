@@ -34,7 +34,7 @@ export const DEVICE_HEADER = "Brigade-Device";
 
 /**
  * Devices one member may register in one workspace; a page fans out to all of them. A new device over it replaces
- * the member's least recently registered ones (`replaced`): reinstalls make new devices, and the newest phone must
+ * the member's least recently alive ones (registered, or confirmed a page; `replaced`): reinstalls make new devices, and the newest phone must
  * never be locked out by phones long gone.
  */
 export const MAX_DEVICES_PER_MEMBER = 10;
@@ -152,7 +152,7 @@ const publicKey: Validator<string> = (input, path = "") =>
  * token registered under another id by the same member (a reinstall) replaces that device, so one phone is never
  * paged twice. A device belongs to whoever registered it: another member's id is `forbidden`. No change is a
  * `conflict`, as for every mutation (RFC 0005). A new device over the member's limit replaces their least recently
- * registered ones (`replaced`): only ever the member's own, so the limit still bounds a page's fan-out.
+ * alive ones (registered, or confirmed a page; `replaced`): only ever the member's own, so the limit still bounds a page's fan-out.
  */
 export const registerDevice = defineMutation({
   name: "device.register",

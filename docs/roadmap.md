@@ -212,8 +212,13 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Done: Android pages through FCM: the device key in the Android Keystore, a `FirebaseMessagingService` that opens
     a page and shows it on the "Pages" channel (or rings it), a tap that opens the incident in its workspace, and
     receipts (RFC 0006 "Android pages").
+  - Tried on the Android emulator against `dev` (2026-10-28, a local release build, the relay's FCM sender with the dev
+    Firebase project): the phone registered, a SEV1 declared through the API arrived as a decrypted page notification
+    on the locked screen, and its delivery receipt was recorded. On the way it surfaced two registration bugs, now
+    fixed: a member's newest phone locked out by the 10-device limit (#109) and the app re-registering every few
+    seconds (#109, #110).
   - Left: the Acknowledge action from a cold background launch, and on Android at all; Android pages tried on a real
-    phone (a Firebase project and `FCM_SERVICE_ACCOUNT` on the relay first); OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the
+    phone; OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the
     session's active one); creating an account or workspace from the app; a tablet layout beyond a readable width.
 - [ ] Event outbox + queue + push notifier
   - Done: the shard alarm drains the outbox to `brigade-events` (`-dev`, `-staging`) in commit order, in bounded
@@ -368,7 +373,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
     `ConnectionService`, following the member's choice like iOS (RFC 0010).
   - Done since (Q14 decided): a call CallKit ends on its own within 2 s of ringing (`failed`) also posts the
     time-sensitive page notification at once on the phone (RFC 0010); still to see on a device which real cases do it.
-  - Left: a per-phone choice of calls; Android calls tried on a real phone.
+  - Tried on the Android emulator against `dev` (2026-10-28): with "SEV1 pages only", a SEV1 rang full screen on the
+    locked emulator, answering showed the call screen, and "1 Acknowledge" acknowledged the incident. The screen then
+    says only "The call ended." rather than that it was acknowledged, and a hardware keyboard's 1 does nothing.
+  - Left: a per-phone choice of calls; Android calls tried on a real phone; saying "Acknowledged" after the button
+    acknowledges.
 - [ ] Mobile: on-call view, "I'm on call" widget, critical/time-sensitive notification setup
   - Done: the on-call screen (shifts, overrides, who each schedule has now, covering a shift); pages are
     time-sensitive. The iOS "I'm on call" widget (home screen small, lock screen rectangular and inline): on call

@@ -6,6 +6,62 @@
 @import "@freecorps/brigade-ui/tokens.css";
 @import "@freecorps/brigade-ui/theme.css";
 
+/*
+ * Surfaces off the sheet. Raised: filled and outline buttons, a 1px edge drawn as a shadow ring (so it adds no
+ * size), a highlight along the top and a short drop below. Inset: text fields, sunk a step into the sheet. Dark
+ * keeps the edge black and the highlight faint, since a light ring reads as a glow there.
+ */
+:root {
+  --brigade-raised:
+    inset 0 1px 0 rgb(255 255 255 / 0.9), 0 1px 2px rgb(22 22 21 / 0.08),
+    0 0 0 1px rgb(22 22 21 / 0.15);
+  --brigade-raised-primary:
+    inset 0 1px 0 rgb(255 255 255 / 0.2), inset 0 -1px 0 rgb(0 0 0 / 0.2),
+    0 1px 2px rgb(11 100 103 / 0.35), 0 0 0 1px color-mix(in oklab, var(--primary), black 25%);
+  --brigade-raised-destructive:
+    inset 0 1px 0 rgb(255 255 255 / 0.18), inset 0 -1px 0 rgb(0 0 0 / 0.2),
+    0 1px 2px rgb(101 26 21 / 0.35), 0 0 0 1px color-mix(in oklab, var(--destructive), black 25%);
+  --brigade-inset: inset 0 1px 2px rgb(22 22 21 / 0.07);
+}
+
+.dark {
+  --brigade-raised:
+    inset 0 1px 0 rgb(255 255 255 / 0.1), 0 1px 2px rgb(0 0 0 / 0.5), 0 0 0 1px rgb(0 0 0 / 0.7);
+  --brigade-raised-primary:
+    inset 0 1px 0 rgb(255 255 255 / 0.35), inset 0 -1px 0 rgb(0 0 0 / 0.15),
+    0 1px 2px rgb(0 0 0 / 0.5), 0 0 0 1px color-mix(in oklab, var(--primary), black 40%);
+  --brigade-inset: inset 0 1px 2px rgb(0 0 0 / 0.35);
+}
+
+@theme inline {
+  --shadow-raised: var(--brigade-raised);
+  --shadow-raised-primary: var(--brigade-raised-primary);
+  --shadow-raised-destructive: var(--brigade-raised-destructive);
+  --shadow-inset: var(--brigade-inset);
+}
+
+/*
+ * A text field, select or date input: the inset surface, one height with the buttons beside it (44px on touch,
+ * 36px under a fine pointer) and 16px text, so iOS does not zoom into it. Width, padding and font stay with the
+ * caller.
+ */
+@utility field {
+  height: --spacing(11);
+  border-radius: var(--brigade-radius-md);
+  border: 1px solid var(--input);
+  background-color: var(--background);
+  box-shadow: var(--brigade-inset);
+  font-size: var(--brigade-text-base);
+  outline: none;
+  transition: border-color var(--brigade-duration-fast) ease-out;
+  @media (pointer: fine) {
+    height: --spacing(9);
+  }
+  &::placeholder {
+    color: var(--muted-foreground);
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring;

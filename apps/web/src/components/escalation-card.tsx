@@ -56,7 +56,7 @@ import { queryErrorReason } from "@/lib/incidents";
 import { memberLabel, rotationChoices } from "@/lib/oncall";
 
 const SELECT =
-  "h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
+  "field w-full min-w-0 px-3 focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
 const LABEL = "text-xs font-medium tracking-wide text-muted-foreground uppercase";
 /** Levels a policy shows before "Show all N levels". */
 const LEVELS_SHOWN = 3;

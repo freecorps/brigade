@@ -132,7 +132,7 @@ export function WorkspaceSwitcher({ place = "header" }: { place?: "header" | "si
             sidebar ? (
               <Button
                 variant="ghost"
-                className="h-12 w-full min-w-0 justify-start gap-2.5 px-2 text-left hover:bg-sidebar-accent aria-expanded:bg-sidebar-accent"
+                className="h-12 w-full min-w-0 justify-start pointer-fine:h-12 gap-2.5 px-2 text-left hover:bg-sidebar-accent aria-expanded:bg-sidebar-accent"
               />
             ) : (
               <Button
@@ -268,7 +268,7 @@ export function AccountMenu({
           render={
             <Button
               variant="ghost"
-              className="h-12 w-full min-w-0 justify-start gap-2.5 px-2 text-left font-normal hover:bg-sidebar-accent aria-expanded:bg-sidebar-accent"
+              className="h-12 w-full min-w-0 justify-start pointer-fine:h-12 gap-2.5 px-2 text-left font-normal hover:bg-sidebar-accent aria-expanded:bg-sidebar-accent"
             />
           }
         >

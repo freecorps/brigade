@@ -628,7 +628,7 @@ function RoleRow({
             // whitespace-normal: a long name wraps inside the trigger instead of pushing the chevron out.
             <Button
               variant="ghost"
-              className="-ml-2 h-auto min-h-11 max-w-full justify-start gap-2 px-2 py-1.5 text-left font-normal whitespace-normal"
+              className="-ml-2 h-auto min-h-11 pointer-fine:h-auto max-w-full justify-start gap-2 px-2 py-1.5 text-left font-normal whitespace-normal"
             />
           }
         >
@@ -742,7 +742,7 @@ function UpdateForm({
           .filter(Boolean)
           .join(" ")}
         // 16px: iOS zooms into smaller inputs. Grows with the text up to a limit, then scrolls.
-        className="field-sizing-content max-h-80 min-h-24 w-full min-w-0 resize-y rounded-md border border-input bg-card px-3 py-2.5 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive"
+        className="field h-auto field-sizing-content max-h-80 min-h-24 w-full min-w-0 resize-y px-3 py-2.5 focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive"
       />
       {invalid ? (
         <p
@@ -1023,7 +1023,7 @@ function IncidentTitle({ id, title, editable }: { id: string; title: string; edi
           }}
           aria-invalid={invalid}
           aria-describedby={invalid ? errorId : undefined}
-          className="h-12 w-full min-w-0 rounded-md border border-input bg-card px-3 text-2xl font-semibold outline-none focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive"
+          className="field h-12 w-full min-w-0 px-3 text-2xl font-semibold focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive"
         />
         {invalid ? (
           <p
@@ -1187,7 +1187,7 @@ function WrittenUpdate({
           rows={3}
           aria-invalid={invalid !== null}
           aria-describedby={[invalid && errorId, noteId].filter(Boolean).join(" ")}
-          className="field-sizing-content max-h-80 min-h-24 w-full min-w-0 resize-y rounded-md border border-input bg-card px-3 py-2.5 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive"
+          className="field h-auto field-sizing-content max-h-80 min-h-24 w-full min-w-0 resize-y px-3 py-2.5 focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive"
         />
         {invalid ? (
           <p

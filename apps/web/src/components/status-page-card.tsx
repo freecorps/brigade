@@ -52,8 +52,7 @@ import {
   type StatusSettings,
 } from "@/lib/status-page";
 
-const SELECT =
-  "h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring";
+const SELECT = "field w-full min-w-0 px-3 focus-visible:ring-3 focus-visible:ring-ring";
 
 const LANGUAGE_NAMES: Record<StatusLocale, () => string> = {
   en: () => m.language_name_en(),
@@ -974,7 +973,7 @@ function Subscribers({
           <a
             href={api.exportUrl}
             download
-            className="inline-flex h-11 items-center gap-2 rounded-md border px-4 text-sm font-medium"
+            className="inline-flex h-11 items-center gap-2 rounded-md border px-4 text-sm font-medium pointer-fine:h-9"
           >
             <DownloadIcon aria-hidden className="size-4" />
             {text("export")}

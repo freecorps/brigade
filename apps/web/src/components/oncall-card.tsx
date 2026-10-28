@@ -90,7 +90,7 @@ import {
 } from "@/lib/oncall";
 
 const SELECT =
-  "h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
+  "field w-full min-w-0 px-3 focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
 const LABEL = "text-xs font-medium tracking-wide text-muted-foreground uppercase";
 /** Forms run edge to edge on phones (the card's padding is room enough) and as a box from `sm` up. */
 const FORM =

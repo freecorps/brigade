@@ -54,8 +54,7 @@ const part = (name: string, words: { email?: string; date?: string; name?: strin
   });
 
 // 16px and 44px tall on phones, like the members' role picker.
-const SELECT =
-  "h-11 w-full rounded-md border border-input bg-card px-2 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring sm:w-40 sm:text-sm";
+const SELECT = "field w-full px-2 focus-visible:ring-3 focus-visible:ring-ring sm:w-40 sm:text-sm";
 
 /** Pending invitations listed before "Show all": enough to see what is out, few enough not to bury the members. */
 export const PENDING_SHOWN = 5;

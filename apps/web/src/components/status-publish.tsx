@@ -23,8 +23,7 @@ import { statusCardText as say, statusText } from "@/lib/status-page";
 
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-const SELECT =
-  "h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring";
+const SELECT = "field w-full min-w-0 px-3 focus-visible:ring-3 focus-visible:ring-ring";
 
 /** Public statuses wear the incident statuses' colours they correspond to. */
 const PUBLIC_BADGE = {
@@ -293,7 +292,7 @@ function PublishedUpdates({
                       setInvalid(false);
                     }}
                     // 16px: iOS zooms into smaller inputs.
-                    className="field-sizing-content max-h-80 min-h-24 w-full min-w-0 resize-y rounded-md border border-input bg-card px-3 py-2.5 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive"
+                    className="field h-auto field-sizing-content max-h-80 min-h-24 w-full min-w-0 resize-y px-3 py-2.5 focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive"
                   />
                   {invalid ? <FormError>{say("public_body_required")}</FormError> : null}
                   <p className="text-xs text-muted-foreground">{say("cache_window")}</p>
@@ -557,7 +556,7 @@ function PublishForm({
             setInvalid((current) => ({ ...current, body: false }));
           }}
           // 16px: iOS zooms into smaller inputs.
-          className="field-sizing-content max-h-80 min-h-28 w-full min-w-0 resize-y rounded-md border border-input bg-card px-3 py-2.5 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive"
+          className="field h-auto field-sizing-content max-h-80 min-h-28 w-full min-w-0 resize-y px-3 py-2.5 focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive"
         />
         {invalid.body ? <FormError>{say("public_body_required")}</FormError> : null}
       </div>

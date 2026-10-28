@@ -61,7 +61,7 @@ export function TimeZonePicker({
           id={id}
           placeholder={m.oncall_zone({ part: "placeholder" })}
           aria-invalid={invalid ? true : undefined}
-          className="h-11 w-full min-w-0 rounded-md border border-input bg-card pr-11 pl-3 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive"
+          className="field w-full min-w-0 pr-11 pl-3 focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive"
         />
         <Combobox.Trigger
           aria-label={m.oncall_field({ field: "time_zone" })}

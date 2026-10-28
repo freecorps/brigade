@@ -49,9 +49,9 @@ import { queryErrorReason } from "@/lib/incidents";
 import { rotationChoices } from "@/lib/oncall";
 
 export const SELECT =
-  "h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
+  "field w-full min-w-0 px-3 focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
 export const TEXTAREA =
-  "min-h-20 w-full min-w-0 resize-y rounded-md border border-input bg-card px-3 py-2 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
+  "field h-auto min-h-20 w-full min-w-0 resize-y px-3 py-2 focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
 export const LABEL = "text-xs font-medium tracking-wide text-muted-foreground uppercase";
 /** Forms run edge to edge on phones (the card's padding is room enough) and as a box from `sm` up. */
 export const FORM =

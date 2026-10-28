@@ -33,8 +33,7 @@ import {
   type SlackChannels,
 } from "@/lib/slack";
 
-const SELECT =
-  "h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring";
+const SELECT = "field w-full min-w-0 px-3 focus-visible:ring-3 focus-visible:ring-ring";
 
 const LANGUAGE_NAMES: Record<WorkspaceLocale, () => string> = {
   en: () => m.language_name_en(),

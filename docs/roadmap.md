@@ -180,8 +180,10 @@ Validate the risky assumptions before writing product code. Each spike produces 
     bucket (`brigade-exports`, with its lifecycle rule) exist and are bound at wrangler.jsonc's top level; the
     production relay (`brigade-relay`) is deployed with its APNs and FCM secrets, the same key and Firebase project as
     `dev`'s, since the app is one bundle id. The production build adds the `RELAY` and `AI` bindings
-    (apps/api vite.config.ts `PRODUCTION_BINDINGS`). Left: the first API and dashboard deploy, the dashboard's custom
-    domain, the email sender and the first owner. The hosted instance runs at `brigade.freecorps.com.br` (RFC 0002
+    (apps/api vite.config.ts `PRODUCTION_BINDINGS`). The API and the dashboard are deployed (2026-10-28), the
+    dashboard on its custom domain (set at deploy, `--domain`, so no hostname is in apps/web's wrangler.jsonc), sign-up
+    closed and the first owner created; paging health answers `ok`. Left: the email sender (its domain onboarded to
+    Email Sending, then `EMAIL_FROM`) and a production mobile build pointed at the hosted instance. The hosted instance runs at `brigade.freecorps.com.br` (RFC 0002
     "Environments"). Staging has its database only.
 - [x] Web dashboard: incident list/detail, monitors
   - The incident list, the incident page (`/incidents/<number>`), the Monitors card (create, edit, pause, delete;

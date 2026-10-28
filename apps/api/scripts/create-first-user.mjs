@@ -24,7 +24,11 @@ const fail = (message) => {
 
 let values;
 try {
+  // `vp run setup:first-user -- --url …` passes the `--` through, which parseArgs would read as the end of the
+  // options; drop a leading one.
+  const args = process.argv.slice(2);
   ({ values } = parseArgs({
+    args: args[0] === "--" ? args.slice(1) : args,
     options: {
       url: { type: "string" },
       email: { type: "string" },

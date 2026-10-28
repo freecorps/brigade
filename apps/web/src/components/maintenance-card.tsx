@@ -309,7 +309,8 @@ function WindowForm({
       componentIds: chosen,
       startsAt: fromLocalInput(starts),
       endsAt: fromLocalInput(ends),
-      outage,
+      // Only components can be down: with none chosen the box is hidden, and a ticked one must not linger.
+      outage: outage && chosen.length > 0,
     };
     const found = checkDraft(draft, Date.now());
     setProblem(found);

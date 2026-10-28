@@ -1,7 +1,7 @@
 // How on-call schedules read in a UI, shared by the dashboard's On-call card and the app's on-call screen (RFC 0003
 // "Schedules"): who someone is, a handoff time in the schedule's zone and in the viewer's, a zone's name and offset,
 // and why a schedule change was refused. Pure: the current locale for the messages, an explicit one for times.
-import { zoneOffset, type MemberRow } from "@freecorps/brigade-schema";
+import { MAX_OVERRIDES_PER_MEMBER, zoneOffset, type MemberRow } from "@freecorps/brigade-schema";
 import { formatDateTime, formatRelativeTime } from "./format.ts";
 import { mutationErrorReason } from "./incident.ts";
 import { m } from "./paraglide/messages.js";
@@ -113,8 +113,17 @@ export function offsetLabel(timeZone: string, instant: number): string {
   return `UTC${minutes < 0 ? "-" : "+"}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
 }
 
-/** Why the shard refused a schedule change, in the shared wording, with "gone" for a deleted schedule. */
-export function scheduleRefusal(code: string): string {
-  if (code === "not_found") return m.oncall_gone();
-  return mutationErrorReason(code);
+/**
+ * Why the shard refused a schedule change, in the shared wording, with "gone" for a deleted schedule and the
+ * per-member override cap (`limit_reached` naming `userId`) said as such.
+ */
+export function scheduleRefusal(error: {
+  code: string;
+  issues?: readonly { path: string; message?: string }[];
+}): string {
+  if (error.code === "not_found") return m.oncall_gone();
+  if (error.code === "limit_reached" && error.issues?.some((issue) => issue.path === "userId")) {
+    return m.oncall_override_member_limit({ max: MAX_OVERRIDES_PER_MEMBER });
+  }
+  return mutationErrorReason(error.code);
 }

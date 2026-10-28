@@ -15,7 +15,10 @@ import {
   NOTIFIER_ACTOR,
   type EmailAbout,
   type EmailFailure,
+  type MemberRemoved,
+  type MemberRoleChanged,
   type NotificationFailed,
+  type ScheduleLeft,
   type Store,
   type BrigadeTables,
 } from "@freecorps/brigade-schema";
@@ -47,6 +50,13 @@ export const EMAIL_WORKSPACE_DAILY_CAP = 200;
  */
 export const REMINDER_WORKSPACE_DAILY_CAP = 200;
 export const REMINDER_USER_DAILY_CAP = 2;
+/**
+ * The owners' emails about a member taken out of schedules have caps of their own too (RFC 0005 "Rotations"): an
+ * offboarding day must never use up the sends an email about a page that failed needs, least of all after a removal
+ * that emptied a layer.
+ */
+export const ROTATION_WORKSPACE_DAILY_CAP = 100;
+export const ROTATION_USER_DAILY_CAP = 20;
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
@@ -147,6 +157,59 @@ export function asksForReminder(event: BrigadeEvent): boolean {
 const reminderKey = (userId: string, date: string) => `reminder:${userId}:${date}`;
 /** Ledger rows that are reminders (`reminderKey`), in SQL. */
 const IS_REMINDER = "substr(key, 1, 9) = 'reminder:'";
+/** Ledger rows that are rotation emails (`rotationKey`), in SQL. */
+const IS_ROTATION = "substr(key, 1, 9) = 'rotation:'";
+
+/**
+ * Why a member left the rotations, as the owners' email words it: removed (by an owner or admin, or caught up from
+ * D1), left on their own, or made a viewer.
+ */
+export type RotationCause = "removed" | "left" | "viewer";
+
+/**
+ * The email that tells the workspace's owners which schedules a member was taken out of (RFC 0003 "Schedules", Q20):
+ * the schedules come from the event, who the owners are and the member's name from D1.
+ */
+export type RotationPlan =
+  | {
+      send: true;
+      workspace: string;
+      userId: string;
+      cause: RotationCause;
+      schedules: ScheduleLeft[];
+      /** Owners it already reached (a redelivery, or a retry after some sends failed). */
+      sent: string[];
+      budget: EmailBudget;
+    }
+  | { send: false; reason: "held"; until: number }
+  | { send: false; reason: "not_a_rotation" | "not_found" | "nothing" };
+
+/** The member event and what it says, when it took someone out of schedules. */
+function rotationOf(
+  event: BrigadeEvent,
+): { userId: string; cause: RotationCause; schedules: ScheduleLeft[] } | undefined {
+  if (event.type !== "member.removed" && event.type !== "member.role_changed") return undefined;
+  const data = event.data as Partial<MemberRemoved["data"] & MemberRoleChanged["data"]> | null;
+  const schedules = data?.schedules;
+  if (typeof data?.userId !== "string" || !Array.isArray(schedules) || schedules.length === 0) {
+    return undefined;
+  }
+  if (event.type === "member.role_changed" && data.to !== "viewer") return undefined;
+  const cause: RotationCause =
+    event.type === "member.role_changed" ? "viewer" : data.reason === "left" ? "left" : "removed";
+  return { userId: data.userId, cause, schedules };
+}
+
+/**
+ * Whether `event` asks for the owners' email about a member taken out of schedules: `member.removed`, or
+ * `member.role_changed` to a viewer, that lists at least one schedule.
+ */
+export function asksForRotationEmail(event: BrigadeEvent): boolean {
+  return rotationOf(event) !== undefined;
+}
+
+/** The owners' email about one member event, in the email ledger: once per event. Counted in the paging caps. */
+const rotationKey = (event: BrigadeEvent) => `rotation:${event.id}`;
 
 /**
  * What one recipient's send did, as the consumer reports it. `capped`: not sent, because the recipient or the
@@ -386,6 +449,93 @@ export class Mailer {
   }
 
   /**
+   * The owners' email `event` asks for (a member taken out of schedules), claimed for the caller until
+   * `EMAIL_CLAIM_MS` from `now` like the notifier's emails, within the same caps (`EMAIL_WORKSPACE_DAILY_CAP`,
+   * `EMAIL_USER_HOURLY_CAP`). The schedules are the event's, as they were when the member left; one deleted since is
+   * left out, and none left is nothing to send.
+   */
+  planRotation(event: BrigadeEvent, now: number): RotationPlan {
+    this.prune(now);
+    const rotation = rotationOf(event);
+    if (!rotation) return { send: false, reason: "not_a_rotation" };
+    const { store } = this.options.shard;
+    const [workspace] = store.scan("workspace");
+    if (!workspace) return { send: false, reason: "not_found" };
+    const schedules = rotation.schedules.filter(
+      (schedule) => typeof schedule?.id === "string" && store.get("schedules", schedule.id),
+    );
+    if (schedules.length === 0) return { send: false, reason: "nothing" };
+    const key = rotationKey(event);
+    const claim = this.claim(key, now);
+    if (claim === "done") return { send: false, reason: "nothing" };
+    if (claim !== "claimed") return { send: false, reason: "held", until: claim.until };
+    return {
+      send: true,
+      workspace: workspace.name,
+      userId: rotation.userId,
+      cause: rotation.cause,
+      schedules: schedules.map(({ id, name, emptied }) => ({
+        id,
+        name: String(name),
+        emptied: emptied === true,
+      })),
+      sent: this.sent(key),
+      budget: this.budget(now, "rotation"),
+    };
+  }
+
+  /**
+   * Records what the owners' email about a member taken out of schedules did: each owner reached goes in the ledger
+   * (a retry skips them, and they count toward the caps); a capped one is final at once (logged). When `final`, the
+   * email is done and each owner it never reached is logged (it has no incident to put on a timeline); otherwise its
+   * claim is let go, so the retry can take it at once.
+   */
+  recordRotation(
+    event: BrigadeEvent,
+    outcomes: readonly EmailOutcome[],
+    final: boolean,
+    now: number,
+  ): void {
+    if (!asksForRotationEmail(event)) return;
+    const key = rotationKey(event);
+    const { sql } = this.options.storage;
+    const claim = sql
+      .exec<{ done: number }>("select done from email_keys where key = ?", key)
+      .toArray()[0];
+    if (!claim || claim.done) return;
+    for (const outcome of outcomes) {
+      if (!outcome.ok && !outcome.capped) continue;
+      sql.exec(
+        "insert into email_sends (key, user_id, at, capped) values (?, ?, ?, ?) on conflict do nothing",
+        key,
+        outcome.userId,
+        now,
+        outcome.ok ? 0 : 1,
+      );
+      if (!outcome.ok) {
+        this.options.log("rotation email capped", {
+          event: event.id,
+          recipient: recipientHash(key, outcome.userId),
+        });
+      }
+    }
+    if (!final) {
+      sql.exec("update email_keys set claimed_until = 0 where key = ?", key);
+      return;
+    }
+    const sent = new Set(this.sent(key));
+    for (const { userId } of outcomes) {
+      if (sent.has(userId)) continue;
+      sent.add(userId);
+      this.options.log("rotation email failed", {
+        event: event.id,
+        recipient: recipientHash(key, userId),
+      });
+    }
+    sql.exec("update email_keys set done = 1, claimed_until = 0 where key = ?", key);
+  }
+
+  /**
    * Takes `key` for the caller until `EMAIL_CLAIM_MS` from `now`: `claimed`, or `done` (sent or given up), or held by
    * another delivery until `until`.
    */
@@ -433,11 +583,18 @@ export class Mailer {
    * What the caps leave now (see `EmailBudget`); capped recipients do not count. `paging`: the emails about pages
    * (`EMAIL_WORKSPACE_DAILY_CAP`, `EMAIL_USER_HOURLY_CAP`, `users` over the last hour), reminders left out;
    * `reminder`: the reminders' own (`REMINDER_WORKSPACE_DAILY_CAP`, `REMINDER_USER_DAILY_CAP`, `users` over the last
-   * day), nothing else counted.
+   * day), nothing else counted; `rotation`: the rotation emails' own (`ROTATION_WORKSPACE_DAILY_CAP`,
+   * `ROTATION_USER_DAILY_CAP`, `users` over the last day), nothing else counted. Neither of the last two counts
+   * toward the paging caps.
    */
-  private budget(now: number, kind: "paging" | "reminder"): EmailBudget {
+  private budget(now: number, kind: "paging" | "reminder" | "rotation"): EmailBudget {
     const { sql } = this.options.storage;
-    const which = kind === "reminder" ? IS_REMINDER : `not ${IS_REMINDER}`;
+    const which =
+      kind === "reminder"
+        ? IS_REMINDER
+        : kind === "rotation"
+          ? IS_ROTATION
+          : `not ${IS_REMINDER} and not ${IS_ROTATION}`;
     const today = sql
       .exec<{ sends: number }>(
         `select count(*) as sends from email_sends where capped = 0 and at > ? and ${which}`,
@@ -447,11 +604,16 @@ export class Mailer {
     const users: Record<string, number> = {};
     for (const row of sql.exec<{ user_id: string; sends: number }>(
       `select user_id, count(*) as sends from email_sends where capped = 0 and at > ? and ${which} group by user_id`,
-      now - (kind === "reminder" ? DAY_MS : HOUR_MS),
+      now - (kind === "paging" ? HOUR_MS : DAY_MS),
     )) {
       users[row.user_id] = row.sends;
     }
-    const cap = kind === "reminder" ? REMINDER_WORKSPACE_DAILY_CAP : EMAIL_WORKSPACE_DAILY_CAP;
+    const cap =
+      kind === "reminder"
+        ? REMINDER_WORKSPACE_DAILY_CAP
+        : kind === "rotation"
+          ? ROTATION_WORKSPACE_DAILY_CAP
+          : EMAIL_WORKSPACE_DAILY_CAP;
     return { workspace: Math.max(0, cap - today), users };
   }
 

@@ -156,6 +156,25 @@ export function layerName(layer: Pick<ScheduleLayer, "name">, index: number): st
   return layer.name.trim() || m.oncall_layer_name({ number: String(index + 1) });
 }
 
+/** The id of a schedule's row in the On-call card, which the overview's gap notice links to. */
+export const scheduleAnchor = (id: string) => `schedule-${id}`;
+
+/** A schedule with layers that have nobody in them, and which (their names, in the card's words). */
+export type ScheduleGap = { id: string; name: string; layers: string[] };
+
+/**
+ * The schedules with a layer that has nobody in it (a member who left was its last, RFC 0003 "Schedules"), by the
+ * list's order: nobody is on call there unless another layer covers it, until someone edits the schedule.
+ */
+export function scheduleGaps(rows: readonly ScheduleRow[]): ScheduleGap[] {
+  return rows.flatMap((row) => {
+    const layers = row.layers.flatMap((layer, index) =>
+      layer.members.length === 0 ? [layerName(layer, index)] : [],
+    );
+    return layers.length ? [{ id: row.id, name: row.name, layers }] : [];
+  });
+}
+
 export type CheckedSchedule =
   | {
       ok: true;

@@ -80,7 +80,7 @@ export function OnCall() {
 
   const report = (name: string) => (outcome: MutationOutcome) => {
     if (outcome.ok) return;
-    const text = m.oncall_change_failed({ name, reason: scheduleRefusal(outcome.error.code) });
+    const text = m.oncall_change_failed({ name, reason: scheduleRefusal(outcome.error) });
     setRefusals((current) =>
       [...current, { key: `${Date.now()}-${current.length}`, text }].slice(-3),
     );

@@ -11,6 +11,7 @@ import {
   email_reminder_intro,
   email_reminder_more,
   email_reset,
+  email_rotation,
   email_status,
   email_signup_attempt,
   email_text,
@@ -37,10 +38,11 @@ import {
   formatIncidentNumber,
   type PageFailure,
   type Role,
+  type ScheduleLeft,
   type Severity,
 } from "@freecorps/brigade-schema";
 import { singleLine, type OutgoingEmail } from "./email.ts";
-import type { ReminderItem } from "./mailer.ts";
+import type { ReminderItem, RotationCause } from "./mailer.ts";
 import type { StatusEmailContent } from "./status-mail.ts";
 
 /** What an email says about the incident: all of it user content except the severity and number. */
@@ -402,6 +404,42 @@ export function renderWebhookDisabledEmail(
       lines: [text("intro"), text("how")],
       ...(url ? { link: { label: text("open"), url } } : {}),
       after: [],
+      footer: text("footer"),
+    },
+    to,
+    locale,
+  );
+}
+
+/**
+ * The email that tells an owner a member was taken out of on-call schedules (RFC 0003 "Schedules", Q20): who (their
+ * name from D1, or "A member" without one), why, and each schedule, saying which one now has a layer with nobody in
+ * it; `url` is the dashboard's On-call card. Nothing else about the member. The names are what members typed.
+ */
+export function renderRotationEmail(
+  facts: {
+    workspace: string;
+    member: string | null;
+    cause: RotationCause;
+    schedules: readonly ScheduleLeft[];
+  },
+  to: { email: string; name?: string },
+  url: string | undefined,
+  locale: Locale,
+): OutgoingEmail {
+  const say = (part: string, member: string, schedule = "") =>
+    email_rotation({ part, workspace: facts.workspace, member, schedule }, { locale });
+  const member = facts.member?.trim() ? singleLine(facts.member) : say("someone", "");
+  const text = (part: string, schedule?: string) => say(part, member, schedule);
+  return renderMessage(
+    {
+      subject: text("subject"),
+      lines: [text(`intro_${facts.cause}`)],
+      list: facts.schedules.map((schedule) =>
+        text(schedule.emptied ? "item_emptied" : "item", schedule.name),
+      ),
+      ...(url ? { link: { label: text("open"), url } } : {}),
+      after: [text("how")],
       footer: text("footer"),
     },
     to,

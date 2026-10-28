@@ -1122,6 +1122,32 @@
     }
   ],
   "oncall_layer_empty": "Ninguém nesta camada: um buraco até alguém ser adicionado",
+  "oncall_override_member_limit": "Essa pessoa já tem {max} substituições futuras nesta escala, o máximo para uma pessoa. Remova uma antes.",
+  "oncall_gaps_title": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Uma escala tem uma camada sem ninguém",
+        "countPlural=*": "{countFormatted} escalas têm uma camada sem ninguém"
+      }
+    }
+  ],
+  "oncall_gaps_layers": "Ninguém em {layers}",
+  "oncall_gaps_hint": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=manage": "Uma camada vazia não tem ninguém de plantão, a não ser que outra camada cubra. Edite a escala para adicionar alguém, ou remova a camada.",
+        "part=*": "Uma camada vazia não tem ninguém de plantão, a não ser que outra camada cubra. Peça a um proprietário ou admin para adicionar alguém."
+      }
+    }
+  ],
   "oncall_time_zone": "Horários em {zone} ({offset})",
   "oncall_unit": [
     {
@@ -2713,6 +2739,25 @@
         "part=open": "Abrir o painel",
         "part=footer": "Você recebe este email porque é proprietário de {workspace} no Brigade.",
         "part=*": "Um webhook em {workspace} foi desligado"
+      }
+    }
+  ],
+  "email_rotation": [
+    {
+      "declarations": ["input part", "input workspace", "input member", "input schedule"],
+      "selectors": ["part"],
+      "match": {
+        "part=subject": "{member} saiu das escalas de plantão em {workspace}",
+        "part=intro_removed": "Removeram {member} de {workspace}, então o Brigade tirou essa pessoa destas escalas de plantão:",
+        "part=intro_left": "{member} saiu de {workspace}, então o Brigade tirou essa pessoa destas escalas de plantão:",
+        "part=intro_viewer": "{member} agora é leitor em {workspace}, e leitores não ficam de plantão, então o Brigade tirou essa pessoa destas escalas de plantão:",
+        "part=item": "{schedule}",
+        "part=item_emptied": "{schedule}: uma das camadas está sem ninguém agora",
+        "part=how": "Os outros de cada rodízio avançaram para cobrir os turnos, e as substituições dessa pessoa foram apagadas. Confira se as novas passagens de turno servem para todos.",
+        "part=someone": "Um membro",
+        "part=open": "Abrir as escalas",
+        "part=footer": "Você recebe este email porque é proprietário de {workspace} no Brigade.",
+        "part=*": "{member} saiu das escalas de plantão em {workspace}"
       }
     }
   ],

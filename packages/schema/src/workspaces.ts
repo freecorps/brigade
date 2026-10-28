@@ -172,7 +172,7 @@ export const syncMember = defineMutation({
     if (current) store.update("members", args.id, row);
     else store.insert("members", row);
     // Viewers only read. Run whenever the copy says viewer: a first copy may follow layers an older role was in.
-    return ok(...(args.role === "viewer" ? dropFromSchedules(store, args.id, ctx) : []));
+    return ok(...(args.role === "viewer" ? dropFromSchedules(store, args.id, ctx).events : []));
   },
 });
 

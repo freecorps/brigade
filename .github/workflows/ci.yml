@@ -1,5 +1,5 @@
 # The gate for every push to main and every pull request. `babysit-pr` watches the
-# "Check, test and build" job by name; rename both together.
+# "Check, test and build" job by name, and the "Protect main" ruleset requires it; rename all three together.
 name: CI
 
 # Prose-only pushes to main start no runner.
@@ -22,9 +22,52 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Check, tests and build run side by side; none needs another's output (tests and check read packages from source,
+# RFC 0002). The API's tests are most of the time: they run in workerd, and the paging tests wait out real timeouts
+# on purpose, so they are split across runners by file (`vitest --shard`).
 jobs:
   check:
-    name: Check, test and build
+    name: Check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp check
+
+  test:
+    name: Test (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: packages and apps
+            command: vp run -r --filter "!@freecorps/brigade-api" test
+          - {
+              name: api 1/4,
+              command: cd apps/api && vpx wrangler types --check && vp test --shard=1/4,
+            }
+          - { name: api 2/4, command: cd apps/api && vp test --shard=2/4 }
+          - { name: api 3/4, command: cd apps/api && vp test --shard=3/4 }
+          - { name: api 4/4, command: cd apps/api && vp test --shard=4/4 }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version: "24"
+          cache: true
+      # apps/api's `test` script is `wrangler types --check && vp test`; the first shard runs the type check once.
+      - run: ${{ matrix.command }}
+      # Fails if a test changed a committed file or left a new one.
+      - run: test -z "$(git status --porcelain)" || { git status --porcelain; git diff; exit 1; }
+
+  build:
+    name: Build
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -33,8 +76,21 @@ jobs:
         with:
           node-version: "24"
           cache: true
-      - run: vp check
-      - run: vp run -r test
       - run: vp run -r build
       # Fails if a build changed a committed file (package.json exports, compiled messages) or left a new one.
       - run: test -z "$(git status --porcelain)" || { git status --porcelain; git diff; exit 1; }
+
+  # The one required check: green only when every job above is. `always()` so a failed job above fails this one
+  # rather than skipping it, which the ruleset would not count as a pass either way.
+  gate:
+    name: Check, test and build
+    needs: [check, test, build]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "check, test, build: $RESULTS"
+          for result in $RESULTS; do [ "$result" = success ] || exit 1; done

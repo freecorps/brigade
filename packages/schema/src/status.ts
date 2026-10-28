@@ -198,9 +198,12 @@ export const configureStatusPage = defineMutation({
     ) {
       return fail("conflict", "Status page settings are unchanged");
     }
+    // The API claimed the slug in D1 before a public save (RFC 0012 "Addresses"); a draft keeps what it held.
+    const held = current?.slug === args.slug && current.claimed !== false;
     const row: StatusPageRow = {
       id: STATUS_PAGE_ID,
       ...args,
+      claimed: args.enabled || held,
       updatedAt: ctx.now,
       updatedBy: ctx.actor.id,
     };
@@ -208,7 +211,8 @@ export const configureStatusPage = defineMutation({
     else store.insert("status_page", row);
     const previousSlug = current && current.slug !== args.slug ? current.slug : null;
     if (ctx.server) {
-      if (previousSlug && !store.get("status_retired", previousSlug)) {
+      // Only a slug this workspace held: a draft's was never in D1 nor KV, and may be another page's by now.
+      if (previousSlug && current?.claimed !== false && !store.get("status_retired", previousSlug)) {
         store.insert("status_retired", { id: previousSlug, at: ctx.now });
       }
       // Taken back before the shard got round to releasing it: still this workspace's in D1.

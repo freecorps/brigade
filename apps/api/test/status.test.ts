@@ -292,6 +292,37 @@ describe("PUT /workspaces/:id/status-page", () => {
     expect(await response.json()).toEqual({ error: "slug_taken" });
     expect(await owners(address)).toEqual([a.id]);
   });
+
+  test("a draft's slug is claimed only when the page first goes public, and never touches another page's", async () => {
+    const a = await team();
+    const b = await team({ ana: a.eva, caio: a.caio, eva: a.ana });
+    const address = slug();
+    // A draft keeps its slug on the page alone: nothing in D1, and another workspace may hold the same one.
+    expect((await configure(a, a.ana, settings(address, { enabled: false }))).status).toBe(200);
+    expect(await owners(address)).toEqual([]);
+    expect((await configure(b, b.ana, settings(address))).status).toBe(200);
+    await b.push();
+    expect(await owners(address)).toEqual([b.id]);
+    // Saving the draft, or moving it to another slug, deletes nothing of the page that went public there.
+    expect(
+      (await configure(a, a.ana, settings(address, { enabled: false, title: "Acme draft" }))).status,
+    ).toBe(200);
+    await a.push();
+    const other = slug();
+    expect((await configure(a, a.ana, settings(other, { enabled: false }))).status).toBe(200);
+    await a.push();
+    expect(await a.withShard((shard) => shard.store.scan("status_retired"))).toEqual([]);
+    expect(await snapshot(address)).toMatchObject({ title: "Acme" });
+    expect(await owners(address)).toEqual([b.id]);
+    // Going public under a taken slug is refused then; under a free one claims it.
+    const taken = await configure(a, a.ana, settings(address));
+    expect(taken.status).toBe(409);
+    expect((await configure(a, a.ana, settings(other))).status).toBe(200);
+    expect(await owners(other)).toEqual([a.id]);
+    // Made a draft again, the page keeps the address it went public under.
+    expect((await configure(a, a.ana, settings(other, { enabled: false }))).status).toBe(200);
+    expect(await owners(other)).toEqual([a.id]);
+  });
 });
 
 describe("the snapshot", () => {

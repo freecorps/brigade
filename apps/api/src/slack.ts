@@ -946,8 +946,10 @@ export class SlackDesk {
     };
     const wanted = connection.incidentChannels ?? "off";
     const major = incident.severity === "sev1" || incident.severity === "sev2";
-    const wants = wanted === "all" || (wanted === "major" && major);
-    const createChannel = () => {
+    // `raised`: the event's own target severity (SEV1/SEV2), so a raise lowered again before Slack got to it still makes
+    // the channel the raise asked for (Q22).
+    const createChannel = (raised = false) => {
+      const wants = wanted === "all" || (wanted === "major" && (major || raised));
       if (!wants || channel) return;
       jobs.push({
         key: "channel",
@@ -997,7 +999,7 @@ export class SlackDesk {
       // Raised to SEV1 or SEV2 after declaring, with no channel yet: the channel the declaration would have made (Q22).
       // Only this event's own channel is invited to and posted in, so a raise never re-posts in an older one.
       case "incident.severity_changed": {
-        if (raisedToMajor(event) && major && isActive(incident.status)) createChannel();
+        if (raisedToMajor(event) && isActive(incident.status)) createChannel(true);
         if (open && !open.ts && this.job(event.id, "channel")?.done) {
           invite(this.responders(incident));
           jobs.push({

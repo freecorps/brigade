@@ -10,6 +10,7 @@ import {
   ROLES,
   runMutation,
   WORKSPACE_NAME_MAX,
+  workspaceLocale,
   type BrigadeTables,
   type MutationContext,
   type Role,
@@ -71,6 +72,7 @@ describe("workspace.create", () => {
       "slack.connect",
       "notification.failSlack",
       "slack.markRevoked",
+      "slack.takeOver",
       "slack.forgetToken",
       "slack.archiveDue",
       "webhook.create",
@@ -115,12 +117,12 @@ describe("workspace.create", () => {
         {
           type: "workspace.created",
           subject: WS,
-          data: { id: WS, name: "Acme", createdBy: "usr_ana" },
+          data: { id: WS, name: "Acme", createdBy: "usr_ana", locale: "en" },
         },
       ],
     });
     expect(store.scan("workspace")).toEqual([
-      { id: WS, name: "Acme", createdAt: T, createdBy: "usr_ana" },
+      { id: WS, name: "Acme", createdAt: T, createdBy: "usr_ana", locale: "en" },
     ]);
   });
 
@@ -248,5 +250,70 @@ describe("workspace.setAiDrafts", () => {
     expect(
       runMutation(mutations, "workspace.setAiDrafts", { enabled: true }, store, ctx()),
     ).toMatchObject({ ok: true, events: [{ data: { enabled: true } }] });
+  });
+});
+
+describe("workspace.setLocale (Q15)", () => {
+  const provisioned = (locale?: string) => {
+    const store = createMemoryStore<BrigadeTables>();
+    const result = runMutation(
+      serverMutations,
+      "workspace.create",
+      { id: WS, name: "Acme", ...(locale ? { locale } : {}) },
+      store,
+      ctx(),
+    );
+    expect(result).toMatchObject({ ok: true });
+    return { store, result };
+  };
+
+  test("is set at creation from the creator's language, English without one", () => {
+    const pt = provisioned("pt-BR");
+    expect(workspaceLocale(pt.store.get("workspace", WS))).toBe("pt-BR");
+    expect(pt.result).toMatchObject({
+      events: [{ type: "workspace.created", data: { locale: "pt-BR" } }],
+    });
+    expect(workspaceLocale(provisioned().store.get("workspace", WS))).toBe("en");
+    // A row from before workspaces had one.
+    expect(workspaceLocale({})).toBe("en");
+    const store = createMemoryStore<BrigadeTables>();
+    expect(
+      runMutation(
+        serverMutations,
+        "workspace.create",
+        { id: WS, name: "Acme", locale: "fr" },
+        store,
+        ctx(),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+  });
+
+  test("only owners change it; the event says from what to what; no change is a conflict", () => {
+    const { store } = provisioned();
+    for (const role of ["admin", "responder", "viewer"] as const) {
+      expect(
+        runMutation(mutations, "workspace.setLocale", { locale: "pt-BR" }, store, ctx(role)),
+        role,
+      ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    }
+    expect(
+      runMutation(mutations, "workspace.setLocale", { locale: "pt-BR" }, store, ctx()),
+    ).toEqual({
+      ok: true,
+      events: [
+        {
+          type: "workspace.locale_changed",
+          subject: WS,
+          data: { locale: "pt-BR", previous: "en" },
+        },
+      ],
+    });
+    expect(workspaceLocale(store.get("workspace", WS))).toBe("pt-BR");
+    expect(
+      runMutation(mutations, "workspace.setLocale", { locale: "pt-BR" }, store, ctx()),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(
+      runMutation(mutations, "workspace.setLocale", { locale: "es" }, store, ctx()),
+    ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
   });
 });

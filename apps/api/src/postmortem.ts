@@ -18,7 +18,6 @@ import {
   POSTMORTEM_TOTAL_MAX,
   prefixRange,
   roleDefinition,
-  STATUS_LOCALES,
   type MutationStore,
   type PostmortemDraftFailure,
   type PostmortemSection,
@@ -30,7 +29,7 @@ import {
 import { unauthenticated } from "./api-tokens.ts";
 import type { Auth } from "./auth.ts";
 import { DRAFT_STATUS } from "./http.ts";
-import { checkMember, json, readJson } from "./member-route.ts";
+import { checkMember, json } from "./member-route.ts";
 
 /**
  * The model that writes drafts: Meta's Llama 3.3 70B (FP8, the "fast" variant), a general instruction model that
@@ -412,8 +411,8 @@ export type DraftRequestResult =
   | { ok: false; code: string };
 
 /**
- * `POST /workspaces/:id/incidents/:incidentId/postmortem/draft` (body `{ locale }`, the asker's language, used when
- * the workspace has no status page language): responders and up, or an API token with `incident:update`. 503 `ai_unavailable` without the `AI` binding; 403
+ * `POST /workspaces/:id/incidents/:incidentId/postmortem/draft` (the draft is in the workspace's language; a body's
+ * `locale`, from clients before it, is ignored): responders and up, or an API token with `incident:update`. 503 `ai_unavailable` without the `AI` binding; 403
  * `ai_disabled` when an owner turned AI drafts off for the workspace; 202
  * `{ requestId }` once the draft is pending, the draft itself arriving through sync.
  */
@@ -438,13 +437,10 @@ export async function requestDraftRoute(
   if (!isId("inc", incidentId)) return json({ error: "not_found" }, 404);
   const ai = env.AI;
   if (!ai) return json({ error: "ai_unavailable" }, 503);
-  const body = await readJson(request);
-  const asked = (body as { locale?: unknown } | undefined)?.locale;
-  const locale: StatusLocale = STATUS_LOCALES.find((one) => one === asked) ?? "en";
   const shard = env.WORKSPACE.getByName(workspaceId);
   let result: DraftRequestResult;
   try {
-    result = await shard.requestPostmortemDraft(workspaceId, member.actor, incidentId, locale);
+    result = await shard.requestPostmortemDraft(workspaceId, member.actor, incidentId);
   } catch (error) {
     console.error(
       JSON.stringify({

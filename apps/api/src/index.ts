@@ -59,7 +59,8 @@ import { MAX_ALERT_BODY } from "./alert-intake.ts";
 import { apiTokenRoute, callerOf, unauthenticated } from "./api-tokens.ts";
 import { ACK_STATUS, INVITATION_STATUS, MEMBER_STATUS, RECEIPT_STATUS, USER_ID } from "./http.ts";
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
-import { serveConfig, signUpMode } from "./sign-up.ts";
+import { pruneEmailDays } from "./email-ceiling.ts";
+import { instanceAccess, serveConfig, type AccessEnv } from "./sign-up.ts";
 import { BOOTSTRAP_PATH, bootstrapFirstUser } from "./bootstrap.ts";
 import { forgetSessionEnd, recordSessionEnd, sweepSessionEnds } from "./session-end.ts";
 import { DEVICES_REGISTER_PATH, registerDevices } from "./device-route.ts";
@@ -185,7 +186,7 @@ export default {
     if (sync !== undefined) return openSync(request, env, auth, sync, waitUntil);
     if (pathname === "/workspaces") return createWorkspace(request, auth);
     // Before anyone signs in: the sign-up mode, and the first owner of a new instance (RFC 0002 "Auth").
-    if (pathname === "/config") return serveConfig(request, signUpMode((env as SetupEnv).SIGNUP));
+    if (pathname === "/config") return serveConfig(request, instanceAccess(env as SetupEnv));
     if (pathname === BOOTSTRAP_PATH) {
       return bootstrapFirstUser(request, (env as SetupEnv).BOOTSTRAP_TOKEN, env.DB, auth);
     }
@@ -318,7 +319,7 @@ export default {
       ctx?.waitUntil(sweep);
     }
     // Ended sessions a shard has yet to act on (src/session-end.ts), every run; and the rate-limit counters past
-    // every window, once an hour. Never in the heartbeat's way.
+    // every window and the email ceiling's old days, once an hour. Never in the heartbeat's way.
     ctx?.waitUntil(sweepSessionEnds(env, Date.now()));
     if (new Date(controller.scheduledTime).getUTCMinutes() === RATE_LIMIT_PRUNE_MINUTE) {
       ctx?.waitUntil(
@@ -328,6 +329,7 @@ export default {
           ),
         ),
       );
+      ctx?.waitUntil(pruneEmailDays(env.DB, Date.now()));
     }
     await env.WATCHDOG.getByName(WATCHDOG_NAME).beat();
   },
@@ -435,10 +437,12 @@ async function memberRoles(db: D1Database, userId: string): Promise<Role[]> {
 }
 
 /**
- * `SIGNUP` (src/sign-up.ts: `open`, `invite`, `closed`; unset is `closed`), a var only `dev` sets, and the optional
- * secret `BOOTSTRAP_TOKEN` (src/bootstrap.ts), which only a new instance needs, until its first user exists.
+ * `SIGNUP` (src/sign-up.ts: `open`, `invite`, `closed`; unset is `closed`), a var only `dev` sets;
+ * `REQUIRE_VERIFIED_EMAIL` (src/sign-up.ts, off unless set); the email settings that say whether the instance can
+ * send email at all (src/email.ts); and the optional secret `BOOTSTRAP_TOKEN` (src/bootstrap.ts), which only a new
+ * instance needs, until its first user exists.
  */
-type SetupEnv = { SIGNUP?: string; BOOTSTRAP_TOKEN?: string };
+type SetupEnv = AccessEnv & { BOOTSTRAP_TOKEN?: string };
 
 /**
  * Better Auth on this Worker's D1 for one request; a new workspace gets its shard provisioned right away.
@@ -450,10 +454,13 @@ export function workerAuth(
   request: Request,
   onWorkspaceCreated?: AuthBindings["onWorkspaceCreated"],
 ): Auth {
+  // Closed without email; verification before sign-in only where it can be done (src/sign-up.ts).
+  const access = instanceAccess(env as SetupEnv);
   return createAuth({
     database: env.DB,
     secret: env.BETTER_AUTH_SECRET,
-    signUp: signUpMode((env as SetupEnv).SIGNUP),
+    signUp: access.signUp,
+    requireVerifiedEmail: access.requireVerifiedEmail,
     waitUntil: (promise) => ctx.waitUntil(promise),
     // The web Worker forwards with the browser's URL, so this is the protocol the browser used.
     secureCookies: new URL(request.url).protocol === "https:",
@@ -539,6 +546,8 @@ export type InheritedWorkspace = {
   /** Alert source URLs that stopped working, and alert routes the account created that were disabled. */
   sources?: number;
   routes?: number;
+  /** The Slack team whose connection the account made, disconnected (its bot token revoked). */
+  slack?: string;
   /** The shard could not be reached: nothing there was paused, and the owner should look. */
   failed: boolean;
 };
@@ -551,7 +560,8 @@ export type InheritedWorkspace = {
  * `user.passwordResetAt` instead.
  *
  * On a takeover (`takeOver`: the address was not verified until now), the shard of each workspace where the account is
- * the only member also pauses its monitors and revokes its heartbeat URLs, and the owner is told once
+ * the only member also pauses its monitors, revokes its heartbeat and alert source URLs and disconnects a Slack
+ * connection the account made, and the owner is told once
  * (`takeover_notice`, read by `GET /account/takeover`).
  */
 export function signOutWith(
@@ -599,7 +609,7 @@ export function signOutWith(
             failure = undefined;
             // The shard found another member after all, and took nothing over.
             if (!sole || result.paused === undefined) return undefined;
-            const { paused, revoked = 0, sources = 0, routes = 0 } = result;
+            const { paused, revoked = 0, sources = 0, routes = 0, slack } = result;
             return {
               id: workspace.id,
               name: workspace.name,
@@ -607,6 +617,7 @@ export function signOutWith(
               revoked,
               sources,
               routes,
+              ...(slack !== undefined ? { slack } : {}),
               failed: false,
             };
           } catch (error) {
@@ -693,6 +704,7 @@ function mergeNotice(
     same.revoked = Math.max(same.revoked, workspace.revoked);
     same.sources = Math.max(same.sources ?? 0, workspace.sources ?? 0);
     same.routes = Math.max(same.routes ?? 0, workspace.routes ?? 0);
+    same.slack ??= workspace.slack;
     same.failed = same.failed && workspace.failed;
   }
   return merged;
@@ -740,9 +752,9 @@ export async function takeoverNotice(
 }
 
 function provisionWith(env: Env): NonNullable<AuthBindings["onWorkspaceCreated"]> {
-  return async ({ id, name, ownerId }) => {
+  return async ({ id, name, ownerId, locale }) => {
     const result = await env.WORKSPACE.getByName(id).provision(
-      { id, name },
+      { id, name, locale },
       { kind: "user", id: ownerId, role: "owner" },
     );
     if (!result.ok) throw new Error(`Provisioning workspace ${id} failed: ${result.code}`);

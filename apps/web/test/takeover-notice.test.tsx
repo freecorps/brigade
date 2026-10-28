@@ -22,6 +22,16 @@ const inherited = [
     failed: false,
   },
   { id: "ws_2", name: "Empty", paused: [], revoked: 0, sources: 0, routes: 0, failed: false },
+  {
+    id: "ws_4",
+    name: "Chatty",
+    paused: [],
+    revoked: 0,
+    sources: 0,
+    routes: 0,
+    slack: "Squat Slack",
+    failed: false,
+  },
   { id: "ws_3", name: "Unreachable", paused: [], revoked: 0, sources: 0, routes: 0, failed: true },
 ];
 
@@ -107,6 +117,7 @@ describe("TakeoverNotice", () => {
     expect(items).toEqual([
       "Squat2 monitors paused: Their host, Their cron. 1 heartbeat URL turned off. 2 alert source URLs turned off. 1 alert route turned off",
       "EmptyNothing there needed turning off.",
+      "ChattySlack disconnected from Squat Slack",
       "UnreachableBrigade couldn't reach this workspace, so nothing in it was paused. Check its monitors now.",
     ]);
     await act(async () => shown.querySelector("button")!.click());
@@ -130,5 +141,6 @@ describe("TakeoverNotice", () => {
     const shown = await mount(api().fetcher, "pt-BR");
     expect(shown.querySelector("h2")?.textContent).toBe("Você recuperou esta conta");
     expect(shown.querySelector("li")?.textContent).toContain("2 monitores pausados");
+    expect(shown.textContent).toContain("Slack desconectado de Squat Slack");
   });
 });

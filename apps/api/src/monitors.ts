@@ -18,6 +18,7 @@ import {
   type MonitorRow,
   type ProbeRegion,
   type RandomBytes,
+  workspaceLocale,
 } from "@freecorps/brigade-schema";
 import type { MutationResultMessage } from "@freecorps/brigade-sync/protocol";
 import type { CheckConfig } from "./check.ts";
@@ -112,8 +113,11 @@ export class Monitoring {
         open: {
           alertId: newId("alt", now, random),
           incidentId: newId("inc", now, random),
-          // TODO(RFC 0008): the workspace's default locale, once workspaces have one.
-          title: monitor_incident_title({ name: monitor?.name ?? args.id }, { locale: "en" }),
+          // Shared text: in the workspace's locale (RFC 0008, Q15).
+          title: monitor_incident_title(
+            { name: monitor?.name ?? args.id },
+            { locale: workspaceLocale(shard.store.scan("workspace")[0]) },
+          ),
         },
       },
       now,

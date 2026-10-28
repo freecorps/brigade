@@ -515,6 +515,11 @@ export type WorkspaceRow = {
   email?: EmailSettings;
   /** Whether members may ask Workers AI for a postmortem draft (`workspace.setAiDrafts`, RFC 0013); absent: on. */
   aiDrafts?: boolean;
+  /**
+   * The language of the shared text the server writes (`workspace.setLocale`, RFC 0008 "Workspace locale"); absent
+   * (a row from before it): `en`.
+   */
+  locale?: "en" | "pt-BR";
 };
 
 /**

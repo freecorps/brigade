@@ -28,9 +28,9 @@ export const MAX_PENDING_INVITATIONS = 50;
 export const INVITATIONS_DAILY_CAP = 30;
 /**
  * Invitation emails one address may get in a day, from every workspace together: many workspaces cannot add up to
- * flood one inbox.
+ * flood one inbox. 5, not 3, so someone invited to several teams at once is not cut off (Q21).
  */
-export const INVITATIONS_PER_ADDRESS_DAILY_CAP = 3;
+export const INVITATIONS_PER_ADDRESS_DAILY_CAP = 5;
 /** Invitation emails one inviter may send in a day, from every workspace they manage together. */
 export const INVITATIONS_PER_INVITER_DAILY_CAP = 50;
 /** Emails one invitation may ever send (the first and its resends). */

@@ -1949,7 +1949,7 @@
       }
     }
   ],
-  "auth_error_email_not_verified": "Confirm your email first: open the link Brigade sent you, then sign in.",
+  "auth_error_email_not_verified": "Confirm your email first: open the link Brigade sent you, then sign in. Lost the link? Reset your password, which confirms your email too.",
   "auth_sign_up_invited_description": "Use the address the invitation was sent to. After you confirm it, you can accept the invitation.",
   "auth_error_sign_up_closed": "Sign-up is closed on this instance — ask an owner for an invitation.",
   "auth_sign_up_closed_title": "Sign-up is closed",
@@ -2009,8 +2009,8 @@
       "selectors": ["part"],
       "match": {
         "part=title": "You took this account back",
-        "part=body": "Someone signed up with your email address before you confirmed it, and created the workspaces below. They're yours now. So nobody else can page you through what they set up, Brigade paused every monitor there, turned off their heartbeat and alert source URLs, and turned off the alert routes they created.",
-        "part=after": "Resume the monitors you want to keep. Give each heartbeat and alert source you keep a new URL before you resume it, and save each alert route you want to keep. Check each workspace's on-call schedules and escalation policies too.",
+        "part=body": "Someone signed up with your email address before you confirmed it, and created the workspaces below. They're yours now. So nobody else can page you through what they set up, Brigade paused every monitor there, turned off their heartbeat and alert source URLs, turned off the alert routes they created, and disconnected any Slack they connected.",
+        "part=after": "Resume the monitors you want to keep. Give each heartbeat and alert source you keep a new URL before you resume it, and save each alert route you want to keep. Connect Slack again if you use it. Check each workspace's on-call schedules and escalation policies too.",
         "part=failed": "Brigade couldn't reach this workspace, so nothing in it was paused. Check its monitors now.",
         "part=nothing": "Nothing there needed turning off.",
         "part=dismiss": "Got it",
@@ -3691,6 +3691,27 @@
         "part=error_cloudflare_failed": "Cloudflare didn't answer. Try again in a minute.",
         "part=error_failed": "Couldn't save. Try again.",
         "part=*": "Custom domain"
+      }
+    }
+  ],
+  "takeover_slack": "Slack disconnected from {team}",
+  "slack_language_workspace": "Channel messages are written in the workspace's language: {language}.",
+  "workspace_language_read": "Brigade writes this workspace's shared text in {language}. An owner can change it.",
+  "workspace_language": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Workspace language",
+        "part=description": "The language Brigade writes shared text in: the titles of incidents monitors and alert sources open, Slack channel messages and AI postmortem drafts. Emails and notifications to each person stay in their own language.",
+        "part=label": "Language",
+        "part=hint": "Only owners can change it. Text already written stays as it is.",
+        "part=saving": "Saving…",
+        "part=saved": "Saved",
+        "part=failed": "Couldn't save the language. Try again.",
+        "part=loading": "Loading the language…",
+        "part=load_failed": "Couldn't load the workspace language.",
+        "part=*": "Workspace language"
       }
     }
   ]

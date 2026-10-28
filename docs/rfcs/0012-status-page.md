@@ -286,7 +286,9 @@ reader skips fields it does not check, so they need no new version ("Feeds").
   its feeds that would be the 404 (a bad slug, a cached 404, nothing in KV) first counts against the caller's
   address (`cf-connecting-ip`) in Workers Rate Limiting (`STATUS_MISS_LIMIT`, 30 a minute, namespaces 418x); past it
   the answer is a `429` page with `Retry-After: 60`, never cached. A page that exists is never counted, so a busy
-  page is never refused to anyone, and a flood of distinct addresses from one place is bounded. A request without a
+  page is never refused to anyone. What it bounds is the answers a caller gets, not what probing reveals or costs: past
+  the limit a made-up address answers `429` where a real one still answers `200`, the same signal a `404` gave, and the
+  limiter runs after the KV read, so an uncached miss costs the read as before. A request without a
   caller address (a local run) or a limiter that fails is answered as before. Subscribing is the one write a visitor makes, and
   it is rate-limited before it touches either ("Email subscriptions").
 

@@ -66,7 +66,11 @@ export async function notifyOperators(
   const results = await Promise.all(
     to.map((email) =>
       mail
-        .send(renderOperatorStatusEmail({ status, reasons }, { email }, "en"))
+        // About paging itself failing: never dropped by the daily ceiling (src/email-ceiling.ts).
+        .send({
+          ...renderOperatorStatusEmail({ status, reasons }, { email }, "en"),
+          priority: "paging",
+        })
         .catch((error: unknown) => ({ ok: false as const, retry: false, code: String(error) })),
     ),
   );

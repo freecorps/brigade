@@ -219,8 +219,8 @@ stay refused (RFC 0002 "Auth"). The code is `apps/api/src/invitations.ts`; the r
   invitation emails (invitations and resends) per workspace per day (`INVITATIONS_DAILY_CAP`, `rate_limited`), and
   one send of an invitation per 5 minutes (`INVITATION_RESEND_INTERVAL_MS`, `too_soon`), counted in the shard's own
   ledger (`invitation_sends`) under the member lock. Across workspaces, from D1's `invitation_send` (migration
-  0005): 3 invitation emails per invited address per day (`INVITATIONS_PER_ADDRESS_DAILY_CAP`, `address_limited`;
-  decided to become 5 (Q21), so someone invited to several teams at once is not cut off; to build;
+  0005): 5 invitation emails per invited address per day (`INVITATIONS_PER_ADDRESS_DAILY_CAP`, `address_limited`;
+  5 rather than 3 (Q21), so someone invited to several teams at once is not cut off;
   counted on `invitationAddressKey`, the address with any `+tag` dropped from the local part, so `jane+1@` and
   `jane+2@` share one count, while the invitation keeps the address as typed),
   50 per inviter per day (`INVITATIONS_PER_INVITER_DAILY_CAP`, `inviter_limited`) and 5 per invitation ever
@@ -561,7 +561,8 @@ server-only mutations (`postmortem.requestDraft` as the member, `.writeDraft` an
 - Workspace settings (`workspace:manage`): owners and admins. The first is who is emailed when paging fails
   (`workspace.setEmail`, `workspace.email_changed`; kept on the `workspace` row as `email`, absent meaning both on;
   RFC 0005 "Email"). The second is whether members may ask for AI postmortem drafts (`workspace.setAiDrafts`,
-  `workspace.ai_drafts_changed`; kept as `aiDrafts`, absent meaning on; RFC 0013), which only owners change. A failed email is an `email_failed` timeline entry, written by `sys_notifier` like
+  `workspace.ai_drafts_changed`; kept as `aiDrafts`, absent meaning on; RFC 0013), which only owners change. The language shared text is written in (`workspace.setLocale`,
+  `workspace.locale_changed`; the row's `locale`, RFC 0008 "Workspace locale") is owners only too. A failed email is an `email_failed` timeline entry, written by `sys_notifier` like
   `page_failed`.
 - **System actors** (RFC 0004 "Server-side writes") carry a role like members and pass the same check. Monitors run
   as `{ kind: "system", id: "sys_monitors", role: "admin" }` (`MONITOR_ACTOR`); incidents they open are declared by

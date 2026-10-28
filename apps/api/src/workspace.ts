@@ -12,6 +12,7 @@ import {
   MAX_EXPORT_BYTES,
   newId,
   ROLES,
+  SLACK_ROW_ID,
   nextMaintenanceAt,
   nextReminderAt,
   postmortemRevisions,
@@ -30,7 +31,8 @@ import {
   type PostmortemSections,
   type ProbeRegion,
   type Role,
-  type StatusLocale,
+  type WorkspaceLocale,
+  workspaceLocale,
 } from "@freecorps/brigade-schema";
 import {
   encode,
@@ -248,10 +250,18 @@ export type EndedSession = {
 /**
  * What `signOutUser` did. With `takeOver`, `paused`: the names of the monitors it paused; `revoked`: how many heartbeat
  * URLs stopped working; `sources`: how many alert source URLs; `routes`: how many alert routes the account created were
- * disabled. All absent when it took nothing over (another member is here after all).
+ * disabled; `slack`: the name of the Slack team whose connection the account made, now disconnected. All absent when
+ * it took nothing over (another member is here after all).
  */
 export type SignOutResult =
-  | { ok: true; paused?: string[]; revoked?: number; sources?: number; routes?: number }
+  | {
+      ok: true;
+      paused?: string[];
+      revoked?: number;
+      sources?: number;
+      routes?: number;
+      slack?: string;
+    }
   | { ok: false; code: "not_found" };
 
 /** Largest frame the shard reads at all, to salvage the id of a refused `subscribe` or `mutate`. */
@@ -521,7 +531,10 @@ export class WorkspaceDO extends DurableObject<Env> {
    * shard's workspace and writes `workspace.created` to the outbox, like any mutation (RFC 0005). Idempotent: a
    * second call finds the row and changes nothing.
    */
-  provision(workspace: { id: string; name: string }, actor: Actor): { ok: boolean; code?: string } {
+  provision(
+    workspace: { id: string; name: string; locale?: WorkspaceLocale },
+    actor: Actor,
+  ): { ok: boolean; code?: string } {
     if (!this.shard.claim(workspace.id)) {
       this.log("shard serves another workspace", { workspace: workspace.id });
       return { ok: false, code: "internal" };
@@ -900,14 +913,13 @@ export class WorkspaceDO extends DurableObject<Env> {
    * Asks for an AI draft of the incident's postmortem (RPC from `POST
    * /workspaces/:id/incidents/:incidentId/postmortem/draft`, which checked the session or API token, the role and
    * that the deployment has the `AI` binding): runs the server-only `postmortem.requestDraft` as the member (RBAC, the
-   * rate limit, its event) and hands back what the model may read (src/postmortem.ts). The language is the status
-   * page's when the workspace has one, else `locale`, the asker's.
+   * rate limit, its event) and hands back what the model may read (src/postmortem.ts). The draft is shared text, so
+   * it is written in the workspace's language (RFC 0008, Q15; RFC 0013 "Drafting with AI").
    */
   async requestPostmortemDraft(
     workspaceId: string,
     actor: Actor,
     incidentId: string,
-    locale: StatusLocale,
   ): Promise<DraftRequestResult> {
     if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
     const acting = this.tokenActor(actor);
@@ -922,7 +934,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     }
     // What the model reads comes first: an incident it cannot read is refused before the draft is pending and the
     // rate limit counts it. The mutation writes nothing `draftSource` reads, and nothing runs between the two.
-    const language = this.shard.store.get("status_page", STATUS_PAGE_ID)?.locale ?? locale;
+    const language = workspaceLocale(this.shard.store.scan("workspace")[0]);
     const source = draftSource(this.shard.store, incidentId, language);
     if (!source) return { ok: false, code: "not_found" };
     const now = Date.now();
@@ -1113,7 +1125,8 @@ export class WorkspaceDO extends DurableObject<Env> {
    * this is what keeps a phone or a socket of whoever held the account before from going on as them. With `takeOver`
    * (the owner of the address took back an account someone else signed up with, and it is the only member here),
    * also pauses every monitor and revokes every heartbeat and alert source URL (`monitor.takeOver`,
-   * `alertSource.takeOver`), so whoever set them up cannot page
+   * `alertSource.takeOver`) and disconnects a Slack connection the account made (`slack.takeOver`, its bot token
+   * revoked like a Disconnect's), so whoever set them up cannot page
    * the owner through them; answers the names of the monitors it paused and how many heartbeat URLs it revoked. The
    * shard checks its own member list again first: with anyone else in it, nothing is taken over. Nothing to change
    * is fine. A shard that serves another workspace, or none yet, answers `not_found`.
@@ -1159,7 +1172,19 @@ export class WorkspaceDO extends DurableObject<Env> {
       // After the monitors are paused: a monitor the routes kept quiet must not page the owner on the way out (RFC
       // 0002 "Taking back an address"); paused monitors are never rerouted.
       if (routes > 0) this.rerouteAlerts();
-      return { ok: true, paused, revoked, sources, routes };
+      // A Slack connection the account made: disconnected as Disconnect does, the bot token given back to Slack by
+      // the notifier (`slack.takeOver`, Q21). Last of the steps that can fail, so a retry still finds it to name.
+      const slack = this.shard.store.get("slack", SLACK_ROW_ID);
+      const slackTeam = slack?.connectedBy === userId ? slack.teamName : undefined;
+      if (slackTeam !== undefined) this.serverMutation("slack.takeOver", { userId });
+      return {
+        ok: true,
+        paused,
+        revoked,
+        sources,
+        routes,
+        ...(slackTeam !== undefined ? { slack: slackTeam } : {}),
+      };
     } catch (error) {
       this.membership.armRepair(Date.now());
       throw error;

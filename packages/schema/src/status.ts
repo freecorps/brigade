@@ -200,10 +200,13 @@ export const configureStatusPage = defineMutation({
     }
     // The API claimed the slug in D1 before a public save (RFC 0012 "Addresses"); a draft keeps what it held.
     const held = current?.slug === args.slug && current.claimed !== false;
+    // A slug it gave up moments ago and has not released yet is still this workspace's in D1 (and maybe KV): taken
+    // back, even as a draft, it is held, so it is retired (and cleared from KV) when the page moves on again.
+    const reclaimed = ctx.server && store.get("status_retired", args.slug) !== undefined;
     const row: StatusPageRow = {
       id: STATUS_PAGE_ID,
       ...args,
-      claimed: args.enabled || held,
+      claimed: args.enabled || held || reclaimed,
       updatedAt: ctx.now,
       updatedBy: ctx.actor.id,
     };

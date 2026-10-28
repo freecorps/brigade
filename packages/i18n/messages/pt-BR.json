@@ -1949,7 +1949,7 @@
       }
     }
   ],
-  "auth_error_email_not_verified": "Confirme seu email primeiro: abra o link que o Brigade enviou e depois entre.",
+  "auth_error_email_not_verified": "Confirme seu email primeiro: abra o link que o Brigade enviou e depois entre. Perdeu o link? Redefina sua senha, o que também confirma seu email.",
   "auth_sign_up_invited_description": "Use o endereço para o qual o convite foi enviado. Depois de confirmá-lo, você pode aceitar o convite.",
   "auth_error_sign_up_closed": "O cadastro está fechado nesta instância — peça um convite a um proprietário.",
   "auth_sign_up_closed_title": "Cadastro fechado",
@@ -2009,8 +2009,8 @@
       "selectors": ["part"],
       "match": {
         "part=title": "Você recuperou esta conta",
-        "part=body": "Alguém se cadastrou com o seu e-mail antes de você confirmá-lo e criou os espaços de trabalho abaixo. Agora eles são seus. Para que ninguém mais possa acionar você pelo que foi configurado ali, o Brigade pausou todos os monitores, desativou as URLs de heartbeat e de fontes de alertas e desligou as rotas de alertas que foram criadas.",
-        "part=after": "Retome os monitores que quiser manter. Dê a cada heartbeat e fonte de alertas que você mantiver uma nova URL antes de retomá-los, e salve cada rota de alertas que quiser manter. Confira também as escalas e as políticas de escalonamento de cada espaço de trabalho.",
+        "part=body": "Alguém se cadastrou com o seu e-mail antes de você confirmá-lo e criou os espaços de trabalho abaixo. Agora eles são seus. Para que ninguém mais possa acionar você pelo que foi configurado ali, o Brigade pausou todos os monitores, desativou as URLs de heartbeat e de fontes de alertas, desligou as rotas de alertas que foram criadas e desconectou o Slack que tenha sido conectado.",
+        "part=after": "Retome os monitores que quiser manter. Dê a cada heartbeat e fonte de alertas que você mantiver uma nova URL antes de retomá-los, e salve cada rota de alertas que quiser manter. Conecte o Slack de novo se você o usa. Confira também as escalas e as políticas de escalonamento de cada espaço de trabalho.",
         "part=failed": "O Brigade não conseguiu acessar este espaço de trabalho, então nada nele foi pausado. Confira os monitores agora.",
         "part=nothing": "Não havia nada para desativar.",
         "part=dismiss": "Entendi",
@@ -3691,6 +3691,27 @@
         "part=error_cloudflare_failed": "A Cloudflare não respondeu. Tente de novo em um minuto.",
         "part=error_failed": "Não foi possível salvar. Tente de novo.",
         "part=*": "Domínio próprio"
+      }
+    }
+  ],
+  "takeover_slack": "Slack desconectado de {team}",
+  "slack_language_workspace": "As mensagens no canal são escritas no idioma do espaço de trabalho: {language}.",
+  "workspace_language_read": "O Brigade escreve os textos compartilhados deste espaço de trabalho em {language}. Um proprietário pode mudar isso.",
+  "workspace_language": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Idioma do espaço de trabalho",
+        "part=description": "O idioma em que o Brigade escreve textos compartilhados: os títulos dos incidentes abertos por monitores e fontes de alertas, as mensagens nos canais do Slack e os rascunhos de postmortem feitos com IA. Emails e notificações para cada pessoa continuam no idioma dela.",
+        "part=label": "Idioma",
+        "part=hint": "Só proprietários podem mudar. O que já foi escrito continua como está.",
+        "part=saving": "Salvando…",
+        "part=saved": "Salvo",
+        "part=failed": "Não foi possível salvar o idioma. Tente de novo.",
+        "part=loading": "Carregando o idioma…",
+        "part=load_failed": "Não foi possível carregar o idioma do espaço de trabalho.",
+        "part=*": "Idioma do espaço de trabalho"
       }
     }
   ]

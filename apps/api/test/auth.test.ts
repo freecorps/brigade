@@ -14,6 +14,7 @@ import {
   WORKSPACE_LIMIT,
 } from "../src/auth.ts";
 import worker, { createWorkspace as postWorkspace, workerAuth } from "../src/index.ts";
+import { Shard } from "../src/shard.ts";
 import type { SocketState } from "../src/workspace.ts";
 import { sessionCookie } from "./session.ts";
 
@@ -446,9 +447,24 @@ describe("POST /workspaces", () => {
           source: `brigade://${workspace.id}/workspace`,
           workspaceId: workspace.id,
           actor: { kind: "user", id: ana.user.id },
-          data: { id: workspace.id, name: "Acme Ops", createdBy: ana.user.id },
+          // Ana signed up without a language: English (RFC 0008 "Workspace locale").
+          data: { id: workspace.id, name: "Acme Ops", createdBy: ana.user.id, locale: "en" },
         }),
       ]);
+    });
+  });
+
+  test("a new workspace takes its creator's language (Q15)", async () => {
+    const bia = await signUp("Bia");
+    await env.DB.prepare(`update "user" set locale = 'pt-BR' where id = ?`).bind(bia.user.id).run();
+    const workspace = await createWorkspace(bia.cookie, "Equipe");
+    await runInDurableObject(env.WORKSPACE.getByName(workspace.id), (_instance, state) => {
+      const shard = new Shard(state.storage, {
+        shard: "workspace",
+        randomBytes: (n) => crypto.getRandomValues(new Uint8Array(n)),
+        log: () => {},
+      });
+      expect(shard.store.scan("workspace")[0]?.locale).toBe("pt-BR");
     });
   });
 

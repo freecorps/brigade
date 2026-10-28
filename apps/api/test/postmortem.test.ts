@@ -120,7 +120,7 @@ async function team() {
     await run("incident.assignRole", { id: INC, role: "commander", userId: caio!.id }, owner),
   ];
   for (const result of results) expect(result).toMatchObject({ ok: true });
-  return { id, stub, ana: ana!, caio: caio!, duda: duda!, eva: eva!, withShard, run };
+  return { id, stub, ana: ana!, caio: caio!, duda: duda!, eva: eva!, owner, withShard, run };
 }
 
 type Team = Awaited<ReturnType<typeof team>>;
@@ -193,7 +193,11 @@ describe("drafting a postmortem with Workers AI", () => {
         return { response: JSON.stringify(answer) };
       },
     };
-    const response = await draft(t, t.caio, ai);
+    // The draft is shared text: in the workspace's language, which an owner set (Q15), whatever the asker's.
+    expect(await t.run("workspace.setLocale", { locale: "pt-BR" }, t.owner)).toMatchObject({
+      ok: true,
+    });
+    const response = await draft(t, t.caio, ai, { locale: "en" });
     expect(response.status).toBe(202);
     const row = await t.withShard((shard) => shard.store.get("postmortems", INC));
     expect(row).toMatchObject({
@@ -212,6 +216,22 @@ describe("drafting a postmortem with Workers AI", () => {
       shard.store.scan("timeline").filter((entry) => entry.kind === "postmortem"),
     );
     expect(events).toMatchObject([{ change: "ai_drafted", actor: "sys_ai" }]);
+  });
+
+  test("the draft is in the workspace's language, not the asker's (Q15)", async () => {
+    const t = await team();
+    const seen: unknown[] = [];
+    const ai: AiBinding = {
+      run: async (_model, inputs) => {
+        seen.push(inputs);
+        return { response: JSON.stringify(answer) };
+      },
+    };
+    // The workspace was made by an account with no language: English, though Caio's dashboard asks for Portuguese.
+    expect((await draft(t, t.caio, ai, { locale: "pt-BR" })).status).toBe(202);
+    const text = JSON.stringify(seen);
+    expect(text).toContain("Write in English.");
+    expect(text).not.toContain("Brazilian Portuguese");
   });
 
   test("the draft fills the type's template: its sections in order, by their titles and hints", async () => {

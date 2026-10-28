@@ -9594,7 +9594,7 @@
           "Postmortems"
         ],
         "summary": "Ask Workers AI to draft an incident's postmortem",
-        "description": "Responders and up (`incident:update`). Runs `postmortem.requestDraft` (RFC 0013): the draft is written by the model in the background and arrives over Brigade Sync, in the status page's language when there is one, else `locale`. `409 conflict`: a draft is being written, or the postmortem has text a member wrote; `429 limit_reached`: too many drafts lately. `403 ai_disabled`: an owner turned AI drafts off for the workspace. `503 ai_unavailable`: the server has no Workers AI. With an API token: the `incident:update` scope.",
+        "description": "Responders and up (`incident:update`). Runs `postmortem.requestDraft` (RFC 0013): the draft is written by the model in the background and arrives over Brigade Sync, in the workspace's language (`locale` in the body is ignored, kept for older clients). `409 conflict`: a draft is being written, or the postmortem has text a member wrote; `429 limit_reached`: too many drafts lately. `403 ai_disabled`: an owner turned AI drafts off for the workspace. `503 ai_unavailable`: the server has no Workers AI. With an API token: the `incident:update` scope.",
         "security": [
           {
             "session": []

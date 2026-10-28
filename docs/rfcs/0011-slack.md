@@ -109,7 +109,10 @@ until then the new calls fail with `missing_scope`, recorded as `slack_failed` (
 sealed token to the server-only `slack_revocations` table (one per team). The D1 row is left and treated as stale (a
 lookup that finds the shard on another team, or none, ignores it and the next install overwrites it). On
 `slack.disconnected` the Slack notifier opens the kept token and gives it back with `auth.revoke`, then
-`slack.forgetToken` deletes it (`slack.token_forgotten`). A token Slack no longer takes (`invalid_auth`,
+`slack.forgetToken` deletes it (`slack.token_forgotten`). A takeover (RFC 0002 "Taking back an address", Q21) does
+the same to a connection the taken-back account made, in a workspace where it is the only member
+(`slack.takeOver`, server only, `slack.disconnected` with `reason: "takeover"`), and the owner's takeover notice
+names the Slack team. A token Slack no longer takes (`invalid_auth`,
 `token_revoked`) counts as revoked; one the workspace holds again for the same team (Slack can answer a reinstall
 with the same token) is kept, not revoked; after the retries it is forgotten anyway. `slack.connect` keeps the token
 it replaces the same way, revoked on that `slack.connected`: another team's, or the same team's older one (a reinstall
@@ -236,9 +239,10 @@ private ones need the bot invited.
 - **Rendered from the incident as it is now** (number, severity, status, title, who declared it, who acknowledged
   it), not from the event, so events handled out of order still leave the latest state. Titles and names are user
   text: `&`, `<` and `>` are escaped for Slack's mrkdwn, so a title cannot mention `@channel` or forge a link.
-  The language is the connection's (RFC 0008: shared channels use the workspace's locale; until workspaces have one,
-  it is set on the card and defaults to the connecting member's). Decided (Q22), to build: once the workspace locale
-  exists (Q15, built separately), channel messages follow it. A channel made on a raise uses the same language.
+  The language is the workspace's (RFC 0008 "Workspace locale", Q15 and Q22, built): an owner changes it on the
+  dashboard's Workspace language card, and the Slack card names it instead of a picker of its own. The connection's
+  own `locale` is still stored (and `slack.configure` still takes it from older clients) but no longer read; the
+  bridge falls back on the workspace's too for a Slack user with no language of their own. A channel made on a raise uses the same language.
 - **Idempotent per event.** The shard keeps a Slack ledger: events handled (`slack_events`), each job of an event
   (`slack_jobs`, with attempts and the earliest retry; "Jobs" below) and each incident's message (`slack_messages`:
   channel, `ts`). A redelivered event that is done

@@ -33,6 +33,7 @@ import {
   type RandomBytes,
   type Severity,
   type SlackLocale,
+  workspaceLocale,
   type SlackRow,
 } from "@freecorps/brigade-schema";
 import type { MutationResultMessage } from "@freecorps/brigade-sync/protocol";
@@ -357,7 +358,12 @@ export class SlackDesk {
     if (!connection || !token || connection.teamId !== teamId || token.teamId !== teamId)
       return null;
     const [workspace] = store.scan("workspace");
-    return { workspaceName: workspace?.name ?? "", token: token.token, locale: connection.locale };
+    // Shared text (the bridge's fallback for a Slack user with no language of their own): the workspace's (Q15).
+    return {
+      workspaceName: workspace?.name ?? "",
+      token: token.token,
+      locale: workspaceLocale(workspace),
+    };
   }
 
   /**
@@ -844,7 +850,8 @@ export class SlackDesk {
         job: job.key,
         teamId: connection.teamId,
         token: token.token,
-        locale: connection.locale,
+        // Channel messages are shared text: the workspace's language (RFC 0008, Q15; RFC 0011).
+        locale: workspaceLocale(store.scan("workspace")[0]),
         work: job.work,
       };
     }

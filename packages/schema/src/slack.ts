@@ -2,6 +2,7 @@
 // in, and the bot token, encrypted by the API before it reaches the shard. The token is server-only (`slack_tokens`):
 // it never syncs and no event carries it. The synced `slack` row is what the dashboard's Slack card shows.
 
+import { ACCOUNT_ACTOR } from "./devices.ts";
 import { isActive } from "./lifecycle.ts";
 import { defineMutation, fail, ok, type DomainEvent, type MutationStore } from "./mutation.ts";
 import { defineQuery } from "./query.ts";
@@ -93,7 +94,14 @@ export type SlackConfigured = DomainEvent<
     archiveAfterHours: number | null;
   }
 >;
-export type SlackDisconnected = DomainEvent<"slack.disconnected", { teamId: string }>;
+/**
+ * The connection was forgotten: by an owner or admin (Disconnect), or (`reason: "takeover"`) because the owner of an
+ * address took back the account that made it (`slack.takeOver`).
+ */
+export type SlackDisconnected = DomainEvent<
+  "slack.disconnected",
+  { teamId: string; reason?: "takeover" }
+>;
 /** Slack removed the app or revoked its token (Events API): the token is forgotten and nothing more is sent. */
 export type SlackRevoked = DomainEvent<
   "slack.revoked",
@@ -185,15 +193,16 @@ export const connectSlack = defineMutation({
 });
 
 /**
- * The channel incidents are posted in (null: none), the language of channel messages, and the incident channels:
- * whether declaring creates one, private or public, and how long after resolving it is archived (null: kept). Owners
- * and admins. Settings left out (a client from before them) keep what they were.
+ * The channel incidents are posted in (null: none) and the incident channels: whether declaring creates one, private or
+ * public, and how long after resolving it is archived (null: kept). Owners and admins. Settings left out (a client
+ * from before them) keep what they were. `locale` is kept for clients from before the workspace locale: channel
+ * messages are written in the workspace's language now (`workspace.setLocale`, RFC 0008, Q15), not the connection's.
  */
 export const configureSlack = defineMutation({
   name: "slack.configure",
   args: v.object({
     channelId: v.nullable(slackChannelId),
-    locale: v.picklist(SLACK_LOCALES),
+    locale: v.omittable(v.picklist(SLACK_LOCALES)),
     // Left out (a client from before them): kept as they are. `null` is a value: no name, or keep the channels.
     channelName: v.omittable(v.nullable(v.string({ min: 1, max: SLACK_CHANNEL_NAME_MAX }))),
     incidentChannels: v.omittable(v.picklist(SLACK_INCIDENT_CHANNELS)),
@@ -213,7 +222,7 @@ export const configureSlack = defineMutation({
           : args.channelId === current.channelId
             ? (current.channelName ?? null)
             : null,
-      locale: args.locale,
+      locale: args.locale ?? current.locale,
       incidentChannels: args.incidentChannels ?? current.incidentChannels ?? "off",
       privateChannels: args.privateChannels ?? current.privateChannels ?? false,
       archiveAfterHours:
@@ -238,9 +247,29 @@ export const configureSlack = defineMutation({
 });
 
 /**
- * Forgets the connection (RFC 0011 "Installing", "Disconnecting"); owners and admins. The token moves to
- * `slack_revocations`, where the Slack notifier finds it on `slack.disconnected` and revokes it in Slack.
+ * Forgets the connection: the token moves to `slack_revocations`, where the Slack notifier finds it on
+ * `slack.disconnected` and revokes it in Slack (RFC 0011 "Disconnecting").
  */
+function disconnect(
+  store: MutationStore,
+  current: SlackRow,
+  now: number,
+  reason?: "takeover",
+): SlackDisconnected {
+  store.delete("slack", SLACK_ROW_ID);
+  const token = store.get("slack_tokens", SLACK_ROW_ID);
+  if (token) {
+    keepForRevocation(store, token, now);
+    store.delete("slack_tokens", SLACK_ROW_ID);
+  }
+  return {
+    type: "slack.disconnected",
+    subject: SLACK_ROW_ID,
+    data: { teamId: current.teamId, ...(reason ? { reason } : {}) },
+  };
+}
+
+/** Forgets the connection (RFC 0011 "Installing", "Disconnecting"); owners and admins. */
 export const disconnectSlack = defineMutation({
   name: "slack.disconnect",
   args: v.object({}),
@@ -248,18 +277,30 @@ export const disconnectSlack = defineMutation({
   apply(store, _args, ctx) {
     const current = store.get("slack", SLACK_ROW_ID);
     if (!current) return fail("not_found", "Slack is not connected");
-    store.delete("slack", SLACK_ROW_ID);
-    const token = store.get("slack_tokens", SLACK_ROW_ID);
-    if (token) {
-      keepForRevocation(store, token, ctx.now);
-      store.delete("slack_tokens", SLACK_ROW_ID);
+    return ok(disconnect(store, current, ctx.now));
+  },
+});
+
+/**
+ * Server only, as `ACCOUNT_ACTOR`: the owner of an address took back an account someone else signed up with, alone in
+ * this workspace (RFC 0002 "Taking back an address", Q21). A Slack connection that account (`userId`) made is
+ * disconnected as Disconnect does, its bot token given back to Slack by the notifier, so whoever signed up cannot
+ * keep a Slack team of theirs tied to the owner's workspace (slash commands, channels made in their Slack). Nothing to
+ * disconnect (no connection, or one someone else made) is a `conflict`.
+ */
+export const takeOverSlack = defineMutation({
+  name: "slack.takeOver",
+  args: v.object({ userId: v.string({ min: 1, max: 64 }) }),
+  permission: "workspace:manage",
+  apply(store, args, ctx) {
+    if (ctx.actor.kind !== ACCOUNT_ACTOR.kind || ctx.actor.id !== ACCOUNT_ACTOR.id) {
+      return fail("forbidden", "Only the server takes Slack over");
     }
-    const event: SlackDisconnected = {
-      type: "slack.disconnected",
-      subject: SLACK_ROW_ID,
-      data: { teamId: current.teamId },
-    };
-    return ok(event);
+    const current = store.get("slack", SLACK_ROW_ID);
+    if (!current || current.connectedBy !== args.userId) {
+      return fail("conflict", "No Slack connection of that account");
+    }
+    return ok(disconnect(store, current, ctx.now, "takeover"));
   },
 });
 

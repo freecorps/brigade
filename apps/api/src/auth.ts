@@ -15,7 +15,7 @@ import {
   workspaceName,
   type RandomBytes,
 } from "@freecorps/brigade-schema";
-import { isLocale, resolveLocale } from "@freecorps/brigade-i18n";
+import { isLocale, resolveLocale, type Locale } from "@freecorps/brigade-i18n";
 import { expo } from "@better-auth/expo";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
@@ -97,6 +97,11 @@ export type AuthBindings = {
    * instance's own.
    */
   signUp?: SignUpMode;
+  /**
+   * Whether an account must have verified its address to sign in (`REQUIRE_VERIFIED_EMAIL`, src/sign-up.ts; off by
+   * default, and never without email). A sign-in with the right password then answers `403 EMAIL_NOT_VERIFIED`.
+   */
+  requireVerifiedEmail?: boolean;
   /** Runs promises after the response (`ctx.waitUntil`). */
   waitUntil?: (promise: Promise<unknown>) => void;
   /**
@@ -108,7 +113,13 @@ export type AuthBindings = {
    * Called once Better Auth has created a workspace (provisions its shard). If it throws, the workspace is
    * deleted again (see createAuth) and the request fails, so no workspace exists without its shard.
    */
-  onWorkspaceCreated?: (workspace: { id: string; name: string; ownerId: string }) => Promise<void>;
+  onWorkspaceCreated?: (workspace: {
+    id: string;
+    name: string;
+    ownerId: string;
+    /** The workspace's locale (RFC 0008, Q15): its creator's `user.locale`, `en` when they have none. */
+    locale: Locale;
+  }) => Promise<void>;
   /**
    * The email sender (`emailSender(env)`), for verification emails; none when email is not set up, and then none is
    * sent (and asking again answers `EMAIL_NOT_CONFIGURED`). `dashboardUrl`: the dashboard's origin for the link;
@@ -659,9 +670,13 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
     secret: bindings.secret,
     database: bindings.database,
     // Unverified accounts sign in and use their own workspaces; verification gates email, inviting and joining
-    // (RFC 0002 "Auth").
+    // (RFC 0002 "Auth"). An instance may require it before sign-in too (Q21): Better Auth then checks the password
+    // first and answers `403 EMAIL_NOT_VERIFIED`, sending no email (no `sendOnSignIn`: the link from sign-up, or a
+    // password reset, which marks the address verified, is the way in), so a sign-in can never be used to email
+    // someone.
     emailAndPassword: {
       enabled: true,
+      requireEmailVerification: bindings.requireVerifiedEmail === true,
       // A uniform sign-up (RFC 0002 "Auth"): with no session handed out, Better Auth answers a sign-up with a taken
       // address the same as one that created an account (a made-up user, no session, the password hashed all the
       // same), so the answer cannot tell whether an address has an account. The clients sign in right after.
@@ -940,10 +955,12 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
               });
             }
             try {
+              const locale = Reflect.get(user, "locale");
               await bindings.onWorkspaceCreated?.({
                 id: workspace.id,
                 name: workspace.name,
                 ownerId: user.id,
+                locale: resolveLocale(typeof locale === "string" ? locale : undefined),
               });
             } catch (error) {
               await store?.undo(workspace.id);

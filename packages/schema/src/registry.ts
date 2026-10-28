@@ -58,6 +58,7 @@ import {
   failSlack,
   forgetSlackToken,
   markSlackRevoked,
+  takeOverSlack,
   slackArchiveDue,
   slackConnection,
 } from "./slack.ts";
@@ -105,6 +106,7 @@ import {
   currentWorkspace,
   setAiDrafts,
   setEmailSettings,
+  setWorkspaceLocale,
   syncMember,
 } from "./workspaces.ts";
 import { memberEmailMutations } from "./member-email.ts";
@@ -132,6 +134,7 @@ export const mutations = defineRegistry([
   ...memberEmailMutations,
   setEmailSettings,
   setAiDrafts,
+  setWorkspaceLocale,
   configureSlack,
   disconnectSlack,
   ...statusMutations,
@@ -199,6 +202,7 @@ export const serverMutations = defineRegistry([
   ...memberEmailMutations,
   setEmailSettings,
   setAiDrafts,
+  setWorkspaceLocale,
   configureSlack,
   disconnectSlack,
   ...statusMutations,
@@ -238,6 +242,7 @@ export const serverMutations = defineRegistry([
   connectSlack,
   failSlack,
   markSlackRevoked,
+  takeOverSlack,
   forgetSlackToken,
   slackArchiveDue,
   createWebhook,

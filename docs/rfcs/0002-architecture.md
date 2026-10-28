@@ -240,14 +240,23 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     someone tried to sign up with the address, that nothing changed, and how to sign in or reset; at most 3 a day per
     account (`SIGN_UP_NOTICE_LIMIT`), after the response. What it does not close: whoever signs up with a free
     address and then signs in learns it was free, and holds an unverified account at it until its owner takes it back
-    with a password reset (below); requiring verification before sign-in would close that, at the cost of instances
-    without email (an instance setting, decided below).
-  - **Sign-up and the first user (decided, Q21).** Sign-up is locked per environment and **closed by default**
-    (self-host first), and the setup script creates the first user; both are built, below. Still to build: an
-    instance without email always has closed sign-up, since nobody there could verify or reset (today only the
-    default keeps it closed); the hosted instance opens it once a Brigade-wide daily email ceiling is in place (RFC
-    0005 "Abuse"); "Require a verified email before sign-in" is an instance setting, off by default; on an instance
-    with email it closes the "learns the address was free" gap above.
+    with a password reset (below); requiring verification before sign-in closes that, at the cost of instances
+    without email (an instance setting, below).
+  - **Sign-up and the first user (decided, Q21; built).** Sign-up is locked per environment and **closed by
+    default** (self-host first), and the setup script creates the first user; both below. **An instance without
+    email always has closed sign-up**, since nobody there could verify or reset: when no sender is configured
+    (`EMAIL_FROM` with the binding, or the dev log double), `SIGNUP=open` or `invite` is treated as `closed`
+    (`instanceAccess`, `src/sign-up.ts`), logged once per isolate, and `GET /config` answers `signUp: "closed"` with
+    `signUpClosedBy: "no_email"`; an invited address still gets in, as under `closed`. The Brigade-wide daily email
+    ceiling is built (RFC 0005 "Abuse"), so the hosted instance may open sign-up. **"Require a verified email before
+    sign-in"** is the API Worker's `REQUIRE_VERIFIED_EMAIL` (`true`, `1`, `on` or `yes`; anything else, or unset, is
+    off, the default). When on, Better Auth's `requireEmailVerification` checks the password first and then refuses
+    an unverified account with `403 EMAIL_NOT_VERIFIED`, which `authErrorMessage` words in en and pt-BR (open the
+    link, or reset the password, which confirms the address too); no email is sent at sign-in (no `sendOnSignIn`), so
+    a sign-in can never be used to email someone. It closes the "learns the address was free" gap above. It is
+    ignored without email (logged once), where nobody but the first owner could ever sign in; `GET /config` says
+    whether it is in force (`requireVerifiedEmail`). Sessions and API tokens from before it was turned on are kept: it gates
+    sign-in only, so an operator who wants unverified accounts out also ends their sessions.
   - **Sign-up modes (built):** who may create an account is the API Worker's `SIGNUP` variable (`src/sign-up.ts`):
     `open` (anyone; the `dev` environment, local runs and the tests), `invite` or `closed`. Unset or misspelled is
     `closed`, so production and staging, and every self-hosted instance that sets nothing, start closed (Q21: no
@@ -408,8 +417,10 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     bytes nobody holds a token for), revokes every alert source URL the same way (`alertSource.takeOver`,
     `alert_source.revoked`; RFC 0005 "Alert sources") and disables the alert routes the account created
     (`disabled: "takeover"`, `alert_route.updated` with `reason: takeover`, until someone saves them), disconnects a
-    Slack connection the account made (decided, Q21; to build: as Disconnect, the bot token given back), and the dashboard
-    tells the owner once which workspaces came with the account and what was paused or disabled, or that a shard could
+    Slack connection the account made (`slack.takeOver`, Q21: as Disconnect, the bot token given back to Slack by the
+    notifier on `slack.disconnected`, RFC 0011 "Disconnecting"), and the dashboard
+    tells the owner once which workspaces came with the account and what was paused, disabled or disconnected (the
+    Slack team by name), or that a shard could
     not be reached (`takeover_notice` in D1,
     `GET`/`DELETE /account/takeover`, en and pt-BR; two resets at once merge into one notice). The owner resumes what they
     want to keep and gives a heartbeat they keep a new URL (`monitor.rotateHeartbeat`, New URL in its edit form;

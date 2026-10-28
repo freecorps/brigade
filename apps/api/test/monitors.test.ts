@@ -275,7 +275,7 @@ describe("tcpCheck", () => {
 let names = 0;
 
 /** A provisioned workspace shard, and a way to run code against its storage. */
-async function workspace() {
+async function workspace(locale?: "en" | "pt-BR") {
   // A real workspace id: `workspace.create` takes only those.
   const id = newId("ws", Date.now() + ++names, random);
   // The organization Better Auth would have written: heartbeats look the workspace up in D1.
@@ -285,9 +285,12 @@ async function workspace() {
     .bind(id, "Acme", `ws-${id}`, new Date().toISOString())
     .run();
   const stub = env.WORKSPACE.getByName(id);
-  expect(await stub.provision({ id, name: "Acme" }, { ...admin, role: "owner" })).toEqual({
-    ok: true,
-  });
+  expect(
+    await stub.provision(
+      { id, name: "Acme", ...(locale ? { locale } : {}) },
+      { ...admin, role: "owner" },
+    ),
+  ).toEqual({ ok: true });
   const withShard = <R>(
     fn: (shard: Shard, instance: WorkspaceDO, sql: SqlStorage) => R | Promise<R>,
   ) =>
@@ -991,6 +994,33 @@ async function sha256Hex(text: string): Promise<string> {
 }
 
 describe("heartbeats", () => {
+  test("the incident a missed beat opens is titled in the workspace's language (Q15)", async () => {
+    const ws = await workspace("pt-BR");
+    const monitorId = newId("mon", Date.now(), random);
+    expect(
+      await ws.run("monitor.createHeartbeat", {
+        id: monitorId,
+        name: "Backup noturno",
+        intervalSeconds: 60,
+        graceSeconds: 30,
+        tokenHash: await sha256Hex(newHeartbeatSecret(random)),
+      }),
+    ).toMatchObject({ ok: true });
+    // Never pinged, created 2 minutes ago: past the interval plus the grace.
+    await ws.withShard((shard) => {
+      const past = Date.now() - 120_000;
+      shard.store.update("monitors", monitorId, { since: past, restartedAt: past });
+      shard.store.update("heartbeats", monitorId, { lastPingAt: past });
+    });
+    await ws.withShard((_shard, instance) => instance.alarm());
+    await ws.withShard((shard) => {
+      expect(shard.store.get("monitors", monitorId)?.status).toBe("down");
+      expect(shard.store.scan("incidents")).toEqual([
+        expect.objectContaining({ title: "Backup noturno está fora do ar" }),
+      ]);
+    });
+  });
+
   test("POST /heartbeat/:token: the right secret only; a missed beat opens an incident", async () => {
     const ws = await workspace();
     const monitorId = newId("mon", Date.now(), random);

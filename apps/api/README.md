@@ -66,8 +66,13 @@ event in the outbox (RFC 0005). Member roles, removal and leaving go through `/w
 
 **Sign-up** (RFC 0002 "Sign-up modes", `src/sign-up.ts`): the `SIGNUP` variable is `open`, `invite` or `closed`, and
 unset (production, staging, a self-hosted instance) is `closed`. Under `invite` and `closed` only an address holding a
-pending invitation may sign up; anything else answers `403 SIGN_UP_CLOSED`. `GET /config` (no session) answers
-`{ "signUp": "<mode>" }`, which the dashboard and the app read to show or hide their sign-up forms. `dev` sets
+pending invitation may sign up; anything else answers `403 SIGN_UP_CLOSED`. An instance without an email sender is
+always `closed`, whatever `SIGNUP` says (logged once). `REQUIRE_VERIFIED_EMAIL=true` makes an unverified account's
+sign-in answer `403 EMAIL_NOT_VERIFIED` (off by default; ignored without email). `GET /config` (no session) answers
+`{ "signUp": "<mode>", "requireVerifiedEmail": <bool> }`, plus `"signUpClosedBy": "no_email"` when `SIGNUP` asked
+for more than the instance can do, which the dashboard and the app read to show or hide their sign-up forms.
+`EMAIL_DAILY_CEILING` (default 2000) is the most emails the instance sends a day, from every workspace together,
+counted in D1's `email_day`; emails about a page that failed are never dropped (RFC 0005 "Abuse"). `dev` sets
 `open` in `wrangler.jsonc`, and so do local runs and the tests (`LOCAL_VARS` in `vite.config.ts`). The first account
 on a closed instance comes from "First owner" below.
 

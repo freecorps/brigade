@@ -657,13 +657,16 @@ describe("SlackBridge.act", () => {
     expect(await slackConnection(env, teamId)).toEqual({ ok: false, code: "unreadable" });
   });
 
-  test("the usage is in the Slack user's language, else the connection's", async () => {
+  test("the usage is in the Slack user's language, else the workspace's", async () => {
     const t = await team();
     const teamId = await connect(t);
     const pt = slackUser(teamId, t.caio.email, { locale: "pt-BR" });
     expect(await slackReplyLocale(env, { teamId, slackUserId: pt }, usersInfo)).toBe("pt-BR");
     const plain = slackUser(teamId, t.caio.email);
     expect(await slackReplyLocale(env, { teamId, slackUserId: plain }, usersInfo)).toBe("en");
+    // The workspace's language (Q15), not the connection's, once an owner sets it.
+    await t.run("workspace.setLocale", { locale: "pt-BR" }, owner(t));
+    expect(await slackReplyLocale(env, { teamId, slackUserId: plain }, usersInfo)).toBe("pt-BR");
     expect(await slackReplyLocale(env, { teamId: newTeam(), slackUserId: plain }, usersInfo)).toBe(
       "en",
     );
@@ -804,6 +807,18 @@ describe("the incident message", () => {
     expect(posts).toHaveLength(1);
     expect(posts[0]?.body.channel).toBe("C0CHAN0001");
     expect(JSON.stringify(posts[0]?.body.blocks)).toContain("Checkout &lt;!channel&gt; down");
+  });
+
+  test("is written in the workspace's language, not the language the connection was made in (Q15)", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    const event = await declared(t, teamId);
+    await t.run("workspace.setLocale", { locale: "pt-BR" }, owner(t));
+    const slack = slackApi();
+    await deliver([event], slack.send);
+    const post = JSON.stringify(slack.calls.find((call) => call.method === "chat.postMessage"));
+    expect(post).toContain("Declarado por");
+    expect(post).not.toContain("Declared by");
   });
 
   test("later changes update the same message", async () => {

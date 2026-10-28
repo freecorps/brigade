@@ -137,7 +137,8 @@ email notifier's own failures are `notification.failed` with `channel: "email"` 
 failure the email was about, `userId`, `reason`: `undelivered`, or `capped` when a cap dropped it, `about`: `unpaged` or `nobody_paged`), with an
 `email_failed` entry ("Couldn't email Ana that nobody could be paged"). Changing who is emailed emits
 `workspace.email_changed` (`unpaged`, `nobodyPaged`); turning AI drafts of postmortems off or on emits
-`workspace.ai_drafts_changed` (`enabled`, RFC 0013).
+`workspace.ai_drafts_changed` (`enabled`, RFC 0013). `workspace.created` carries the workspace's `locale` too, and an owner changing
+it emits `workspace.locale_changed` (`locale`, `previous`; RFC 0008 "Workspace locale", Q15).
 
 Outbound webhooks ("Outbound webhooks" below) emit `webhook.created` (`id`, `events`, `enabled`), `webhook.updated`
 (`id`, `events`, `urlChanged`, `headersCleared`), `webhook.enabled` (`id`), `webhook.disabled` (`id`, `reason`: `manual`, or `failing`
@@ -374,8 +375,22 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   way) and carries no name: at most 3 per address and IP an hour and 10 per address a day, counted for any address, and 3 per IP a
   minute. An address someone else signed up with and never verified stays taken until its owner resets the
   password, which takes the account back (RFC 0002 "Auth"). **Decided (Q21):** these caps stay as they are, except
-  invitations per address (5 a day). To build: a Brigade-wide daily ceiling on email, below the sender's own quota
-  (Cloudflare Email Sending answers `E_RATE_LIMIT_EXCEEDED` past it), before open sign-up on a shared instance.
+  invitations per address (5 a day, built).
+- **The Brigade-wide daily ceiling (Q21, built).** Below every cap above and below the sender's own quota
+  (Cloudflare Email Sending answers `E_RATE_LIMIT_EXCEEDED` past it), so one busy or abused workspace cannot use up
+  the others' sends: every email the API Worker sends, from every workspace and of every kind (the notifier's,
+  reminders, rotations, invitations, verification, reset, sign-up notices, status page emails, webhook emails, the
+  operators'), goes through `emailSender(env)`, which counts it in D1's `email_day` (one row per UTC day, migration 0014) with one upsert that only goes through below `EMAIL_DAILY_CEILING` (a whole number; unset or unreadable is
+  2000), so isolates sending at once never overshoot it (`src/email-ceiling.ts`). Past it, an email is dropped,
+  logged (never the address) and answered as a refusal that is not retried, which each caller records as it records
+  any refused send. **An email about a page that failed is never dropped**: the notifier's member and owners' emails
+  and the operators' email are marked `priority: "paging"`, counted (so the rest of the day stays closed) and always
+  sent, without waiting on D1: the count runs alongside the send, so a D1 that hangs (the outage the operators'
+  email may be about) never holds it up (tested in `apps/api/test/email.test.ts`, `email-ceiling.test.ts` and
+  `watchdog.test.ts`). Any other email waits at most `CEILING_COUNT_TIMEOUT_MS` (1.5 s) for its count; if D1 cannot
+  count by then, or fails, it is sent and the failure logged: the per-feature caps still hold. An email is counted
+  before it is sent, so an attempt that fails and is retried counts each time. The cron deletes days older than a week. With it in
+  place, a shared instance may open sign-up (RFC 0002 "Sign-up and the first user").
 - **Push first.** Email only acts on failures push already recorded, so it can never delay or stop a page. The
   consumer handles a batch's messages in parallel and acks each on its own: a page in the same batch as an email
   goes to the relay without waiting for it (tested). Every wait on the email side is bounded (10 s a send, 5 s the
@@ -785,7 +800,8 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
 Designed in RFC 0011: install, `/inc` (declare and its form, ack, update, sev, resolve, role, escalate), an
 Acknowledge button, one message per incident, a channel per incident (opt-in), the timeline mirrored both ways and
 the Events API. It emits `slack.connected` (`teamId`, `teamName`, `replaced`), `slack.configured` (the channel, its
-name, the language and the incident-channel settings), `slack.disconnected` (`teamId`), `slack.revoked` (`teamId`,
+name, the language and the incident-channel settings), `slack.disconnected` (`teamId`, and `reason: "takeover"` when
+the owner of an address took back the account that made it, RFC 0002), `slack.revoked` (`teamId`,
 `reason`), `slack.token_forgotten` (`teamId`) and `slack.archive_due` (`incidentId`), never the token; a Slack user's
 action is the dashboard's own mutation and event, and `/inc escalate` is `escalation.paged` with `reason: "manual"`.
 A job the notifier gave up on is `notification.failed`

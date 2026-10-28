@@ -2,10 +2,10 @@ import { m } from "@freecorps/brigade-i18n";
 import {
   can,
   SLACK_INCIDENT_CHANNELS,
-  SLACK_LOCALES,
+  workspaceLocale,
   type SlackIncidentChannels,
-  type SlackLocale,
   type SlackRow,
+  type WorkspaceLocale,
 } from "@freecorps/brigade-schema";
 import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import {
@@ -36,14 +36,15 @@ import {
 const SELECT =
   "h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring";
 
-const LANGUAGE_NAMES: Record<SlackLocale, () => string> = {
+const LANGUAGE_NAMES: Record<WorkspaceLocale, () => string> = {
   en: () => m.language_name_en(),
   "pt-BR": () => m.language_name_pt_br(),
 };
 
 /**
  * The workspace's Slack connection (RFC 0011), live from its shard (`slack.connection`, never the token): Add to Slack,
- * the connected Slack workspace, the channel incidents are posted in and their language, and Disconnect. Owners and
+ * the connected Slack workspace, the channel incidents are posted in, the language their messages are in (the
+ * workspace's, RFC 0008), and Disconnect. Owners and
  * admins change it; everyone else reads it.
  */
 export function SlackCard() {
@@ -76,6 +77,7 @@ function SlackConnection({
 }: Pick<PanelProps, "result" | "onRetry"> & { setResult: (result: PanelProps["result"]) => void }) {
   const { role, workspaceId } = useMember();
   const connection = useQuery("slack.connection", {});
+  const workspace = useQuery("workspace.current", {});
   const configure = useMutation("slack.configure");
   const disconnect = useMutation("slack.disconnect");
   const manage = can(role, "workspace:manage");
@@ -92,6 +94,8 @@ function SlackConnection({
   return (
     <SlackPanel
       connection={row}
+      // Unknown until the workspace row loads: never assert English for a workspace that failed to load.
+      workspaceLocale={workspace.rows[0] ? workspaceLocale(workspace.rows[0]) : undefined}
       channels={channels}
       onReloadChannels={loadChannels}
       loading={connection.status === "loading"}
@@ -114,7 +118,6 @@ function SlackConnection({
 export type SlackSettings = {
   channelId: string | null;
   channelName: string | null;
-  locale: SlackLocale;
   incidentChannels: SlackIncidentChannels;
   privateChannels: boolean;
   archiveAfterHours: number | null;
@@ -122,6 +125,8 @@ export type SlackSettings = {
 
 type PanelProps = {
   connection: SlackRow | null;
+  /** The workspace's language (`workspace.setLocale`), which channel messages are written in. */
+  workspaceLocale?: WorkspaceLocale;
   /** The channels to pick from (owners and admins); a failed list falls back to a typed id. */
   channels: SlackChannels;
   onReloadChannels: () => void;
@@ -140,6 +145,7 @@ type PanelProps = {
 /** The card itself, without the hooks: what each state looks like (tested and screenshotted with made-up data). */
 export function SlackPanel({
   connection,
+  workspaceLocale,
   channels,
   onReloadChannels,
   loading,
@@ -201,6 +207,7 @@ export function SlackPanel({
         ) : connection ? (
           <Connected
             connection={connection}
+            workspaceLocale={workspaceLocale}
             channels={channels}
             onReloadChannels={onReloadChannels}
             manage={manage}
@@ -223,6 +230,7 @@ const archivePart = (hours: number | null) =>
 
 function Connected({
   connection,
+  workspaceLocale,
   channels,
   onReloadChannels,
   manage,
@@ -232,11 +240,10 @@ function Connected({
 }: Pick<
   PanelProps,
   "channels" | "onReloadChannels" | "manage" | "onAdd" | "onSave" | "onDisconnect"
-> & { connection: SlackRow }) {
+> & { connection: SlackRow; workspaceLocale: WorkspaceLocale | undefined }) {
   const saved = (): SlackSettings => ({
     channelId: connection.channelId,
     channelName: connection.channelName ?? null,
-    locale: connection.locale,
     incidentChannels: connection.incidentChannels ?? "off",
     privateChannels: connection.privateChannels ?? false,
     archiveAfterHours: connection.archiveAfterHours ?? null,
@@ -250,7 +257,6 @@ function Connected({
   const [leaving, setLeaving] = useState<"idle" | "busy" | "failed">("idle");
   const [reconnecting, setReconnecting] = useState(false);
   const channelId = useId();
-  const languageId = useId();
   const perIncidentId = useId();
   const privateId = useId();
   const archiveId = useId();
@@ -262,7 +268,6 @@ function Connected({
   }, [
     connection.channelId,
     connection.channelName,
-    connection.locale,
     connection.incidentChannels,
     connection.privateChannels,
     connection.archiveAfterHours,
@@ -431,23 +436,14 @@ function Connected({
                 <p className="text-sm text-muted-foreground">{slackText("channel_hint")}</p>
               </div>
             )}
-            <div className="flex min-w-0 flex-col gap-1.5">
-              <label htmlFor={languageId} className="text-sm font-medium">
-                {slackText("language_label")}
-              </label>
-              <select
-                id={languageId}
-                className={SELECT}
-                value={form.locale}
-                onChange={(event) => change({ locale: event.target.value as SlackLocale })}
-              >
-                {SLACK_LOCALES.map((value) => (
-                  <option key={value} value={value}>
-                    {LANGUAGE_NAMES[value]()}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {workspaceLocale ? (
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <span className="text-sm font-medium">{slackText("language_label")}</span>
+                <p className="text-sm text-pretty text-muted-foreground">
+                  {m.slack_language_workspace({ language: LANGUAGE_NAMES[workspaceLocale]() })}
+                </p>
+              </div>
+            ) : null}
             <fieldset className="grid min-w-0 gap-4 border-t pt-4 sm:col-span-2 sm:grid-cols-2">
               <div className="flex min-w-0 flex-col gap-1.5 sm:col-span-2">
                 <label htmlFor={perIncidentId} className="text-sm font-medium">

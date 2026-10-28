@@ -324,7 +324,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     people invited), the Acknowledge button, `!update`, `/inc sev`, `/inc resolve` and the message shortcut.
   - Left: the app and secrets for staging and production (owner's call, integrations/slack/README.md; Freecorps
     creates the hosted app, Q22); App Home; Enterprise Grid and distribution beyond one app per instance.
-  - Left (decided, Q22; RFC 0011): an incident channel for a severity raised to SEV1 or SEV2 after declaring.
+  - Done (Q22): an incident channel made when the severity is raised to SEV1 or SEV2 after declaring, once.
   - Done since: channel messages in the workspace locale (Q15, Q22); the card names it instead of a picker of its
     own.
 - [ ] Email notifier; in-app VoIP call paging (RFC 0010); optional PSTN notifier (provider-agnostic)
@@ -494,9 +494,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Left: staging's and production's KV namespaces (`dev` binds `brigade-status-dev`), applying migrations 0008 to 0010 and
     0013 to staging's and production's databases, and 0013 to `dev`'s (owner's call, apps/api README "Status page");
     the mobile app's publish and maintenance actions; the rest of Q23 (uptime choices, the large-provider list).
+  - Done (Q23): "this page may be out of date" past 48 hours; a per-IP rate limit on `/status/*` misses
+    (`STATUS_MISS_LIMIT`, 30 a minute, then 429); a draft's slug claimed only when the page first goes public;
+    maintenance that marks its components down (planned outage), on the page, in the feeds and on the dashboard.
   - Left (decided, Q23; RFC 0012): custom domains (Cloudflare for SaaS custom hostnames), configurable from the setup
-    script; "this page may be out of date" past 48 hours; a per-IP rate limit on `/status/*` misses; a draft's slug
-    claimed only when the page first goes public; maintenance that marks a component down (planned outage).
+    script.
 - [ ] Outbound webhooks; OpenAPI reference; `packages/sdk` published
   - Done: outbound webhooks (RFC 0005 "Outbound webhooks"): owners and admins register up to 20 endpoints per
     workspace on the dashboard's Webhooks card (URL, description, event filter from the public catalog, on and off),
@@ -550,7 +552,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
 - [ ] One-command self-host deploy + setup wizard (Slack manifest, relay registration)
   - [x] Sign-up closed by default per environment and the first owner from `vp run setup:first-user` with a
         one-time `BOOTSTRAP_TOKEN` (RFC 0002 "Sign-up modes", "The first owner")
-  - Left (decided, Q23; RFC 0002 "Environments"): the setup wizard calling it, creating the `STATUS` KV namespace;
+  - [x] The self-host setup steps create the `STATUS` KV namespace (apps/api README "Self-host setup")
+  - Left (decided, Q23; RFC 0002 "Environments"): the setup wizard running those steps and `setup:first-user`;
     optional custom domains for status pages.
 - [ ] Hosted push relay with terms of service
 - [ ] App Store / Play Store release (after CLA is in place)

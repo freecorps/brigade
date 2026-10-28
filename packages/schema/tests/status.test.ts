@@ -125,6 +125,17 @@ describe("statusPage.configure", () => {
     expect(store.scan("status_retired").map((row) => row.id)).toEqual(["acme-status"]);
   });
 
+  test("a draft taking back the slug it just left holds it, so moving on retires it again", () => {
+    const { store } = ready();
+    run(store, "statusPage.configure", { ...page, enabled: false, slug: "acme-draft" });
+    expect(store.scan("status_retired").map((row) => row.id)).toEqual(["acme"]);
+    // Back to "acme" before the shard released it: still this workspace's in D1 and KV.
+    run(store, "statusPage.configure", { ...page, enabled: false, slug: "acme" });
+    expect(store.get("status_page", STATUS_PAGE_ID)).toMatchObject({ claimed: true });
+    run(store, "statusPage.configure", { ...page, enabled: false, slug: "acme-later" });
+    expect(store.scan("status_retired").map((row) => row.id)).toContain("acme");
+  });
+
   test("slugs are 3 to 40 lowercase letters, digits and single inner hyphens", () => {
     for (const ok of ["abc", "acme-status", "a1-b2-c3", "x".repeat(40)]) {
       expect(isStatusSlug(ok), ok).toBe(true);

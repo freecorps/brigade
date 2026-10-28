@@ -81,7 +81,7 @@ export class StatusPublisher {
 
   /**
    * Sets up or changes the page as `actor` (RPC from `PUT /workspaces/:id/status-page`): the slug claimed in D1
-   * first, so two workspaces never hold one address, then `statusPage.configure` in this shard with its event. A
+   * first when the page is public, so two workspaces never hold one address, then `statusPage.configure` in this shard with its event. A
    * slug that was free and that the shard then refused is released again. A storage failure after the claim leaves
    * the slug with this workspace, which is harmless: the next save with it succeeds.
    *
@@ -97,7 +97,10 @@ export class StatusPublisher {
     const { store } = this.deps.shard;
     const current = store.get("status_page", STATUS_PAGE_ID);
     let claimed: number | null = null;
-    if (current?.slug !== args.slug) {
+    // Only a public page claims its slug (decided, Q23): a draft's is kept on the page alone (`claimed: false`), so a
+    // `slug_taken` never tells an admin which addresses other drafts use; a taken one is refused when it goes public.
+    const held = current?.slug === args.slug && current.claimed !== false;
+    if (args.enabled && !held) {
       try {
         const now = Date.now();
         const [before, , owner] = await this.deps.db.batch([
@@ -267,7 +270,8 @@ export class StatusPublisher {
           // Built and read in one turn: a change landing during the write marks a newer version, pushed next.
           const snapshot = statusSnapshot(shard.store, now);
           if (snapshot) await kv.put(statusKey(page.slug), JSON.stringify(snapshot));
-          else await kv.delete(statusKey(page.slug));
+          // A draft that never went public under its slug published nothing there; another page may use it now.
+          else if (page.claimed !== false) await kv.delete(statusKey(page.slug));
           if (handle.abandoned) return;
           this.setMeta("status_pushed_at", now);
         }

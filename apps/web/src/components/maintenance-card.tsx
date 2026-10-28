@@ -71,8 +71,9 @@ export function MaintenanceCard() {
       now={Date.now()}
       onSave={async (draft, id) =>
         id
-          ? (await update({ ...draft, id })).ok
-          : (await schedule({ ...draft, id: client.newId("mnt") })).ok
+          ? (await update({ ...draft, outage: draft.outage === true, id })).ok
+          : (await schedule({ ...draft, outage: draft.outage === true, id: client.newId("mnt") }))
+              .ok
       }
       onEnd={async (id) => (await end({ id })).ok}
       onCancel={async (id) => (await cancel({ id })).ok}
@@ -82,7 +83,7 @@ export function MaintenanceCard() {
 
 export type MaintenanceDraft = Pick<
   MaintenanceRow,
-  "title" | "body" | "componentIds" | "startsAt" | "endsAt"
+  "title" | "body" | "componentIds" | "startsAt" | "endsAt" | "outage"
 >;
 
 type PanelProps = {
@@ -198,7 +199,10 @@ function WindowRow({ row, ...props }: PanelProps & { row: MaintenanceRow }) {
         <span id={titleId} className="min-w-0 text-sm font-medium [overflow-wrap:anywhere]">
           {row.title}
         </span>
-        <Badge variant={PHASE_BADGE[row.phase]}>{say(`phase_${row.phase}`)}</Badge>
+        <span className="flex flex-wrap gap-1.5">
+          {row.outage ? <Badge variant="sev1">{say("outage_badge")}</Badge> : null}
+          <Badge variant={PHASE_BADGE[row.phase]}>{say(`phase_${row.phase}`)}</Badge>
+        </span>
       </div>
       <p className="text-sm text-muted-foreground tabular-nums">{range(row)}</p>
       {names.length > 0 ? (
@@ -286,6 +290,7 @@ function WindowForm({
   const [title, setTitle] = useState(row?.title ?? "");
   const [body, setBody] = useState(row?.body ?? "");
   const [chosen, setChosen] = useState<string[]>(row?.componentIds ?? []);
+  const [outage, setOutage] = useState(row?.outage === true);
   const [starts, setStarts] = useState(toLocalInput(row?.startsAt ?? nextHour));
   const [ends, setEnds] = useState(toLocalInput(row?.endsAt ?? nextHour + hour));
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -294,6 +299,7 @@ function WindowForm({
   const startsId = useId();
   const endsId = useId();
   const hintId = useId();
+  const outageHintId = useId();
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -303,6 +309,8 @@ function WindowForm({
       componentIds: chosen,
       startsAt: fromLocalInput(starts),
       endsAt: fromLocalInput(ends),
+      // Only components can be down: with none chosen the box is hidden, and a ticked one must not linger.
+      outage: outage && chosen.length > 0,
     };
     const found = checkDraft(draft, Date.now());
     setProblem(found);
@@ -404,6 +412,23 @@ function WindowForm({
             </label>
           ))}
         </fieldset>
+      ) : null}
+      {components.length > 0 ? (
+        <label className="flex min-h-11 items-start gap-3 border-t pt-4 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5 size-5 shrink-0 accent-primary"
+            checked={outage}
+            aria-describedby={outageHintId}
+            onChange={(event) => setOutage(event.target.checked)}
+          />
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span className="font-medium">{say("outage_label")}</span>
+            <span id={outageHintId} className="text-muted-foreground">
+              {say("outage_hint")}
+            </span>
+          </span>
+        </label>
       ) : null}
       <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" disabled={state === "busy"}>

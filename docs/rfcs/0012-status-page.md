@@ -129,11 +129,12 @@ the same kind of decision as what monitors watch, so it is an admin's call.
 ## Addresses
 
 - A slug is 3 to 40 lowercase letters, digits and single hyphens, starting and ending with a letter or digit
-  (`STATUS_SLUG`), unique across the instance. A shard cannot see other workspaces, so uniqueness lives in D1
+  (`STATUS_SLUG`), unique across the instance's public pages. A shard cannot see other workspaces, so uniqueness lives in D1
   (`status_slug`, migration 0008: slug, workspace).
 - **D1 first, then the shard**, as for member changes (RFC 0003 "Members"): `PUT /workspaces/:id/status-page` checks
   the origin, the session and the member's role in D1 (an outsider never wakes a shard), then the shard
-  (`WorkspaceDO.configureStatusPage`) checks `status:manage` and the settings, claims the slug (`insert … on
+  (`WorkspaceDO.configureStatusPage`) checks `status:manage` and the settings, claims the slug when the page is
+  public ("Claimed when it first goes public" below; `insert … on
   conflict do nothing`, then reads who holds it: another workspace is `409 slug_taken`) and runs the server-only
   `statusPage.configure` with its event `status_page.configured`. Server only because a socket's mutation is
   synchronous and cannot wait on D1. A slug the shard then refuses (nothing changed) is released again if it was
@@ -151,9 +152,13 @@ the same kind of decision as what monitors watch, so it is an admin's call.
   workspace already holds rewrites it), and a release deletes only a row stamped no later than the claim it undoes,
   or stamped before the slug was given up (strictly: a claim in the same millisecond is a claim made since). A release that lands late, after the slug was taken back, finds
   a newer stamp and leaves it. So `configure` never waits on a push, and a push stuck on KV never holds it.
-- **Claimed when it first goes public (decided, Q23; to build).** Today saving a slug claims it, drafts included, so
-  a `slug_taken` tells any workspace admin which addresses are in use. A draft's slug will be claimed only when the
-  page is first made public; until then it is kept on the page alone, and a taken slug is refused at that point.
+- **Claimed when it first goes public (decided, Q23).** A draft's slug is kept on the page alone (`claimed: false`
+  on `status_page`), so a `slug_taken` never tells a workspace admin which addresses other drafts use, and two drafts
+  may name one slug. The save that makes the page public claims it, and a slug another workspace holds is refused
+  then (`409 slug_taken`, nothing changed). From then on the page holds it (`claimed: true`), also as a draft again,
+  exactly as before. A slug that was never claimed is never retired, deleted from KV or released: it may be another
+  page's by then (tested). Pages from before have no `claimed` and count as holding their slug, since every save
+  claimed it.
 - **Custom domains (decided, Q23; to build)**: a domain maps to a slug through Cloudflare for SaaS custom hostnames,
   and the same route serves it. The self-host setup script can configure them, so an operator sets up a page's
   domain without opening Cloudflare's dashboard.
@@ -208,8 +213,9 @@ reader skips fields it does not check, so they need no new version ("Feeds").
   so a visitor can tell how fresh it is; while KV or the shard is down, visitors keep reading the last snapshot,
   which is the honest answer (the last thing the team said). Without a `STATUS` binding nothing is pushed and every
   address answers 404, while the dashboard still sets the page up; adding the binding later publishes on the next
-  change. Decided (Q23), to build: past 48 hours the page also says "this page may be out of date", since a page
-  that is rebuilt daily and is older than that means the shard or KV is stuck.
+  change. Past 48 hours (`STATUS_STALE_MS`) the page also says "This page may be out of date: it was last updated
+  …" under its banner (decided, Q23), since a page that is rebuilt daily and is older than that means the shard or
+  KV is stuck. The Worker decides when it renders, so the notice appears within the page's 30 s of caching.
 
 ## The public page
 
@@ -230,9 +236,14 @@ reader skips fields it does not check, so they need no new version ("Feeds").
 - **Caching and abuse.** The response is kept in the edge cache (the Cache API, keyed by slug alone, so headers and
   hosts never split it; a no-op on workers.dev) and the KV read uses `cacheTtl: 30`, so a busy page costs about one
   KV read per location every 30 s, and a flood of made-up addresses one cached 404 per address. Nothing on the read
-  path touches D1 or a shard, so there is nothing per request to rate-limit. Decided (Q23), to build: a rate limit per
-  IP on `/status/*` misses (the Workers rate limiting binding), so a flood of distinct addresses is bounded before
-  custom hostnames bring Cloudflare's own protection. Subscribing is the one write a visitor makes, and
+  path touches D1 or a shard. **Misses are rate-limited per caller** (decided, Q23): every answer of the page and
+  its feeds that would be the 404 (a bad slug, a cached 404, nothing in KV) first counts against the caller's
+  address (`cf-connecting-ip`) in Workers Rate Limiting (`STATUS_MISS_LIMIT`, 30 a minute, namespaces 418x); past it
+  the answer is a `429` page with `Retry-After: 60`, never cached. A page that exists is never counted, so a busy
+  page is never refused to anyone. What it bounds is the answers a caller gets, not what probing reveals or costs: past
+  the limit a made-up address answers `429` where a real one still answers `200`, the same signal a `404` gave, and the
+  limiter runs after the KV read, so an uncached miss costs the read as before. A request without a
+  caller address (a local run) or a limiter that fails is answered as before. Subscribing is the one write a visitor makes, and
   it is rate-limited before it touches either ("Email subscriptions").
 
 ## Local times
@@ -311,10 +322,16 @@ reader skips fields it does not check, so they need no new version ("Feeds").
 - **On the page**: windows under way first (with the component chip "Under maintenance"), upcoming ones after the
   components, at most 10, soonest first, in UTC (the visitor's zone with script, "Local times"). A component under maintenance shows it only while nothing worse (an
   incident, its own status) does, and the banner says "Scheduled maintenance in progress" when everything else is
-  operational. The page's overall status is unchanged: maintenance is not an outage. Decided (Q23), to build: a
-  window may say it takes a component down (a planned outage), shown as down for its components while it runs.
+  operational. The page's overall status is unchanged: maintenance is not an outage.
+- **A planned outage** (decided, Q23): a window may say it takes its components down (`outage` on
+  `maintenance.schedule` and `.update`, carried by every maintenance event, `outage: true` on the snapshot's window,
+  an optional field, so no new snapshot version). While it runs its components show `major_outage` (the worse of
+  that and anything else); the page's overall status and banner stay the team's and the incidents', as for any
+  maintenance, so planned work never reads as an incident. The window carries a "Planned outage" chip and says its
+  components are down while it runs, upcoming or under way, and so do its feed entries. The emails are unchanged.
 - **The dashboard's Scheduled maintenance card** lists open and recent windows with their times in the viewer's time
-  zone, and plans, edits, ends and calls them off (asking first).
+  zone, and plans, edits, ends and calls them off (asking first); a "Planned outage" box under the components, and a
+  badge on the row.
 
 ## Email subscriptions
 
@@ -483,4 +500,5 @@ email notifier acts on `incident.update_published`, the maintenance events, `sta
 - Custom domains (decided, above), embedding, pruning history past 90 days, showing who published (choice per page), maintenance and subscriber
   events in the webhook catalog, the mobile app's publish and maintenance actions.
 - KV namespaces for staging and production: `STATUS` is bound for local runs and the tests and, in `dev`, to
-  `brigade-status-dev` (apps/api README "Status page"). Self-host setup creates it (decided, Q23; to build).
+  `brigade-status-dev` (apps/api README "Status page"). The self-host setup steps create it (decided, Q23; apps/api
+  README "Self-host setup").

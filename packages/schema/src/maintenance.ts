@@ -23,7 +23,7 @@ export const MAINTENANCE_KEEP_MS = 90 * 24 * 60 * 60 * 1000;
 type Window = Pick<
   MaintenanceRow,
   "id" | "title" | "componentIds" | "startsAt" | "endsAt" | "phase"
->;
+> & { outage: boolean };
 
 export type MaintenanceScheduled = DomainEvent<"maintenance.scheduled", Window>;
 export type MaintenanceUpdated = DomainEvent<"maintenance.updated", Window>;
@@ -38,6 +38,7 @@ const windowOf = (row: MaintenanceRow): Window => ({
   startsAt: row.startsAt,
   endsAt: row.endsAt,
   phase: row.phase,
+  outage: row.outage === true,
 });
 
 /** Where a window stands at `now`. */
@@ -69,6 +70,8 @@ const windowArgs = v.object({
   componentIds: v.array(v.id("cmp"), { max: MAX_COMPONENTS, unique: true }),
   startsAt: time,
   endsAt: time,
+  /** A planned outage (decided, Q23): its components show as down while it runs. Left out: no. */
+  outage: v.omittable(v.boolean()),
 });
 type WindowArgs = {
   title: string;
@@ -122,8 +125,10 @@ export const scheduleMaintenance = defineMutation({
         store.delete("status_maintenance", row.id);
       }
     }
+    const { outage, ...rest } = args;
     const row: MaintenanceRow = {
-      ...args,
+      ...rest,
+      ...(outage && { outage: true }),
       phase: maintenancePhase(args, ctx.now),
       createdAt: ctx.now,
       createdBy: ctx.actor.id,
@@ -155,13 +160,16 @@ export const updateMaintenance = defineMutation({
       current.body === args.body &&
       current.startsAt === args.startsAt &&
       current.endsAt === args.endsAt &&
-      current.componentIds.join() === args.componentIds.join()
+      current.componentIds.join() === args.componentIds.join() &&
+      (current.outage === true) === (args.outage === true)
     ) {
       return fail("conflict", "The window is unchanged");
     }
     const row: MaintenanceRow = {
       ...current,
       ...args,
+      // Written either way: the store merges a patch, so leaving it out would keep a planned outage on.
+      outage: args.outage === true,
       phase: maintenancePhase(args, ctx.now),
       updatedAt: ctx.now,
     };

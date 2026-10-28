@@ -13,6 +13,8 @@ export type Status_MaintenanceInputs = {
 * | "upcoming_title" | "Scheduled maintenance" |
 * | "window_upcoming" | "{time} to {until}" |
 * | "window_active" | "Until {until}" |
+* | "outage" | "Planned outage" |
+* | "outage_hint" | "The components it affects are down while it runs." |
 * | * | "Maintenance" |
 *
 * @param {Status_MaintenanceInputs} inputs

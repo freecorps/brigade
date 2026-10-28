@@ -79,6 +79,10 @@ function windowEntry(
     { locale },
   );
   const lines: string[] = [range];
+  if (window.outage) {
+    const say = (part: string) => status_maintenance({ part, time: "", until: "" }, { locale });
+    lines.push(`${say("outage")}: ${say("outage_hint")}`);
+  }
   if (window.components.length > 0) {
     lines.push(say(locale, "affects", { list: window.components.join(", ") }));
   }

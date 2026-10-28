@@ -9,7 +9,8 @@
 // same value as the API Worker's secret, read from the environment so it never lands in shell history. Without
 // `--email` the owner is `owner@<the instance's host>`. The password is generated here, sent once over HTTPS, stored
 // only as Better Auth's hash, and printed once: keep it in a password manager, then change it from the dashboard if
-// you like. The API refuses once any user exists, so running this again does nothing.
+// you like. The API refuses once any user exists, so running this again does nothing. Run it last: the instance's
+// resources, including the status pages' `STATUS` KV namespace, come first (apps/api/README.md "Self-host setup").
 import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
 

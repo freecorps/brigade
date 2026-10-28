@@ -869,6 +869,12 @@ export type StatusPageRow = {
   locale: StatusLocale;
   /** Whether the public can read it; a page that is not enabled is a draft nobody outside sees. */
   enabled: boolean;
+  /**
+   * Whether this workspace holds `slug` in D1: from the first time the page went public under it (decided, Q23). A
+   * draft's slug is kept on the page alone, so nothing is ever deleted from KV or released under it. Absent on pages
+   * from before, whose slugs were claimed on every save: held.
+   */
+  claimed?: boolean;
   updatedAt: number;
   updatedBy: string;
 };
@@ -911,6 +917,8 @@ export type MaintenanceRow = {
   componentIds: string[];
   startsAt: number;
   endsAt: number;
+  /** A planned outage: its components are down while it runs, not only under maintenance. Absent on older rows: no. */
+  outage?: boolean;
   phase: MaintenancePhase;
   createdAt: number;
   createdBy: string;

@@ -198,9 +198,15 @@ export const configureStatusPage = defineMutation({
     ) {
       return fail("conflict", "Status page settings are unchanged");
     }
+    // The API claimed the slug in D1 before a public save (RFC 0012 "Addresses"); a draft keeps what it held.
+    const held = current?.slug === args.slug && current.claimed !== false;
+    // A slug it gave up moments ago and has not released yet is still this workspace's in D1 (and maybe KV): taken
+    // back, even as a draft, it is held, so it is retired (and cleared from KV) when the page moves on again.
+    const reclaimed = ctx.server && store.get("status_retired", args.slug) !== undefined;
     const row: StatusPageRow = {
       id: STATUS_PAGE_ID,
       ...args,
+      claimed: args.enabled || held || reclaimed,
       updatedAt: ctx.now,
       updatedBy: ctx.actor.id,
     };
@@ -208,7 +214,12 @@ export const configureStatusPage = defineMutation({
     else store.insert("status_page", row);
     const previousSlug = current && current.slug !== args.slug ? current.slug : null;
     if (ctx.server) {
-      if (previousSlug && !store.get("status_retired", previousSlug)) {
+      // Only a slug this workspace held: a draft's was never in D1 nor KV, and may be another page's by now.
+      if (
+        previousSlug &&
+        current?.claimed !== false &&
+        !store.get("status_retired", previousSlug)
+      ) {
         store.insert("status_retired", { id: previousSlug, at: ctx.now });
       }
       // Taken back before the shard got round to releasing it: still this workspace's in D1.
@@ -763,6 +774,8 @@ export type SnapshotMaintenance = {
   /** When it was planned, and when anything the public reads about it last changed. Absent from older snapshots. */
   publishedAt?: number;
   updatedAt?: number;
+  /** A planned outage: its components show `major_outage` while it runs. Absent when it is not one. */
+  outage?: true;
 };
 export type SnapshotGroup = {
   name: string | null;
@@ -832,8 +845,12 @@ export function statusSnapshot(store: SnapshotStore, now: number): StatusSnapsho
   for (const component of components) {
     const derived = componentStatus(component, incidents);
     overall = worseStatus(overall, derived);
-    const status: SnapshotComponentStatus =
-      derived === "operational" && inProgress.some((row) => row.componentIds.includes(component.id))
+    const touching = inProgress.filter((row) => row.componentIds.includes(component.id));
+    // A planned outage takes its components down while it runs (decided, Q23); the page's overall status stays the
+    // team's and the incidents', as for any maintenance, so the banner says maintenance rather than an outage.
+    const status: SnapshotComponentStatus = touching.some((row) => row.outage === true)
+      ? worseStatus(derived, "major_outage")
+      : derived === "operational" && touching.length > 0
         ? "maintenance"
         : derived;
     let group = groups.find((candidate) => candidate.name === component.group);
@@ -866,6 +883,7 @@ export function statusSnapshot(store: SnapshotStore, now: number): StatusSnapsho
     endsAt: row.endsAt,
     publishedAt: row.createdAt,
     updatedAt: row.updatedAt,
+    ...(row.outage === true && { outage: true as const }),
   });
   const upcoming = windows
     .filter((row) => row.phase === "scheduled")

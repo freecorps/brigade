@@ -153,6 +153,19 @@ describe("maintenance card", () => {
     expect(saved[0]!.draft.endsAt - saved[0]!.draft.startsAt).toBe(HOUR);
   });
 
+  test("a window can be a planned outage, shown on its row and kept when editing", async () => {
+    const { container, saved } = panel({ windows: [windowRow({ outage: true })] });
+    expect(container.textContent).toContain("Planned outage");
+    act(() => button(container, "Edit").click());
+    const box = [...container.querySelectorAll("label")]
+      .find((label) => label.textContent?.startsWith("Planned outage"))!
+      .querySelector("input")!;
+    expect(box.checked).toBe(true);
+    act(() => box.click());
+    await act(async () => button(container, "Save").click());
+    expect(saved).toMatchObject([{ draft: { outage: false }, id: "mnt_1" }]);
+  });
+
   test("a window under way can end now; calling one off asks first", async () => {
     const { container, ended, cancelled } = panel({
       windows: [windowRow({ phase: "in_progress", startsAt: NOW - HOUR })],

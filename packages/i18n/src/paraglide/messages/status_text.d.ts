@@ -40,6 +40,9 @@ export type Status_TextInputs = {
 * | "feed_json" | "JSON feed" |
 * | "component_maintenance" | "Under maintenance" |
 * | "overall_maintenance" | "Scheduled maintenance in progress" |
+* | "stale" | "This page may be out of date: it was last updated {time}." |
+* | "rate_limited_title" | "Too many requests" |
+* | "rate_limited_body" | "Too many addresses with no status page were asked for from your network. Try again in a minute." |
 * | * | "Status" |
 *
 * @param {Status_TextInputs} inputs

@@ -2224,6 +2224,9 @@
         "part=feed_json": "Feed JSON",
         "part=component_maintenance": "Em manutenção",
         "part=overall_maintenance": "Manutenção programada em andamento",
+        "part=stale": "Esta página pode estar desatualizada: a última atualização foi em {time}.",
+        "part=rate_limited_title": "Muitas solicitações",
+        "part=rate_limited_body": "Sua rede pediu muitos endereços sem página de status. Tente de novo em um minuto.",
         "part=*": "Status"
       }
     }
@@ -3214,6 +3217,8 @@
         "part=upcoming_title": "Manutenção programada",
         "part=window_upcoming": "De {time} a {until}",
         "part=window_active": "Até {until}",
+        "part=outage": "Indisponibilidade planejada",
+        "part=outage_hint": "Os componentes afetados ficam fora do ar enquanto ela dura.",
         "part=*": "Manutenção"
       }
     }
@@ -3373,6 +3378,9 @@
         "part=not_set_up": "Configure a página de status primeiro para programar manutenções nela.",
         "part=viewer": "Owners, admins e responders podem programar manutenções.",
         "part=past_title": "Concluídas",
+        "part=outage_label": "Indisponibilidade planejada",
+        "part=outage_hint": "Os componentes afetados aparecem fora do ar na página de status enquanto ela dura, não só em manutenção.",
+        "part=outage_badge": "Indisponibilidade planejada",
         "part=*": "Manutenção"
       }
     }

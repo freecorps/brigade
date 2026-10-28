@@ -292,6 +292,38 @@ describe("PUT /workspaces/:id/status-page", () => {
     expect(await response.json()).toEqual({ error: "slug_taken" });
     expect(await owners(address)).toEqual([a.id]);
   });
+
+  test("a draft's slug is claimed only when the page first goes public, and never touches another page's", async () => {
+    const a = await team();
+    const b = await team({ ana: a.eva, caio: a.caio, eva: a.ana });
+    const address = slug();
+    // A draft keeps its slug on the page alone: nothing in D1, and another workspace may hold the same one.
+    expect((await configure(a, a.ana, settings(address, { enabled: false }))).status).toBe(200);
+    expect(await owners(address)).toEqual([]);
+    expect((await configure(b, b.ana, settings(address))).status).toBe(200);
+    await b.push();
+    expect(await owners(address)).toEqual([b.id]);
+    // Saving the draft, or moving it to another slug, deletes nothing of the page that went public there.
+    expect(
+      (await configure(a, a.ana, settings(address, { enabled: false, title: "Acme draft" })))
+        .status,
+    ).toBe(200);
+    await a.push();
+    const other = slug();
+    expect((await configure(a, a.ana, settings(other, { enabled: false }))).status).toBe(200);
+    await a.push();
+    expect(await a.withShard((shard) => shard.store.scan("status_retired"))).toEqual([]);
+    expect(await snapshot(address)).toMatchObject({ title: "Acme" });
+    expect(await owners(address)).toEqual([b.id]);
+    // Going public under a taken slug is refused then; under a free one claims it.
+    const taken = await configure(a, a.ana, settings(address));
+    expect(taken.status).toBe(409);
+    expect((await configure(a, a.ana, settings(other))).status).toBe(200);
+    expect(await owners(other)).toEqual([a.id]);
+    // Made a draft again, the page keeps the address it went public under.
+    expect((await configure(a, a.ana, settings(other, { enabled: false }))).status).toBe(200);
+    expect(await owners(other)).toEqual([a.id]);
+  });
 });
 
 describe("the snapshot", () => {
@@ -968,6 +1000,37 @@ describe("the snapshot", () => {
       expect(await response.text()).toContain("No status page here");
     }
     expect((await exports.default.fetch(`${ORIGIN}/status`)).status).toBe(404);
+  });
+
+  test("past 30 misses a minute an address is answered 429, while a real page still answers it", async () => {
+    const t = await team();
+    const address = slug();
+    await configure(t, t.ana, settings(address));
+    await t.push();
+    const from = { "cf-connecting-ip": "203.0.113.77" };
+    const get = (path: string) => exports.default.fetch(`${ORIGIN}${path}`, { headers: from });
+    const missing = slug();
+    for (let index = 0; index < 30; index++) {
+      const response = await get(
+        index % 2 === 0 ? `/status/${missing}-${index}` : `/status/${missing}`,
+      );
+      expect(response.status).toBe(404);
+    }
+    const limited = await get(`/status/${missing}-more`);
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("Retry-After")).toBe("60");
+    expect(limited.headers.get("Cache-Control")).toBe("no-store");
+    expect(await limited.text()).toContain("Too many requests");
+    // A cached 404 counts as a miss too, a feed's as well; a real page and its feed never do.
+    expect((await get(`/status/${missing}`)).status).toBe(429);
+    expect((await get(`/status/${missing}/feed.atom`)).status).toBe(429);
+    expect((await get(`/status/${address}`)).status).toBe(200);
+    expect((await get(`/status/${address}/feed.json`)).status).toBe(200);
+    // Another caller is not held back.
+    const other = await exports.default.fetch(`${ORIGIN}/status/${missing}`, {
+      headers: { "cf-connecting-ip": "203.0.113.78" },
+    });
+    expect(other.status).toBe(404);
   });
 
   test("the feeds come from the snapshot in KV, cached like the page", async () => {

@@ -24,8 +24,14 @@ import {
 } from "@freecorps/brigade-schema";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import type { EmailSender, OutgoingEmail } from "../src/email.ts";
-import { consumeEvents, retryDelay, WEBHOOK_BUDGET_MS, type Fetch } from "../src/notify.ts";
-import { snippet, WEBHOOK_TIMEOUT_MS } from "../src/notify-webhooks.ts";
+import {
+  CONSUMER_TIMING,
+  consumeEvents,
+  retryDelay,
+  type ConsumerTiming,
+  type Fetch,
+} from "../src/notify.ts";
+import { snippet } from "../src/notify-webhooks.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
 import { newWebhookSecret, sign, signatureHeaders } from "../src/webhook-sign.ts";
@@ -285,7 +291,11 @@ function receiver(
 async function deliver(
   events: BrigadeEvent[],
   send: Fetch,
-  { attempts = 1, mail }: { attempts?: number; mail?: EmailSender } = {},
+  {
+    attempts = 1,
+    mail,
+    timing,
+  }: { attempts?: number; mail?: EmailSender; timing?: ConsumerTiming } = {},
 ) {
   const batch = createMessageBatch(
     "brigade-events",
@@ -314,6 +324,7 @@ async function deliver(
     send,
     mail,
     (promise) => ctx.waitUntil(promise),
+    timing,
   );
   const settledIn = Date.now() - started;
   const result = await getQueueResult(batch, ctx);
@@ -365,10 +376,17 @@ async function redrive(t: Team): Promise<BrigadeEvent[]> {
   return alarm(t);
 }
 
-/** A receiver that never answers: each delivery waits out `WEBHOOK_TIMEOUT_MS`. */
+/**
+ * The consumer's limits for a receiver that never answers, in production's proportions (the budget under the
+ * delivery's timeout): each such delivery waits out `webhookTimeoutMs` under `waitUntil`, which the batch's result
+ * waits for, so production's 5 s would be seconds per delivery.
+ */
+const FAST: ConsumerTiming = { ...CONSUMER_TIMING, webhookBudgetMs: 500, webhookTimeoutMs: 800 };
+
+/** A receiver that never answers: each delivery waits out the timeout (`FAST.webhookTimeoutMs`). */
 const hang = (request: Request) =>
   new Promise<Response>((resolve, reject) => {
-    const timer = setTimeout(() => resolve(new Response("late")), WEBHOOK_TIMEOUT_MS + 5000);
+    const timer = setTimeout(() => resolve(new Response("late")), FAST.webhookTimeoutMs + 5000);
     request.signal.addEventListener("abort", () => {
       clearTimeout(timer);
       reject(request.signal.reason);
@@ -776,21 +794,21 @@ describe("delivery", () => {
     const event = await declare(t, responder(t));
     const other = await declare(t, responder(t), "Second");
     const hook = receiver(hang);
-    const result = await deliver([event, other], hook.send);
+    const result = await deliver([event, other], hook.send, { timing: FAST });
     // Both pages went out, and the batch settled within the webhooks' budget, not the receiver's pace, with no retry
     // of the messages: the webhooks' retries are the shard's.
     expect(hook.pushes).toEqual(["c".repeat(64), "c".repeat(64)]);
-    expect(result.settledIn).toBeGreaterThanOrEqual(WEBHOOK_BUDGET_MS - 100);
-    expect(result.settledIn).toBeLessThan(WEBHOOK_BUDGET_MS + 1500);
+    expect(result.settledIn).toBeGreaterThanOrEqual(FAST.webhookBudgetMs - 100);
+    expect(result.settledIn).toBeLessThan(FAST.webhookBudgetMs + 1500);
     expect(result).toMatchObject({ explicitAcks: ["msg-0", "msg-1"], retryMessages: [] });
     // The late attempt finished under waitUntil: recorded as a timeout, and the retry waits out its backoff.
     const log = await t.withShard((shard) => shard.store.scan("webhooks")[0]!.recent);
     expect(log.map((one) => one.error)).toEqual(["timeout", "timeout"]);
     // A page's retry is never pushed again: the page ledger settled it.
     await due(t);
-    await deliver([event], hook.send, { attempts: 2 });
+    await deliver([event], hook.send, { attempts: 2, timing: FAST });
     expect(hook.pushes).toHaveLength(2);
-  }, 40_000);
+  });
 
   test("twenty endpoints that never answer leave a connection for the page's relay request", async () => {
     const t = await team();
@@ -823,7 +841,7 @@ describe("delivery", () => {
         waiting.shift()?.();
       }
     };
-    const result = await deliver([event], send);
+    const result = await deliver([event], send, { timing: FAST });
     // The relay was asked at once, not after the receivers' timeouts.
     expect(relayAt).toBeDefined();
     expect(relayAt!).toBeLessThan(1000);
@@ -847,7 +865,7 @@ describe("delivery", () => {
     expect(await redrive(t)).toEqual([
       expect.objectContaining({ type: "webhook.redeliver", data: { eventId: event.id } }),
     ]);
-  }, 40_000);
+  });
 
   test("an endpoint that always times out gets every attempt, beside a page's own retries", async () => {
     const t = await team();
@@ -865,7 +883,7 @@ describe("delivery", () => {
     };
     // The page's retries are push's alone: every delivery of the event asks for exactly push's delay.
     for (let attempt = 1; attempt <= 3; attempt++) {
-      const result = await deliver([event], send, { attempts: attempt });
+      const result = await deliver([event], send, { attempts: attempt, timing: FAST });
       expect(result.retryMessages).toEqual([{ msgId: "msg-0", delaySeconds: retryDelay(attempt) }]);
     }
     expect(pushes).toBe(3);
@@ -873,7 +891,7 @@ describe("delivery", () => {
     for (let attempt = 2; attempt <= WEBHOOK_MAX_ATTEMPTS; attempt++) {
       const queued = await redrive(t);
       expect(queued).toHaveLength(1);
-      const result = await deliver(queued, send);
+      const result = await deliver(queued, send, { timing: FAST });
       // Over its budget, and still no retry of the message.
       expect(result).toMatchObject({ explicitAcks: ["msg-0"], retryMessages: [] });
     }
@@ -888,7 +906,7 @@ describe("delivery", () => {
       expect.objectContaining({ attempts: WEBHOOK_MAX_ATTEMPTS, done: 1 }),
     ]);
     expect(await redrive(t)).toEqual([]);
-  }, 120_000);
+  });
 });
 
 /** Runs mutation `name` as `actor` from a client, answering its result (refusals included). */
@@ -1110,11 +1128,11 @@ describe("replaying a delivery", () => {
     const [replay] = await eventsOf(t, "webhook.replay");
     const page = await declare(t, responder(t), "Second");
     const hook = receiver(hang);
-    const result = await deliver([replay!, page], hook.send);
+    const result = await deliver([replay!, page], hook.send, { timing: FAST });
     expect(hook.pushes).toContain("e".repeat(64));
-    expect(result.settledIn).toBeLessThan(WEBHOOK_BUDGET_MS + 1500);
+    expect(result.settledIn).toBeLessThan(FAST.webhookBudgetMs + 1500);
     expect(result).toMatchObject({ explicitAcks: ["msg-0", "msg-1"], retryMessages: [] });
-  }, 40_000);
+  });
 });
 
 describe("custom headers", () => {

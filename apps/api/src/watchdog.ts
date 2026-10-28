@@ -125,6 +125,8 @@ type Keys =
 export class WatchdogDO extends DurableObject<Env> {
   private readonly drain: OutboxDrain;
   private readonly drainPaused: boolean;
+  /** `PING_TIMEOUT_MS`; a field so tests can shorten it. */
+  private pingTimeoutMs = PING_TIMEOUT_MS;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -334,7 +336,7 @@ export class WatchdogDO extends DurableObject<Env> {
     try {
       const response = await fetch(url, {
         method: "GET",
-        signal: AbortSignal.timeout(PING_TIMEOUT_MS),
+        signal: AbortSignal.timeout(this.pingTimeoutMs),
       });
       await response.body?.cancel();
       ok = response.ok;

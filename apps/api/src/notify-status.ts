@@ -57,6 +57,7 @@ export async function notifyStatus(
   sender: EmailSender | undefined,
   slots: SideConnections,
   waitUntil?: (promise: Promise<unknown>) => void,
+  budgetMs = STATUS_EMAIL_BUDGET_MS,
 ): Promise<number | undefined> {
   if (!sender || !env.BETTER_AUTH_SECRET) return undefined;
   const workspace = env.WORKSPACE.getByName(event.workspaceId);
@@ -69,7 +70,7 @@ export async function notifyStatus(
         )
       : undefined;
   }
-  const deadline = Date.now() + STATUS_EMAIL_BUDGET_MS;
+  const deadline = Date.now() + budgetMs;
   const work = run(event, plan, env, env.BETTER_AUTH_SECRET, sender, slots, deadline).then(
     async (report) => {
       const { retry } = await workspace.recordStatusEmail(event, plan.key, report);
@@ -80,10 +81,7 @@ export async function notifyStatus(
   // Past the budget plus one send's own bound the delivery lets go: the claim holds the batch until it reports.
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<number>((resolve) => {
-    timer = setTimeout(
-      () => resolve(Math.ceil(STATUS_EMAIL_CLAIM_MS / 1000)),
-      STATUS_EMAIL_BUDGET_MS + 2000,
-    );
+    timer = setTimeout(() => resolve(Math.ceil(STATUS_EMAIL_CLAIM_MS / 1000)), budgetMs + 2000);
   });
   try {
     return await Promise.race([work, late]);

@@ -20,7 +20,13 @@ import {
 import type { SlackActResult } from "@freecorps/brigade-slack/bridge";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import { clearPeople } from "@freecorps/brigade-slack/people";
-import { consumeEvents, QUEUE_MAX_RETRIES, SLACK_BUDGET_MS, type Fetch } from "../src/notify.ts";
+import {
+  CONSUMER_TIMING,
+  consumeEvents,
+  QUEUE_MAX_RETRIES,
+  type ConsumerTiming,
+  type Fetch,
+} from "../src/notify.ts";
 import { notifySlack } from "../src/notify-slack.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
@@ -712,7 +718,13 @@ function slackApi(answers: Record<string, () => Response | Promise<Response>> = 
   return { calls, send, pushes };
 }
 
-async function deliver(events: BrigadeEvent[], send: Fetch, attempts = 1) {
+/**
+ * The consumer's limits for a Slack that is late or never answers. Its late call runs on under `waitUntil`, which the
+ * batch's result waits for, so production's 3 s budget would be seconds of real time per delivery.
+ */
+const FAST: ConsumerTiming = { ...CONSUMER_TIMING, slackBudgetMs: 500 };
+
+async function deliver(events: BrigadeEvent[], send: Fetch, attempts = 1, timing?: ConsumerTiming) {
   const batch = createMessageBatch(
     "brigade-events",
     events.map((body, index) => ({ id: `msg-${index}`, timestamp: new Date(), attempts, body })),
@@ -741,6 +753,7 @@ async function deliver(events: BrigadeEvent[], send: Fetch, attempts = 1) {
     send,
     undefined,
     (promise) => ctx.waitUntil(promise),
+    timing,
   );
   // How long the batch took to settle; work left to `waitUntil` finishes before the result below.
   const settledIn = Date.now() - started;
@@ -1113,12 +1126,15 @@ describe("the incident message", () => {
     const hanging = slackApi({
       "chat.postMessage": () =>
         new Promise<Response>((resolve) =>
-          setTimeout(() => resolve(Response.json({ ok: true, ts: "1" })), SLACK_BUDGET_MS + 4000),
+          setTimeout(
+            () => resolve(Response.json({ ok: true, ts: "1" })),
+            FAST.slackBudgetMs + 1500,
+          ),
         ),
     });
-    const result = await deliver([event], hanging.send);
-    expect(result.settledIn).toBeGreaterThanOrEqual(SLACK_BUDGET_MS - 100);
-    expect(result.settledIn).toBeLessThan(SLACK_BUDGET_MS + 2000);
+    const result = await deliver([event], hanging.send, 1, FAST);
+    expect(result.settledIn).toBeGreaterThanOrEqual(FAST.slackBudgetMs - 100);
+    expect(result.settledIn).toBeLessThan(FAST.slackBudgetMs + 1000);
     expect(hanging.pushes).toEqual(["c".repeat(64)]);
     expect(result.retryMessages).toEqual([{ msgId: "msg-0", delaySeconds: expect.any(Number) }]);
   }, 15_000);
@@ -1133,12 +1149,12 @@ describe("the incident message", () => {
         new Promise<Response>((resolve) =>
           setTimeout(
             () => resolve(Response.json({ ok: true, ts: "1790000000.000042" })),
-            SLACK_BUDGET_MS + 500,
+            FAST.slackBudgetMs + 500,
           ),
         ),
     });
-    const first = await deliver([event], late.send);
-    expect(first.settledIn).toBeLessThan(SLACK_BUDGET_MS + 400);
+    const first = await deliver([event], late.send, 1, FAST);
+    expect(first.settledIn).toBeLessThan(FAST.slackBudgetMs + 400);
     expect(first.retryMessages).toEqual([{ msgId: "msg-0", delaySeconds: expect.any(Number) }]);
     const recorded = await t.withShard(
       (_shard, state) =>
@@ -1148,10 +1164,10 @@ describe("the incident message", () => {
     expect(recorded).toBe("1790000000.000042");
     // The Queue's retry, and the incident's next change: neither posts a second message.
     await t.withShard((_shard, state) => state.storage.sql.exec("delete from slack_claims"));
-    await deliver([event], late.send, 2);
+    await deliver([event], late.send, 2, FAST);
     const incident = (await incidents(t))[0]!;
     await t.run("incident.setSeverity", { id: incident.id, severity: "sev2" }, owner(t));
-    await deliver(await eventsOf(t, "incident.severity_changed"), late.send);
+    await deliver(await eventsOf(t, "incident.severity_changed"), late.send, 1, FAST);
     expect(posts(late.calls)).toHaveLength(1);
     const updates = late.calls.filter((call) => call.method === "chat.update");
     expect(updates).toHaveLength(1);

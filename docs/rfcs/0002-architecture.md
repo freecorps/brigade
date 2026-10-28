@@ -376,7 +376,8 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     `monitor.paused` with any firing alert resolved, and `monitor.heartbeat_revoked`, whose hash becomes random
     bytes nobody holds a token for), revokes every alert source URL the same way (`alertSource.takeOver`,
     `alert_source.revoked`; RFC 0005 "Alert sources") and disables the alert routes the account created
-    (`disabled: "takeover"`, `alert_route.updated` with `reason: takeover`, until someone saves them), and the dashboard
+    (`disabled: "takeover"`, `alert_route.updated` with `reason: takeover`, until someone saves them), disconnects a
+    Slack connection the account made (decided, Q21; to build: as Disconnect, the bot token given back), and the dashboard
     tells the owner once which workspaces came with the account and what was paused or disabled, or that a shard could
     not be reached (`takeover_notice` in D1,
     `GET`/`DELETE /account/takeover`, en and pt-BR; two resets at once merge into one notice). The owner resumes what they

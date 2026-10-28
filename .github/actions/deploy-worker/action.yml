@@ -1,0 +1,34 @@
+# Builds one Worker for an environment and deploys what was built. With the Cloudflare Vite plugin the environment is
+# picked at build time (CLOUDFLARE_ENV, through the package's `build` or `build:<env>` script) and `wrangler deploy`
+# takes no `--env` (RFC 0002 "Environments"). Needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in the job's env.
+name: Deploy a Worker
+description: Build a Worker package for an environment and run wrangler deploy on the built config.
+inputs:
+  package:
+    description: Workspace package name, such as @freecorps/brigade-api
+    required: true
+  directory:
+    description: The package's directory, such as apps/api
+    required: true
+  environment:
+    description: production (the top-level config) or dev
+    required: true
+  sha:
+    description: The commit being deployed (under workflow_run, GITHUB_SHA is main's head, not the commit CI checked)
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Build
+      shell: bash
+      env:
+        PACKAGE: ${{ inputs.package }}
+        TASK: ${{ inputs.environment == 'production' && 'build' || format('build:{0}', inputs.environment) }}
+      run: vp run --filter "$PACKAGE" "$TASK"
+    - name: Deploy
+      shell: bash
+      working-directory: ${{ inputs.directory }}
+      env:
+        SHA: ${{ inputs.sha }}
+      # The version message names the commit, so a rollback in the dashboard shows what it goes back to.
+      run: vpx wrangler deploy --message "${SHA::12} (${GITHUB_WORKFLOW} #${GITHUB_RUN_NUMBER})"

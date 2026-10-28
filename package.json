@@ -18,6 +18,7 @@
   "scripts": {
     "dev": "vp run --filter @freecorps/brigade-web dev",
     "ready": "vp check && vp run -r test && vp run -r build",
+    "test": "node --test scripts/*.test.mjs",
     "setup:first-user": "node apps/api/scripts/create-first-user.mjs"
   },
   "devDependencies": {

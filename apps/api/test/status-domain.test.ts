@@ -734,6 +734,9 @@ describe("the shard re-checks the domain on its own", () => {
 
   test("Cloudflare's reasons become codes the dashboard words itself", () => {
     expect(domainError("moved", "active", [])).toBe("moved");
+    // A status named like an Object method is not a failure.
+    expect(domainError("constructor", "active", [])).toBeNull();
+    expect(domainError("toString", "", [])).toBeNull();
     expect(domainError("pending_blocked", "", [])).toBe("blocked");
     expect(domainError("pending", "validation_timed_out", [])).toBe("timed_out");
     expect(domainError("active", "expired", [])).toBe("expired");

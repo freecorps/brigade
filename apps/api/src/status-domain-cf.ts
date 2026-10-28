@@ -82,7 +82,8 @@ export function domainError(
   ssl: string,
   errors: string[],
 ): StatusDomainError | null {
-  const failed = FAILED[status];
+  // Own keys only: a status named like an Object method ("constructor") must not read as failed.
+  const failed = Object.hasOwn(FAILED, status) ? FAILED[status] : undefined;
   if (failed) return failed;
   if (ssl.endsWith("_timed_out")) return "timed_out";
   if (ssl === "expired") return "expired";
@@ -111,7 +112,7 @@ export function readHostname(raw: Raw, target: string): SaasHostname | undefined
   const state: StatusDomainState =
     status === "active" && ssl === "active"
       ? "active"
-      : status in FAILED || ssl.endsWith("_timed_out") || ssl === "expired"
+      : Object.hasOwn(FAILED, status) || ssl.endsWith("_timed_out") || ssl === "expired"
         ? "failed"
         : "pending";
   const records: StatusDomainRecord[] = [{ type: "CNAME", name: raw.hostname, value: target }];

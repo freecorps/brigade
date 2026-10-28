@@ -562,6 +562,12 @@ export type MonitorCheck = {
 };
 
 /**
+ * One report kept on the monitor for the dashboard's and the status page's charts (RFC 0007 "Recent results"): which
+ * source, when it checked, its verdict and the latency of that check.
+ */
+export type MonitorSample = Pick<MonitorCheck, "source" | "at" | "up" | "latencyMs">;
+
+/**
  * A monitor (RFC 0003, 0007). Each kind's fields are null for the others: `url`, `method`, `expectedStatus` and
  * `keyword` for HTTP, `host` and `port` for TCP, `graceSeconds` for a heartbeat. `status`,
  * `checks`, `alertId` and `incidentId` are written by the server only, from probe reports and heartbeats.
@@ -620,6 +626,11 @@ export type MonitorRow = {
   restartedAt: number;
   /** One entry per source that reported, in report order. */
   checks: MonitorCheck[];
+  /**
+   * The last `MONITOR_HISTORY` reports from every source, oldest first, for charts; emptied with `checks` when the
+   * monitor starts over. Absent on rows from before: none kept yet.
+   */
+  history?: MonitorSample[];
   /**
    * The escalation policy an incident this monitor opens is paged through (RFC 0003 "Escalation policies"); null or
    * absent (rows from before): the workspace's default.

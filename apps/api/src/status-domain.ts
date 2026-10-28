@@ -418,15 +418,7 @@ async function takeOver(
   ) {
     return "taken";
   }
-  const removed = await client.remove(domain.cloudflareId);
-  if (!removed.ok) {
-    log("deleting a custom hostname to take it over failed", {
-      workspaceId,
-      from: holder.workspaceId,
-      error: removed.message,
-    });
-    return "cloudflare_failed";
-  }
+  // Released first: the shard refuses a domain verified meanwhile (or re-added), so a live hostname is never deleted.
   let released: { ok: true } | { ok: false; code: string };
   try {
     released = await stub.releaseStatusDomain(
@@ -442,14 +434,17 @@ async function takeOver(
     });
     return "failed";
   }
-  // Removed by its own workspace meanwhile is as good; verified meanwhile keeps it, its next check seeing the delete.
-  if (!released.ok && released.code !== "not_found") {
-    log("a custom hostname deleted for a takeover stayed with its workspace", {
+  // Removed by its own workspace meanwhile is as good.
+  if (!released.ok && released.code !== "not_found") return "taken";
+  const removed = await client.remove(domain.cloudflareId);
+  if (!removed.ok) {
+    // The claim still moves: the new workspace's create then meets Cloudflare's "already exists" and adopts the
+    // hostname, which is in our zone and now its claim.
+    log("deleting a custom hostname to take it over failed; it will be adopted", {
       workspaceId,
       from: holder.workspaceId,
-      code: released.code,
+      error: removed.message,
     });
-    return "taken";
   }
   try {
     const moved = await env.DB.prepare(

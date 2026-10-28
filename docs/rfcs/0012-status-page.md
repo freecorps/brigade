@@ -212,13 +212,13 @@ custom hostnames: the owner points a CNAME at the instance's fallback origin and
   The workspace's next add after `CLAIM_STALE_MS` finds and adopts it.
 - **Taken over after 7 days unverified (decided).** A hostname whose domain has been pending or failed for more than
   `STATUS_DOMAIN_SQUAT_MS` (7 days, from `stateAt`: when it was added, or the check that moved it to its state) may be
-  added by another workspace, so nobody holds a name they never verified. The add deletes the old Cloudflare
-  hostname first (refused: `502 cloudflare_failed`, nothing changed), then the old workspace's shard runs the
+  added by another workspace, so nobody holds a name they never verified. The old workspace's shard first runs the
   server-only `statusDomain.release` as `ACCOUNT_ACTOR` (only for that Cloudflare id, still not active and in its state
-  since the cutoff; event `status_domain.removed` with `takenOver`, through the outbox), then the claim moves to the
-  new workspace and the add goes on as usual. An active domain, a newer one, or a claim with no domain behind it is
-  still `hostname_taken`. A domain verified between the read and the release keeps its row; its next check sees the
-  deleted hostname (tested).
+  since the cutoff; event `status_domain.removed` with `takenOver`, through the outbox): a domain verified meanwhile
+  is refused there and keeps both its row and its Cloudflare hostname. Only then is the old Cloudflare hostname
+  deleted; if Cloudflare refuses, the claim still moves and the new workspace's create adopts the hostname it finds
+  already in the zone (tested). Then the claim moves to the new workspace and the add goes on as usual. An active
+  domain, a newer one, or a claim with no domain behind it is still `hostname_taken`.
 - **What a hostname may be**: lowercase letters, digits and hyphens in three or more labels, an internationalized
   name as punycode, at most 253 characters, no scheme, port or path, and no IP address in any spelling (`1.2.3`,
   `0x7f.1`, `[::1]`). A two-label name (`example.com`) is refused (`apex`): a CNAME cannot sit at a zone's apex

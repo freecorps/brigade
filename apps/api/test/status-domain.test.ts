@@ -1068,7 +1068,7 @@ describe("a hostname left unverified is taken over", () => {
     }
   });
 
-  test("Cloudflare refusing the delete changes nothing", async () => {
+  test("Cloudflare refusing the delete still moves it: the new workspace adopts the hostname it can't create", async () => {
     const a = await team();
     const b = await team();
     const fake = cloudflare();
@@ -1085,13 +1085,14 @@ describe("a hostname left unverified is taken over", () => {
     const logs = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const taken = await route(b, b.ana, "PUT", failing, { hostname: name });
-      expect([taken.status, await taken.json()]).toEqual([502, { error: "cloudflare_failed" }]);
+      expect(taken.status).toBe(200);
     } finally {
       logs.mockRestore();
     }
-    expect(await holder(name)).toBe(a.id);
-    expect(await domainRow(a)).toMatchObject({ hostname: name });
-    expect(await outbox(a, "status_domain.removed")).toEqual([]);
+    // Released by A before any delete; B holds the claim and the hostname Cloudflare still had.
+    expect(await domainRow(a)).toBeNull();
+    expect(await holder(name)).toBe(b.id);
+    expect(await domainRow(b)).toMatchObject({ hostname: name, cloudflareId: "cfh-1" });
   });
 });
 

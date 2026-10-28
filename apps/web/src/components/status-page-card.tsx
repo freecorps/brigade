@@ -30,6 +30,7 @@ import { useEffect, useId, useState, type FormEvent, type ReactNode } from "reac
 import { CONFIRM_DESTRUCTIVE } from "@/components/monitor-form";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
+import { Empty } from "@/components/ui/empty";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Field, FormError } from "@/components/ui/field";
@@ -199,9 +200,7 @@ export function StatusPagePanel(props: PanelProps) {
             {manage && (page || setUp) ? (
               <Settings page={page} onSave={props.onSave} />
             ) : !page ? (
-              <p className="text-sm text-muted-foreground">
-                {say(manage ? "not_set_up" : "manage_only")}
-              </p>
+              <Empty>{say(manage ? "not_set_up" : "manage_only")}</Empty>
             ) : null}
             {page ? <Components {...props} /> : null}
             {page && props.subscribers ? (
@@ -461,14 +460,14 @@ function Components({
         ) : null}
       </div>
       {components.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{say("components_empty")}</p>
+        <Empty>{say("components_empty")}</Empty>
       ) : (
         <div className="flex flex-col gap-4">
           {blocks.map((block, index) => (
             <div key={block.group ?? ""} className="flex min-w-0 flex-col gap-1.5">
               {block.group !== null ? (
                 <div className="flex min-h-11 items-center justify-between gap-3">
-                  <h4 className="min-w-0 text-xs font-semibold tracking-wide text-muted-foreground uppercase [overflow-wrap:anywhere]">
+                  <h4 className="min-w-0 text-xs font-semibold text-muted-foreground [overflow-wrap:anywhere]">
                     {block.group}
                   </h4>
                   {canMove ? (

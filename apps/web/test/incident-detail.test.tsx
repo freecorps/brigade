@@ -485,7 +485,8 @@ test("back to the list puts focus on the incident's title link", async () => {
   await act(() => view.router.load());
   await view.flush();
   expect($("h1")?.textContent).toBe("Checkout down");
-  await click($$("a").find((a) => a.textContent === "All incidents"));
+  // The top bar's section name leads back to the list.
+  await click($$("header a").find((a) => a.textContent === "Incidents"));
   await act(() => view.router.load());
   await view.flush();
   expect(document.activeElement).toBe($('[data-incident-link="1"]'));

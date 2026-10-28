@@ -90,7 +90,7 @@
         "part=configure": "Configuração",
         "part=overview": "Visão geral",
         "part=incidents": "Incidentes",
-        "part=follow_ups": "Follow-ups",
+        "part=follow_ups": "Ações",
         "part=on_call": "Plantão",
         "part=monitors": "Monitores",
         "part=services": "Serviços",

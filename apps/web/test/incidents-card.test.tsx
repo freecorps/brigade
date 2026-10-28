@@ -568,9 +568,9 @@ test("declares refused without issues keep their notice under the form and do no
     });
   };
   const formNotice = () => {
-    // The slot right after the form, before the list: where the user just acted.
-    const form = $("form")!;
-    const next = form.nextElementSibling;
+    // The slot right after the form's band, before the list: where the user just acted.
+    const band = $("form")!.parentElement!;
+    const next = band.nextElementSibling;
     return next?.tagName === "UL" ? next.textContent : null;
   };
   await submit("Card reader offline");

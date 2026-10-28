@@ -43,7 +43,7 @@ export const nav = /** @type {((inputs: NavInputs, options?: { locale?: "en" | "
 		if (i?.part === "configure") return /** @type {LocalizedString} */ (`Configuração`);
 		if (i?.part === "overview") return /** @type {LocalizedString} */ (`Visão geral`);
 		if (i?.part === "incidents") return /** @type {LocalizedString} */ (`Incidentes`);
-		if (i?.part === "follow_ups") return /** @type {LocalizedString} */ (`Follow-ups`);
+		if (i?.part === "follow_ups") return /** @type {LocalizedString} */ (`Ações`);
 		if (i?.part === "on_call") return /** @type {LocalizedString} */ (`Plantão`);
 		if (i?.part === "monitors") return /** @type {LocalizedString} */ (`Monitores`);
 		if (i?.part === "services") return /** @type {LocalizedString} */ (`Serviços`);

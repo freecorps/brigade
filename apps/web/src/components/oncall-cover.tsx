@@ -123,7 +123,11 @@ export function OnCallNowCard() {
   const zone = useMemo(browserTimeZone, []);
   const shown = lanes.slice(0, COVER_LANES);
   return (
-    <Card aria-labelledby="oncall-now-title" className="gap-4">
+    <Card
+      aria-labelledby="oncall-now-title"
+      // Its rows run to the card's edges and its foot, like the incidents beside it.
+      className={cn("gap-4", shown.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
+    >
       <CardHeader className="sm:has-data-[slot=card-action]:grid-cols-[minmax(0,1fr)_auto]">
         <CardTitle id="oncall-now-title">
           {m.overview_cover({ part: "now_title", name: "", from: "", to: "" })}
@@ -185,7 +189,7 @@ export function OnCallNowCard() {
           </ul>
         ) : null}
         {lanes.length > shown.length ? (
-          <p className="pt-3 text-sm text-muted-foreground">
+          <p className="-mx-4 border-t px-4 py-3 text-sm text-muted-foreground sm:-mx-6 sm:px-6">
             {m.oncall_more({ count: lanes.length - shown.length })}
           </p>
         ) : null}

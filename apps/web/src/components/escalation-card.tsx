@@ -57,7 +57,7 @@ import { memberLabel, rotationChoices } from "@/lib/oncall";
 
 const SELECT =
   "field w-full min-w-0 px-3 focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
-const LABEL = "text-xs font-medium tracking-wide text-muted-foreground uppercase";
+const LABEL = "text-xs font-medium text-muted-foreground";
 /** Levels a policy shows before "Show all N levels". */
 const LEVELS_SHOWN = 3;
 /** Forms run edge to edge on phones (the card's padding is room enough) and as a box from `sm` up. */

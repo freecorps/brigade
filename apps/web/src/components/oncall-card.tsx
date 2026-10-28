@@ -91,7 +91,7 @@ import {
 
 const SELECT =
   "field w-full min-w-0 px-3 focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
-const LABEL = "text-xs font-medium tracking-wide text-muted-foreground uppercase";
+const LABEL = "text-xs font-medium text-muted-foreground";
 /** Forms run edge to edge on phones (the card's padding is room enough) and as a box from `sm` up. */
 const FORM =
   "-mx-4 flex min-w-0 flex-col gap-4 border-y bg-muted/40 px-4 py-4 sm:mx-0 sm:rounded-md sm:border";
@@ -200,10 +200,11 @@ export function OnCallCard() {
             )}
           </div>
         ) : null}
+        {/* With the title and the count, like every card's description, not a block of the content below. */}
+        <p className="max-w-prose text-sm text-muted-foreground">{m.oncall_not_paging()}</p>
       </div>
 
       <CardContent className="flex flex-col gap-5">
-        <p className="text-sm text-muted-foreground">{m.oncall_not_paging()}</p>
         {adding ? (
           <ScheduleForm
             initial={emptySchedule(now)}
@@ -474,7 +475,8 @@ function ScheduleItem({
           ) : (
             <>
               <p>
-                <Badge variant="sev3">
+                {/* The destructive colour, as on the overview: nobody on call is a page that reaches no one. */}
+                <Badge variant="outline" className="border-destructive text-destructive">
                   <TriangleAlertIcon aria-hidden />
                   {m.oncall_nobody()}
                 </Badge>

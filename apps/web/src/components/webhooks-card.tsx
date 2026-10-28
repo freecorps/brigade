@@ -510,9 +510,7 @@ function EndpointForm({
         <div className="grid min-w-0 gap-4 sm:grid-cols-3">
           {EVENT_GROUPS.map((group) => (
             <div key={group.part} className="flex min-w-0 flex-col gap-1">
-              <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                {webhookText(group.part)}
-              </p>
+              <p className="text-xs font-medium text-muted-foreground">{webhookText(group.part)}</p>
               {group.types.map((type) => (
                 <label key={type} className="flex min-h-9 items-center gap-2.5 text-sm">
                   <input

@@ -316,7 +316,7 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
             <dl className="flex flex-col gap-4">
               {layout.map((section) => (
                 <div key={section.key} className="flex flex-col gap-1">
-                  <dt className="text-xs font-medium tracking-wide text-muted-foreground uppercase [overflow-wrap:anywhere]">
+                  <dt className="text-xs font-medium text-muted-foreground [overflow-wrap:anywhere]">
                     {sectionName(section)}
                   </dt>
                   <dd

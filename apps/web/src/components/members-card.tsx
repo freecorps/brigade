@@ -7,6 +7,7 @@ import { InvitationsPanel, type InvitationParts } from "@/components/invitations
 import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
+import { Empty } from "@/components/ui/empty";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardTitle } from "@/components/ui/card";
 import { FormError } from "@/components/ui/field";
@@ -220,17 +221,12 @@ export function MembersList({
       className={cn(sorted.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
     >
       <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center justify-between gap-4">
           <CardTitle id="members-title" ref={titleRef} tabIndex={-1} className="outline-none">
             {m.members_part({ part: "title", name: "" })}
           </CardTitle>
           {invite && !invite.opened ? (
-            <Button
-              ref={inviteRef}
-              variant="outline"
-              onClick={invite.open}
-              className="-my-1.5 shrink-0"
-            >
+            <Button ref={inviteRef} variant="outline" onClick={invite.open} className="shrink-0">
               <UserPlusIcon aria-hidden />
               {m.invite_part({ part: "open", email: "", date: "", name: "" })}
             </Button>
@@ -312,13 +308,20 @@ export function MembersList({
               {m.members_part({ part: "retry", name: "" })}
             </Button>
           </div>
-        ) : !loading && members.length <= 1 && !invite?.count ? (
-          // Invitations out already answer "invite your team": the list below says who is coming.
-          <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-            {m.members_part({ part: invite ? "empty_invite" : "empty", name: "" })}
-          </p>
         ) : null}
-        {invite?.pending}
+        {/* After the rows, which run to the card's foot: what follows them brings its own bottom padding back. */}
+        <div
+          className={cn("flex flex-col gap-4 empty:hidden", sorted.length > 0 && "pb-5 sm:pb-6")}
+        >
+          {!loading &&
+          !(reload && members.length === 0) &&
+          members.length <= 1 &&
+          !invite?.count ? (
+            // Invitations out already answer "invite your team": the list below says who is coming.
+            <Empty>{m.members_part({ part: invite ? "empty_invite" : "empty", name: "" })}</Empty>
+          ) : null}
+          {invite?.pending}
+        </div>
       </CardContent>
     </Card>
   );

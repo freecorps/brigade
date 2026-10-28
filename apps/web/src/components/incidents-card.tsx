@@ -27,7 +27,7 @@ import {
   type FocusEvent,
 } from "react";
 import { DeclareForm } from "@/components/declare-form";
-import { IncidentItem, IncidentItemSkeleton } from "@/components/incident-item";
+import { INCIDENT_COLUMNS, IncidentItem, IncidentItemSkeleton } from "@/components/incident-item";
 import { usePreferences } from "@/components/preferences";
 import { useOptionalMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
@@ -289,7 +289,7 @@ export function IncidentsCard() {
     >
       {/* Two fixed lines: nothing below moves as the connection, the count or the SEV1 badge change. */}
       <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <div className="flex h-6 items-center justify-between gap-4">
+        <div className="flex h-11 items-center justify-between gap-4 pointer-fine:h-9">
           <CardTitle id="incidents-title" tabIndex={-1} className="truncate outline-none">
             {m.incidents_title()}
           </CardTitle>
@@ -313,7 +313,11 @@ export function IncidentsCard() {
       </div>
 
       <CardContent className="flex flex-col gap-5">
-        <DeclareForm types={types} policies={policies} onDeclare={onDeclare} />
+        {/* Declaring is an action, not the list's header: it sits in a band of its own, edge to edge, so its labels
+            are never read as the columns of the rows below. */}
+        <div className="-mx-4 border-y bg-muted/40 px-4 py-4 sm:-mx-6 sm:px-6">
+          <DeclareForm types={types} policies={policies} onDeclare={onDeclare} />
+        </div>
         {declareNotices}
 
         {/* Read out once per new notice, in the card's wording, wherever it is drawn. */}
@@ -324,29 +328,44 @@ export function IncidentsCard() {
         </div>
 
         {rows.length > 0 ? (
-          <ul aria-labelledby="incidents-title" className="-mx-4 divide-y border-t sm:-mx-6">
-            {rows.map((row) => (
-              <IncidentItem
-                key={row.id}
-                row={row}
-                pending={{
-                  any: busy.has(row.id),
-                  status: busy.has(`${row.id}/status`),
-                  severity: busy.has(`${row.id}/severity`),
-                }}
-                online={connection === "open"}
-                locale={locale}
-                now={now}
-                notices={renderNotices(
-                  notices.filter((notice) => notice.incidentId === row.id),
-                  "row",
-                )}
-                editable={editable}
-                onStatus={onStatus}
-                onSeverity={onSeverity}
-              />
-            ))}
-          </ul>
+          <div className={cn("-mx-4 sm:-mx-6", declareNotices === null && "-mt-5")}>
+            {/* The rows' own columns, named once; each menu still says what it changes. */}
+            <div
+              aria-hidden
+              className={cn(
+                "hidden gap-x-3 border-b px-6 py-2 text-xs font-medium text-muted-foreground md:grid",
+                INCIDENT_COLUMNS,
+              )}
+            >
+              <span className="col-span-2">{m.incidents_title()}</span>
+              {/* The menus' trigger box (its 1px edge and its padding), so each name starts where its badges do. */}
+              <span className="border border-transparent px-3">{m.incident_severity_label()}</span>
+              <span className="border border-transparent px-3">{m.incident_status_label()}</span>
+            </div>
+            <ul aria-labelledby="incidents-title" className="divide-y">
+              {rows.map((row) => (
+                <IncidentItem
+                  key={row.id}
+                  row={row}
+                  pending={{
+                    any: busy.has(row.id),
+                    status: busy.has(`${row.id}/status`),
+                    severity: busy.has(`${row.id}/severity`),
+                  }}
+                  online={connection === "open"}
+                  locale={locale}
+                  now={now}
+                  notices={renderNotices(
+                    notices.filter((notice) => notice.incidentId === row.id),
+                    "row",
+                  )}
+                  editable={editable}
+                  onStatus={onStatus}
+                  onSeverity={onSeverity}
+                />
+              ))}
+            </ul>
+          </div>
         ) : view === "connecting" ? (
           <ul aria-hidden className="-mx-4 -mb-5 divide-y border-t sm:-mx-6 sm:-mb-6">
             {[0, 1, 2].map((index) => (

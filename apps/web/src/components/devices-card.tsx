@@ -9,6 +9,7 @@ import { CONFIRM_DESTRUCTIVE } from "@/components/monitor-form";
 import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
+import { Empty } from "@/components/ui/empty";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { FormError } from "@/components/ui/field";
 
@@ -92,7 +93,7 @@ export function DevicesPanel({ rows, loading, failed, locale, now, onRemove }: P
         </CardContent>
       ) : rows.length === 0 ? (
         <CardContent>
-          <p className="max-w-prose text-sm text-muted-foreground">{text("empty")}</p>
+          <Empty>{text("empty")}</Empty>
         </CardContent>
       ) : (
         <ul className="divide-y border-t">

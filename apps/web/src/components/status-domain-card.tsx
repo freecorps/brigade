@@ -7,7 +7,8 @@ import { CONFIRM_DESTRUCTIVE } from "@/components/monitor-form";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Empty } from "@/components/ui/empty";
 import { Field, FormError } from "@/components/ui/field";
 import {
   addDomain,
@@ -82,19 +83,16 @@ export function StatusDomainPanel(props: PanelProps) {
   const { ready, loading, domain, manage } = props;
   return (
     <Card aria-labelledby="status-domain-title">
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <CardTitle id="status-domain-title">{say("title")}</CardTitle>
-        <p className="max-w-prose text-sm text-muted-foreground">{say("description")}</p>
-      </div>
+      <CardHeader id="status-domain-title" title={say("title")} description={say("description")} />
       <CardContent className="flex flex-col gap-4">
         {loading ? null : !ready ? (
-          <p className="text-sm text-muted-foreground">{say("not_set_up")}</p>
+          <Empty>{say("not_set_up")}</Empty>
         ) : domain ? (
           <Domain {...props} domain={domain} />
         ) : manage ? (
           <AddDomain {...props} />
         ) : (
-          <p className="text-sm text-muted-foreground">{say("none")}</p>
+          <Empty>{say("none")}</Empty>
         )}
         {!manage && ready ? <p className="text-sm text-muted-foreground">{say("viewer")}</p> : null}
       </CardContent>

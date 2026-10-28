@@ -10,7 +10,7 @@ import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardList } from "@/components/ui/card";
 import { FormError } from "@/components/ui/field";
 
 const text = (
@@ -77,12 +77,11 @@ export function DevicesPanel({ rows, loading, failed, locale, now, onRemove }: P
   const [refused, setRefused] = useState<string | null>(null);
   return (
     <Card aria-labelledby={titleId}>
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <CardTitle id={titleId}>{text("title")}</CardTitle>
-        <p className="max-w-prose text-sm text-muted-foreground">
-          {text("description", { max: MAX_DEVICES_PER_MEMBER })}
-        </p>
-      </div>
+      <CardHeader
+        id={titleId}
+        title={text("title")}
+        description={text("description", { max: MAX_DEVICES_PER_MEMBER })}
+      />
       {loading ? (
         <CardContent>
           <p className="text-sm text-muted-foreground">{text("loading")}</p>
@@ -96,7 +95,7 @@ export function DevicesPanel({ rows, loading, failed, locale, now, onRemove }: P
           <Empty>{text("empty")}</Empty>
         </CardContent>
       ) : (
-        <ul className="divide-y border-t">
+        <CardList>
           {rows.map((row) => (
             <DeviceItem
               key={row.id}
@@ -113,7 +112,7 @@ export function DevicesPanel({ rows, loading, failed, locale, now, onRemove }: P
               }}
             />
           ))}
-        </ul>
+        </CardList>
       )}
     </Card>
   );

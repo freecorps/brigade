@@ -15,7 +15,8 @@ import { usePreferences } from "@/components/preferences";
 import { FORM, Refusal } from "@/components/services-card";
 import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Empty } from "@/components/ui/empty";
 import { Field } from "@/components/ui/field";
 import { createExport, exportText, exportUrl, formatDueDate, useFeatures } from "@/lib/follow-ups";
 
@@ -71,13 +72,19 @@ export function IncidentExportButton({ incident }: { incident: IncidentRow }) {
   };
   return (
     <div className="flex flex-col gap-2">
-      <Button variant="outline" className="self-start" onClick={onExport} disabled={busy}>
+      {/* On phones an icon button, so it stays on the line of the incident's menus. */}
+      <Button
+        variant="outline"
+        className="self-start max-sm:w-11 max-sm:px-0"
+        onClick={onExport}
+        disabled={busy}
+      >
         {busy ? (
           <LoaderCircleIcon aria-hidden className="animate-spin motion-reduce:animate-none" />
         ) : (
           <DownloadIcon aria-hidden />
         )}
-        {exportText(busy ? "creating" : "incident_action")}
+        <span className="max-sm:sr-only">{exportText(busy ? "creating" : "incident_action")}</span>
       </Button>
       {refused ? <Refusal text={refused} onDismiss={() => setRefused(null)} /> : null}
     </div>
@@ -128,12 +135,11 @@ function Exports() {
   const live = recent.rows.filter((row) => row.expiresAt > now);
   return (
     <Card aria-labelledby="exports-title">
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <CardTitle id="exports-title">{exportText("card_title")}</CardTitle>
-        <p className="max-w-prose text-sm text-muted-foreground">
-          {exportText("card_description")}
-        </p>
-      </div>
+      <CardHeader
+        id="exports-title"
+        title={exportText("card_title")}
+        description={exportText("card_description")}
+      />
       <CardContent className="flex flex-col gap-5 text-sm">
         <form className={FORM} onSubmit={submit} noValidate>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -171,7 +177,7 @@ function Exports() {
         <div className="flex flex-col gap-2">
           <h3 className="text-xs font-medium text-muted-foreground">{exportText("recent")}</h3>
           {live.length === 0 ? (
-            <p className="text-muted-foreground">{exportText("none")}</p>
+            <Empty>{exportText("none")}</Empty>
           ) : (
             <ul className="-mx-4 flex flex-col divide-y border-y sm:-mx-6">
               {live.map((row) => (

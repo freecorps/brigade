@@ -20,7 +20,6 @@ import {
   CircleCheckIcon,
   CircleIcon,
   ExternalLinkIcon,
-  ListTodoIcon,
   PencilIcon,
   PlusIcon,
   Trash2Icon,
@@ -35,7 +34,15 @@ import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Segmented } from "@/components/ui/segmented";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CARD_ROW,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardList,
+} from "@/components/ui/card";
+import { Empty } from "@/components/ui/empty";
 import { Field } from "@/components/ui/field";
 import {
   followUpText,
@@ -107,65 +114,28 @@ export function FollowUpsCard({ incident }: { incident: IncidentRow }) {
 
   return (
     <Card aria-labelledby="follow-ups-title">
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <div className="flex items-center justify-between gap-3">
-          <CardTitle id="follow-ups-title">{followUpText("title")}</CardTitle>
-          {done > 0 ? (
-            <span className="text-xs text-muted-foreground tabular-nums">
-              {followUpText("done_count", { count: `${done}/${rows.length}` })}
-            </span>
-          ) : null}
-        </div>
-        <p className="text-sm text-muted-foreground">{followUpText("description")}</p>
-      </div>
+      <CardHeader
+        id="follow-ups-title"
+        title={followUpText("title")}
+        count={done > 0 ? followUpText("done_count", { count: `${done}/${rows.length}` }) : null}
+        description={followUpText("description")}
+        action={
+          editable && !adding && !full ? (
+            <Button variant="outline" onClick={() => setAdding(true)}>
+              <PlusIcon aria-hidden />
+              {followUpText("add")}
+            </Button>
+          ) : null
+        }
+      />
       <CardContent className="flex flex-col gap-4 text-sm">
         {refused ? <Refusal text={refused} onDismiss={() => setRefused(null)} /> : null}
         {followUps.status === "error" ? (
-          <p className="text-muted-foreground">
+          <Empty>
             {followUpText("load_failed", { reason: queryErrorReason(followUps.error?.code) })}
-          </p>
+          </Empty>
         ) : rows.length === 0 && followUps.status === "ready" && !adding ? (
-          <p className="text-muted-foreground">{followUpText("empty")}</p>
-        ) : null}
-        {rows.length > 0 ? (
-          <ul className="-mx-4 flex flex-col divide-y border-t sm:-mx-6">
-            {rows.map((row) =>
-              editing === row.id ? (
-                <li key={row.id} className="px-4 py-3 sm:px-6">
-                  <FollowUpForm
-                    initial={draftOf(row)}
-                    members={owners}
-                    onCancel={() => setEditing(null)}
-                    onSubmit={(draft) => {
-                      setEditing(null);
-                      void update({ id: row.id, ...argsOf(draft) }).then(report(row.title));
-                    }}
-                  />
-                </li>
-              ) : (
-                <FollowUpItem
-                  key={row.id}
-                  row={row}
-                  members={members.rows}
-                  today={today}
-                  locale={locale}
-                  editable={editable}
-                  onToggle={() =>
-                    void setStatus({
-                      id: row.id,
-                      status: row.status === "open" ? "done" : "open",
-                    }).then(report(row.title))
-                  }
-                  onEdit={() => setEditing(row.id)}
-                  onDelete={() => {
-                    if (window.confirm(followUpText("delete_confirm", { name: row.title }))) {
-                      void remove({ id: row.id }).then(report(row.title));
-                    }
-                  }}
-                />
-              ),
-            )}
-          </ul>
+          <Empty>{followUpText("empty")}</Empty>
         ) : null}
         {editable && adding ? (
           <FollowUpForm
@@ -181,19 +151,52 @@ export function FollowUpsCard({ incident }: { incident: IncidentRow }) {
               }).then(report(draft.title.trim()));
             }}
           />
-        ) : editable ? (
-          full ? (
-            <p className="text-muted-foreground">{followUpText("limit")}</p>
-          ) : (
-            <Button variant="outline" className="self-start" onClick={() => setAdding(true)}>
-              <PlusIcon aria-hidden />
-              {followUpText("add")}
-            </Button>
-          )
-        ) : (
+        ) : null}
+        {editable && full ? <p className="text-muted-foreground">{followUpText("limit")}</p> : null}
+        {editable ? null : (
           <p className="text-xs text-muted-foreground">{followUpText("read_only")}</p>
         )}
       </CardContent>
+      {rows.length > 0 ? (
+        <CardList>
+          {rows.map((row) =>
+            editing === row.id ? (
+              <li key={row.id} className={CARD_ROW}>
+                <FollowUpForm
+                  initial={draftOf(row)}
+                  members={owners}
+                  onCancel={() => setEditing(null)}
+                  onSubmit={(draft) => {
+                    setEditing(null);
+                    void update({ id: row.id, ...argsOf(draft) }).then(report(row.title));
+                  }}
+                />
+              </li>
+            ) : (
+              <FollowUpItem
+                key={row.id}
+                row={row}
+                members={members.rows}
+                today={today}
+                locale={locale}
+                editable={editable}
+                onToggle={() =>
+                  void setStatus({
+                    id: row.id,
+                    status: row.status === "open" ? "done" : "open",
+                  }).then(report(row.title))
+                }
+                onEdit={() => setEditing(row.id)}
+                onDelete={() => {
+                  if (window.confirm(followUpText("delete_confirm", { name: row.title }))) {
+                    void remove({ id: row.id }).then(report(row.title));
+                  }
+                }}
+              />
+            ),
+          )}
+        </CardList>
+      ) : null}
     </Card>
   );
 }
@@ -441,10 +444,11 @@ function FollowUpForm({
 }
 
 /**
- * Every open follow-up in the workspace, soonest due first (RFC 0013), with the incident each belongs to. `limit`
- * shows the first few, for the overview's card, with a link to the full list; without it, all of them.
+ * Every open follow-up in the workspace, soonest due first (RFC 0013), with the incident each belongs to, as one card.
+ * `limit` shows the first few, for the overview, with a link to the full list; without it (the page), all of them and
+ * the All / Mine filter in the header.
  */
-export function OpenFollowUps({ limit }: { limit?: number }) {
+function OpenFollowUps({ titleId, limit }: { titleId: string; limit?: number }) {
   const { role, userId } = useMember();
   const { locale } = usePreferences();
   const editable = can(role, "incident:update");
@@ -459,38 +463,46 @@ export function OpenFollowUps({ limit }: { limit?: number }) {
   const shown = limit === undefined ? rows : rows.slice(0, limit);
   const overdue = open.rows.filter((row) => isOverdue(row, today)).length;
   return (
-    <div className="flex flex-col gap-4 text-sm">
-      <div className="flex flex-wrap items-center gap-2">
-        {overdue > 0 ? (
-          <Badge variant="destructive" className="tabular-nums">
-            {followUpText("overdue_count", { count: overdue })}
-          </Badge>
+    <Card aria-labelledby={titleId}>
+      <CardHeader
+        id={titleId}
+        title={followUpText("open_title")}
+        description={followUpText("open_description")}
+        action={
+          <>
+            {overdue > 0 ? (
+              <Badge variant="destructive" className="tabular-nums">
+                {followUpText("overdue_count", { count: overdue })}
+              </Badge>
+            ) : null}
+            {limit === undefined ? (
+              <Segmented
+                label={followUpText("mine_filter")}
+                value={mine ? "mine" : "all"}
+                options={[
+                  { value: "all", label: followUpText("all") },
+                  { value: "mine", label: followUpText("mine") },
+                ]}
+                onChange={(next) => setMine(next === "mine")}
+              />
+            ) : null}
+          </>
+        }
+      />
+      <CardContent className="flex flex-col gap-4">
+        {refused ? <Refusal text={refused} onDismiss={() => setRefused(null)} /> : null}
+        {open.status === "error" ? (
+          <Empty>
+            {followUpText("load_failed", { reason: queryErrorReason(open.error?.code) })}
+          </Empty>
+        ) : open.status !== "ready" ? (
+          <p className="text-sm text-muted-foreground">{followUpText("loading")}</p>
+        ) : shown.length === 0 ? (
+          <Empty>{followUpText("open_empty")}</Empty>
         ) : null}
-        <Segmented
-          className="ml-auto"
-          label={followUpText("mine_filter")}
-          value={mine ? "mine" : "all"}
-          options={[
-            { value: "all", label: followUpText("all") },
-            { value: "mine", label: followUpText("mine") },
-          ]}
-          onChange={(next) => setMine(next === "mine")}
-        />
-      </div>
-      {refused ? <Refusal text={refused} onDismiss={() => setRefused(null)} /> : null}
-      {open.status === "error" ? (
-        <p className="text-muted-foreground">
-          {followUpText("load_failed", { reason: queryErrorReason(open.error?.code) })}
-        </p>
-      ) : open.status !== "ready" ? (
-        <p className="text-muted-foreground">{followUpText("loading")}</p>
-      ) : shown.length === 0 ? (
-        <p className="flex items-start gap-2 text-muted-foreground">
-          <ListTodoIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
-          {followUpText("open_empty")}
-        </p>
-      ) : (
-        <ul className="-mx-4 flex flex-col divide-y border-t sm:-mx-6">
+      </CardContent>
+      {open.status === "ready" && shown.length > 0 ? (
+        <CardList>
           {shown.map((row) => (
             <FollowUpItem
               key={row.id}
@@ -514,18 +526,20 @@ export function OpenFollowUps({ limit }: { limit?: number }) {
               }
             />
           ))}
-        </ul>
-      )}
-      {limit !== undefined && rows.length > 0 ? (
-        <Link
-          to="/follow-ups"
-          className="inline-flex min-h-11 items-center self-start text-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:underline"
-        >
-          {followUpText("open_link_all")}
-          {rows.length > limit ? ` (${rows.length})` : ""}
-        </Link>
+        </CardList>
       ) : null}
-    </div>
+      {limit !== undefined && rows.length > 0 ? (
+        <CardFooter>
+          <Link
+            to="/follow-ups"
+            className="inline-flex min-h-11 items-center text-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:underline pointer-fine:min-h-8"
+          >
+            {followUpText("open_link_all")}
+            {rows.length > limit ? ` (${rows.length})` : ""}
+          </Link>
+        </CardFooter>
+      ) : null}
+    </Card>
   );
 }
 
@@ -533,17 +547,7 @@ export function OpenFollowUps({ limit }: { limit?: number }) {
 export function OpenFollowUpsCard() {
   const open = useQuery("followUps.open", {});
   if (open.status === "ready" && open.rows.length === 0) return null;
-  return (
-    <Card aria-labelledby="open-follow-ups-title">
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <CardTitle id="open-follow-ups-title">{followUpText("open_title")}</CardTitle>
-        <p className="text-sm text-muted-foreground">{followUpText("open_description")}</p>
-      </div>
-      <CardContent>
-        <OpenFollowUps limit={5} />
-      </CardContent>
-    </Card>
-  );
+  return <OpenFollowUps titleId="open-follow-ups-title" limit={5} />;
 }
 
 /** `/follow-ups`: the workspace's open follow-ups, all of them. */
@@ -553,17 +557,7 @@ export function OpenFollowUpsPage() {
   // The top bar names the page and the sidebar leads back: the card is the page, at every section's width.
   return (
     <Page>
-      <Card aria-labelledby="follow-ups-page-title">
-        <div className="flex flex-col gap-1 px-4 sm:px-6">
-          <CardTitle id="follow-ups-page-title">{followUpText("open_title")}</CardTitle>
-          <p className="max-w-prose text-sm text-muted-foreground">
-            {followUpText("open_description")}
-          </p>
-        </div>
-        <CardContent>
-          <OpenFollowUps />
-        </CardContent>
-      </Card>
+      <OpenFollowUps titleId="follow-ups-page-title" />
     </Page>
   );
 }

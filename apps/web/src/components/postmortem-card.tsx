@@ -34,7 +34,7 @@ import { FORM, Refusal, TEXTAREA } from "@/components/services-card";
 import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
   loadRevisions,
   postmortemText,
@@ -219,11 +219,13 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
 
   return (
     <Card aria-labelledby="postmortem-title">
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle id="postmortem-title">{postmortemText("title")}</CardTitle>
-          {editable && editing === null ? (
-            <div className="flex flex-wrap gap-2">
+      <CardHeader
+        id="postmortem-title"
+        title={postmortemText("title")}
+        description={postmortemText("description")}
+        action={
+          editable && editing === null ? (
+            <>
               {showDraft ? (
                 <Button variant="outline" onClick={onDraft} disabled={asking}>
                   {asking ? (
@@ -247,14 +249,14 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
                   {postmortemText(blank ? "start" : "edit")}
                 </Button>
               ) : null}
-            </div>
-          ) : null}
-        </div>
-        <p className="text-sm text-muted-foreground">{postmortemText("description")}</p>
+            </>
+          ) : null
+        }
+      >
         {showDraft && blank ? (
           <p className="text-xs text-muted-foreground">{postmortemText("ai_hint")}</p>
         ) : null}
-      </div>
+      </CardHeader>
       <CardContent className="flex flex-col gap-4 text-sm">
         {refused ? <Refusal text={refused} onDismiss={() => setRefused(null)} /> : null}
         {running ? (

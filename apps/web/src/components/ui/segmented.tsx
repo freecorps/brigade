@@ -36,7 +36,7 @@ export function Segmented<T extends string>({
               "transition-[color,background-color,box-shadow] duration-(--brigade-duration-fast) ease-out",
               "has-focus-visible:ring-3 has-focus-visible:ring-ring",
               selected
-                ? "bg-card font-medium text-foreground shadow-raised"
+                ? "bg-card font-medium text-foreground shadow-raised dark:bg-secondary"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >

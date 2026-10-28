@@ -31,7 +31,7 @@ import { INCIDENT_COLUMNS, IncidentItem, IncidentItemSkeleton } from "@/componen
 import { usePreferences } from "@/components/preferences";
 import { useOptionalMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
   adjustBusy,
   nextFailed,
@@ -289,17 +289,16 @@ export function IncidentsCard() {
       onFocus={onFocus}
       onBlur={onBlur}
       aria-labelledby="incidents-title"
-      // Rows run to the card's edges (their hover tint included), so the card clips them to its corners.
-      className={cn(rows.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
+      // The rows run to the card's foot: their own padding closes the card.
+      className={cn(rows.length > 0 && "pb-0 sm:pb-0")}
     >
-      {/* Two fixed lines: nothing below moves as the connection, the count or the SEV1 badge change. */}
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <div className="flex h-11 items-center justify-between gap-4 pointer-fine:h-9">
-          <CardTitle id="incidents-title" tabIndex={-1} className="truncate outline-none">
-            {m.incidents_title()}
-          </CardTitle>
-          <ConnectionPill view={view} />
-        </div>
+      {/* The count line is fixed height: nothing below moves as the connection, the count or the SEV1 words change. */}
+      <CardHeader
+        id="incidents-title"
+        title={m.incidents_title()}
+        titleProps={{ tabIndex: -1 }}
+        action={<ConnectionPill view={view} />}
+      >
         <div className="flex h-6 items-center gap-2 text-sm whitespace-nowrap text-muted-foreground tabular-nums">
           {status === "ready" ? (
             <>
@@ -316,7 +315,7 @@ export function IncidentsCard() {
             <span aria-hidden className="block h-4 w-32 rounded-sm bg-muted" />
           ) : null}
         </div>
-      </div>
+      </CardHeader>
 
       <CardContent className="flex flex-col gap-5">
         {/* Declaring is an action, not the list's header: it sits in a band of its own, edge to edge, so its labels

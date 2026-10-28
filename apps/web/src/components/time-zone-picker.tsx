@@ -98,7 +98,7 @@ export function TimeZonePicker({
                       <Combobox.Item
                         key={zone.value}
                         value={zone}
-                        className="grid min-h-11 cursor-default grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-3 py-1.5 text-sm outline-none select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground"
+                        className="grid min-h-11 cursor-pointer grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-3 py-1.5 text-sm outline-none select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground"
                       >
                         <Combobox.ItemIndicator className="col-start-1 flex">
                           <CheckIcon aria-hidden className="size-4" />

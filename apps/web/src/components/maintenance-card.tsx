@@ -16,7 +16,7 @@ import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Empty } from "@/components/ui/empty";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardSection } from "@/components/ui/card";
 import { Field, FormError } from "@/components/ui/field";
 
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -110,20 +110,19 @@ export function MaintenancePanel(props: PanelProps) {
     .slice(0, 5);
   return (
     <Card aria-labelledby="maintenance-title">
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <div className="flex min-h-6 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <CardTitle id="maintenance-title" className="truncate">
-            {say("title")}
-          </CardTitle>
-          {ready && publish && !adding && open.length < MAX_OPEN_MAINTENANCE ? (
+      <CardHeader
+        id="maintenance-title"
+        title={say("title")}
+        description={say("description")}
+        action={
+          ready && publish && !adding && open.length < MAX_OPEN_MAINTENANCE ? (
             <Button variant="outline" onClick={() => setAdding(true)}>
               <PlusIcon aria-hidden />
               {say("schedule")}
             </Button>
-          ) : null}
-        </div>
-        <p className="max-w-prose text-sm text-muted-foreground">{say("description")}</p>
-      </div>
+          ) : null
+        }
+      />
       <CardContent className="flex flex-col gap-4">
         {loading ? null : !ready ? (
           <Empty>{say("not_set_up")}</Empty>
@@ -143,16 +142,13 @@ export function MaintenancePanel(props: PanelProps) {
               <p className="text-sm text-muted-foreground">{say("limit")}</p>
             ) : null}
             {past.length > 0 ? (
-              <section aria-labelledby="maintenance-past" className="flex flex-col gap-2">
-                <h3 id="maintenance-past" className="text-sm font-semibold">
-                  {say("past_title")}
-                </h3>
+              <CardSection id="maintenance-past" title={say("past_title")}>
                 <ul className="flex flex-col divide-y rounded-md border">
                   {past.map((row) => (
                     <WindowRow key={row.id} row={row} {...props} />
                   ))}
                 </ul>
-              </section>
+              </CardSection>
             ) : null}
             {!publish ? <p className="text-sm text-muted-foreground">{say("viewer")}</p> : null}
           </>

@@ -435,7 +435,7 @@ test("unavailable: a calm count line, the reason and that it keeps trying; the f
   expect(card.textContent).toContain("vp run dev");
   expect(card.textContent).toContain("This page keeps trying on its own.");
   // The count line keeps its height, empty: no placeholder glyph.
-  const count = $("#incidents-title")!.parentElement!.nextElementSibling!;
+  const count = $("#incidents-title")!.closest('[data-slot="card-header"]')!.lastElementChild!;
   expect(count.textContent).toBe("");
   expect($$("button").some((b) => b.textContent?.startsWith("Declare SEV"))).toBe(true);
 });

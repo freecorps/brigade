@@ -79,7 +79,7 @@ import { StatusPublishCard } from "@/components/status-publish";
 import { PagingCard, WhyPagedView, type PagingData } from "@/components/why-paged";
 import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -383,6 +383,10 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
             disabled={!editable}
             onChange={onStatus}
           />
+          {/* The incident's one page-level action, at the end of its controls rather than alone under the rail. */}
+          <div className="ml-auto">
+            <IncidentExportButton incident={row} />
+          </div>
         </div>
         {canAck ? (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -422,39 +426,40 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
       {/* The timeline comes first in the page (and in tab order), the roles beside it from md. Phones show the roles
           above it (short, and what responders look for first); keyboards are rare there. */}
       <div className="grid items-start gap-6 md:grid-cols-[minmax(0,1fr)_--spacing(80)]">
-        <Card aria-labelledby="timeline-title">
-          <CardTitle id="timeline-title" className="px-4 sm:px-6">
-            {m.incident_page({ part: "timeline" })}
-          </CardTitle>
-          <CardContent className="flex flex-col gap-5">
-            {editable ? (
-              <UpdateForm
-                incidentId={row.id}
+        <div className="flex min-w-0 flex-col gap-6">
+          <Card aria-labelledby="timeline-title">
+            <CardHeader id="timeline-title" title={m.incident_page({ part: "timeline" })} />
+            <CardContent className="flex flex-col gap-5">
+              {editable ? (
+                <UpdateForm
+                  incidentId={row.id}
+                  locale={locale}
+                  pending={busy.has("update")}
+                  onPost={onPost}
+                />
+              ) : null}
+              {noticesFor(["update"])}
+              <Timeline
+                rows={timeline.rows}
+                ready={timeline.status === "ready"}
+                who={who}
                 locale={locale}
-                pending={busy.has("update")}
-                onPost={onPost}
+                now={now}
+                pageAgain={canPageAgain ? row.id : undefined}
+                incidentId={row.id}
+                role={member.role}
               />
-            ) : null}
-            {noticesFor(["update"])}
-            <Timeline
-              rows={timeline.rows}
-              ready={timeline.status === "ready"}
-              who={who}
-              locale={locale}
-              now={now}
-              pageAgain={canPageAgain ? row.id : undefined}
-              incidentId={row.id}
-              role={member.role}
-            />
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+          {/* What the incident leaves behind (RFC 0013), under its timeline, so the column grows with the rail. */}
+          <FollowUpsCard incident={row} />
+          <PostmortemCard incident={row} />
+        </div>
 
         <div className="flex min-w-0 flex-col gap-6 max-md:order-first">
           {/* While a run is on, the escalation and who it paged come first on wide screens, the roles after. */}
           <Card aria-labelledby="roles-title" className={cn(row.escalation && "md:order-last")}>
-            <CardTitle id="roles-title" className="px-4 sm:px-6">
-              {m.incident_page({ part: "roles" })}
-            </CardTitle>
+            <CardHeader id="roles-title" title={m.incident_page({ part: "roles" })} />
             <CardContent className="flex flex-col gap-4">
               <ul className="flex flex-col gap-3">
                 {roles.map((role) => (
@@ -501,12 +506,8 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
             <PagingCard data={paging} who={who} number={row.number} />
           ) : null}
           <IncidentDetailsCard row={row} />
-          <IncidentExportButton incident={row} />
         </div>
       </div>
-      {/* What the incident leaves behind (RFC 0013): its follow-ups and its postmortem, full width under the rest. */}
-      <FollowUpsCard incident={row} />
-      <PostmortemCard incident={row} />
     </Shell>
   );
 }

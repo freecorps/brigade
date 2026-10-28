@@ -32,7 +32,7 @@ import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Empty } from "@/components/ui/empty";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardSection } from "@/components/ui/card";
 import { Field, FormError } from "@/components/ui/field";
 import {
   componentBlocks,
@@ -172,19 +172,18 @@ export function StatusPagePanel(props: PanelProps) {
   const [setUp, setSetUp] = useState(false);
   return (
     <Card aria-labelledby="status-page-title">
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <div className="flex min-h-6 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <CardTitle id="status-page-title" className="truncate">
-            {say("title")}
-          </CardTitle>
-          {manage && !page && !setUp && !loading && !failed ? (
+      <CardHeader
+        id="status-page-title"
+        title={say("title")}
+        description={say("description")}
+        action={
+          manage && !page && !setUp && !loading && !failed ? (
             <Button variant="outline" onClick={() => setSetUp(true)}>
               {say("set_up")}
             </Button>
-          ) : null}
-        </div>
-        <p className="max-w-prose text-sm text-muted-foreground">{say("description")}</p>
-      </div>
+          ) : null
+        }
+      />
       <CardContent className="flex flex-col gap-4">
         {loading ? null : failed ? (
           <div className="flex flex-col items-start gap-2">
@@ -446,19 +445,15 @@ function Components({
     void onReorder(ids).then((ok) => setMoved(ok ? { name } : { failed: true }));
   };
   return (
-    <section
-      aria-labelledby="status-components-title"
-      className="flex flex-col gap-3 border-t pt-4"
+    <CardSection
+      id="status-components-title"
+      title={say("components_title")}
+      description={
+        canMove && components.length > 1
+          ? `${say("components_hint")} ${say("order_hint")}`
+          : say("components_hint")
+      }
     >
-      <div className="flex flex-col gap-1">
-        <h3 id="status-components-title" className="text-sm font-semibold">
-          {say("components_title")}
-        </h3>
-        <p className="max-w-prose text-sm text-muted-foreground">{say("components_hint")}</p>
-        {canMove && components.length > 1 ? (
-          <p className="max-w-prose text-sm text-muted-foreground">{say("order_hint")}</p>
-        ) : null}
-      </div>
       {components.length === 0 ? (
         <Empty>{say("components_empty")}</Empty>
       ) : (
@@ -521,7 +516,7 @@ function Components({
       {manage ? (
         <AddComponent full={components.length >= MAX_COMPONENTS} onCreate={onCreate} />
       ) : null}
-    </section>
+    </CardSection>
   );
 }
 
@@ -943,16 +938,7 @@ function Subscribers({
   }, [attempt]);
   const text = subscribersText;
   return (
-    <section
-      aria-labelledby="status-subscribers-title"
-      className="flex flex-col gap-3 border-t pt-4"
-    >
-      <div className="flex flex-col gap-1">
-        <h3 id="status-subscribers-title" className="text-sm font-semibold">
-          {text("title")}
-        </h3>
-        <p className="max-w-prose text-sm text-muted-foreground">{text("hint")}</p>
-      </div>
+    <CardSection id="status-subscribers-title" title={text("title")} description={text("hint")}>
       {counts === "loading" ? (
         <p
           className="h-5 w-48 animate-pulse rounded bg-muted motion-reduce:animate-none"
@@ -1027,6 +1013,6 @@ function Subscribers({
       {typeof state === "object" && "error" in state ? (
         <FormError>{text(state.error)}</FormError>
       ) : null}
-    </section>
+    </CardSection>
   );
 }

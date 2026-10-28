@@ -8,7 +8,7 @@ import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { LoaderCircleIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { useMember } from "@/components/session";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { FormError } from "@/components/ui/field";
 
 const text = (part: string) => m.workspace_language({ part });
@@ -76,12 +76,7 @@ export function WorkspaceLanguagePanel({
   };
   return (
     <Card id="workspace-language" aria-labelledby={titleId}>
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <CardTitle id={titleId}>{text("title")}</CardTitle>
-        <p className="max-w-prose text-sm text-pretty text-muted-foreground">
-          {text("description")}
-        </p>
-      </div>
+      <CardHeader id={titleId} title={text("title")} description={text("description")} />
       <CardContent className="flex flex-col gap-3">
         {loading ? (
           <p className="text-sm text-muted-foreground">{text("loading")}</p>

@@ -1,7 +1,7 @@
 import { m } from "@freecorps/brigade-i18n";
 import { INCIDENT_STATUSES, SEVERITIES } from "@freecorps/brigade-schema";
 import { SeverityBadge, StatusBadge } from "@/components/incident-badges";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
 /** Sample counts for the plural message: zero, one, few, and a count that needs a separator. */
 const SAMPLE_COUNTS = [0, 1, 3, 1284];
@@ -9,10 +9,7 @@ const SAMPLE_COUNTS = [0, 1, 3, 1284];
 export function LegendCard() {
   return (
     <Card aria-labelledby="legend-title">
-      <CardHeader>
-        <CardTitle id="legend-title">{m.legend_title()}</CardTitle>
-        <CardDescription>{m.legend_description()}</CardDescription>
-      </CardHeader>
+      <CardHeader id="legend-title" title={m.legend_title()} description={m.legend_description()} />
       <CardContent className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
         <Group id="legend-severity" title={m.legend_severity()}>
           <ul className="flex flex-wrap gap-2">

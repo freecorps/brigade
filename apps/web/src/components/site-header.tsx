@@ -274,7 +274,7 @@ export function AccountMenu({
         >
           <span
             aria-hidden
-            className="flex size-7 shrink-0 items-center justify-center rounded-full bg-sidebar-accent text-xs font-semibold text-sidebar-accent-foreground"
+            className="flex size-7 shrink-0 items-center justify-center rounded-full bg-background text-xs font-semibold text-foreground ring-1 ring-border"
           >
             {initials(name)}
           </span>

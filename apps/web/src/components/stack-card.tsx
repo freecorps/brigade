@@ -17,14 +17,7 @@ import {
   type ReactNode,
 } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { StackStatusProvider, useStackStatus } from "@/components/stack-status";
@@ -127,9 +120,12 @@ function StackCardBody({ workspaceId }: { workspaceId: string }) {
 
   return (
     <Card aria-labelledby="stack-title">
-      <CardHeader>
-        <CardTitle id="stack-title">{m.environment({ env: ENVIRONMENT, part: "stack" })}</CardTitle>
-        <CardDescription className="tabular-nums" aria-live="polite">
+      <CardHeader
+        id="stack-title"
+        title={m.environment({ env: ENVIRONMENT, part: "stack" })}
+        action={failed ? null : checkAgain}
+      >
+        <div className="text-sm text-muted-foreground tabular-nums" aria-live="polite">
           {/* First load: the verdict already says it is checking. A re-check says so here, since
               the verdict below is the previous result. */}
           {!report ? (
@@ -139,8 +135,7 @@ function StackCardBody({ workspaceId }: { workspaceId: string }) {
           ) : (
             m.stack_checked_at({ time: formatClock(report.checkedAt, locale) })
           )}
-        </CardDescription>
-        {failed ? null : <CardAction>{checkAgain}</CardAction>}
+        </div>
       </CardHeader>
 
       <CardContent className="flex flex-col gap-5" aria-busy={checking}>

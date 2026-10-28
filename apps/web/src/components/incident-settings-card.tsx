@@ -24,7 +24,8 @@ import { Description, FORM, FormButtons, LABEL, Refusal, SELECT } from "@/compon
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardSection } from "@/components/ui/card";
+import { Empty } from "@/components/ui/empty";
 import { Field, FormError } from "@/components/ui/field";
 import {
   canAddField,
@@ -114,22 +115,20 @@ export function IncidentSettingsCard() {
 
   return (
     <Card aria-labelledby="incident-settings-title">
-      <CardTitle id="incident-settings-title" className="px-4 sm:px-6">
-        {catalogText("settings_title")}
-      </CardTitle>
+      <CardHeader id="incident-settings-title" title={catalogText("settings_title")} />
       <CardContent className="flex flex-col gap-8">
         {refused ? <Refusal text={refused} onDismiss={() => setRefused(null)} /> : null}
         {failed ? <FormError>{queryErrorReason(failed.error?.code)}</FormError> : null}
 
-        <Section
-          id="types"
+        <CardSection
+          id="incident-settings-types"
           title={catalogText("types_title")}
           count={
             loading(types.status)
-              ? null
+              ? COUNT_LOADING
               : m.catalog_count({ kind: "types", count: types.rows.length })
           }
-          add={
+          action={
             manage && editing?.kind !== "type" ? (
               <Button
                 variant="outline"
@@ -197,17 +196,14 @@ export function IncidentSettingsCard() {
               ))}
             </ul>
           ) : types.status === "ready" && editing?.kind !== "type" ? (
-            <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-              {catalogText("types_empty")}
-            </p>
+            <Empty>{catalogText("types_empty")}</Empty>
           ) : null}
-        </Section>
+        </CardSection>
 
-        <Section
-          id="templates"
+        <CardSection
+          id="incident-settings-templates"
           title={templateText("title")}
-          count={loading(types.status) || loading(templates.status) ? null : false}
-          add={null}
+          count={loading(types.status) || loading(templates.status) ? COUNT_LOADING : null}
         >
           {manage ? <AiDraftsSetting /> : null}
           <p className="text-sm text-muted-foreground">{templateText("note")}</p>
@@ -217,17 +213,17 @@ export function IncidentSettingsCard() {
             manage={manage}
             onRefused={setRefused}
           />
-        </Section>
+        </CardSection>
 
-        <Section
-          id="fields"
+        <CardSection
+          id="incident-settings-fields"
           title={catalogText("fields_title")}
           count={
             loading(fields.status)
-              ? null
+              ? COUNT_LOADING
               : m.catalog_count({ kind: "fields", count: fields.rows.length })
           }
-          add={
+          action={
             manage && editing?.kind !== "field" ? (
               <Button
                 variant="outline"
@@ -288,21 +284,19 @@ export function IncidentSettingsCard() {
               ))}
             </ul>
           ) : fields.status === "ready" && editing?.kind !== "field" ? (
-            <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-              {catalogText("fields_empty")}
-            </p>
+            <Empty>{catalogText("fields_empty")}</Empty>
           ) : null}
-        </Section>
+        </CardSection>
 
-        <Section
-          id="roles"
+        <CardSection
+          id="incident-settings-roles"
           title={catalogText("roles_title")}
           count={
             loading(roleRows.status)
-              ? null
+              ? COUNT_LOADING
               : m.catalog_count({ kind: "roles", count: liveRoles.length })
           }
-          add={
+          action={
             manage && editing?.kind !== "role" ? (
               <Button
                 variant="outline"
@@ -377,46 +371,14 @@ export function IncidentSettingsCard() {
               );
             })}
           </ul>
-        </Section>
+        </CardSection>
       </CardContent>
     </Card>
   );
 }
 
-function Section({
-  id,
-  title,
-  count,
-  add,
-  children,
-}: {
-  id: string;
-  title: string;
-  /** Null while it loads; false for a section that counts nothing. */
-  count: string | null | false;
-  add: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  const headingId = `incident-settings-${id}`;
-  return (
-    <section aria-labelledby={headingId} className="flex flex-col gap-3">
-      <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-4 gap-y-2 pointer-fine:min-h-9">
-        <div className="flex min-w-0 items-baseline gap-2">
-          <h3 id={headingId} className="font-semibold">
-            {title}
-          </h3>
-          {count === null ? (
-            <span aria-hidden className="block h-4 w-16 rounded-sm bg-muted" />
-          ) : count === false ? null : (
-            <span className="text-sm text-muted-foreground tabular-nums">{count}</span>
-          )}
-        </div>
-        {add}
-      </div>
-      {children}
-    </section>
-  );
-}
+/** A section's count while its rows load: a bar the width of "3 types". */
+const COUNT_LOADING = <span aria-hidden className="block h-4 w-16 rounded-sm bg-muted" />;
 
 function EditButton({ name, onEdit }: { name: string; onEdit: () => void }) {
   return (

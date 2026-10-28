@@ -30,7 +30,8 @@ import { CONFIRM_DESTRUCTIVE } from "@/components/monitor-form";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CARD_ROW, CARD_X, CardContent, CardHeader, CardList } from "@/components/ui/card";
+import { Empty } from "@/components/ui/empty";
 import { Field, FormError } from "@/components/ui/field";
 import {
   canAddService,
@@ -97,16 +98,19 @@ export function ServicesCard() {
     requestAnimationFrame(() => addRef.current?.focus());
   };
   return (
-    <Card
-      aria-labelledby="services-title"
-      className={cn(rows.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
-    >
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <div className="flex min-h-6 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <CardTitle id="services-title" className="truncate">
-            {catalogText("services_title")}
-          </CardTitle>
-          {manage && !adding ? (
+    <Card aria-labelledby="services-title">
+      <CardHeader
+        id="services-title"
+        title={catalogText("services_title")}
+        count={
+          loading ? (
+            <span aria-hidden className="inline-block h-4 w-24 rounded-sm bg-muted align-middle" />
+          ) : rows.length > 0 ? (
+            m.catalog_count({ kind: "services", count: rows.length })
+          ) : undefined
+        }
+        action={
+          manage && !adding ? (
             <Button
               ref={addRef}
               variant="outline"
@@ -119,20 +123,12 @@ export function ServicesCard() {
               <PlusIcon aria-hidden />
               {m.catalog_action({ action: "add_service" })}
             </Button>
-          ) : null}
-        </div>
-        {loading || rows.length > 0 ? (
-          <div className="flex h-6 items-center text-sm text-muted-foreground tabular-nums">
-            {loading ? (
-              <span aria-hidden className="block h-4 w-24 rounded-sm bg-muted" />
-            ) : (
-              <span>{m.catalog_count({ kind: "services", count: rows.length })}</span>
-            )}
-          </div>
-        ) : null}
-      </div>
+          ) : null
+        }
+      />
 
-      <CardContent className="flex flex-col gap-5">
+      {/* Hidden while it holds nothing, so the list sits one gap under the header. */}
+      <CardContent className="flex flex-col gap-5 empty:hidden">
         {adding ? (
           <ServiceForm
             initial={emptyService()}
@@ -158,32 +154,32 @@ export function ServicesCard() {
           <FormError>{queryErrorReason(services.error?.code)}</FormError>
         ) : null}
 
-        {rows.length > 0 ? (
-          <ul aria-labelledby="services-title" className="-mx-4 divide-y border-t sm:-mx-6">
-            {rows.map((row) => (
-              <li key={row.id}>
-                <ServiceItem
-                  row={row}
-                  active={naming(incidents.rows, row.id).length}
-                  schedules={schedules.rows}
-                  members={members.rows}
-                />
-              </li>
-            ))}
-          </ul>
-        ) : loading ? (
-          <div aria-hidden className="-mx-4 divide-y border-t sm:-mx-6">
-            <div className="flex flex-col gap-2 px-4 py-4 sm:px-6">
-              <span className="block h-5 w-40 rounded-sm bg-muted" />
-              <span className="block h-4 w-64 max-w-full rounded-sm bg-muted" />
-            </div>
-          </div>
-        ) : status === "ready" && !adding ? (
-          <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-            {catalogText("services_empty")}
-          </p>
+        {rows.length === 0 && !loading && status === "ready" && !adding ? (
+          <Empty>{catalogText("services_empty")}</Empty>
         ) : null}
       </CardContent>
+
+      {rows.length > 0 ? (
+        <CardList aria-labelledby="services-title">
+          {rows.map((row) => (
+            <li key={row.id}>
+              <ServiceItem
+                row={row}
+                active={naming(incidents.rows, row.id).length}
+                schedules={schedules.rows}
+                members={members.rows}
+              />
+            </li>
+          ))}
+        </CardList>
+      ) : loading ? (
+        <CardList aria-hidden>
+          <li className={cn("flex flex-col gap-2 py-4", CARD_X)}>
+            <span className="block h-5 w-40 rounded-sm bg-muted" />
+            <span className="block h-4 w-64 max-w-full rounded-sm bg-muted" />
+          </li>
+        </CardList>
+      ) : null}
     </Card>
   );
 }
@@ -202,7 +198,12 @@ function ServiceItem({
 }) {
   const owners = row.owners.map((owner) => ownerLabel(owner, schedules, members));
   return (
-    <div className="relative flex items-center gap-3 px-4 py-3.5 transition-colors duration-150 ease-out hover:bg-muted/50 has-focus-visible:bg-muted/50 sm:px-6">
+    <div
+      className={cn(
+        "relative flex items-center gap-3 transition-colors duration-150 ease-out hover:bg-muted/50 has-focus-visible:bg-muted/50",
+        CARD_ROW,
+      )}
+    >
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <Link
@@ -219,13 +220,19 @@ function ServiceItem({
             </Badge>
           ) : null}
         </div>
-        <p
-          className={cn(
-            "line-clamp-2 text-sm [overflow-wrap:anywhere]",
-            owners.length === 0 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground",
+        {/* Unowned is a warning, but a quiet one: a small amber mark before grey words, not a whole amber line. */}
+        <p className="line-clamp-2 text-sm text-muted-foreground [overflow-wrap:anywhere]">
+          {owners.length === 0 ? (
+            <span className="inline-flex items-center gap-1.5">
+              <TriangleAlertIcon
+                aria-hidden
+                className="size-3.5 shrink-0 text-amber-700 dark:text-amber-400"
+              />
+              {catalogText("unowned")}
+            </span>
+          ) : (
+            owners.join(", ")
           )}
-        >
-          {owners.length === 0 ? catalogText("unowned") : owners.join(", ")}
         </p>
       </div>
       <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />

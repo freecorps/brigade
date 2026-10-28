@@ -20,7 +20,7 @@ import { CONFIRM_DESTRUCTIVE } from "@/components/monitor-form";
 import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Field, FormError } from "@/components/ui/field";
 import {
   ARCHIVE_CHOICES,
@@ -160,12 +160,12 @@ export function SlackPanel({
   const [adding, setAdding] = useState(false);
   return (
     <Card aria-labelledby="slack-title">
-      <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <div className="flex min-h-6 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <CardTitle id="slack-title" className="truncate">
-            {slackText("title")}
-          </CardTitle>
-          {manage && !connection && !loading && !failed ? (
+      <CardHeader
+        id="slack-title"
+        title={slackText("title")}
+        description={slackText("description")}
+        action={
+          manage && !connection && !loading && !failed ? (
             <Button
               variant="outline"
               disabled={adding}
@@ -178,10 +178,9 @@ export function SlackPanel({
               {adding ? <LoaderCircleIcon aria-hidden className="animate-spin" /> : null}
               {slackText(adding ? "adding" : "add")}
             </Button>
-          ) : null}
-        </div>
-        <p className="max-w-prose text-sm text-muted-foreground">{slackText("description")}</p>
-      </div>
+          ) : null
+        }
+      />
       <CardContent className="flex flex-col gap-4">
         {result ? (
           result.ok ? (

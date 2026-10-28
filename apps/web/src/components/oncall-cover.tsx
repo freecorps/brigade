@@ -37,10 +37,11 @@ function useCover() {
   const overrides = useQuery("overrides.all", {});
   const members = useQuery("members.all", {});
   const now = useNow(60_000);
+  // Members too: until they load, every name would read "Unnamed member" for a moment.
   const status =
     schedules.status === "error" || overrides.status === "error"
       ? "error"
-      : schedules.status === "ready" && overrides.status === "ready"
+      : schedules.status === "ready" && overrides.status === "ready" && members.status === "ready"
         ? "ready"
         : "loading";
   const lanes = useMemo(

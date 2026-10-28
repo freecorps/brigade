@@ -52,7 +52,40 @@ describe("coverLane", () => {
   });
 });
 
+test("an hourly two-person rotation with many overrides still reaches the window's edge", () => {
+  const hourly: ScheduleLayer = {
+    ...layer(["usr_ana", "usr_bia"], "2026-10-05", "00:00"),
+    unit: "hours",
+  };
+  const overrides = Array.from({ length: 30 }, (_, index) => ({
+    id: `ovr_${index}`,
+    scheduleId: "sch_1",
+    userId: "usr_cai",
+    start: NOW + index * 40 * 60_000 + 10 * 60_000,
+    end: NOW + index * 40 * 60_000 + 20 * 60_000,
+    createdAt: 0,
+    createdBy: "usr_ana",
+  }));
+  const lane = coverLane(schedule([hourly]), overrides, NOW);
+  expect(lane.length).toBeGreaterThan(48);
+  expect(lane.at(-1)!.end).toBe(NOW + COVER_MS);
+});
+
 describe("coverTicks", () => {
+  test("hourly marks keep every hour, and a clock turning back marks its repeated hour once", () => {
+    expect(coverTicks(NOW, "America/Sao_Paulo", COVER_MS, 1)).toHaveLength(24);
+    // New York falls back at 02:00 on 2026-11-01 (06:00 UTC): 01:00 comes twice, an hour apart.
+    const before = Date.UTC(2026, 10, 1, 4, 30);
+    const hours = coverTicks(before, "America/New_York", 4 * HOUR, 1).map((tick) =>
+      new Intl.DateTimeFormat("en-GB", {
+        timeZone: "America/New_York",
+        hour: "2-digit",
+        hourCycle: "h23",
+      }).format(tick.at),
+    );
+    expect(hours).toEqual(["01", "02", "03"]);
+  });
+
   test("marks 00:00, 06:00, 12:00 and 18:00 on the viewer's clock", () => {
     const ticks = coverTicks(NOW, "America/Sao_Paulo");
     // 18:00 and 00:00 today, 06:00 and 12:00 tomorrow.

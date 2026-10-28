@@ -1,7 +1,13 @@
 // The overview's cover strip: who each schedule pages over the next hours, laid out as a lane of segments. The
 // segments are `nextHandoffs` (RFC 0003 "Schedules"), cut to the window and placed in percent of it; a segment
 // without a member is a gap, nobody on call.
-import { nextHandoffs, type OverrideRow, type ScheduleRow } from "@freecorps/brigade-schema";
+import {
+  MAX_LAYERS_PER_SCHEDULE,
+  MAX_OVERRIDES_PER_SCHEDULE,
+  nextHandoffs,
+  type OverrideRow,
+  type ScheduleRow,
+} from "@freecorps/brigade-schema";
 
 const HOUR = 60 * 60 * 1000;
 
@@ -11,8 +17,12 @@ export const COVER_MS = 24 * HOUR;
 /** Lanes on the overview before "N more": past that, the On call page has them all. */
 export const COVER_LANES = 6;
 
-/** At most this many handoffs in one lane: an hourly rotation fills 24, and a lane is never wider than the window. */
-const MAX_SEGMENTS = 48;
+/**
+ * Enough segments that a lane always reaches the window's edge: at most 24 handoffs a day per layer (the shortest
+ * shift is an hour), 5 layers, and two edges for each of a schedule's 100 overrides. `nextHandoffs` stops at its
+ * limit, and a lane cut short would leave a blank tail that reads as neither a person nor a gap.
+ */
+const MAX_SEGMENTS = 24 * MAX_LAYERS_PER_SCHEDULE + 2 * MAX_OVERRIDES_PER_SCHEDULE + 1;
 
 export type CoverSegment = {
   start: number;
@@ -62,17 +72,23 @@ export function coverTicks(
     hourCycle: "h23",
   });
   const quarter = HOUR / 4;
-  const ticks: { at: number; left: number }[] = [];
+  const ticks: { at: number; left: number; hour: number }[] = [];
   for (let at = Math.ceil(now / quarter) * quarter; at < now + span; at += quarter) {
     const parts = clock.formatToParts(at);
     const hour = Number(parts.find((part) => part.type === "hour")?.value);
     const minute = Number(parts.find((part) => part.type === "minute")?.value);
-    // A clock that turns back reads the same hour twice: one mark for it.
+    // A clock that turns back reads the same hour twice in a row: one mark for it.
     const last = ticks.at(-1);
-    if (minute !== 0 || hour % every !== 0 || (last && at - last.at < 2 * HOUR)) continue;
-    ticks.push({ at, left: ((at - now) / span) * 100 });
+    if (
+      minute !== 0 ||
+      hour % every !== 0 ||
+      (last && last.hour === hour && at - last.at <= HOUR)
+    ) {
+      continue;
+    }
+    ticks.push({ at, left: ((at - now) / span) * 100, hour });
   }
-  return ticks;
+  return ticks.map(({ at, left }) => ({ at, left }));
 }
 
 /**

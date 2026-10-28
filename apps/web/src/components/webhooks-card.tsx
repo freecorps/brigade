@@ -29,7 +29,7 @@ import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CARD_ROW, CARD_X, CardContent, CardHeader, CardList } from "@/components/ui/card";
+import { Card, CARD_ROW, CardContent, CardHeader, CardList } from "@/components/ui/card";
 import { Empty } from "@/components/ui/empty";
 import { Field, FormError } from "@/components/ui/field";
 import { formatAge } from "@/lib/incidents";
@@ -255,7 +255,7 @@ export function WebhooksPanel({
         <CardList>
           {rows.map((row) =>
             editing === row.id ? (
-              <li key={row.id} className={cn(CARD_X, "py-4")}>
+              <li key={row.id} className={CARD_ROW}>
                 <EndpointEditor
                   row={row}
                   locale={locale}

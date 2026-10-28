@@ -30,5 +30,7 @@ runs:
       working-directory: ${{ inputs.directory }}
       env:
         SHA: ${{ inputs.sha }}
-      # The version message names the commit, so a rollback in the dashboard shows what it goes back to.
-      run: vpx wrangler deploy --message "${SHA::12} (${GITHUB_WORKFLOW} #${GITHUB_RUN_NUMBER})"
+      # The version message names the commit, so a rollback in the dashboard shows what it goes back to. A block
+      # scalar: in a plain one, YAML reads ` #` as the start of a comment and cuts the command there.
+      run: |
+        vpx wrangler deploy --message "${SHA::12} (${GITHUB_WORKFLOW} #${GITHUB_RUN_NUMBER})"

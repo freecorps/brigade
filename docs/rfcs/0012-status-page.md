@@ -9,7 +9,7 @@ scheduled maintenance (their sections below). The third: the components' order, 
 times on the page and its feeds. What is left is at the end ("Not yet"). The code:
 `packages/schema/src/status.ts`, `maintenance.ts` and `uptime.ts`, `apps/api/src/status-page.ts` (the shard's push),
 `status-route.ts`, `status-html.ts` and `status-feed.ts` (the routes, the page and its feeds), `status-subscribers.ts` (subscribing),
-`status-mail.ts` and `notify-status.ts` (the emails), and the dashboard's Status page and Scheduled maintenance cards
+`status-mail.ts` and `notify-status.ts` (the emails), `status-domain.ts` and `status-domain-cf.ts` (custom domains), and the dashboard's Status page and Scheduled maintenance cards
 and the incident page's Status page panel.
 
 ## Shape
@@ -159,9 +159,55 @@ the same kind of decision as what monitors watch, so it is an admin's call.
   exactly as before. A slug that was never claimed is never retired, deleted from KV or released: it may be another
   page's by then (tested). Pages from before have no `claimed` and count as holding their slug, since every save
   claimed it.
-- **Custom domains (decided, Q23; to build)**: a domain maps to a slug through Cloudflare for SaaS custom hostnames,
-  and the same route serves it. The self-host setup script can configure them, so an operator sets up a page's
-  domain without opening Cloudflare's dashboard.
+- **Custom domains (decided, Q23)**: see "Custom domains" below.
+
+## Custom domains
+
+A page may also be served at a domain of the workspace's own (`status.example.com`), through Cloudflare for SaaS
+custom hostnames: the owner points a CNAME at the instance's fallback origin and Cloudflare issues the certificate.
+
+- **Off unless the instance is set up for it.** The API needs `CF_SAAS_TOKEN` (an API token scoped to "SSL and
+  Certificates: Edit" on the SaaS zone alone), `CF_ZONE_ID` (that zone), `CF_SAAS_FALLBACK_ORIGIN` (the fallback
+  origin's hostname, what owners point their CNAME at) and `DASHBOARD_URL`. Without all four the dashboard hides the
+  section and the routes answer `503 not_configured`; nothing else changes.
+- **One per page** (`status_domain`, one synced row: hostname, Cloudflare's id, `pending`, `active` or `failed`, the
+  DNS records to create, Cloudflare's reason, when it was last checked). Owners and admins (`status:manage`) add,
+  check and remove it from the dashboard's Custom domain card; everyone reads it.
+- **D1 first, then Cloudflare, then the shard**, as for a slug: `PUT /workspaces/:id/status-page/domain`
+  `{ hostname }` checks the session and the role in D1 (an outsider never reaches Cloudflare or a shard), the
+  hostname, and Workers Rate Limiting per workspace (`STATUS_DOMAIN_LIMIT`, 10 a minute: each change calls
+  Cloudflare's API). It claims the hostname in D1 (`status_custom_host`, migration 0014, unique across the instance;
+  another workspace's is `409 hostname_taken`), creates the custom hostname (`POST /zones/:zone/custom_hostnames`,
+  certificate validated over HTTP once the CNAME points here; Cloudflare's own duplicate is `hostname_taken` too) and
+  runs the server-only `statusDomain.add` with its event `status_domain.added`. A refusal after the claim deletes
+  Cloudflare's hostname and releases the claim, so nothing is left behind (tested).
+- **What a hostname may be**: lowercase letters, digits and hyphens in two or more labels, an internationalized name
+  as punycode, at most 253 characters, no scheme, port or path, and no IP address in any spelling (`1.2.3`, `0x7f.1`,
+  `[::1]`). Never the instance's own domain, anything under it, or a parent of the dashboard's hostname: the own domain
+  is the dashboard's hostname without its first label (or itself when it has two), since a page must never answer for
+  the dashboard's origin.
+- **Verification**: the card shows the records Cloudflare asked for (the CNAME, and its ownership TXT record) with the
+  state, and "Check again" (`POST …/domain/check`) asks Cloudflare (`GET …/custom_hostnames/:id`) and runs
+  `statusDomain.check` (event `status_domain.checked`, with the state it moved from). Active means the hostname and its
+  certificate are; failed means Cloudflare gave up (blocked, moved, deleted, a validation that timed out), shown with
+  its reason; anything else is pending.
+- **Removing** (`DELETE …/domain`) deletes the hostname at Cloudflare first (one it no longer has counts as deleted),
+  then runs `statusDomain.remove` (`status_domain.removed`) and releases D1. If Cloudflare refuses, nothing changes,
+  so a domain the dashboard no longer shows never keeps serving.
+- **The public lookup** is a KV key per hostname (`host:<hostname>` = the slug, in `STATUS`), kept in step by the
+  queue consumer on `status_domain.added`, `.checked`, `.removed` and `status_page.configured`. It reads the shard's
+  domain and page as they are now, never the event's copy, so events handled late or twice leave the latest state:
+  the key exists only while the domain is active, the hostname is this workspace's in D1 and the page is public under
+  a slug it holds. A hostname another workspace holds by then is left to that workspace's events (tested).
+- **Serving.** Custom hostnames reach the API Worker through a Workers route on the SaaS zone (the dashboard keeps its
+  own, more specific route). A request whose host is not the dashboard's, when custom domains are on, reaches only
+  that page: `/` is the page, `/status/<its slug>/…` its feeds and subscription routes, and anything else (another
+  page, the API, sign-in) is the 404 page, counted as a miss. A hostname with no lookup is the same 404. The page,
+  its caches and its headers are the ones of `/status/<slug>`; feed and email links stay on `DASHBOARD_URL`.
+- **Setup** (apps/api README "Custom domains", not run by Brigade): a zone for Cloudflare for SaaS, a fallback origin
+  on it (a proxied hostname such as `status-origin.example.net`), a Workers route `*/*` on that zone to the API
+  Worker, the token with "SSL and Certificates: Edit" on the zone, then the three settings as secrets. The setup
+  wizard will take the same steps.
 
 ## The snapshot
 
@@ -479,7 +525,7 @@ private (or moved to another address) reach the shard at once but visitors only 
 (30 s) and the visitor's browser (`max-age` 30 s). In practice about 1 to 2 minutes, and a browser that already has
 the page keeps showing it until reloaded. The dashboard says so where the page is made public and wherever a
 correction is made. Anything truly sensitive that was published needs a correction now and, where it matters, the
-cache purged by hand (custom domains, a later slice, can purge by URL).
+cache purged by hand.
 
 ## Events
 
@@ -489,13 +535,14 @@ cache purged by hand (custom domains, a later slice, can purge by URL).
 incidents named it), `incident.update_published` (`entryId`, `title`, `status`, `impact`, `componentIds`,
 `body`), `incident.published_update_edited` (`entryId`, `updateId`, `body`), `incident.published_update_removed`
 (`entryId`, `updateId`) and `incident.unpublished` (`entryId`, `title`); `status_component.monitors_linked` (`id`,
-`monitorIds`); the maintenance and subscriber events above, and `status_email.continue` (`eventId`). The status page
+`monitorIds`); `status_domain.added` (`hostname`, `state`), `.checked` (`hostname`, `state`, `previous`) and
+`.removed` (`hostname`); the maintenance and subscriber events above, and `status_email.continue` (`eventId`). The status page
 email notifier acts on `incident.update_published`, the maintenance events, `status_subscriber.requested` and
 `status_email.continue`; none of them is in the webhook catalog yet.
 
 ## Not yet
 
-- Custom domains (decided, above), embedding, pruning history past 90 days, showing who published (choice per page), maintenance and subscriber
+- Embedding, purging a custom domain's cache by URL, pruning history past 90 days, showing who published (choice per page), maintenance and subscriber
   events in the webhook catalog, the mobile app's publish and maintenance actions.
 - KV namespaces for staging and production: `STATUS` is bound for local runs and the tests and, in `dev`, to
   `brigade-status-dev` (apps/api README "Status page"). The self-host setup steps create it (decided, Q23; apps/api

@@ -34,6 +34,7 @@ export * from "./notifications.ts";
 export * from "./slack.ts";
 export * from "./status.ts";
 export * from "./maintenance.ts";
+export * from "./status-domain.ts";
 export * from "./uptime.ts";
 export * from "./webhooks.ts";
 export * from "./alert-normalize.ts";

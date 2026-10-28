@@ -494,8 +494,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Done (Q23): "this page may be out of date" past 48 hours; a per-IP rate limit on `/status/*` misses
     (`STATUS_MISS_LIMIT`, 30 a minute, then 429); a draft's slug claimed only when the page first goes public;
     maintenance that marks its components down (planned outage), on the page, in the feeds and on the dashboard.
-  - Left (decided, Q23; RFC 0012): custom domains (Cloudflare for SaaS custom hostnames), configurable from the setup
-    script.
+  - Done (Q23): custom domains through Cloudflare for SaaS custom hostnames: owners and admins add one on the
+    dashboard's Custom domain card, see the DNS records and whether Cloudflare verified it, and remove it; the API
+    serves the page at a verified hostname, looked up in KV and kept in step by events; tested against a fake of
+    Cloudflare's API.
+  - Left: setting up Cloudflare for SaaS on a deployed environment (owner's call, apps/api README "Custom domains").
 - [ ] Outbound webhooks; OpenAPI reference; `packages/sdk` published
   - Done: outbound webhooks (RFC 0005 "Outbound webhooks"): owners and admins register up to 20 endpoints per
     workspace on the dashboard's Webhooks card (URL, description, event filter from the public catalog, on and off),
@@ -550,8 +553,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - [x] Sign-up closed by default per environment and the first owner from `vp run setup:first-user` with a
         one-time `BOOTSTRAP_TOKEN` (RFC 0002 "Sign-up modes", "The first owner")
   - [x] The self-host setup steps create the `STATUS` KV namespace (apps/api README "Self-host setup")
-  - Left (decided, Q23; RFC 0002 "Environments"): the setup wizard running those steps and `setup:first-user`;
-    optional custom domains for status pages.
+  - [x] Custom domains for status pages, set up by hand for now (apps/api README "Custom domains")
+  - Left (decided, Q23; RFC 0002 "Environments"): the setup wizard running those steps, the custom domains' and
+    `setup:first-user`.
 - [ ] Hosted push relay with terms of service
 - [ ] App Store / Play Store release (after CLA is in place)
 - [ ] Public site + docs (en, pt-BR); contribution guide; community translations

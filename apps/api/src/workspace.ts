@@ -16,6 +16,7 @@ import {
   nextReminderAt,
   postmortemRevisions,
   remindersDue,
+  STATUS_DOMAIN_ID,
   STATUS_PAGE_ID,
   statusFollowKey,
   TOKENS_ACTOR,
@@ -56,6 +57,7 @@ import {
   type SocketVerdict,
 } from "./members.ts";
 import { ESCALATION_RETRY_MS, Escalations } from "./escalation.ts";
+import type { StatusDomainView } from "./status-domain.ts";
 import {
   Invitations,
   type InvitationEmailPlan,
@@ -723,6 +725,51 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (!result.ok) return result;
     }
     return { ok: true };
+  }
+
+  /**
+   * A change to the status page's own domain (RPC from src/status-domain.ts, once the route checked the role in D1 and
+   * Cloudflare answered): `statusDomain.add`, `.check` or `.remove` as the member, with its event. A token the shard
+   * no longer backs and a member removed within the tombstone are refused as for the page's settings.
+   */
+  async changeStatusDomain(
+    workspaceId: string,
+    actor: Actor,
+    name: "add" | "check" | "remove",
+    args: Record<string, unknown>,
+  ): Promise<{ ok: true } | { ok: false; code: string } | TokenRefused> {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    const acting = this.tokenActor(actor);
+    if (!acting) return TOKEN_REFUSED;
+    if (await this.membership.refuses(workspaceId, acting.by ?? acting.id, Date.now())) {
+      return { ok: false, code: "not_a_member" };
+    }
+    const now = Date.now();
+    const { result, changes } = this.shard.mutate({
+      clientId: "status-domain",
+      mutationId: newId("mut", now, (length) => crypto.getRandomValues(new Uint8Array(length))),
+      actor: acting,
+      name: `statusDomain.${name}`,
+      args,
+      now,
+      internal: true,
+    });
+    if (!result.ok) return { ok: false, code: result.error.code };
+    this.broadcast(result.version, changes, undefined);
+    return { ok: true };
+  }
+
+  /**
+   * The page's domain and where it sends visitors (RPC from src/status-domain.ts: the routes, and the queue consumer
+   * keeping the public hostname lookup in step). A page is public only while it is enabled under a slug it holds.
+   */
+  statusDomainState(workspaceId: string): StatusDomainView {
+    if (this.shard.workspace() !== workspaceId) return { domain: null, page: null };
+    const page = this.shard.store.get("status_page", STATUS_PAGE_ID);
+    return {
+      domain: this.shard.store.get("status_domain", STATUS_DOMAIN_ID) ?? null,
+      page: page ? { slug: page.slug, public: page.enabled && page.claimed !== false } : null,
+    };
   }
 
   /**

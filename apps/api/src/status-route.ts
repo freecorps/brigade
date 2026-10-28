@@ -126,7 +126,7 @@ async function serveFromSnapshot(
   // Only an address with no page counts against the caller (decided, Q23): a real page's hits never do.
   const head = async (response: Response) =>
     answer(
-      response.status === 404 && !(await missAllowed(request, env)) ? rateLimited() : response,
+      response.status === 404 && !(await missAllowed(request, env)) ? rateLimitedPage() : response,
     );
   if (!STATUS_SLUG.test(slug)) return head(notFound());
   const key = new Request(cacheKey);
@@ -168,9 +168,11 @@ async function serveFromSnapshot(
 }
 
 const notFound = () => page(renderStatusMessage("not_found", "en"), 404, STATUS_MISSING_MAX_AGE_S);
+/** The 404 page, for a custom hostname with no page (src/status-domain.ts). */
+export const statusNotFound = notFound;
 
 /** Past the misses a caller may make: never cached, so the next minute's answer is the real one. */
-function rateLimited(): Response {
+export function rateLimitedPage(): Response {
   const response = page(renderStatusMessage("rate_limited", "en"), 429);
   response.headers.set("Retry-After", "60");
   return response;
@@ -181,7 +183,7 @@ function rateLimited(): Response {
  * abuse"): a flood of made-up addresses from one place is bounded, while every page that exists is served to anyone.
  * Without the binding or a caller address, or if the limiter fails, the miss is answered as before.
  */
-async function missAllowed(request: Request, env: Env): Promise<boolean> {
+export async function missAllowed(request: Request, env: Env): Promise<boolean> {
   const limiter = env.STATUS_MISS_LIMIT as RateLimit | undefined;
   // Cloudflare always names the caller; a request without it (a local run) has nobody to count against.
   const address = request.headers.get("cf-connecting-ip");

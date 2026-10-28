@@ -560,6 +560,36 @@ applied anywhere yet. Following components (RFC 0012 "Following components") add
 (a nullable `follows` column, so every existing row keeps getting everything): apply it with the others, before a
 deploy that includes it, since the subscribe, manage and notification queries read the column.
 
+## Custom domains
+
+RFC 0012 "Custom domains". Optional: a status page served at a workspace's own domain through Cloudflare for SaaS
+custom hostnames (`src/status-domain.ts`, the client in `src/status-domain-cf.ts`). Off until all of these exist; the
+setup wizard will do the same steps. Nothing here runs on its own, and Brigade never creates these resources:
+
+1. **A zone for Cloudflare for SaaS** on the instance's account (it may be the dashboard's zone), with Cloudflare for
+   SaaS enabled on it.
+2. **A fallback origin**: a proxied DNS record on that zone, for example `status-origin.example.net` (`AAAA 100::`,
+   proxied), set as the zone's fallback origin under Custom Hostnames. Owners point their CNAME at it.
+3. **A Workers route** `*/*` on that zone to the API Worker (`brigade-api`), so a custom hostname reaches it. Keep the
+   dashboard's own route on its hostname: the more specific route wins. The API serves only the status page on any
+   host that is not `DASHBOARD_URL`'s.
+4. **An API token** scoped to "SSL and Certificates: Edit" on that zone alone (custom hostnames need nothing more).
+5. **The settings**, each with `wrangler secret put <NAME>` (add `--env` for dev or staging):
+
+   | Secret                    | What                                                        |
+   | ------------------------- | ----------------------------------------------------------- |
+   | `CF_SAAS_TOKEN`           | The token from step 4                                       |
+   | `CF_ZONE_ID`              | The zone's id (step 1)                                      |
+   | `CF_SAAS_FALLBACK_ORIGIN` | The fallback origin's hostname (step 2), shown to owners    |
+   | `DASHBOARD_URL`           | Already set for email links; its hostname is never a page's |
+
+6. **D1**: apply `migrations/0014_status_custom_host.sql` (which workspace holds each hostname).
+
+Owners and admins then add a domain on the dashboard's Custom domain card, create the records it shows, and press
+"Check again" until it is active. Changes are rate-limited per workspace (`STATUS_DOMAIN_LIMIT`, 10 a minute,
+namespaces 4191-4193). Each active hostname has a `host:<hostname>` key in the `STATUS` KV namespace, written by the
+queue consumer.
+
 ## Webhooks
 
 RFC 0005 "Outbound webhooks". Owners and admins register endpoints on the dashboard's Webhooks card (at most 20 per

@@ -3648,5 +3648,50 @@
         "part=*": "Email quando o acionamento falha"
       }
     }
+  ],
+  "status_domain_card": [
+    {
+      "declarations": ["input part", "input name", "input time"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Domínio próprio",
+        "part=description": "Sirva a página de status no seu próprio endereço, como status.example.com. A Cloudflare emite o certificado assim que os registros DNS abaixo estiverem configurados.",
+        "part=not_set_up": "Configure a página de status antes de dar um domínio a ela.",
+        "part=none": "A página de status não tem domínio próprio.",
+        "part=viewer": "Donos e administradores podem adicionar ou remover o domínio.",
+        "part=hostname_label": "Domínio",
+        "part=hostname_hint": "Um subdomínio que você controla. Aponte um CNAME para {name}.",
+        "part=add": "Adicionar domínio",
+        "part=adding": "Adicionando…",
+        "part=state_pending": "Pendente",
+        "part=state_active": "Ativo",
+        "part=state_failed": "Falhou",
+        "part=explain_pending": "Crie estes registros DNS onde seu domínio está hospedado e verifique de novo. Pode levar alguns minutos depois que os registros estiverem no ar.",
+        "part=explain_active": "A página de status é servida neste domínio.",
+        "part=explain_failed": "A Cloudflare não conseguiu verificar o domínio. Confira os registros e verifique de novo, ou remova o domínio e adicione outra vez.",
+        "part=records_title": "Registros DNS a criar",
+        "part=record_name": "Nome",
+        "part=record_value": "Valor",
+        "part=checked": "Verificado pela última vez em {time}",
+        "part=check": "Verificar de novo",
+        "part=checking": "Verificando…",
+        "part=remove": "Remover domínio",
+        "part=removing": "Removendo…",
+        "part=keep": "Manter",
+        "part=remove_confirm": "Remover {name}? A página de status deixa de responder lá na hora; o endereço de sempre continua funcionando.",
+        "part=error_required": "Informe um domínio.",
+        "part=error_invalid_hostname": "Isso não é um domínio. Informe um nome como status.example.com, sem https:// nem caminho.",
+        "part=error_own_domain": "Esse domínio pertence a esta instância do Brigade. Use um seu.",
+        "part=error_hostname_taken": "Esse domínio já está em uso por outra página de status.",
+        "part=error_domain_exists": "A página de status já tem um domínio. Remova-o primeiro.",
+        "part=error_not_configured": "Esta instância do Brigade não tem domínios próprios configurados.",
+        "part=error_forbidden": "Só donos e administradores podem mudar o domínio.",
+        "part=error_rate_limited": "Muitas mudanças em um minuto. Tente de novo em instantes.",
+        "part=error_not_found": "O domínio não está mais na página de status.",
+        "part=error_cloudflare_failed": "A Cloudflare não respondeu. Tente de novo em um minuto.",
+        "part=error_failed": "Não foi possível salvar. Tente de novo.",
+        "part=*": "Domínio próprio"
+      }
+    }
   ]
 }

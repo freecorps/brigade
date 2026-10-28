@@ -80,7 +80,9 @@ jobs:
   relay:
     name: Relay
     needs: changes
-    if: contains(fromJSON(needs.changes.outputs.packages), '@freecorps/brigade-relay')
+    if: >-
+      needs.changes.result == 'success' &&
+      contains(fromJSON(needs.changes.outputs.packages), '@freecorps/brigade-relay')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: ${{ needs.changes.outputs.environment }}
@@ -106,8 +108,10 @@ jobs:
     name: API
     needs: [changes, relay]
     # Runs when the relay was skipped (unchanged) but not when it failed: the API would bind to a relay out of step.
+    # `needs.changes.result` first: when the CI run failed, `changes` is skipped and its outputs are empty, which
+    # fromJSON cannot read.
     if: >-
-      !failure() && !cancelled() &&
+      !failure() && !cancelled() && needs.changes.result == 'success' &&
       contains(fromJSON(needs.changes.outputs.packages), '@freecorps/brigade-api')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -147,7 +151,7 @@ jobs:
     name: Dashboard
     needs: [changes, api]
     if: >-
-      !failure() && !cancelled() &&
+      !failure() && !cancelled() && needs.changes.result == 'success' &&
       contains(fromJSON(needs.changes.outputs.packages), '@freecorps/brigade-web')
     runs-on: ubuntu-24.04
     timeout-minutes: 15

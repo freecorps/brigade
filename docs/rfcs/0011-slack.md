@@ -278,19 +278,19 @@ again, until nothing is left (at most 8 per delivery; the rest come with the ret
 the incident's timeline (`notification.failSlack`, once per job), so a failed invite does not stop the message. The
 incident's claim covers every job, so two events of one incident never create a channel or post at once.
 
-| Event                              | Jobs                                                                          |
-| ---------------------------------- | ----------------------------------------------------------------------------- |
-| `incident.declared`                | create the channel (when asked for), look up, invite, post in it, in the main |
-| `incident.acknowledged`            | update both messages, mirror                                                  |
-| `incident.status_changed`          | update both messages, mirror; a closed incident's channel comes due           |
-| `incident.severity_changed`        | update both messages, mirror                                                  |
-| `incident.update_posted`           | mirror (not an update that came from a Slack message)                         |
-| `incident.update_edited`           | rewrite the mirrored message (`chat.update`), if the mirror posted one        |
-| `incident.update_deleted`          | delete the mirrored message (`chat.delete`), if the mirror posted one         |
-| `incident.role_assigned`           | look up and invite the new holder, mirror                                     |
-| `escalation.paged`                 | look up and invite whoever was paged                                          |
-| `slack.archive_due`                | archive the channel, if the incident is still closed                          |
-| `slack.disconnected`, `.connected` | give back the token let go of (`auth.revoke`)                                 |
+| Event                              | Jobs                                                                                                                                                                              |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `incident.declared`                | create the channel (when asked for), look up, invite, post in it, in the main                                                                                                     |
+| `incident.acknowledged`            | update both messages, mirror                                                                                                                                                      |
+| `incident.status_changed`          | update both messages, mirror; a closed incident's channel comes due                                                                                                               |
+| `incident.severity_changed`        | update both messages, mirror; raised to SEV1 or SEV2 with incident channels set to `major` and none yet: create the channel, look up, invite, post in it (decided, Q22; to build) |
+| `incident.update_posted`           | mirror (not an update that came from a Slack message)                                                                                                                             |
+| `incident.update_edited`           | rewrite the mirrored message (`chat.update`), if the mirror posted one                                                                                                            |
+| `incident.update_deleted`          | delete the mirrored message (`chat.delete`), if the mirror posted one                                                                                                             |
+| `incident.role_assigned`           | look up and invite the new holder, mirror                                                                                                                                         |
+| `escalation.paged`                 | look up and invite whoever was paged                                                                                                                                              |
+| `slack.archive_due`                | archive the channel, if the incident is still closed                                                                                                                              |
+| `slack.disconnected`, `.connected` | give back the token let go of (`auth.revoke`)                                                                                                                                     |
 
 **Budget.** Slack's calls run under the side-connection limiter (src/side-connections.ts) with their own share:
 Slack holds at most `SLACK_CONNECTIONS` (2) of the 3 side slots, so it never takes every slot from the webhooks, and

@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Page } from "@/components/app-shell";
 import { OpenFollowUpsCard } from "@/components/follow-ups-card";
 import { IncidentsCard } from "@/components/incidents-card";
+import { CoverStrip, OnCallNowCard } from "@/components/oncall-cover";
 import { OnCallGapsNotice } from "@/components/oncall-gaps";
 import { PagingHealthNotice } from "@/components/paging-health";
 import { usePreferences } from "@/components/preferences";
@@ -27,8 +28,9 @@ function Dashboard() {
 }
 
 /**
- * What needs someone now: anything wrong with paging or the member's account, schedules with nobody in a layer, the
- * open incidents and the follow-ups left from them. Everything else has its own section in the sidebar.
+ * What needs someone now: anything wrong with paging or the member's account, schedules with nobody in a layer, then
+ * the open incidents beside who is on call for them, the next 24 hours of cover, and the follow-ups left from past
+ * incidents. Everything else has its own section in the sidebar.
  */
 function Overview() {
   // Read so a language switch re-renders the page (and its cards) in place: the router memoizes route
@@ -43,7 +45,12 @@ function Overview() {
       {user ? <VerifyNotice email={user.email} verified={user.emailVerified} /> : null}
       {user ? <TakeoverNotice key={user.id} /> : null}
       <OnCallGapsNotice />
-      <IncidentsCard />
+      {/* Incidents take the width; on call sits beside them from `lg`, under them on smaller screens. */}
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <IncidentsCard />
+        <OnCallNowCard />
+      </div>
+      <CoverStrip />
       <OpenFollowUpsCard />
     </Page>
   );

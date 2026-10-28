@@ -64,6 +64,22 @@
   "language_name_en": "English",
   "language_name_pt_br": "Português (Brasil)",
   "overview_title": "Overview",
+  "overview_cover": [
+    {
+      "declarations": ["input part", "input name", "input from", "input to"],
+      "selectors": ["part"],
+      "match": {
+        "part=now_title": "On call now",
+        "part=all_schedules": "All schedules",
+        "part=cover_title": "The next 24 hours",
+        "part=cover_description": "Who each schedule pages, from now on. A hatched stretch has nobody on call.",
+        "part=now": "Now",
+        "part=segment": "{name}, {from} to {to}",
+        "part=set_up": "Set up on call",
+        "part=*": "Brigade"
+      }
+    }
+  ],
   "nav": [
     {
       "declarations": ["input part"],

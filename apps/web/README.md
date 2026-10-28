@@ -11,7 +11,8 @@ and opens the workspace's shard as the member (their role is the optimistic acto
 The dashboard is one section per job, in the app shell (`components/app-shell.tsx`): a sidebar with the workspace
 switcher, the sections and the account menu, and the page on an inset sheet with a top bar that names it. A route
 joins it with `staticData: { section }`; `src/lib/navigation.ts` lists the sections. Respond: the overview (`/`:
-paging and account notices, open incidents and follow-ups), Incidents, Follow-ups, On call, Monitors, Services.
+paging and account notices, open incidents beside who is on call now, the next 24 hours of cover per schedule
+(`components/oncall-cover.tsx`, `src/lib/cover.ts`) and open follow-ups), Incidents, Follow-ups, On call, Monitors, Services.
 Configure: Escalation, Alerts, Integrations (Slack, webhooks, API tokens), Status page, Members. At the foot:
 Workspace settings (incident types and fields, email, language, exports, the stack check and the severity and status
 legend) and Your account (email, phones, calls). On phones the sidebar opens as a sheet from the top bar's menu.

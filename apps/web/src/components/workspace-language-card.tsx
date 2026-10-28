@@ -85,7 +85,7 @@ export function WorkspaceLanguagePanel({
       <CardContent className="flex flex-col gap-3">
         {loading ? (
           <p className="text-sm text-muted-foreground">{text("loading")}</p>
-        ) : owner ? (
+        ) : failed ? null : owner ? (
           <div className="flex min-w-0 flex-col gap-1.5">
             <label htmlFor={selectId} className="text-sm font-medium">
               {text("label")}

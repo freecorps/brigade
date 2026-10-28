@@ -94,7 +94,8 @@ function SlackConnection({
   return (
     <SlackPanel
       connection={row}
-      workspaceLocale={workspaceLocale(workspace.rows[0])}
+      // Unknown until the workspace row loads: never assert English for a workspace that failed to load.
+      workspaceLocale={workspace.rows[0] ? workspaceLocale(workspace.rows[0]) : undefined}
       channels={channels}
       onReloadChannels={loadChannels}
       loading={connection.status === "loading"}
@@ -144,7 +145,7 @@ type PanelProps = {
 /** The card itself, without the hooks: what each state looks like (tested and screenshotted with made-up data). */
 export function SlackPanel({
   connection,
-  workspaceLocale = "en",
+  workspaceLocale,
   channels,
   onReloadChannels,
   loading,
@@ -239,7 +240,7 @@ function Connected({
 }: Pick<
   PanelProps,
   "channels" | "onReloadChannels" | "manage" | "onAdd" | "onSave" | "onDisconnect"
-> & { connection: SlackRow; workspaceLocale: WorkspaceLocale }) {
+> & { connection: SlackRow; workspaceLocale: WorkspaceLocale | undefined }) {
   const saved = (): SlackSettings => ({
     channelId: connection.channelId,
     channelName: connection.channelName ?? null,
@@ -435,12 +436,14 @@ function Connected({
                 <p className="text-sm text-muted-foreground">{slackText("channel_hint")}</p>
               </div>
             )}
-            <div className="flex min-w-0 flex-col gap-1.5">
-              <span className="text-sm font-medium">{slackText("language_label")}</span>
-              <p className="text-sm text-pretty text-muted-foreground">
-                {m.slack_language_workspace({ language: LANGUAGE_NAMES[workspaceLocale]() })}
-              </p>
-            </div>
+            {workspaceLocale ? (
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <span className="text-sm font-medium">{slackText("language_label")}</span>
+                <p className="text-sm text-pretty text-muted-foreground">
+                  {m.slack_language_workspace({ language: LANGUAGE_NAMES[workspaceLocale]() })}
+                </p>
+              </div>
+            ) : null}
             <fieldset className="grid min-w-0 gap-4 border-t pt-4 sm:col-span-2 sm:grid-cols-2">
               <div className="flex min-w-0 flex-col gap-1.5 sm:col-span-2">
                 <label htmlFor={perIncidentId} className="text-sm font-medium">

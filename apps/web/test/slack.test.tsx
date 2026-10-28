@@ -220,6 +220,11 @@ describe("SlackPanel", () => {
     }
   });
 
+  test("a workspace whose row did not load names no language rather than English", () => {
+    const { container } = render({ connection, workspaceLocale: undefined });
+    expect(container.textContent).not.toContain("workspace's language");
+  });
+
   test("a saved channel Slack no longer lists stays a choice", () => {
     const { container } = render({
       connection: { ...connection, channelId: "C0GONE0001", channelName: "old-incidents" },

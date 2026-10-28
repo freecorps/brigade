@@ -84,3 +84,13 @@ test("reads in Portuguese", () => {
   expect(container.textContent).toContain("Idioma do espaço de trabalho");
   expect(container.textContent).toContain("Só proprietários podem mudar.");
 });
+
+test("a workspace that failed to load says so and claims no language", () => {
+  for (const owner of [true, false]) {
+    const { container } = render({ owner, failed: true, value: "en" });
+    expect(container.querySelector("select")).toBeNull();
+    expect(container.textContent).not.toContain("English");
+    act(() => root?.unmount());
+    document.body.innerHTML = "";
+  }
+});

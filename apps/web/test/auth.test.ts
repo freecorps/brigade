@@ -319,12 +319,16 @@ describe("after a sign-up, a sign-in refused", () => {
     );
   });
 
-  test("an unverified address on a server that requires verification is said as that, not as a taken address", () => {
+  test("an unverified address on a server that requires verification is said as that, not as a taken address", async () => {
     const message = authErrorMessage({ status: 401, code: "EMAIL_NOT_VERIFIED" }, "after-sign-up");
     expect(message).toBe(authErrorMessage({ status: 403, code: "EMAIL_NOT_VERIFIED" }, "sign-in"));
     expect(message).not.toContain("we've emailed its owner");
     // A server that requires it sends no new link at sign-in (Q21): the way back without the link is a reset.
     expect(message).toContain("Reset your password");
+    await setLocale("pt-BR");
+    expect(authErrorMessage({ status: 403, code: "EMAIL_NOT_VERIFIED" }, "sign-in")).toContain(
+      "Redefina sua senha",
+    );
   });
 });
 

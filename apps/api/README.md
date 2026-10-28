@@ -402,7 +402,8 @@ vp run setup:first-user -- --url https://brigade.example.com
 otherwise. The script generates a strong password and prints the address and password once: the API stores only
 Better Auth's hash, so keep it in a password manager. The address is marked verified. Others join through
 invitations (closed and `invite` instances let an invited address sign up). Locally (`vp run dev`, sign-up open)
-none of this is needed; to try it, put `BOOTSTRAP_TOKEN` in `apps/api/.dev.vars` on an empty local D1.
+none of this is needed; to try it, run `SIGNUP=closed BOOTSTRAP_TOKEN=… vp run dev` (apps/web's Vite config passes both from the shell) on an
+empty local D1, then the script with `--url http://localhost:5173`.
 
 ## Deploying dev
 

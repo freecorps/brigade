@@ -41,6 +41,8 @@ function localSecrets(): Record<string, string> {
     "DASHBOARD_URL",
     "WEBHOOK_SECRET_KEY",
     "MAX_MONITORS",
+    "SIGNUP",
+    "BOOTSTRAP_TOKEN",
   ];
   return Object.fromEntries(
     names.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : [])),
@@ -68,13 +70,21 @@ export default defineConfig(({ command, mode }) => ({
             // this Worker and the API; the `API` service binding resolves to it by name. The build
             // only bundles this Worker: apps/api builds and deploys on its own.
             // In dev it also gets the API's local-only vars (apps/api/vite.config.ts: the dev sync actor, and
-            // the email notifier logging what it would send).
+            // the email notifier logging what it would send, and sign-up open; `SIGNUP=closed vp run dev` tries the
+            // closed instance).
             auxiliaryWorkers:
               command === "serve"
                 ? [
                     {
                       configPath: "../api/wrangler.jsonc",
-                      config: { vars: { SYNC_DEV_ACTOR: "1", EMAIL_LOG: "1", ...localSecrets() } },
+                      config: {
+                        vars: {
+                          SYNC_DEV_ACTOR: "1",
+                          EMAIL_LOG: "1",
+                          SIGNUP: "open",
+                          ...localSecrets(),
+                        },
+                      },
                     },
                   ]
                 : [],

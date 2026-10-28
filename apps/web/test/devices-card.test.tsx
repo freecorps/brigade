@@ -32,7 +32,10 @@ afterEach(() => {
   void setI18nLocale("en");
 });
 
-function render(props: Partial<Parameters<typeof DevicesPanel>[0]> = {}, removes = true) {
+function render(
+  props: Partial<Parameters<typeof DevicesPanel>[0]> = {},
+  removes: boolean | "throws" = true,
+) {
   const removed: string[] = [];
   const container = document.createElement("div");
   document.body.append(container);
@@ -47,6 +50,7 @@ function render(props: Partial<Parameters<typeof DevicesPanel>[0]> = {}, removes
         now={NOW}
         onRemove={async (id) => {
           removed.push(id);
+          if (removes === "throws") throw new Error("socket closed");
           return removes;
         }}
         {...props}
@@ -74,6 +78,16 @@ test("lists only the member's own phones, the one heard from most recently first
   ]);
 });
 
+test("phones heard from at the same time are listed so the last is the one a new phone replaces first", () => {
+  // `device.register` replaces the least recently alive first, then the lower id: the reverse of this list.
+  const rows = [device(1), device(3), device(2)].map((row) => ({ ...row, lastSeenAt: NOW }));
+  expect(ownDevices(rows, "usr_ana").map((row) => row.id)).toEqual([
+    device(3).id,
+    device(2).id,
+    device(1).id,
+  ]);
+});
+
 test("shows each phone's platform, build, registration, last word and calls", () => {
   const { container } = render({
     rows: [device(1), device(2, { platform: "android", voip: false })],
@@ -88,13 +102,17 @@ test("shows each phone's platform, build, registration, last word and calls", ()
   // FCM has no environment: an Android phone is never called a store build.
   expect(items[1]).not.toContain("build");
   expect(items[1]).toContain("Notifications only");
+  // "Last heard from" is any registration, one that changed nothing included (`device.touch`), or a receipt.
+  expect(container.querySelector("li p[title]")?.getAttribute("title")).toBe(
+    "The last time the app registered this phone, even with nothing new to send, or the phone confirmed it showed a page",
+  );
 });
 
 test("removes a phone only after a confirmation that says a signed-in app comes back", async () => {
   const { container, removed } = render();
   await act(async () => button(container, "Remove").click());
   expect(removed).toEqual([]);
-  expect(container.textContent).toContain("registers again the next time it opens");
+  expect(container.textContent).toContain("registers again as soon as the app is open");
   await act(async () => button(container, "Keep").click());
   expect(removed).toEqual([]);
   await act(async () => button(container, "Remove").click());
@@ -107,6 +125,18 @@ test("a refused removal says so", async () => {
   await act(async () => button(container, "Remove").click());
   await act(async () => button(container, "Remove phone").click());
   expect(container.textContent).toContain("Couldn't remove this phone");
+});
+
+test("a removal that throws says it failed and leaves the confirmation usable", async () => {
+  const { container, removed } = render({}, "throws");
+  await act(async () => button(container, "Remove").click());
+  await act(async () => button(container, "Remove phone").click());
+  expect(container.textContent).toContain("Couldn't remove this phone");
+  const go = button(container, "Remove phone");
+  expect(go.disabled).toBe(false);
+  expect(button(container, "Keep").disabled).toBe(false);
+  await act(async () => go.click());
+  expect(removed).toHaveLength(2);
 });
 
 test("says when no phone pages the member, and when the list can't load", () => {
@@ -125,4 +155,12 @@ test("the most a member may have, all listed, in Portuguese", async () => {
   expect(buttons(container).filter((one) => one.textContent === "Remover")).toHaveLength(
     MAX_DEVICES_PER_MEMBER,
   );
+  await act(async () =>
+    buttons(container)
+      .find((one) => one.textContent === "Remover")!
+      .click(),
+  );
+  // Never "neste Celular Android" mid-sentence.
+  expect(container.textContent).toContain("Parar de acionar você neste celular?");
+  expect(container.textContent).toContain("assim que o app estiver aberto");
 });

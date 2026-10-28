@@ -165,6 +165,7 @@ describe("CallSession", () => {
     const { session, acks, release } = setup();
     release();
     session.answered(CALL);
+    session.focused(true);
     // KEYCODE_2, KEYCODE_ENTER.
     session.keyPressed(CALL.id, 9);
     session.keyPressed(CALL.id, 66);
@@ -180,10 +181,31 @@ describe("CallSession", () => {
     const other = setup();
     other.release();
     other.session.answered(CALL);
+    other.session.focused(true);
     other.session.ended(CALL.id);
     other.session.keyPressed(CALL.id, 8);
     await Promise.resolve();
     expect(other.acks).toEqual([]);
+  });
+
+  test("a hardware keyboard's 1 acknowledges only while the call screen is focused", async () => {
+    const { session, acks, release } = setup();
+    release();
+    session.answered(CALL);
+    // Before the call screen opened, and after it lost focus (a note being typed elsewhere in the app): no ack.
+    session.keyPressed(CALL.id, 8);
+    session.focused(true);
+    session.focused(false);
+    session.keyPressed(CALL.id, 8);
+    await Promise.resolve();
+    expect(acks).toEqual([]);
+    expect(session.state?.ack).toEqual({ kind: "idle" });
+    // Back on the call screen.
+    session.focused(true);
+    session.keyPressed(CALL.id, 8);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(acks).toEqual([CALL.incident]);
   });
 
   test("speaks in Portuguese for a pt-BR user", () => {

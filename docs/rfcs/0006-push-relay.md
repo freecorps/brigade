@@ -133,8 +133,11 @@ relay's bearer token):
 - **Your phones (dashboard).** The overview's "Your phones" card lists the signed-in member's own devices in the
   workspace from the synced `member_devices` summaries (no token or key): platform, the iOS build's APNs environment
   (Android has one, so it shows none), the end of its id, when it was registered, when Brigade last heard from it
-  (its latest registration or receipt) and whether it rings as a call. Each can be removed after a confirmation
-  with `device.unregister`, whose optimistic run drops the member's own summary so the list updates at once. Owners
+  (its latest registration, one that changed nothing included, or receipt) and whether it rings as a call, newest
+  heard from first: the exact reverse of the order a new phone past the limit replaces in, so the last row is the
+  next to go. Each can be removed after a confirmation with `device.unregister`, whose optimistic run drops the
+  member's own summary so the list updates at once; the confirmation says a phone whose app is still signed in
+  registers again as soon as the app is open (the watch below). Owners
   and admins see only their own there as well: every member already sees each colleague's phones in "Why wasn't I
   paged?" (below), and `device.unregister` only ever removes one's own, so no role is given a way to drop anyone
   else's (removing the member from the workspace does that, RFC 0003 "Members").
@@ -142,9 +145,10 @@ relay's bearer token):
   its own device id. When the row it saw while registered disappears (evicted as `replaced`, removed from the
   dashboard, dropped by the server for any other reason), it stops saying the phone is paged and registers again at
   once, through the same cycle as every other trigger, so never within `MIN_TRY_GAP_MS` of the last try
-  (`removalWatch`, apps/mobile src/lib/paging.ts). It chases a removal at most `REMOVAL_TRIES` (3) times an hour:
+  (`removalWatch`, apps/mobile/src/lib/paging.ts). It chases a removal at most `REMOVAL_TRIES` (3) times an hour:
   past that something keeps removing it (another of the member's phones over the limit, say), so the phone says it
-  is not paged (failed, with Try again) until the member comes back to the app or asks. A phone removed from the
+  is not paged (failed, with Try again). The count starts over when the member taps Try again, or when the phone
+  registers again on its own after that (back to the app, back online, a new token). A phone removed from the
   dashboard on purpose registers again too, while its member is signed in on it: that is the only way the phone
   gets their pages, and a member who wants it to stop signs out on it (which the card's confirmation says).
 - **Server-only.** Devices live in the workspace shard's `devices` table, which is never synced: no member sees
@@ -153,7 +157,8 @@ relay's bearer token):
   launch already signed in), once it has permission, a token and a key, through Brigade Sync as that member. Its
   device id is derived from the device key, so a relaunch registers the same id (a no-op, `conflict`). Registered or
   unchanged, the shard then runs `device.touch` (server only, as the member, `silent`: no event), which records when
-  the member last registered it (`updatedAt`), so a sign-out acted on late (`device.signOut` with `before`) never
+  the member last registered it (`updatedAt`, and its summary's `lastSeenAt`, so the dashboard's "last heard from"
+  and the replacement order agree), so a sign-out acted on late (`device.signOut` with `before`) never
   drops the phone they registered again since, and the session they registered it with (`sessionId`). Sign out
   unregisters it first (`device.unregister`, given up after 5 s so signing out offline still works; the device then
   stays registered until someone signs out on it online or APNs drops its token), then ends the session. The account
@@ -683,7 +688,8 @@ workspace (every member, viewers included, as for the timeline): **every member 
 Brigade last heard from each**. Decided acceptable within a workspace (it is what tells a team why someone was not
 paged), and the dashboard says so under the explanation. They carry no token, key or content, and the event
 data names only ids. Devices themselves stay server-only; a token-free summary of each (`member_devices`: platform,
-APNs environment, whether it takes calls, registered, last heard from: the latest registration or receipt) is kept
+APNs environment, whether it takes calls, registered, last heard from: the latest registration, `device.touch`
+included, or receipt) is kept
 with it by `device.register` and dropped with it. A device registered before summaries gets one the next time the
 app registers it.
 

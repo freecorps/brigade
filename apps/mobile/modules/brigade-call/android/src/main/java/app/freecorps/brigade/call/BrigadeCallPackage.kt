@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.os.Bundle
 import android.view.KeyEvent
+import android.widget.EditText
 import expo.modules.core.interfaces.Package
 import expo.modules.core.interfaces.ReactActivityHandler
 import expo.modules.core.interfaces.ReactActivityLifecycleListener
@@ -21,13 +22,15 @@ class BrigadeCallPackage : Package {
 
 /**
  * Hands a hardware keyboard's keys to the call screen while a call is answered: 1 acknowledges there, as on CallKit's
- * keypad (src/lib/call-session.ts decides which keys count). Only keys the app gets, so only while it is in front,
- * and none is taken from React Native: the call screen has no text field.
+ * keypad (src/lib/call-session.ts decides which keys count, and only while the call screen is focused). Only keys
+ * the app gets, so only while it is in front; none while a text field has focus (a 1 typed there is text), and none
+ * is taken from React Native.
  */
 class CallKeyHandler : ReactActivityHandler {
   override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
     val call = Calls.answered ?: return false
     if (event.isCanceled) return false
+    if (Calls.mainActivity?.get()?.currentFocus is EditText) return false
     Calls.listener?.onKey(call, keyCode)
     return false
   }

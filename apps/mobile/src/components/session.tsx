@@ -20,7 +20,14 @@ import { useUserLocale } from "@/hooks/use-user-locale";
 import { authClient, forgetSession, server } from "@/lib/auth-client";
 import { registerEverywhere, unregisterPhone, type Paging, type Registrations } from "@/lib/device";
 import { drainer, type Drainable } from "@/lib/drain";
-import { pagingCycle, pagingNudges, removalWatch, type RemovalVerdict } from "@/lib/paging";
+import {
+  devicePresent,
+  pagingCycle,
+  pagingNudges,
+  removalWatch,
+  type RemovalVerdict,
+  type RemovalWatch as Watch,
+} from "@/lib/paging";
 import { dropQueues, openQueue } from "@/lib/pending";
 import { pendingFiles } from "@/lib/pending-files";
 import {
@@ -499,10 +506,16 @@ function ActiveWorkspace({
   }, [sync, ids, workspaceId, userId]);
   const {
     paging: registrations,
-    retry: retryPaging,
+    retry,
     stop: stopPaging,
     removed,
   } = usePaging(register !== null, online, register);
+  // One per member and workspace; Try again starts its count over.
+  const watch = useMemo(() => removalWatch(Date.now), [userId, workspaceId]);
+  const retryPaging = useCallback(() => {
+    watch.reset();
+    return retry();
+  }, [watch, retry]);
   const paging = registrations[workspaceId] ?? "pending";
   const pagedWorkspaces = useMemo(
     () =>
@@ -594,6 +607,7 @@ function ActiveWorkspace({
       <WidgetSnapshot userId={userId} workspaceId={workspaceId} workspaceName={workspaceName!} />
       <RemovalWatch
         key={`${userId}:${workspaceId}`}
+        watch={watch}
         registered={paging === "on"}
         onRemoved={(verdict) => removed(workspaceId, verdict)}
       />
@@ -608,9 +622,11 @@ function ActiveWorkspace({
  * section does not say "Paged on this phone" until the next launch (src/lib/paging.ts `removalWatch`).
  */
 function RemovalWatch({
+  watch,
   registered,
   onRemoved,
 }: {
+  watch: Watch;
   registered: boolean;
   onRemoved: (verdict: Exclude<RemovalVerdict, undefined>) => void;
 }) {
@@ -625,12 +641,8 @@ function RemovalWatch({
     };
   }, [registered]);
   const devices = useQuery("devices.all", {});
-  const [watch] = useState(() => removalWatch(Date.now));
   const latest = useLatest(onRemoved);
-  const present =
-    deviceId === undefined || devices.status !== "ready"
-      ? undefined
-      : devices.rows.some((row) => row.id === deviceId);
+  const present = devicePresent(deviceId, devices);
   useEffect(() => {
     const verdict = watch.see(present, registered);
     if (verdict) latest.current(verdict);

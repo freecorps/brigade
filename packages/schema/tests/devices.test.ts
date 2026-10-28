@@ -602,5 +602,18 @@ describe("device.touch", () => {
     });
     expect(touch(store, ana, { id }, T - 10).ok).toBe(true);
     expect(store.get("devices", id)?.updatedAt).toBe(T);
+    expect(store.get("member_devices", id)?.lastSeenAt).toBe(T);
+  });
+
+  test("moves the summary's `lastSeenAt`, so the dashboard's \"last heard from\" is the registration that changed nothing", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const id = deviceId();
+    run(store, ana, "device.register", args(id));
+    expect(store.get("member_devices", id)?.lastSeenAt).toBe(T);
+    expect(touch(store, ana, { id }, T + 60_000).ok).toBe(true);
+    expect(store.get("member_devices", id)?.lastSeenAt).toBe(T + 60_000);
+    // Another member's touch moves nothing.
+    expect(touch(store, bia, { id }, T + 120_000).ok).toBe(false);
+    expect(store.get("member_devices", id)?.lastSeenAt).toBe(T + 60_000);
   });
 });

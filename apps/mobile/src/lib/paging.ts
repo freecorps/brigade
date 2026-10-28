@@ -199,24 +199,34 @@ export const REMOVAL_WINDOW_MS = 60 * 60_000;
  * dropped by the server), so it registers again now (a nudge, so never within `MIN_TRY_GAP_MS` of the last try):
  * while the member is signed in on this phone that is the only way it gets their pages. `gave_up`: it went
  * `REMOVAL_TRIES` times within `REMOVAL_WINDOW_MS`, so something keeps removing it (another of the member's phones
- * evicting it over the limit, say); the app stops chasing it and says the phone is not paged, until the member
- * comes back to the app or taps Try again.
+ * evicting it over the limit, say); the app stops chasing it and says the phone is not paged. The count starts over
+ * when the member taps Try again (`reset`) or the phone registers again on its own after the watch gave up (coming
+ * back to the app, back online, a new token): the member is back in the loop, so it is chased again.
  */
 export type RemovalVerdict = "again" | "gave_up" | undefined;
 
 /**
  * Watches for the phone's device leaving the shard (RFC 0006 "Device registration"). `see` takes whether its row is
- * in the synced summaries (undefined while they load) and whether the last registration said it is on; only a row
- * seen while registered and then gone counts, so a registration answered before its row arrived is not a removal.
+ * in the synced summaries (undefined while they load, `devicePresent`) and whether the last registration said it is
+ * on; only a row seen while registered and then gone counts, so a registration answered before its row arrived is not
+ * a removal.
  */
 export function removalWatch(now: () => number) {
   let seen = false;
   let tries: number[] = [];
+  // `gave_up`: it stopped chasing; `off`: and the phone has since been shown as not paged.
+  let gaveUp: "no" | "gave_up" | "off" = "no";
   return {
     see(present: boolean | undefined, registered: boolean): RemovalVerdict {
       if (!registered) {
         seen = false;
+        if (gaveUp === "gave_up") gaveUp = "off";
         return undefined;
+      }
+      // Registered again after the watch gave up: not one of its own chases, so the count starts over.
+      if (gaveUp === "off") {
+        gaveUp = "no";
+        tries = [];
       }
       if (present === undefined) return undefined;
       if (present) {
@@ -227,11 +237,34 @@ export function removalWatch(now: () => number) {
       seen = false;
       const at = now();
       tries = tries.filter((tried) => at - tried < REMOVAL_WINDOW_MS);
-      if (tries.length >= REMOVAL_TRIES) return "gave_up";
+      if (tries.length >= REMOVAL_TRIES) {
+        gaveUp = "gave_up";
+        return "gave_up";
+      }
       tries.push(at);
       return "again";
     },
+    /** The member tapped Try again: the count starts over. */
+    reset(): void {
+      tries = [];
+      gaveUp = "no";
+    },
   };
+}
+
+export type RemovalWatch = ReturnType<typeof removalWatch>;
+
+/**
+ * Whether the phone's device (`deviceId`, undefined until read) is among the open workspace's synced summaries, what
+ * `RemovalWatch.see` takes: undefined until both the id and the summaries are in, so a list still loading (or
+ * reloading after a reconnect, or failed) is never taken as the device gone.
+ */
+export function devicePresent(
+  deviceId: string | undefined,
+  devices: { status: string; rows: readonly { id: string }[] },
+): boolean | undefined {
+  if (deviceId === undefined || devices.status !== "ready") return undefined;
+  return devices.rows.some((row) => row.id === deviceId);
 }
 
 /**

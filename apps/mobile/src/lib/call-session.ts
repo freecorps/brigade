@@ -71,6 +71,8 @@ export function callStatus(state: NonNullable<CallState>): string {
 
 export class CallSession {
   #state: CallState = null;
+  /** Whether the call screen is the focused screen (`focused`): the only place a hardware key acknowledges. */
+  #screenFocused = false;
   readonly #listeners = new Set<() => void>();
 
   constructor(
@@ -127,12 +129,19 @@ export class CallSession {
     }
   }
 
+  /** The call screen gained (true) or lost (false) focus: set on focus, cleared on blur. */
+  focused(focused: boolean): void {
+    this.#screenFocused = focused;
+  }
+
   /**
    * Android: a hardware key released while the call is answered (`keyCode`, Android's `KeyEvent` code). 1
-   * acknowledges, as the screen's button does, while the call lasts; every other key does nothing.
+   * acknowledges, as the screen's button does, while the call lasts and only while the call screen is focused: a 1
+   * typed anywhere else in the app (an incident note, say) is the member's text, never an acknowledgement. Every
+   * other key does nothing.
    */
   keyPressed(callId: string, keyCode: number): void {
-    if (!ACK_KEY_CODES.includes(keyCode) || this.#state?.ended) return;
+    if (!ACK_KEY_CODES.includes(keyCode) || !this.#screenFocused || this.#state?.ended) return;
     void this.acknowledge(callId);
   }
 

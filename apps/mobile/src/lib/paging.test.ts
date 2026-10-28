@@ -19,6 +19,7 @@ import {
   REMOVAL_TRIES,
   REMOVAL_WINDOW_MS,
   removalWatch,
+  devicePresent,
   type PagingDeps,
 } from "./paging";
 import type { FinishResult } from "./sign-out";
@@ -538,4 +539,46 @@ test("a device the server keeps removing is chased a few times an hour, then lef
   // An hour after the first try, one more is allowed.
   now = REMOVAL_WINDOW_MS + 60_000;
   expect(remove()).toBe("again");
+});
+
+test("a device seen, then unregistered by the app itself, is not removed when its row goes before it is on again", () => {
+  const watch = removalWatch(() => 0);
+  expect(watch.see(true, true)).toBeUndefined();
+  // Not on any more (signing out, a failed registration): what it saw no longer counts.
+  expect(watch.see(true, false)).toBeUndefined();
+  // On again, its row not synced back yet: not a removal.
+  expect(watch.see(false, true)).toBeUndefined();
+});
+
+test("Try again, or registering again after giving up, starts the count over", () => {
+  let now = 0;
+  const watch = removalWatch(() => now);
+  const remove = () => {
+    expect(watch.see(true, true)).toBeUndefined();
+    now += 60_000;
+    return watch.see(false, true);
+  };
+  const giveUp = () => {
+    for (let n = 0; n < REMOVAL_TRIES; n++) expect(remove()).toBe("again");
+    expect(remove()).toBe("gave_up");
+  };
+  giveUp();
+  // The member taps Try again.
+  watch.reset();
+  expect(remove()).toBe("again");
+  for (let n = 1; n < REMOVAL_TRIES; n++) expect(remove()).toBe("again");
+  expect(remove()).toBe("gave_up");
+  // The app shows it failed (not registered); the member comes back to the app and it registers on its own.
+  expect(watch.see(false, false)).toBeUndefined();
+  expect(remove()).toBe("again");
+});
+
+test("the phone's device counts as present or gone only once its id and the summaries are in", () => {
+  const rows = [{ id: "dev_a" }, { id: "dev_b" }];
+  expect(devicePresent(undefined, { status: "ready", rows })).toBeUndefined();
+  expect(devicePresent("dev_a", { status: "loading", rows: [] })).toBeUndefined();
+  expect(devicePresent("dev_a", { status: "error", rows: [] })).toBeUndefined();
+  expect(devicePresent("dev_a", { status: "ready", rows })).toBe(true);
+  expect(devicePresent("dev_c", { status: "ready", rows })).toBe(false);
+  expect(devicePresent("dev_a", { status: "ready", rows: [] })).toBe(false);
 });

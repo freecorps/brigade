@@ -23,12 +23,12 @@ export type Devices_CardInputs = {
 * | "id" | "ID ending {suffix}" |
 * | "registered" | "Registered {when}" |
 * | "seen" | "Last heard from {when}" |
-* | "seen_hint" | "Its last registration, or the last page it confirmed it showed" |
+* | "seen_hint" | "The last time the app registered this phone, even with nothing new to send, or the phone confirmed it showed a page" |
 * | "calls_on" | "Rings as a call" |
 * | "calls_off" | "Notifications only" |
 * | "remove" | "Remove" |
 * | "remove_label" | "Remove {name}" |
-* | "remove_confirm" | "Stop paging this {name}? If the Brigade app is still signed in on it, it registers again the next time it opens: sign out in the app to stop it for good." |
+* | "remove_confirm" | "Stop paging this {name}? If the Brigade app is still signed in on it, it registers again as soon as the app is open: sign out in the app to stop it for good." |
 * | "remove_go" | "Remove phone" |
 * | "removing" | "Removing…" |
 * | "keep" | "Keep" |

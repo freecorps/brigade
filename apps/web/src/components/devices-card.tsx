@@ -26,11 +26,14 @@ const text = (
  * The signed-in member's own phones in this workspace (RFC 0006 "Device registration"), newest heard from first:
  * from the synced, token-free `member_devices` summary, never another member's (they are on the incident page's
  * "Why wasn't I paged?"). `device.unregister` only ever removes one's own, so no role sees a Remove for anyone else.
+ * The exact reverse of the order `device.register` replaces in (least recently alive first, then the lower id), so
+ * the last row is the one a new phone past the limit replaces: every registration and receipt moves `lastSeenAt`, so
+ * it is never behind the device's own `updatedAt`.
  */
 export function ownDevices(rows: readonly DeviceSummaryRow[], userId: string): DeviceSummaryRow[] {
   return rows
     .filter((row) => row.userId === userId)
-    .sort((a, b) => b.lastSeenAt - a.lastSeenAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    .sort((a, b) => b.lastSeenAt - a.lastSeenAt || b.id.localeCompare(a.id));
 }
 
 export function DevicesCard() {
@@ -102,7 +105,8 @@ export function DevicesPanel({ rows, loading, failed, locale, now, onRemove }: P
               refused={refused === row.id}
               onRemove={async () => {
                 setRefused(null);
-                const ok = await onRemove(row.id);
+                // A mutation that throws (the client torn down, say) is a refusal too, never a stuck dialog.
+                const ok = await onRemove(row.id).catch(() => false);
                 if (!ok) setRefused(row.id);
                 return ok;
               }}
@@ -184,9 +188,11 @@ function DeviceItem({
               disabled={busy}
               onClick={async () => {
                 setBusy(true);
-                const ok = await onRemove();
-                setBusy(false);
-                if (ok) setConfirm(false);
+                try {
+                  if (await onRemove()) setConfirm(false);
+                } finally {
+                  setBusy(false);
+                }
               }}
             >
               {text(busy ? "removing" : "remove_go")}

@@ -1,7 +1,7 @@
 import { m } from "@freecorps/brigade-i18n";
 import { radius, spacing } from "@freecorps/brigade-ui";
-import { useRouter } from "expo-router";
-import { useEffect, useSyncExternalStore } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { BackHandler, Pressable, ScrollView, View } from "react-native";
 import { ThemedText } from "@/components/themed-text";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
@@ -18,6 +18,14 @@ export function CallScreen() {
   const padding = useScreenPadding();
   const router = useRouter();
   const state = useSyncExternalStore(callSession.subscribe, callSession.getState);
+
+  // A hardware keyboard's 1 acknowledges only while this screen is the one in front (CallSession.keyPressed).
+  useFocusEffect(
+    useCallback(() => {
+      callSession.focused(true);
+      return () => callSession.focused(false);
+    }, []),
+  );
 
   // On a locked Android phone this screen is shown over the keyguard: Back must not lead into the rest of the
   // app while the call lasts.

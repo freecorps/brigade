@@ -22,12 +22,12 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "id" | "ID ending {suffix}" |
 * | "registered" | "Registered {when}" |
 * | "seen" | "Last heard from {when}" |
-* | "seen_hint" | "Its last registration, or the last page it confirmed it showed" |
+* | "seen_hint" | "The last time the app registered this phone, even with nothing new to send, or the phone confirmed it showed a page" |
 * | "calls_on" | "Rings as a call" |
 * | "calls_off" | "Notifications only" |
 * | "remove" | "Remove" |
 * | "remove_label" | "Remove {name}" |
-* | "remove_confirm" | "Stop paging this {name}? If the Brigade app is still signed in on it, it registers again the next time it opens: sign out in the app to stop it for good." |
+* | "remove_confirm" | "Stop paging this {name}? If the Brigade app is still signed in on it, it registers again as soon as the app is open: sign out in the app to stop it for good." |
 * | "remove_go" | "Remove phone" |
 * | "removing" | "Removing…" |
 * | "keep" | "Keep" |
@@ -53,12 +53,12 @@ export const devices_card = /** @type {((inputs: Devices_CardInputs, options?: {
 		if (i?.part === "id") return /** @type {LocalizedString} */ (`ID terminado em ${i?.suffix}`);
 		if (i?.part === "registered") return /** @type {LocalizedString} */ (`Registrado ${i?.when}`);
 		if (i?.part === "seen") return /** @type {LocalizedString} */ (`Último sinal ${i?.when}`);
-		if (i?.part === "seen_hint") return /** @type {LocalizedString} */ (`Seu último registro, ou o último acionamento que ele confirmou ter mostrado`);
+		if (i?.part === "seen_hint") return /** @type {LocalizedString} */ (`A última vez que o app registrou este celular, mesmo sem nada novo a enviar, ou que o celular confirmou ter mostrado um acionamento`);
 		if (i?.part === "calls_on") return /** @type {LocalizedString} */ (`Toca como chamada`);
 		if (i?.part === "calls_off") return /** @type {LocalizedString} */ (`Só notificações`);
 		if (i?.part === "remove") return /** @type {LocalizedString} */ (`Remover`);
 		if (i?.part === "remove_label") return /** @type {LocalizedString} */ (`Remover ${i?.name}`);
-		if (i?.part === "remove_confirm") return /** @type {LocalizedString} */ (`Parar de acionar neste ${i?.name}? Se o app do Brigade ainda estiver conectado nele, ele se registra de novo na próxima vez que abrir: saia da conta no app para parar de vez.`);
+		if (i?.part === "remove_confirm") return /** @type {LocalizedString} */ (`Parar de acionar você neste celular? Se o app do Brigade ainda estiver conectado nele, ele se registra de novo assim que o app estiver aberto: saia da conta no app para parar de vez.`);
 		if (i?.part === "remove_go") return /** @type {LocalizedString} */ (`Remover celular`);
 		if (i?.part === "removing") return /** @type {LocalizedString} */ (`Removendo…`);
 		if (i?.part === "keep") return /** @type {LocalizedString} */ (`Manter`);
@@ -78,12 +78,12 @@ export const devices_card = /** @type {((inputs: Devices_CardInputs, options?: {
 		if (i?.part === "id") return /** @type {LocalizedString} */ (`ID ending ${i?.suffix}`);
 		if (i?.part === "registered") return /** @type {LocalizedString} */ (`Registered ${i?.when}`);
 		if (i?.part === "seen") return /** @type {LocalizedString} */ (`Last heard from ${i?.when}`);
-		if (i?.part === "seen_hint") return /** @type {LocalizedString} */ (`Its last registration, or the last page it confirmed it showed`);
+		if (i?.part === "seen_hint") return /** @type {LocalizedString} */ (`The last time the app registered this phone, even with nothing new to send, or the phone confirmed it showed a page`);
 		if (i?.part === "calls_on") return /** @type {LocalizedString} */ (`Rings as a call`);
 		if (i?.part === "calls_off") return /** @type {LocalizedString} */ (`Notifications only`);
 		if (i?.part === "remove") return /** @type {LocalizedString} */ (`Remove`);
 		if (i?.part === "remove_label") return /** @type {LocalizedString} */ (`Remove ${i?.name}`);
-		if (i?.part === "remove_confirm") return /** @type {LocalizedString} */ (`Stop paging this ${i?.name}? If the Brigade app is still signed in on it, it registers again the next time it opens: sign out in the app to stop it for good.`);
+		if (i?.part === "remove_confirm") return /** @type {LocalizedString} */ (`Stop paging this ${i?.name}? If the Brigade app is still signed in on it, it registers again as soon as the app is open: sign out in the app to stop it for good.`);
 		if (i?.part === "remove_go") return /** @type {LocalizedString} */ (`Remove phone`);
 		if (i?.part === "removing") return /** @type {LocalizedString} */ (`Removing…`);
 		if (i?.part === "keep") return /** @type {LocalizedString} */ (`Keep`);

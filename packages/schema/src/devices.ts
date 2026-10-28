@@ -267,8 +267,9 @@ export const registerDevice = defineMutation({
 
 /**
  * Server only, as the member, right after their `device.register` went through or changed nothing (`conflict`):
- * records that they registered it now (`updatedAt`), so a sign-out acted on late (`device.signOut` with `before`)
- * never drops the phone they just registered again, and with `sessionId` the session they registered it with. Not a
+ * records that they registered it now (`updatedAt`, and its summary's `lastSeenAt`, so "last heard from" and the
+ * order replacement goes by agree), so a sign-out acted on late (`device.signOut` with `before`) never drops the
+ * phone they just registered again, and with `sessionId` the session they registered it with. Not a
  * change to the workspace: `silent`, no event (RFC 0005). Another member's device, or none, is `not_found`.
  */
 export const touchDevice = defineMutation({
@@ -288,6 +289,11 @@ export const touchDevice = defineMutation({
       updatedAt: Math.max(ctx.now, current.updatedAt),
       ...(args.sessionId !== undefined ? { sessionId: args.sessionId } : {}),
     });
+    // The phone just spoke to the shard: what the dashboard shows as "last heard from", and what replacement counts.
+    const summary = store.get("member_devices", args.id);
+    if (summary && summary.lastSeenAt < ctx.now) {
+      store.update("member_devices", args.id, { lastSeenAt: ctx.now });
+    }
     return ok();
   },
 });

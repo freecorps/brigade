@@ -15,7 +15,10 @@ import {
   NOTIFIER_ACTOR,
   type EmailAbout,
   type EmailFailure,
+  type MemberRemoved,
+  type MemberRoleChanged,
   type NotificationFailed,
+  type ScheduleLeft,
   type Store,
   type BrigadeTables,
 } from "@freecorps/brigade-schema";
@@ -147,6 +150,57 @@ export function asksForReminder(event: BrigadeEvent): boolean {
 const reminderKey = (userId: string, date: string) => `reminder:${userId}:${date}`;
 /** Ledger rows that are reminders (`reminderKey`), in SQL. */
 const IS_REMINDER = "substr(key, 1, 9) = 'reminder:'";
+
+/**
+ * Why a member left the rotations, as the owners' email words it: removed (by an owner or admin, or caught up from
+ * D1), left on their own, or made a viewer.
+ */
+export type RotationCause = "removed" | "left" | "viewer";
+
+/**
+ * The email that tells the workspace's owners which schedules a member was taken out of (RFC 0003 "Schedules", Q20):
+ * the schedules come from the event, who the owners are and the member's name from D1.
+ */
+export type RotationPlan =
+  | {
+      send: true;
+      workspace: string;
+      userId: string;
+      cause: RotationCause;
+      schedules: ScheduleLeft[];
+      /** Owners it already reached (a redelivery, or a retry after some sends failed). */
+      sent: string[];
+      budget: EmailBudget;
+    }
+  | { send: false; reason: "held"; until: number }
+  | { send: false; reason: "not_a_rotation" | "not_found" | "nothing" };
+
+/** The member event and what it says, when it took someone out of schedules. */
+function rotationOf(
+  event: BrigadeEvent,
+): { userId: string; cause: RotationCause; schedules: ScheduleLeft[] } | undefined {
+  if (event.type !== "member.removed" && event.type !== "member.role_changed") return undefined;
+  const data = event.data as Partial<MemberRemoved["data"] & MemberRoleChanged["data"]> | null;
+  const schedules = data?.schedules;
+  if (typeof data?.userId !== "string" || !Array.isArray(schedules) || schedules.length === 0) {
+    return undefined;
+  }
+  if (event.type === "member.role_changed" && data.to !== "viewer") return undefined;
+  const cause: RotationCause =
+    event.type === "member.role_changed" ? "viewer" : data.reason === "left" ? "left" : "removed";
+  return { userId: data.userId, cause, schedules };
+}
+
+/**
+ * Whether `event` asks for the owners' email about a member taken out of schedules: `member.removed`, or
+ * `member.role_changed` to a viewer, that lists at least one schedule.
+ */
+export function asksForRotationEmail(event: BrigadeEvent): boolean {
+  return rotationOf(event) !== undefined;
+}
+
+/** The owners' email about one member event, in the email ledger: once per event. Counted in the paging caps. */
+const rotationKey = (event: BrigadeEvent) => `rotation:${event.id}`;
 
 /**
  * What one recipient's send did, as the consumer reports it. `capped`: not sent, because the recipient or the
@@ -383,6 +437,93 @@ export class Mailer {
     } else {
       sql.exec("update email_keys set claimed_until = 0 where key = ?", key);
     }
+  }
+
+  /**
+   * The owners' email `event` asks for (a member taken out of schedules), claimed for the caller until
+   * `EMAIL_CLAIM_MS` from `now` like the notifier's emails, within the same caps (`EMAIL_WORKSPACE_DAILY_CAP`,
+   * `EMAIL_USER_HOURLY_CAP`). The schedules are the event's, as they were when the member left; one deleted since is
+   * left out, and none left is nothing to send.
+   */
+  planRotation(event: BrigadeEvent, now: number): RotationPlan {
+    this.prune(now);
+    const rotation = rotationOf(event);
+    if (!rotation) return { send: false, reason: "not_a_rotation" };
+    const { store } = this.options.shard;
+    const [workspace] = store.scan("workspace");
+    if (!workspace) return { send: false, reason: "not_found" };
+    const schedules = rotation.schedules.filter(
+      (schedule) => typeof schedule?.id === "string" && store.get("schedules", schedule.id),
+    );
+    if (schedules.length === 0) return { send: false, reason: "nothing" };
+    const key = rotationKey(event);
+    const claim = this.claim(key, now);
+    if (claim === "done") return { send: false, reason: "nothing" };
+    if (claim !== "claimed") return { send: false, reason: "held", until: claim.until };
+    return {
+      send: true,
+      workspace: workspace.name,
+      userId: rotation.userId,
+      cause: rotation.cause,
+      schedules: schedules.map(({ id, name, emptied }) => ({
+        id,
+        name: String(name),
+        emptied: emptied === true,
+      })),
+      sent: this.sent(key),
+      budget: this.budget(now, "paging"),
+    };
+  }
+
+  /**
+   * Records what the owners' email about a member taken out of schedules did: each owner reached goes in the ledger
+   * (a retry skips them, and they count toward the caps); a capped one is final at once (logged). When `final`, the
+   * email is done and each owner it never reached is logged (it has no incident to put on a timeline); otherwise its
+   * claim is let go, so the retry can take it at once.
+   */
+  recordRotation(
+    event: BrigadeEvent,
+    outcomes: readonly EmailOutcome[],
+    final: boolean,
+    now: number,
+  ): void {
+    if (!asksForRotationEmail(event)) return;
+    const key = rotationKey(event);
+    const { sql } = this.options.storage;
+    const claim = sql
+      .exec<{ done: number }>("select done from email_keys where key = ?", key)
+      .toArray()[0];
+    if (!claim || claim.done) return;
+    for (const outcome of outcomes) {
+      if (!outcome.ok && !outcome.capped) continue;
+      sql.exec(
+        "insert into email_sends (key, user_id, at, capped) values (?, ?, ?, ?) on conflict do nothing",
+        key,
+        outcome.userId,
+        now,
+        outcome.ok ? 0 : 1,
+      );
+      if (!outcome.ok) {
+        this.options.log("rotation email capped", {
+          event: event.id,
+          recipient: recipientHash(key, outcome.userId),
+        });
+      }
+    }
+    if (!final) {
+      sql.exec("update email_keys set claimed_until = 0 where key = ?", key);
+      return;
+    }
+    const sent = new Set(this.sent(key));
+    for (const { userId } of outcomes) {
+      if (sent.has(userId)) continue;
+      sent.add(userId);
+      this.options.log("rotation email failed", {
+        event: event.id,
+        recipient: recipientHash(key, userId),
+      });
+    }
+    sql.exec("update email_keys set done = 1, claimed_until = 0 where key = ?", key);
   }
 
   /**

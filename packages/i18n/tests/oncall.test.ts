@@ -1,5 +1,6 @@
 import type { MemberRow } from "@freecorps/brigade-schema";
 import { expect, test } from "vite-plus/test";
+import { setLocale } from "../src/index.ts";
 import {
   handoffTime,
   memberLabel,
@@ -38,5 +39,24 @@ test("zones read by their current name, and members by theirs or as unnamed", ()
   expect(memberLabel(members, "usr_nameless")).toBe("Unnamed member");
   // Gone from the list (removed since): never a raw id.
   expect(memberLabel(members, "usr_gone")).toBe("Unnamed member");
-  expect(scheduleRefusal("not_found")).toBe("The schedule no longer exists.");
+  expect(scheduleRefusal({ code: "not_found" })).toBe("The schedule no longer exists.");
+});
+
+test("an override over the per-member cap says so; the schedule's own cap reads as any limit", async () => {
+  const perMember = {
+    code: "limit_reached",
+    issues: [{ path: "userId", message: "At most 20 upcoming overrides per member on a schedule" }],
+  };
+  expect(scheduleRefusal(perMember)).toBe(
+    "This person already has 20 upcoming overrides on this schedule, the most one person can have. Remove one first.",
+  );
+  expect(scheduleRefusal({ code: "limit_reached" })).toBe("You've reached the limit for this.");
+  await setLocale("pt-BR");
+  try {
+    expect(scheduleRefusal(perMember)).toBe(
+      "Essa pessoa já tem 20 substituições futuras nesta escala, o máximo para uma pessoa. Remova uma antes.",
+    );
+  } finally {
+    await setLocale("en");
+  }
 });

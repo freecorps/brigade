@@ -296,17 +296,25 @@ says who is on call; escalation policies (below) page from it.
   of each layer keeps its order and the rotation counts again from its start, so later shifts move up (as PagerDuty
   does); the alternative, leaving their shifts as holes, keeps everyone else's dates but leaves time nobody covers,
   which is worse once schedules page. A layer left with nobody is a visible gap until someone edits it; the editor
-  asks for at least one member. Promoting a viewer back does not restore their place. **Decided (Q20), to build:**
-  later shifts keep moving up, and the workspace's owners are emailed which schedules changed and for whom (through
-  the email notifier, RFC 0005 "Email"); the dashboard's overview warns about a schedule that has nobody on call now
-  or a layer left empty.
+  asks for at least one member. Promoting a viewer back does not restore their place. **Decided (Q20):** later
+  shifts keep moving up (as above). `member.removed` and `member.role_changed` carry the schedules the member was
+  taken out of (`schedules`: `id`, `name`, `emptied` when they were the last in one of its layers; those whose
+  rotations had them or where an override of theirs had not ended yet), and from that event, through the outbox,
+  the workspace's owners (verified addresses, not the admins) are emailed the list with the member's name and
+  nothing else about them (RFC 0005 "Email", "Rotations"). A viewer role `member.sync` copied from D1 carries no
+  `member.*` event (that change happened outside Brigade), so it emails nobody (accepted). The dashboard's overview
+  warns about each schedule with a layer that has nobody in it, linking to its row in the On-call card; a schedule
+  with nobody on call for other reasons (before a layer starts) shows "Nobody on call" on the card, as before.
 - **On the phone.** The app's on-call screen and the incident list's line work out the member's shifts from the same
   rows (`nextHandoffs`). The iOS "I'm on call" widget cannot reach the shard: the app writes it a snapshot of the
   member's stretches on call (merged across schedules, 4 weeks ahead) into the App Group whenever the rows change,
   and the widget flips at each handoff by the clock alone. A snapshot over 24 hours old asks to open the app, since
   an override added since would not be in it (`apps/mobile/src/lib/widget.ts`).
-- **Limits.** 50 schedules per workspace, 100 overrides not yet ended per schedule, and (decided, Q20; to build) 20
-  not yet ended per member, so one responder cannot fill a schedule's cap and block everyone else's; an override that ended over 30
+- **Limits.** 50 schedules per workspace, 100 overrides not yet ended per schedule, and 20 not yet ended per member
+  and schedule (`MAX_OVERRIDES_PER_MEMBER`, Q20), so one responder cannot fill a schedule's cap and block everyone
+  else's: `schedule.addOverride` refuses the 21st as `limit_reached` with an issue on `userId`, which the dashboard
+  and the app word as that cap ("This person already has 20 upcoming overrides…"), whoever adds it; removing
+  overrides is unchanged. An override that ended over 30
   days ago is deleted when the next one is added to its schedule (`schedule.override_removed`, `expired`), so the
   table stays small. Deleting a schedule deletes its overrides.
 

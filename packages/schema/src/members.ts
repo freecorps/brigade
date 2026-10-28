@@ -7,7 +7,7 @@ import { allows, can, ROLES, type Role } from "./access.ts";
 import { DEFAULT_CALL_CHOICE, forgetMemberSettings, type MemberCallsChanged } from "./calls.ts";
 import { dropDevices } from "./devices.ts";
 import { defineMutation, fail, ok, type Actor, type DomainEvent } from "./mutation.ts";
-import { dropFromSchedules } from "./schedules.ts";
+import { dropFromSchedules, type ScheduleLeft } from "./schedules.ts";
 import { v } from "./validate.ts";
 
 /**
@@ -31,14 +31,21 @@ export const tokenReaches = (role: Role | null) =>
 export const MEMBER_REMOVALS = ["removed", "left", "reconciled"] as const;
 export type MemberRemoval = (typeof MEMBER_REMOVALS)[number];
 
+/**
+ * `schedules`: the schedules they were taken out of (`dropFromSchedules`), empty unless they became a viewer. The
+ * owners are emailed the list (RFC 0005 "Email").
+ */
 export type MemberRoleChanged = DomainEvent<
   "member.role_changed",
-  { userId: string; from: Role; to: Role }
+  { userId: string; from: Role; to: Role; schedules: ScheduleLeft[] }
 >;
 export type MemberRemoved = DomainEvent<
   "member.removed",
-  /** `role` is theirs before, or null when the shard no longer knew it (a leaver finishing with only devices left). */
-  { userId: string; role: Role | null; reason: MemberRemoval }
+  /**
+   * `role` is theirs before, or null when the shard no longer knew it (a leaver finishing with only devices left);
+   * `schedules`, the schedules they were taken out of.
+   */
+  { userId: string; role: Role | null; reason: MemberRemoval; schedules: ScheduleLeft[] }
 >;
 
 /** A change one member asks for on another (or on themselves). */
@@ -105,14 +112,15 @@ export const changeMemberRole = defineMutation({
     if (args.from === args.to) return fail("conflict", "Role is unchanged");
     if (store.get("members", args.id))
       store.update("members", args.id, { role: args.to, updatedAt: ctx.now });
+    // Viewers only read: a member made one leaves the rotations (RFC 0003 "Schedules").
+    const dropped =
+      args.to === "viewer" ? dropFromSchedules(store, args.id, ctx) : { events: [], schedules: [] };
     const event: MemberRoleChanged = {
       type: "member.role_changed",
       subject: args.id,
-      data: { userId: args.id, from: args.from, to: args.to },
+      data: { userId: args.id, from: args.from, to: args.to, schedules: dropped.schedules },
     };
-    // Viewers only read: a member made one leaves the rotations (RFC 0003 "Schedules").
-    const schedules = args.to === "viewer" ? dropFromSchedules(store, args.id, ctx) : [];
-    return ok(event, ...schedules);
+    return ok(event, ...dropped.events);
   },
 });
 
@@ -151,13 +159,18 @@ export const removeMember = defineMutation({
     if (store.get("members", args.id)) store.delete("members", args.id);
     forgetMemberSettings(store, args.id);
     const devices = dropDevices(store, args.id, "member_removed");
-    const schedules = dropFromSchedules(store, args.id, ctx);
+    const dropped = dropFromSchedules(store, args.id, ctx);
     const event: MemberRemoved = {
       type: "member.removed",
       subject: args.id,
-      data: { userId: args.id, role: args.role, reason: args.reason },
+      data: {
+        userId: args.id,
+        role: args.role,
+        reason: args.reason,
+        schedules: dropped.schedules,
+      },
     };
-    return ok(event, ...devices, ...schedules);
+    return ok(event, ...devices, ...dropped.events);
   },
 });
 
@@ -201,25 +214,31 @@ export const reconcileMembers = defineMutation({
       if (role === undefined) {
         store.delete("members", current.id);
         forgetMemberSettings(store, current.id);
+        const devices = dropDevices(store, current.id, "member_removed");
+        const dropped = dropFromSchedules(store, current.id, ctx);
         const event: MemberRemoved = {
           type: "member.removed",
           subject: current.id,
-          data: { userId: current.id, role: current.role, reason: "reconciled" },
+          data: {
+            userId: current.id,
+            role: current.role,
+            reason: "reconciled",
+            schedules: dropped.schedules,
+          },
         };
-        events.push(
-          event,
-          ...dropDevices(store, current.id, "member_removed"),
-          ...dropFromSchedules(store, current.id, ctx),
-        );
+        events.push(event, ...devices, ...dropped.events);
       } else if (role !== current.role) {
         store.update("members", current.id, { role, updatedAt: ctx.now });
+        const dropped =
+          role === "viewer"
+            ? dropFromSchedules(store, current.id, ctx)
+            : { events: [], schedules: [] };
         const event: MemberRoleChanged = {
           type: "member.role_changed",
           subject: current.id,
-          data: { userId: current.id, from: current.role, to: role },
+          data: { userId: current.id, from: current.role, to: role, schedules: dropped.schedules },
         };
-        events.push(event);
-        if (role === "viewer") events.push(...dropFromSchedules(store, current.id, ctx));
+        events.push(event, ...dropped.events);
       }
     }
     // Devices of someone with no copy (their `member.sync` failed, or the copy went before this rule existed).

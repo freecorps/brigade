@@ -13,6 +13,7 @@ import { LegendCard } from "@/components/legend-card";
 import { MembersCard } from "@/components/members-card";
 import { MonitorsCard } from "@/components/monitors-card";
 import { OnCallCard } from "@/components/oncall-card";
+import { OnCallGapsNotice } from "@/components/oncall-gaps";
 import { PagingHealthNotice } from "@/components/paging-health";
 import { ServicesCard } from "@/components/services-card";
 import { usePreferences } from "@/components/preferences";
@@ -57,6 +58,7 @@ function Overview() {
       <PagingHealthNotice />
       {user ? <VerifyNotice email={user.email} verified={user.emailVerified} /> : null}
       {user ? <TakeoverNotice key={user.id} /> : null}
+      <OnCallGapsNotice />
       <IncidentsCard />
       <OpenFollowUpsCard />
       <OnCallCard />

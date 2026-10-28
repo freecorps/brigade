@@ -182,7 +182,8 @@ export type Recipient = {
 export async function lookUp(
   db: D1Database | undefined,
   workspaceId: string,
-  to: EmailJob["to"],
+  /** `ownersOnly`: the owners, without the admins (the email about a member taken out of schedules). */
+  to: EmailJob["to"] | { ownersOnly: true },
 ): Promise<Recipient[]> {
   if (!db) throw new Error("no D1 binding");
   if ("userIds" in to && to.userIds.length === 0) return [];
@@ -191,22 +192,29 @@ export async function lookUp(
     from "member" m join "user" u on u.id = m.userId
     where m.organizationId = ? and u.emailVerified = 1`;
   const query =
-    "owners" in to
+    "userIds" in to
       ? db
-          .prepare(`${select} and m.role in ('owner', 'admin') order by m.createdAt limit ?`)
-          .bind(workspaceId, MAX_OWNER_RECIPIENTS)
-      : db
           .prepare(`${select} and m.userId in (${to.userIds.map(() => "?").join(", ")})`)
-          .bind(workspaceId, ...to.userIds);
+          .bind(workspaceId, ...to.userIds)
+      : db
+          .prepare(
+            `${select} and m.role in (${"owners" in to ? "'owner', 'admin'" : "'owner'"}) order by m.createdAt limit ?`,
+          )
+          .bind(workspaceId, MAX_OWNER_RECIPIENTS);
+  const { results } = await withinRecipientsTimeout(query.all<Recipient>());
+  return results;
+}
+
+/** `read`, or a rejection once it takes longer than `RECIPIENTS_TIMEOUT_MS`. */
+export async function withinRecipientsTimeout<T>(read: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const { results } = await Promise.race([
-      query.all<Recipient>(),
+    return await Promise.race([
+      read,
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error("D1 timed out")), RECIPIENTS_TIMEOUT_MS);
       }),
     ]);
-    return results;
   } finally {
     clearTimeout(timer);
   }

@@ -67,7 +67,13 @@ import {
   Monitoring,
   type MonitorEnv,
 } from "./monitors.ts";
-import { Mailer, type EmailOutcome, type EmailPlan, type ReminderPlan } from "./mailer.ts";
+import {
+  Mailer,
+  type EmailOutcome,
+  type EmailPlan,
+  type ReminderPlan,
+  type RotationPlan,
+} from "./mailer.ts";
 import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
 import {
   asksForPage,
@@ -1631,6 +1637,21 @@ export class WorkspaceDO extends DurableObject<Env> {
   recordReminder(event: BrigadeEvent, outcome: EmailOutcome, final: boolean): void {
     if (this.shard.workspace() !== event.workspaceId) return;
     this.mailer.recordReminder(event, outcome, final, Date.now());
+  }
+
+  /**
+   * The owners' email about a member taken out of schedules (RPC from the queue consumer, src/notify-rotation.ts):
+   * see `Mailer.planRotation`.
+   */
+  planRotationEmail(event: BrigadeEvent): RotationPlan {
+    if (this.shard.workspace() !== event.workspaceId) return { send: false, reason: "not_found" };
+    return this.mailer.planRotation(event, Date.now());
+  }
+
+  /** What that email's sends did (RPC from the queue consumer): see `Mailer.recordRotation`. */
+  recordRotationEmail(event: BrigadeEvent, outcomes: EmailOutcome[], final: boolean): void {
+    if (this.shard.workspace() !== event.workspaceId) return;
+    this.mailer.recordRotation(event, outcomes, final, Date.now());
   }
 
   /**

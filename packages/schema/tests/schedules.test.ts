@@ -3,6 +3,8 @@ import {
   createMemoryStore,
   layerShiftAt,
   localMinute,
+  MAX_OVERRIDES_PER_MEMBER,
+  MAX_OVERRIDES_PER_SCHEDULE,
   MEMBERS_ACTOR,
   mutations,
   nextHandoffs,
@@ -764,6 +766,104 @@ describe("overrides", () => {
     });
   });
 
+  test("one member holds at most 20 overrides not yet ended per schedule, besides the 100 per schedule", () => {
+    expect(MAX_OVERRIDES_PER_MEMBER).toBe(20);
+    expect(MAX_OVERRIDES_PER_SCHEDULE).toBe(100);
+    const store = withSchedule();
+    const id = (n: number) => `ovr_01JB00000000000000000${String(n).padStart(5, "0")}`;
+    // Ended ones never count: one that ended an hour ago is still kept, but not upcoming.
+    store.insert(
+      "overrides",
+      override({ id: id(900), userId: "usr_caio", start: T - 5 * HOUR, end: T - HOUR }),
+    );
+    for (let n = 0; n < MAX_OVERRIDES_PER_MEMBER; n++) {
+      const added = runMutation(
+        mutations,
+        "schedule.addOverride",
+        cover({ id: id(n), start: T + n * DAY, end: T + n * DAY + HOUR }),
+        store,
+        ctx("usr_caio", "responder"),
+      );
+      expect(added.ok, `override ${n}`).toBe(true);
+    }
+    const refused = runMutation(
+      mutations,
+      "schedule.addOverride",
+      cover({ id: id(50), start: T + 50 * DAY, end: T + 50 * DAY + HOUR }),
+      store,
+      ctx("usr_caio", "responder"),
+    );
+    expect(refused).toEqual({
+      ok: false,
+      error: {
+        code: "limit_reached",
+        message: "At most 20 upcoming overrides per member on a schedule",
+        issues: [
+          { path: "userId", message: "At most 20 upcoming overrides per member on a schedule" },
+        ],
+      },
+    });
+    // An admin cannot add a 21st for them either; for someone else, they still can.
+    expect(
+      runMutation(
+        mutations,
+        "schedule.addOverride",
+        cover({ id: id(51), start: T + 51 * DAY, end: T + 51 * DAY + HOUR }),
+        store,
+        ctx("usr_ana", "owner"),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "limit_reached", issues: [{ path: "userId" }] } });
+    expect(
+      runMutation(
+        mutations,
+        "schedule.addOverride",
+        cover({ id: id(52), userId: "usr_eva", start: T + DAY, end: T + DAY + HOUR }),
+        store,
+        ctx("usr_ana", "owner"),
+      ).ok,
+    ).toBe(true);
+    // Removing one, as they or an admin may, makes room again.
+    expect(
+      runMutation(
+        mutations,
+        "schedule.removeOverride",
+        { id: id(0) },
+        store,
+        ctx("usr_ana", "owner"),
+      ).ok,
+    ).toBe(true);
+    expect(
+      runMutation(
+        mutations,
+        "schedule.addOverride",
+        cover({ id: id(53), start: T + 53 * DAY, end: T + 53 * DAY + HOUR }),
+        store,
+        ctx("usr_caio", "responder"),
+      ).ok,
+    ).toBe(true);
+  });
+
+  test("the schedule's own cap of 100 is refused without naming a member", () => {
+    const store = withSchedule();
+    for (let n = 0; n < MAX_OVERRIDES_PER_SCHEDULE; n++) {
+      store.insert(
+        "overrides",
+        override({
+          id: `ovr_01JB00000000000000000${String(n + 1000).padStart(5, "0")}`,
+          userId: `usr_x${n}`,
+          start: T + HOUR,
+          end: T + 2 * HOUR,
+        }),
+      );
+    }
+    expect(
+      runMutation(mutations, "schedule.addOverride", cover(), store, ctx("usr_ana", "owner")),
+    ).toEqual({
+      ok: false,
+      error: { code: "limit_reached", message: "At most 100 upcoming overrides per schedule" },
+    });
+  });
+
   test("an override that ended a month ago is deleted when the next one is added", () => {
     const store = withSchedule();
     store.insert("overrides", override({ id: OVR2, start: T - 40 * DAY, end: T - 31 * DAY }));
@@ -854,6 +954,80 @@ describe("members leaving the rotations", () => {
       userId: "usr_eva",
       source: { kind: "layer", layerId: LYR1 },
     });
+  });
+
+  test("the member events list the schedules they left, by name, saying which now has an empty layer", () => {
+    const store = prepared();
+    const second = "sch_01JB0000000000000000000002";
+    runMutation(
+      mutations,
+      "schedule.create",
+      createArgs({ id: second, name: "Database", layers: [layer({ members: ["usr_ana"] })] }),
+      store,
+      ctx("usr_ana", "owner"),
+    );
+    // Only an upcoming override ties Caio to "Database"; one that ended ties nobody.
+    store.insert(
+      "overrides",
+      override({
+        id: "ovr_01JB0000000000000000000003",
+        scheduleId: second,
+        userId: "usr_caio",
+        start: T + HOUR,
+        end: T + 2 * HOUR,
+      }),
+    );
+    const removed = runMutation(
+      serverMutations,
+      "member.remove",
+      { id: "usr_caio", role: "responder", reason: "removed" },
+      store,
+      ctx("usr_ana", "owner"),
+    );
+    expect(removed.ok && removed.events[0]).toEqual({
+      type: "member.removed",
+      subject: "usr_caio",
+      data: {
+        userId: "usr_caio",
+        role: "responder",
+        reason: "removed",
+        schedules: [
+          { id: second, name: "Database", emptied: false },
+          { id: SCH, name: "Platform", emptied: true },
+        ],
+      },
+    });
+
+    const viewer = runMutation(
+      serverMutations,
+      "member.changeRole",
+      { id: "usr_eva", from: "responder", to: "viewer" },
+      store,
+      ctx("usr_ana", "owner"),
+    );
+    expect(viewer.ok && viewer.events[0].data).toEqual({
+      userId: "usr_eva",
+      from: "responder",
+      to: "viewer",
+      schedules: [{ id: SCH, name: "Platform", emptied: false }],
+    });
+    // Another role change, or someone in no schedule, lists none.
+    const promoted = runMutation(
+      serverMutations,
+      "member.changeRole",
+      { id: "usr_bia", from: "admin", to: "responder" },
+      store,
+      ctx("usr_ana", "owner"),
+    );
+    expect(promoted.ok && promoted.events[0].data).toMatchObject({ schedules: [] });
+    const gone = runMutation(
+      serverMutations,
+      "member.remove",
+      { id: "usr_bia", role: "responder", reason: "left" },
+      store,
+      ctx("usr_bia", "responder"),
+    );
+    expect(gone.ok && gone.events[0].data).toMatchObject({ schedules: [] });
   });
 
   test("member.remove with the role unknown (null) still takes them out of the rotations", () => {

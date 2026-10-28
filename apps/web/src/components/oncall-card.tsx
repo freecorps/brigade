@@ -73,6 +73,7 @@ import {
   ROTATION_UNITS,
   rotationChoices,
   rotationFrom,
+  scheduleAnchor,
   scheduleRefusal,
   text,
   UPCOMING_MS,
@@ -124,7 +125,7 @@ export function OnCallCard() {
 
   const report = (name: string) => (outcome: MutationOutcome) => {
     if (!outcome.ok) {
-      setRefused(m.oncall_change_failed({ name, reason: scheduleRefusal(outcome.error.code) }));
+      setRefused(m.oncall_change_failed({ name, reason: scheduleRefusal(outcome.error) }));
     }
   };
   const closeAll = () => {
@@ -152,6 +153,7 @@ export function OnCallCard() {
   const usedZones = rows.map((row) => row.timeZone);
   return (
     <Card
+      id="oncall"
       aria-labelledby="oncall-title"
       className={cn(status === "ready" && rows.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
     >
@@ -236,8 +238,9 @@ export function OnCallCard() {
             {rows.map((row) => (
               <li
                 key={row.id}
+                id={scheduleAnchor(row.id)}
                 data-schedule={row.id}
-                className="flex flex-col gap-4 px-4 py-4 sm:px-6"
+                className="flex scroll-mt-4 flex-col gap-4 px-4 py-4 sm:px-6"
               >
                 {editing === row.id ? (
                   <ScheduleForm

@@ -38,6 +38,11 @@ export const MAX_LAYERS_PER_SCHEDULE = 5;
 export const MAX_LAYER_MEMBERS = 50;
 /** Overrides that have not ended yet, per schedule. */
 export const MAX_OVERRIDES_PER_SCHEDULE = 100;
+/**
+ * Overrides that have not ended yet, per member and schedule (Q20), so one responder cannot fill a schedule's cap
+ * and block everyone else's. Refused as `limit_reached` with an issue on `userId`, which says it was this cap.
+ */
+export const MAX_OVERRIDES_PER_MEMBER = 20;
 export const MAX_OVERRIDE_MS = 90 * 24 * 60 * 60 * 1000;
 /** An override that ended this long ago is deleted when the next one is added to its schedule. */
 export const OVERRIDE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -573,18 +578,26 @@ export const addOverride = defineMutation({
     if (store.get("overrides", args.id)) return fail("conflict", "Override already exists");
     const events: DomainEvent[] = [];
     let open = 0;
+    let theirs = 0;
     for (const row of store.scan("overrides")) {
       if (row.scheduleId !== args.scheduleId) continue;
       if (row.end < ctx.now - OVERRIDE_RETENTION_MS) {
         store.delete("overrides", row.id);
         events.push(removed(row, "expired"));
-      } else if (row.end > ctx.now) open++;
+      } else if (row.end > ctx.now) {
+        open++;
+        if (row.userId === args.userId) theirs++;
+      }
     }
     if (open >= MAX_OVERRIDES_PER_SCHEDULE) {
       return fail(
         "limit_reached",
         `At most ${MAX_OVERRIDES_PER_SCHEDULE} upcoming overrides per schedule`,
       );
+    }
+    if (theirs >= MAX_OVERRIDES_PER_MEMBER) {
+      const message = `At most ${MAX_OVERRIDES_PER_MEMBER} upcoming overrides per member on a schedule`;
+      return fail("limit_reached", message, [{ path: "userId", message }]);
     }
     const row: OverrideRow = {
       id: args.id,
@@ -628,19 +641,28 @@ export const removeOverride = defineMutation({
 });
 
 /**
+ * A schedule a member was taken out of (`dropFromSchedules`): `emptied` when they were the last in one of its layers,
+ * a gap until someone edits it. The member events carry the list (`member.removed`, `member.role_changed`), and the
+ * owners are emailed it (RFC 0003 "Schedules", RFC 0005 "Email").
+ */
+export type ScheduleLeft = { id: string; name: string; emptied: boolean };
+
+/**
  * Takes `userId` out of every rotation, every escalation policy's levels (`dropFromPolicies`) and every service's
  * owners (`dropOwner`) and their open follow-ups (`dropFollowUpOwner`), and deletes their
  * overrides, in the transaction that removed them from the workspace or made them a viewer (`member.remove`,
  * `member.changeRole`, `member.reconcile`, `member.sync`). The rest of each
  * layer keeps its order and the rotation is counted again from its start, so the shifts after them move up; a
- * layer left with nobody is a gap the dashboard shows ("Nobody on call") until someone edits it.
+ * layer left with nobody is a gap the dashboard shows ("Nobody on call") until someone edits it. `schedules`: those
+ * whose rotations had them or where an override of theirs had not ended yet, by name.
  */
 export function dropFromSchedules(
   store: MutationStore,
   userId: string,
   ctx: MutationContext,
-): DomainEvent[] {
+): { events: DomainEvent[]; schedules: ScheduleLeft[] } {
   const events: DomainEvent[] = [];
+  const left = new Map<string, ScheduleLeft>();
   for (const schedule of store.scan("schedules")) {
     if (!schedule.layers.some((layer) => layer.members.includes(userId))) continue;
     const layers = schedule.layers.map((layer) => ({
@@ -648,6 +670,14 @@ export function dropFromSchedules(
       members: layer.members.filter((member) => member !== userId),
     }));
     store.update("schedules", schedule.id, { layers, updatedAt: ctx.now });
+    left.set(schedule.id, {
+      id: schedule.id,
+      name: schedule.name,
+      // Left with nobody by this removal: a layer already empty is no news.
+      emptied: schedule.layers.some(
+        (layer) => layer.members.length === 1 && layer.members[0] === userId,
+      ),
+    });
     const event: ScheduleUpdated = {
       type: "schedule.updated",
       subject: schedule.id,
@@ -666,11 +696,18 @@ export function dropFromSchedules(
     if (row.userId !== userId) continue;
     store.delete("overrides", row.id);
     events.push(removed(row, "member_removed"));
+    const schedule = row.end > ctx.now ? store.get("schedules", row.scheduleId) : undefined;
+    if (schedule && !left.has(schedule.id)) {
+      left.set(schedule.id, { id: schedule.id, name: schedule.name, emptied: false });
+    }
   }
   events.push(...dropFromPolicies(store, { kind: "member", id: userId }, ctx));
   events.push(...dropOwner(store, { kind: "member", id: userId }, ctx));
   events.push(...dropFollowUpOwner(store, userId, ctx));
-  return events;
+  const schedules = [...left.values()].sort(
+    (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) || (a.id < b.id ? -1 : 1),
+  );
+  return { events, schedules };
 }
 
 // ---- Queries ------------------------------------------------------------------------------------------------------

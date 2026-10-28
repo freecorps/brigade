@@ -101,7 +101,8 @@ new `WorkspaceDO` (`workspace.created`, subject the workspace id). Member change
 knew it, `reason`: `removed`, `left`,
 or `reconciled` when the shard caught up with a change D1 had and it missed, actor `sys_members`; a member
 removed through Brigade whose copy a late sync upgrade restored is announced again as `reconciled`), subject the
-member, after D1 committed (RFC 0003 "Members"); a removal also emits `device.unregistered` (`member_removed`) for
+member, after D1 committed (RFC 0003 "Members"); both carry `schedules`, the schedules the member was taken out of
+(`id`, `name`, `emptied`; empty unless they left or became a viewer, RFC 0003 "Schedules"); a removal also emits `device.unregistered` (`member_removed`) for
 each of the member's devices. Invitations (RFC 0003 "Invitations") emit `member.invited` (`invitationId`, `role`,
 `invitedBy`, `expiresAt`, `send`; subject the invitation, never the address), `invitation.revoked` (`invitationId`,
 `revokedBy`), `invitation.declined` (`invitationId`, `userId`) and, on acceptance, `member.added` (`userId`, `role`,
@@ -388,9 +389,18 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   an address nobody proved, counted per inbox (`+tag` dropped, and Gmail's dots): at most 3 per inbox and page while it
   is pending, 5 per inbox and 200 per recipient domain a day across pages, and 200 a day per page, apart from the
   page's notifications.
+- **Rotations** (Q20, RFC 0003 "Schedules", `src/notify-rotation.ts`): `member.removed`, or `member.role_changed` to a
+  viewer, whose `schedules` lists any leads to an email to the workspace's owners (verified addresses only, from D1,
+  at most 50; not the admins): the member's name (read from D1's `user`, "A member" without one) and why (removed,
+  left, made a viewer), each schedule by name, saying which now has a layer with nobody in it, and a link to the
+  dashboard's On-call card. Nothing else about the member. Each owner's locale (`email_rotation`), escaped like the
+  others. A schedule deleted since is left out; none left is nothing to send. Claimed in the email ledger
+  (`rotation:<event id>`, held 60 s, so a redelivery emails no owner twice), within the notifier's caps
+  (`EMAIL_USER_HOURLY_CAP`, `EMAIL_WORKSPACE_DAILY_CAP`; it counts toward them), retried like the others (30 s to 4
+  minutes, 5 attempts) skipping owners it reached, then only logged: it has no incident timeline. Tests:
+  `apps/api/test/email.test.ts` ("the owners' email about a member taken out of schedules").
 - **Not yet (decided, to build).** An email to Brigade's operators (`OPERATOR_EMAILS`) on `brigade.status_changed`
-  (Q19, RFC 0007 "Watching the watcher") and to owners when a removed member changes a rotation (Q20, RFC 0003
-  "Schedules"); both build on the `EmailSender`.
+  (Q19, RFC 0007 "Watching the watcher"), on the `EmailSender`.
 
 ## Alert sources
 

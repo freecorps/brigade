@@ -164,7 +164,7 @@ describe("member.changeRole, member.remove, member.reconcile", () => {
         {
           type: "member.role_changed",
           subject: "usr_caio",
-          data: { userId: "usr_caio", from: "responder", to: "viewer" },
+          data: { userId: "usr_caio", from: "responder", to: "viewer", schedules: [] },
         },
       ],
     });
@@ -217,7 +217,7 @@ describe("member.changeRole, member.remove, member.reconcile", () => {
         {
           type: "member.removed",
           subject: "usr_caio",
-          data: { userId: "usr_caio", role: "responder", reason: "removed" },
+          data: { userId: "usr_caio", role: "responder", reason: "removed", schedules: [] },
         },
         {
           type: "device.unregistered",
@@ -248,7 +248,7 @@ describe("member.changeRole, member.remove, member.reconcile", () => {
         {
           type: "member.removed",
           subject: "usr_eva",
-          data: { userId: "usr_eva", role: "viewer", reason: "left" },
+          data: { userId: "usr_eva", role: "viewer", reason: "left", schedules: [] },
         },
       ],
     });

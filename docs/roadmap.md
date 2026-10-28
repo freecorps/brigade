@@ -290,8 +290,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
     view and "I'm on call" (the Mobile item); schedules on teams (Better Auth teams); layer
     restrictions (only some hours or days); a calendar view and export (iCal); telling someone their shift starts;
     shift swaps (later, Q20).
-  - Left (decided, Q20; RFC 0003 "Schedules"): emailing the owners when a removed member changes a rotation; a
-    dashboard warning for an empty schedule; at most 20 overrides not yet ended per member.
+  - Done (Q20; RFC 0003 "Schedules"): the owners are emailed which schedules a member left (removed, left or made a
+    viewer), from the member event through the outbox; the overview warns about a schedule with a layer left empty,
+    linking to it; at most 20 overrides not yet ended per member and schedule.
   - Left (decided, Q18; RFC 0003 "Escalation policies", RFC 0006 "Who is paged"): an "escalate from severity" setting
     per policy (default every severity); an optional policy picked when declaring by hand.
 - [ ] Slack app: `/inc`, incident channels, timeline mirror, ack buttons
@@ -336,7 +337,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     reset and invitations (RFC 0005 "Email", "Abuse").
   - Left: onboarding a sending domain and setting `EMAIL_FROM` (and `DASHBOARD_URL`) per environment, and applying
     migrations 0003, 0004 and 0005 to the deployed databases (owner's call, apps/api/README.md "Email"); verification no
-    longer blocks it. Next on the same sender (decided): an email to owners when rotations change (Q20); the
+    longer blocks it. Done on the same sender: the owners' email when a member leaves the rotations (Q20); the
     operators' email when the paging pipeline degrades is done (Q19, `OPERATOR_EMAILS`). The PSTN notifier is deferred
     (Q13).
   - Left (decided, Q21; RFC 0005 "Abuse"): 5 invitation emails a day per invited address (was 3); a Brigade-wide

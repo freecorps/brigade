@@ -1346,3 +1346,185 @@ describe("reminders of follow-ups due", () => {
     });
   });
 });
+
+describe("the owners' email about a member taken out of schedules", () => {
+  /** A workspace where Bia holds two schedules' rotations (the only one in "Nights"), Caio's role aside. */
+  async function setUp(locales: Partial<Record<string, string>> = {}) {
+    const ws = await workspace(locales);
+    const layer = (members: string[]) => ({
+      id: newId("lyr", Date.now(), random),
+      name: "",
+      members,
+      startDate: "2026-10-05",
+      handoffTime: "09:00",
+      unit: "weeks",
+      count: 1,
+    });
+    const nights = newId("sch", Date.now(), random);
+    const platform = newId("sch", Date.now(), random);
+    await ws.run(ws.people.ana, "schedule.create", {
+      id: nights,
+      name: "<b>Nights</b> & weekends",
+      timeZone: "America/Sao_Paulo",
+      layers: [layer([ws.people.bia.id])],
+    });
+    await ws.run(ws.people.ana, "schedule.create", {
+      id: platform,
+      name: "Platform",
+      timeZone: "America/Sao_Paulo",
+      layers: [layer([ws.people.ana.id, ws.people.bia.id])],
+    });
+    // An admin and an owner whose address is not verified: neither is emailed.
+    const now = new Date().toISOString();
+    for (const [suffix, role, verified] of [
+      ["dora", "admin", 1],
+      ["ugo", "owner", 0],
+    ] as const) {
+      const userId = `usr_${suffix}_${ws.id}`;
+      await env.DB.prepare(
+        `insert into "user" (id, name, email, "emailVerified", "createdAt", "updatedAt") values (?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(userId, suffix, `${suffix}.${ws.id.toLowerCase()}@example.com`, verified, now, now)
+        .run();
+      await env.DB.prepare(
+        `insert into member (id, "organizationId", "userId", role, "createdAt") values (?, ?, ?, ?, ?)`,
+      )
+        .bind(newId("mem", Date.now(), random), ws.id, userId, role, now)
+        .run();
+    }
+    return { ws, nights, platform };
+  }
+
+  test("removing a member emails each verified owner (not the admins) the schedules they left, from the outbox, in their language", async () => {
+    const { ws } = await setUp({ [olga.id]: "pt-BR" });
+    await ws.run(ws.people.ana, "member.remove", {
+      id: ws.people.bia.id,
+      role: "responder",
+      reason: "removed",
+    });
+    const [removed] = await ws.events("member.removed");
+    let pushed = 0;
+    const relay: Fetch = async (request) => {
+      await request.body?.cancel();
+      pushed++;
+      return Response.json({ status: 200 });
+    };
+    const mail = recorder();
+    expect(await deliver([removed!], mail.sender, { relay })).toEqual({
+      acked: ["msg-0"],
+      retried: [],
+    });
+    expect(pushed).toBe(0);
+    expect(mail.to()).toEqual([ws.address(ws.people.ana), ws.address(ws.people.olga)].sort());
+    const anas = mail.sent.find((one) => one.to.email === ws.address(ws.people.ana))!;
+    expect(anas.subject).toBe("bia was taken out of on-call schedules in Acme");
+    expect(anas.text).toContain(
+      "bia was removed from Acme, so Brigade took them out of these on-call schedules:",
+    );
+    // By name, saying which one is left with nobody in a layer.
+    expect(anas.text).toContain(
+      "- <b>Nights</b> & weekends: one of its layers has nobody in it now\n- Platform",
+    );
+    expect(anas.text).toContain("Open the schedules: https://brigade.example.com/#oncall");
+    expect(anas.text).toContain("because you're an owner of Acme");
+    expect(anas.html).not.toContain("<b>Nights");
+    expect(anas.html).toContain("&lt;b&gt;Nights&lt;/b&gt; &amp; weekends");
+    // Nothing about the member but their name.
+    expect(anas.text).not.toContain(ws.address(ws.people.bia));
+    expect(anas.text).not.toContain(ws.people.bia.id);
+    const olgas = mail.sent.find((one) => one.to.email === ws.address(ws.people.olga))!;
+    expect(olgas.subject).toBe("bia saiu das escalas de plantão em Acme");
+    expect(olgas.text).toContain("Removeram bia de Acme");
+
+    // Redelivered: nobody twice.
+    await deliver([removed!], mail.sender, { attempts: 2 });
+    expect(mail.sent).toHaveLength(2);
+  });
+
+  test("leaving, or becoming a viewer, says so; a change that left no schedule emails nobody", async () => {
+    const { ws } = await setUp();
+    await ws.run(ws.people.ana, "member.changeRole", {
+      id: ws.people.bia.id,
+      from: "responder",
+      to: "viewer",
+    });
+    // Caio, a viewer already, was in no schedule: nothing to say.
+    await ws.run(ws.people.caio, "member.remove", {
+      id: ws.people.caio.id,
+      role: "viewer",
+      reason: "left",
+    });
+    const mail = recorder();
+    await deliver(
+      [...(await ws.events("member.role_changed")), ...(await ws.events("member.removed"))],
+      mail.sender,
+    );
+    expect(mail.sent.map((one) => one.subject)).toEqual([
+      "bia was taken out of on-call schedules in Acme",
+      "bia was taken out of on-call schedules in Acme",
+    ]);
+    expect(mail.sent[0]!.text).toContain(
+      "bia is now a viewer in Acme, and viewers aren't on call, so Brigade took them out of these on-call schedules:",
+    );
+
+    const other = await setUp();
+    await other.ws.run(other.ws.people.bia, "member.remove", {
+      id: other.ws.people.bia.id,
+      role: "responder",
+      reason: "left",
+    });
+    const left = recorder();
+    await deliver(await other.ws.events("member.removed"), left.sender);
+    expect(left.sent[0]!.text).toContain("bia left Acme, so Brigade took them out");
+  });
+
+  test("within the email caps: an owner who got an hour's emails gets none; a failing send is retried, skipping who got it", async () => {
+    const { ws } = await setUp();
+    await ws.withShard((_shard, sql) => {
+      for (let i = 0; i < EMAIL_USER_HOURLY_CAP; i++) {
+        sql.exec(
+          "insert into email_sends (key, user_id, at) values (?, ?, ?)",
+          `seed:${i}`,
+          ws.people.ana.id,
+          Date.now() - 60_000,
+        );
+      }
+    });
+    await ws.run(ws.people.ana, "member.remove", {
+      id: ws.people.bia.id,
+      role: "responder",
+      reason: "removed",
+    });
+    const [removed] = await ws.events("member.removed");
+    let fail = true;
+    const mail = recorder((email) =>
+      fail && email.to.email === ws.address(ws.people.olga)
+        ? { ok: false, code: "E_RATE_LIMIT_EXCEEDED", retry: true }
+        : { ok: true },
+    );
+    expect(await deliver([removed!], mail.sender)).toEqual({
+      acked: [],
+      retried: [{ msgId: "msg-0", delaySeconds: emailRetryDelay(1) }],
+    });
+    // Ana is over her hour's cap: never sent, never retried.
+    expect(mail.to()).toEqual([ws.address(ws.people.olga)]);
+    fail = false;
+    expect((await deliver([removed!], mail.sender, { attempts: 2 })).acked).toEqual(["msg-0"]);
+    expect(mail.to()).toEqual([ws.address(ws.people.olga), ws.address(ws.people.olga)]);
+    await deliver([removed!], mail.sender, { attempts: 3 });
+    expect(mail.sent).toHaveLength(2);
+  });
+
+  test("without a sender nothing is planned or sent, and the event is acked", async () => {
+    const { ws } = await setUp();
+    await ws.run(ws.people.ana, "member.remove", {
+      id: ws.people.bia.id,
+      role: "responder",
+      reason: "removed",
+    });
+    expect(await deliver(await ws.events("member.removed"), undefined)).toEqual({
+      acked: ["msg-0"],
+      retried: [],
+    });
+  });
+});

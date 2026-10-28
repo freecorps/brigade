@@ -42,23 +42,23 @@ export const devices_card = /** @type {((inputs: Devices_CardInputs, options?: {
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
 		if (i?.part === "title") return /** @type {LocalizedString} */ (`Seus celulares`);
-		if (i?.part === "description") return /** @type {LocalizedString} */ (`Os celulares em que o app Brigade chama você neste workspace, até ${i?.max}. Um celular novo além disso substitui o que deu notícia há mais tempo. Todos no workspace veem esta lista, para entender por que alguém foi ou não chamado.`);
+		if (i?.part === "description") return /** @type {LocalizedString} */ (`Os celulares em que o app do Brigade aciona você neste workspace, até ${i?.max}. Um celular novo além disso substitui o que deu sinal há mais tempo. Todos no workspace veem esta lista, para entender por que alguém foi ou não acionado.`);
 		if (i?.part === "loading") return /** @type {LocalizedString} */ (`Carregando seus celulares…`);
 		if (i?.part === "load_failed") return /** @type {LocalizedString} */ (`Não foi possível carregar seus celulares.`);
-		if (i?.part === "empty") return /** @type {LocalizedString} */ (`Nenhum celular chama você aqui ainda. Entre no app Brigade no seu celular para receber chamados.`);
+		if (i?.part === "empty") return /** @type {LocalizedString} */ (`Nenhum celular aciona você aqui ainda. Entre no app do Brigade no seu celular para receber acionamentos.`);
 		if (i?.part === "platform_ios") return /** @type {LocalizedString} */ (`iPhone`);
 		if (i?.part === "platform_android") return /** @type {LocalizedString} */ (`Celular Android`);
 		if (i?.part === "env_production") return /** @type {LocalizedString} */ (`Versão da App Store ou TestFlight`);
 		if (i?.part === "env_sandbox") return /** @type {LocalizedString} */ (`Versão de desenvolvimento`);
 		if (i?.part === "id") return /** @type {LocalizedString} */ (`ID terminado em ${i?.suffix}`);
 		if (i?.part === "registered") return /** @type {LocalizedString} */ (`Registrado ${i?.when}`);
-		if (i?.part === "seen") return /** @type {LocalizedString} */ (`Última notícia ${i?.when}`);
-		if (i?.part === "seen_hint") return /** @type {LocalizedString} */ (`Seu último registro, ou o último chamado que ele confirmou ter mostrado`);
-		if (i?.part === "calls_on") return /** @type {LocalizedString} */ (`Toca como ligação`);
+		if (i?.part === "seen") return /** @type {LocalizedString} */ (`Último sinal ${i?.when}`);
+		if (i?.part === "seen_hint") return /** @type {LocalizedString} */ (`Seu último registro, ou o último acionamento que ele confirmou ter mostrado`);
+		if (i?.part === "calls_on") return /** @type {LocalizedString} */ (`Toca como chamada`);
 		if (i?.part === "calls_off") return /** @type {LocalizedString} */ (`Só notificações`);
 		if (i?.part === "remove") return /** @type {LocalizedString} */ (`Remover`);
 		if (i?.part === "remove_label") return /** @type {LocalizedString} */ (`Remover ${i?.name}`);
-		if (i?.part === "remove_confirm") return /** @type {LocalizedString} */ (`Parar de chamar neste ${i?.name}? Se o app Brigade ainda estiver conectado nele, ele se registra de novo na próxima vez que abrir: saia da conta no app para parar de vez.`);
+		if (i?.part === "remove_confirm") return /** @type {LocalizedString} */ (`Parar de acionar neste ${i?.name}? Se o app do Brigade ainda estiver conectado nele, ele se registra de novo na próxima vez que abrir: saia da conta no app para parar de vez.`);
 		if (i?.part === "remove_go") return /** @type {LocalizedString} */ (`Remover celular`);
 		if (i?.part === "removing") return /** @type {LocalizedString} */ (`Removendo…`);
 		if (i?.part === "keep") return /** @type {LocalizedString} */ (`Manter`);

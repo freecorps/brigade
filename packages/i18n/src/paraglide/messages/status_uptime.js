@@ -17,6 +17,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "day_down" | "{date}: down for {minutes} min" |
 * | "day_none" | "{date}: no data" |
 * | "start" | "90 days ago" |
+* | "start_short" | "30 days ago" |
+* | "percent" | "{percent}% uptime" |
 * | "end" | "Today" |
 * | * | "Uptime" |
 *
@@ -34,6 +36,8 @@ export const status_uptime = /** @type {((inputs: Status_UptimeInputs, options?:
 		if (i?.part === "day_down") return /** @type {LocalizedString} */ (`${i?.date}: fora do ar por ${i?.minutes} min`);
 		if (i?.part === "day_none") return /** @type {LocalizedString} */ (`${i?.date}: sem dados`);
 		if (i?.part === "start") return /** @type {LocalizedString} */ (`90 dias atrás`);
+		if (i?.part === "start_short") return /** @type {LocalizedString} */ (`30 dias atrás`);
+		if (i?.part === "percent") return /** @type {LocalizedString} */ (`${i?.percent}% de disponibilidade`);
 		if (i?.part === "end") return /** @type {LocalizedString} */ (`Hoje`);
 		return /** @type {LocalizedString} */ (`Disponibilidade`)
 	}
@@ -45,6 +49,8 @@ export const status_uptime = /** @type {((inputs: Status_UptimeInputs, options?:
 		if (i?.part === "day_down") return /** @type {LocalizedString} */ (`${i?.date}: down for ${i?.minutes} min`);
 		if (i?.part === "day_none") return /** @type {LocalizedString} */ (`${i?.date}: no data`);
 		if (i?.part === "start") return /** @type {LocalizedString} */ (`90 days ago`);
+		if (i?.part === "start_short") return /** @type {LocalizedString} */ (`30 days ago`);
+		if (i?.part === "percent") return /** @type {LocalizedString} */ (`${i?.percent}% uptime`);
 		if (i?.part === "end") return /** @type {LocalizedString} */ (`Today`);
 		return /** @type {LocalizedString} */ (`Uptime`)
 	}

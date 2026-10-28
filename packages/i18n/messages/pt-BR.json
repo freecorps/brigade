@@ -3277,6 +3277,20 @@
       }
     }
   ],
+  "status_group_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} componente",
+        "countPlural=*": "{countFormatted} componentes"
+      }
+    }
+  ],
   "status_uptime": [
     {
       "declarations": ["input part", "input percent", "input date", "input minutes"],
@@ -3289,6 +3303,8 @@
         "part=day_down": "{date}: fora do ar por {minutes} min",
         "part=day_none": "{date}: sem dados",
         "part=start": "90 dias atrás",
+        "part=start_short": "30 dias atrás",
+        "part=percent": "{percent}% de disponibilidade",
         "part=end": "Hoje",
         "part=*": "Disponibilidade"
       }

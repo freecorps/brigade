@@ -365,6 +365,7 @@ export * from './stack_timed_out.js';
 export * from './stack_unreachable.js';
 export * from './status_card.js';
 export * from './status_domain_card.js';
+export * from './status_group_count.js';
 export * from './status_maintenance.js';
 export * from './status_subscribe.js';
 export * from './status_subscribers.js';

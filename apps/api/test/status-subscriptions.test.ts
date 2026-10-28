@@ -1449,6 +1449,22 @@ describe("the page", () => {
     expect(html).not.toContain("<form");
   });
 
+  test("a named group is a card that folds with its count; each day rises in turn and names itself", () => {
+    const html = renderStatusPage(
+      { ...base, groups: [{ ...base.groups[0]!, name: "Payments <EU>" }] },
+      { slug: "acme" },
+    );
+    expect(html).toContain(
+      '<details class="group" open><summary><span class="name">Payments &lt;EU&gt;</span><span class="count">1 component</span></summary>',
+    );
+    expect(html).toContain(
+      '<span class="u-down" style="--i:1" data-tip="Oct 26, 2026: down for 90 min"></span>',
+    );
+    // The scale says 30 days on a phone, where only those show.
+    expect(html).toContain('<span class="short">30 days ago</span>');
+    expect(html).toContain('<span class="pct">99.5% uptime</span>');
+  });
+
   test("pt-BR", () => {
     const html = renderStatusPage({ ...base, locale: "pt-BR" }, { slug: "acme", subscribe: true });
     expect(html).toContain("de disponibilidade nos últimos 90 dias");

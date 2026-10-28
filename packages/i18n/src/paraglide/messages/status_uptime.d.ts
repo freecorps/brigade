@@ -17,6 +17,8 @@ export type Status_UptimeInputs = {
 * | "day_down" | "{date}: down for {minutes} min" |
 * | "day_none" | "{date}: no data" |
 * | "start" | "90 days ago" |
+* | "start_short" | "30 days ago" |
+* | "percent" | "{percent}% uptime" |
 * | "end" | "Today" |
 * | * | "Uptime" |
 *

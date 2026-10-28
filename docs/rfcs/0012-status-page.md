@@ -319,8 +319,9 @@ reader skips fields it does not check, so they need no new version ("Feeds").
   cookies read, only `GET` and `HEAD`.
 - **Server-rendered, one script.** A plain HTML document with inline CSS, the design tokens of `packages/ui` (light
   and dark by `prefers-color-scheme`), readable on a phone: the viewport set, safe-area padding, 16 px text, rows at
-  least 48 px tall, long names wrapping. Past incidents fold behind `<details>`. Everything works without script; the
-  one script only shows times in the visitor's zone ("Local times").
+  least 48 px tall, long names wrapping. Past incidents and named component groups fold behind `<details>`. Everything
+  works without script; the one script shows times in the visitor's zone ("Local times") and lets a tap name an uptime
+  day on a phone.
 - **Read defensively.** A snapshot is rendered only if it is the version the Worker knows, its language and every
   status one it has words for, and every time a real date (`isSnapshot`); anything else, or a render that throws,
   is the 503 page (not cached), so a Worker older or newer than the shard never shows half a page.
@@ -396,9 +397,13 @@ reader skips fields it does not check, so they need no new version ("Feeds").
   a component (`touchesStatusPage`), so a busy monitor nobody shows never rebuilds the page; the page is rebuilt
   every 5 minutes while a linked one fires, and at UTC midnight the bars move on to the new day ("The
   snapshot").
-- **On the page**: 90 thin bars under the component, coloured like the component scale, each with its day as a
-  tooltip, hidden from screen readers behind one text alternative (`role="img"`): the percentage and every day with
-  downtime and how long. No script.
+- **On the page**: 90 rounded bars under the component (the last 30 on a phone), in their own green, amber and red,
+  hidden from screen readers behind one text alternative (`role="img"`): the percentage and every day with downtime
+  and how long. Under the bars, the scale ("90 days ago", the percentage, "Today"). In CSS, the bars rise in turn
+  when the page opens (fading only, under reduced motion), and hovering one dims the others and shows its day above
+  it. On a phone, where there is no hover, a tap does the same through the page's one script; without it the bars and
+  their text alternative are unchanged. Named groups are cards that fold (`<details>`, open to start with) with their
+  component count.
 
 ## Scheduled maintenance
 

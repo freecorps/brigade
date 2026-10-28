@@ -88,11 +88,13 @@ export function AppShell({ live, children }: { live: boolean; children: ReactNod
       <div className="flex min-w-0 flex-1 flex-col md:py-2 md:pr-2">
         <div className="flex min-h-0 flex-1 flex-col bg-background md:overflow-hidden md:rounded-xl md:border">
           <TopBar live={live} user={user} />
-          {/* The sheet's scroller on wide screens, so the top bar and the sheet's rounded corners stay put. */}
+          {/* The sheet's scroller on wide screens, so the top bar and the sheet's rounded corners stay put. Positioned,
+              so anything absolute inside it (a visually hidden input, a live region) scrolls and clips with it instead
+              of hanging off the window and giving the page a second scrollbar. */}
           <main
             id="main"
             tabIndex={-1}
-            className="min-h-0 flex-1 outline-none md:overflow-y-auto md:[scrollbar-gutter:stable]"
+            className="relative min-h-0 flex-1 outline-none md:overflow-y-auto md:[scrollbar-gutter:stable]"
           >
             {children}
           </main>

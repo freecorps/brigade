@@ -32,7 +32,7 @@ export function Segmented<T extends string>({
           <label
             key={option.value}
             className={cn(
-              "flex h-full cursor-pointer items-center justify-center rounded-sm px-3 text-sm whitespace-nowrap select-none",
+              "relative flex h-full cursor-pointer items-center justify-center rounded-sm px-3 text-sm whitespace-nowrap select-none",
               "transition-[color,background-color,box-shadow] duration-(--brigade-duration-fast) ease-out",
               "has-focus-visible:ring-3 has-focus-visible:ring-ring",
               selected

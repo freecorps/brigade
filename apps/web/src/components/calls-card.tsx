@@ -100,7 +100,7 @@ export function CallsPanel({ value, loading, failed, onChange }: PanelProps) {
                 <label
                   key={choice}
                   className={cn(
-                    "flex min-h-11 cursor-pointer items-start gap-3 rounded-md border px-3 py-2.5 text-sm",
+                    "relative flex min-h-11 cursor-pointer items-start gap-3 rounded-md border px-3 py-2.5 text-sm",
                     "has-focus-visible:ring-3 has-focus-visible:ring-ring",
                     selected ? "border-primary bg-primary/5" : "border-input hover:bg-muted",
                   )}

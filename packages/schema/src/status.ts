@@ -822,6 +822,12 @@ export type StatusSnapshot = {
   maintenance?: SnapshotMaintenance[];
   /** Windows not started yet, soonest first, at most `STATUS_UPCOMING_MAX`. Absent from version 1. */
   upcoming?: SnapshotMaintenance[];
+  /**
+   * The workspace whose shard pushed it (apps/api src/status-page.ts), never rendered: a page at a custom domain is
+   * served only when the snapshot under its slug is still that workspace's (RFC 0012 "Custom domains"). Absent from
+   * snapshots pushed before custom domains.
+   */
+  workspaceId?: string;
 };
 
 type SnapshotStore = Pick<MutationStore, "get" | "scan">;

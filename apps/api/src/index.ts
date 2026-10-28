@@ -42,6 +42,7 @@ import { receiptWorkspace } from "./receipts.ts";
 import { beginSlackInstall, listSlackChannels } from "./slack-bridge.ts";
 import type { FeedFormat } from "./status-feed.ts";
 import { configureStatusPage, serveStatusFeed, serveStatusPage } from "./status-route.ts";
+import { statusDomainRoute } from "./status-domain.ts";
 import {
   serveSubscribers,
   serveSubscription,
@@ -74,6 +75,7 @@ import {
 
 export { ProbeDO } from "./probe.ts";
 export { SlackBridge } from "./slack-bridge.ts";
+export { StatusPages } from "./status-pages.ts";
 export { WatchdogDO } from "./watchdog.ts";
 export { WorkspaceDO } from "./workspace.ts";
 
@@ -90,6 +92,7 @@ const SYNC_PATH = /^\/sync\/([^/]+)$/;
 const HEARTBEAT_PATH = /^\/heartbeat\/([^/]+)$/;
 const ALERTS_PATH = /^\/alerts\/([^/]+)$/;
 const STATUS_PAGE_PATH = /^\/workspaces\/([^/]+)\/status-page$/;
+const STATUS_DOMAIN_PATH = /^\/workspaces\/([^/]+)\/status-page\/domain(\/check)?$/;
 const SUBSCRIBERS_PATH = /^\/workspaces\/([^/]+)\/status-page\/subscribers(\/export)?$/;
 /** `/status/<slug>/<action>`: subscribing to a page by email (RFC 0012 "Email subscriptions"). */
 const SUBSCRIPTION_PATH = /^\/status\/([^/]+)\/(subscribe|confirm|manage|unsubscribe)$/;
@@ -227,6 +230,10 @@ export default {
     const statusPage = STATUS_PAGE_PATH.exec(pathname)?.[1];
     if (statusPage !== undefined)
       return configureStatusPage(request, env, auth, statusPage, waitUntil);
+    const domain = STATUS_DOMAIN_PATH.exec(pathname);
+    if (domain) {
+      return statusDomainRoute(request, env, auth, domain[1]!, !!domain[2], undefined, waitUntil);
+    }
     const subscribers = SUBSCRIBERS_PATH.exec(pathname);
     if (subscribers)
       return serveSubscribers(request, env, auth, subscribers[1]!, subscribers[2] ?? "");

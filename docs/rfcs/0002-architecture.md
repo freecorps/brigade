@@ -51,6 +51,8 @@ and pushes it from its alarm, so it lags by seconds, longer while a push fails a
 apps/
   api/         Cloudflare Worker: HTTP/WS entry, Durable Objects, queue consumers      (AGPL-3.0)
   relay/       Push relay Worker (RFC 0006)                                            (AGPL-3.0)
+  status-edge/ Status page edge Worker on the Cloudflare for SaaS zone: serves a page  (AGPL-3.0)
+               at its own domain through the API's StatusPages entrypoint (RFC 0012)
   web/         Dashboard SPA (React + Vite) on Workers static assets, plus a small     (AGPL-3.0)
                Worker that forwards /api/* to the api Worker (service binding)
   mobile/      Expo app (iOS/Android)                                                  (AGPL-3.0)
@@ -118,7 +120,8 @@ the session are relied on, and the reference says how), `GET /workspaces/:id` (t
 its phone in every workspace it was opened in, RFC 0006 "Device registration"), the status page's subscribers
 (`GET`, `DELETE /workspaces/:id/status-page/subscribers`, `GET …/export`: the public's addresses, cookie only),
 `POST /workspaces/:id/api-tokens` and `DELETE /workspaces/:id/api-tokens/:tokenId` (the dashboard's API tokens card:
-the token is answered once, RFC 0014), `GET /features` (what the deployment has, RFC 0013), `GET /config` (the
+the token is answered once, RFC 0014), the status page's own domain (`GET`, `PUT`, `DELETE
+/workspaces/:id/status-page/domain`, `POST …/check`: the dashboard's Custom domain card, RFC 0012), `GET /features` (what the deployment has, RFC 0013), `GET /config` (the
 sign-up mode, "Auth" below), `POST /setup/first-user` (the first owner, "Auth" below) and `/slack/*`. The
 webhook, status page, export and draft routes were internal (cookie only) until API tokens reached them: they are in
 the reference now, with the dashboard still their main caller. `GET /status/:slug` is the
@@ -454,5 +457,7 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
 - Self-hosted — one Cloudflare account, one `deploy` command, guided setup (Slack app manifest, relay registration).
   The setup steps (apps/api README "Self-host setup") create the `STATUS` KV namespace with the instance's other
   resources and bind it at the top level of `apps/api/wrangler.jsonc` (decided, Q23), then run `vp run
-  setup:first-user` ("The first owner"; sign-up stays closed). To build: one wizard running them, and optionally
-  custom domains for status pages (RFC 0012 "Addresses").
+  setup:first-user` ("The first owner"; sign-up stays closed). Custom domains for status pages are optional steps
+  of their own (Cloudflare for SaaS on a zone of its own, a fallback origin, the `brigade-status-edge` Worker with the
+  zone's `*/*` route, and a scoped token; apps/api README "Custom domains", RFC 0012 "Custom domains"). Deploy order:
+  the API, then the edge Worker. To build: one wizard running them all.

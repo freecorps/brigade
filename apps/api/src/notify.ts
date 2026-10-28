@@ -17,6 +17,8 @@ import { notifyRotation } from "./notify-rotation.ts";
 import { asksForInvitation, notifyInvitation } from "./notify-invite.ts";
 import { notifySlack, type SlackNotifyEnv } from "./notify-slack.ts";
 import { notifyStatus, type StatusNotifyEnv } from "./notify-status.ts";
+import { asksForStatusHost, notifyStatusHost } from "./status-domain.ts";
+import type { SaasEnv } from "./status-domain-cf.ts";
 import { notifyWebhookDisabled, notifyWebhooks, type WebhookNotifyEnv } from "./notify-webhooks.ts";
 import type { BrigadeEvent } from "./outbox.ts";
 import {
@@ -80,12 +82,16 @@ export const D1_HEALTH_TIMEOUT_MS = 3000;
 
 /** Optional: an instance without a relay still runs, and every page it would send is recorded as failed. */
 export type NotifyEnv = EmailEnv &
+  SaasEnv &
   EmailNotifyEnv &
   OperatorEnv &
   SlackNotifyEnv &
   StatusNotifyEnv &
   WebhookNotifyEnv & {
     WORKSPACE: Env["WORKSPACE"];
+    /** The status pages' snapshots and custom hostname lookups (src/status-domain.ts `syncStatusHost`). */
+    STATUS?: Env["STATUS"];
+    DB?: Env["DB"];
     /** The dead-man switch's watchdog (src/watchdog.ts); without it a heartbeat is logged and dropped. */
     WATCHDOG?: Env["WATCHDOG"];
     /**
@@ -215,13 +221,15 @@ export async function consumeEvents(
               ? await notifyWebhookDisabled(event, message.attempts, env, mail)
               : statusEmail
                 ? await notifyStatus(event, message.attempts, env, mail, slots, waitUntil)
-                : reminder
-                  ? await notifyReminder(event, message.attempts, env, mail)
-                  : rotation
-                    ? await notifyRotation(event, message.attempts, env, mail)
-                    : (await notifyPush(event, message.attempts, env, send))
-                      ? retryDelay(message.attempts)
-                      : undefined;
+                : asksForStatusHost(event)
+                  ? await notifyStatusHost(event, env)
+                  : reminder
+                    ? await notifyReminder(event, message.attempts, env, mail)
+                    : rotation
+                      ? await notifyRotation(event, message.attempts, env, mail)
+                      : (await notifyPush(event, message.attempts, env, send))
+                        ? retryDelay(message.attempts)
+                        : undefined;
         // Slack's and the webhooks' work always finishes (within its budget) before the message is settled. A page's
         // own retry comes first: never put off behind their backoff, and an early retry only finds their work held.
         const [slackSeconds, webhookSeconds] = await sides;

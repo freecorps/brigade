@@ -21,6 +21,7 @@ import { usePreferences } from "@/components/preferences";
 import { RequireWorkspace } from "@/components/session";
 import { SlackCard } from "@/components/slack-card";
 import { MaintenanceCard } from "@/components/maintenance-card";
+import { StatusDomainCard } from "@/components/status-domain-card";
 import { StatusPageCard } from "@/components/status-page-card";
 import { StackCard } from "@/components/stack-card";
 import { WebhooksCard } from "@/components/webhooks-card";
@@ -75,6 +76,7 @@ function Overview() {
       <WorkspaceEmailCard />
       <WorkspaceLanguageCard />
       <StatusPageCard />
+      <StatusDomainCard />
       <MaintenanceCard />
       <SlackCard />
       <WebhooksCard />

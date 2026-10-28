@@ -879,6 +879,45 @@ export type StatusPageRow = {
   updatedBy: string;
 };
 
+/** Where a status page's own domain stands at Cloudflare: waiting for its DNS records, serving, or given up on. */
+export type StatusDomainState = "pending" | "active" | "failed";
+/**
+ * Why Cloudflare has not verified the domain, as a code the dashboard words in each language (never Cloudflare's own
+ * English): the DNS records are not in place (`dns`), a CAA record forbids the certificate (`caa`), validation ran out
+ * of time (`timed_out`), the certificate expired (`expired`), the hostname no longer points here (`moved`), Cloudflare
+ * blocked it (`blocked`), Cloudflare no longer has it (`deleted`), or another reason (`other`).
+ */
+export type StatusDomainError =
+  | "dns"
+  | "caa"
+  | "timed_out"
+  | "expired"
+  | "moved"
+  | "blocked"
+  | "deleted"
+  | "other";
+/** A DNS record the owner must create for the domain, as Cloudflare asked for it. */
+export type StatusDomainRecord = { type: "CNAME" | "TXT"; name: string; value: string };
+
+/** A status page's own domain (RFC 0012 "Custom domains"): one per page, synced to the dashboard. */
+export type StatusDomainRow = {
+  id: string;
+  /** Lowercase, punycode for an internationalized name; unique across the instance (D1 `status_custom_host`). */
+  hostname: string;
+  /** Cloudflare's id of the custom hostname, to check and delete it. */
+  cloudflareId: string;
+  state: StatusDomainState;
+  records: StatusDomainRecord[];
+  /** Cloudflare's reason, when it is not active and gave one. */
+  error: StatusDomainError | null;
+  /** When Cloudflare was last asked. */
+  checkedAt: number;
+  /** Since when it is in its state: when it was added, or the check that moved it (a takeover reads it). */
+  stateAt: number;
+  createdAt: number;
+  createdBy: string;
+};
+
 /** A part of the service the status page lists (RFC 0012 "Components"). */
 export type StatusComponentRow = {
   id: string; // cmp_<ULID>, made by the client
@@ -1354,6 +1393,7 @@ export type BrigadeTables = {
   status_incidents: StatusIncidentRow;
   status_retired: StatusRetiredRow;
   status_maintenance: MaintenanceRow;
+  status_domain: StatusDomainRow;
   webhooks: WebhookRow;
   webhook_secrets: WebhookSecretRow;
   services: ServiceRow;
@@ -1407,6 +1447,7 @@ export const TABLES = {
   status_incidents: { serverOnly: false },
   status_retired: { serverOnly: true },
   status_maintenance: { serverOnly: false },
+  status_domain: { serverOnly: false },
   webhooks: { serverOnly: false },
   webhook_secrets: { serverOnly: true },
   services: { serverOnly: false },

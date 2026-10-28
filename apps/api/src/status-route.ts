@@ -51,12 +51,14 @@ export function statusPageHeaders(cache: "no-store" | number): Headers {
  * `GET /status/:slug`: the public page, no session. The snapshot comes from KV (`cacheTtl`) behind the edge's own
  * cache (the Cache API, where the Worker runs on a zone; a no-op on workers.dev), so a busy page costs about one KV read
  * per location every 30 s and never wakes the shard. An address with no page, or one that is not public, is a 404.
+ * With `owner` (a custom hostname, src/status-pages.ts) a snapshot another workspace pushed is a 404 too.
  */
 export function serveStatusPage(
   request: Request,
   env: Env,
-  ctx: ExecutionContext,
+  ctx: Pick<ExecutionContext, "waitUntil">,
   slug: string,
+  owner?: string,
 ): Promise<Response> {
   // A key of our own, not the request: the same page whatever host or headers it came with.
   return serveFromSnapshot(
@@ -64,7 +66,8 @@ export function serveStatusPage(
     env,
     ctx,
     slug,
-    `https://status.cache.invalid/${slug}`,
+    ownedKey(`https://status.cache.invalid/${slug}`, owner),
+    owner,
     (stored) => {
       // The subscribe form only where email can be sent: a page whose emails never go out promises nothing.
       const subscribe = emailSender(env) !== undefined;
@@ -86,15 +89,16 @@ const FEED_TYPES: Record<FeedFormat, string> = {
 export function serveStatusFeed(
   request: Request,
   env: Env & { DASHBOARD_URL?: string },
-  ctx: ExecutionContext,
+  ctx: Pick<ExecutionContext, "waitUntil">,
   slug: string,
   format: FeedFormat,
+  owner?: string,
 ): Promise<Response> {
   const origin = new URL(
     dashboardLink("/", {}, env.DASHBOARD_URL, new URL(request.url).origin) ?? request.url,
   ).origin;
   const key = `https://status.cache.invalid/${slug}/feed.${format}?origin=${encodeURIComponent(origin)}`;
-  return serveFromSnapshot(request, env, ctx, slug, key, (stored) => {
+  return serveFromSnapshot(request, env, ctx, slug, ownedKey(key, owner), owner, (stored) => {
     const urls = feedUrls(origin, slug);
     const body = format === "atom" ? renderAtomFeed(stored, urls) : renderJsonFeed(stored, urls);
     const headers = statusPageHeaders(STATUS_MAX_AGE_S);
@@ -105,17 +109,26 @@ export function serveStatusFeed(
   });
 }
 
+/** A cache key of its own for a page served for `owner` only, so a render checked for one workspace serves no other. */
+function ownedKey(key: string, owner: string | undefined): string {
+  if (owner === undefined) return key;
+  const url = new URL(key);
+  url.searchParams.set("workspace", owner);
+  return url.href;
+}
+
 /**
  * What the page and its feeds share: `GET` and `HEAD` only, the edge cache under `cacheKey`, then the snapshot from KV,
- * checked (`isSnapshot`) before `render` sees it. No page is a 404, an unreadable snapshot or a throwing render the
- * 503 page (never cached).
+ * checked (`isSnapshot`) before `render` sees it. No page is a 404, and so is a snapshot `owner` (when given) did not
+ * push; an unreadable snapshot or a throwing render is the 503 page (never cached).
  */
 async function serveFromSnapshot(
   request: Request,
   env: Env,
-  ctx: ExecutionContext,
+  ctx: Pick<ExecutionContext, "waitUntil">,
   slug: string,
   cacheKey: string,
+  owner: string | undefined,
   render: (snapshot: StatusSnapshot) => Response,
 ): Promise<Response> {
   if (request.method !== "GET" && request.method !== "HEAD") {
@@ -126,7 +139,7 @@ async function serveFromSnapshot(
   // Only an address with no page counts against the caller (decided, Q23): a real page's hits never do.
   const head = async (response: Response) =>
     answer(
-      response.status === 404 && !(await missAllowed(request, env)) ? rateLimited() : response,
+      response.status === 404 && !(await missAllowed(request, env)) ? rateLimitedPage() : response,
     );
   if (!STATUS_SLUG.test(slug)) return head(notFound());
   const key = new Request(cacheKey);
@@ -146,7 +159,11 @@ async function serveFromSnapshot(
   }
   let response: Response;
   if (stored === null) response = notFound();
-  else if (!isSnapshot(stored)) {
+  else if (owner !== undefined && Object(stored).workspaceId !== owner) {
+    // The slug is another workspace's by now, or its snapshot predates the field: never another's page (RFC 0012
+    // "Custom domains").
+    response = notFound();
+  } else if (!isSnapshot(stored)) {
     // A newer shape than this Worker knows, or a damaged value: never rendered half-way.
     console.error(JSON.stringify({ message: "a status page snapshot is unreadable", slug }));
     response = unavailable();
@@ -168,9 +185,11 @@ async function serveFromSnapshot(
 }
 
 const notFound = () => page(renderStatusMessage("not_found", "en"), 404, STATUS_MISSING_MAX_AGE_S);
+/** The 404 page, for a path a custom hostname does not serve (src/status-pages.ts). */
+export const statusNotFound = notFound;
 
 /** Past the misses a caller may make: never cached, so the next minute's answer is the real one. */
-function rateLimited(): Response {
+export function rateLimitedPage(): Response {
   const response = page(renderStatusMessage("rate_limited", "en"), 429);
   response.headers.set("Retry-After", "60");
   return response;
@@ -181,7 +200,7 @@ function rateLimited(): Response {
  * abuse"): a flood of made-up addresses from one place is bounded, while every page that exists is served to anyone.
  * Without the binding or a caller address, or if the limiter fails, the miss is answered as before.
  */
-async function missAllowed(request: Request, env: Env): Promise<boolean> {
+export async function missAllowed(request: Request, env: Env): Promise<boolean> {
   const limiter = env.STATUS_MISS_LIMIT as RateLimit | undefined;
   // Cloudflare always names the caller; a request without it (a local run) has nobody to count against.
   const address = request.headers.get("cf-connecting-ip");
@@ -287,6 +306,7 @@ export function isSnapshot(value: unknown): value is StatusSnapshot {
     ) &&
     isArrayOf(value.active, isIncident) &&
     isArrayOf(value.history, isIncident) &&
+    (value.workspaceId === undefined || isString(value.workspaceId)) &&
     (v2
       ? isArrayOf(value.maintenance, isWindow) && isArrayOf(value.upcoming, isWindow)
       : value.maintenance === undefined && value.upcoming === undefined)

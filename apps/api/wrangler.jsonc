@@ -82,6 +82,8 @@
   // page, checked before D1 or a shard is touched. Namespace ids 416x and 417x, one per environment like the receipts'.
   // STATUS_MISS_LIMIT (src/status-route.ts): `/status/*` answers with no page there, 30 a minute per caller address,
   // then 429; a page that exists is never counted (RFC 0012 "Caching and abuse"). Namespace ids 418x.
+  // STATUS_DOMAIN_LIMIT (src/status-domain.ts): changes to a status page's own domain, 10 a minute per workspace, each
+  // a call to Cloudflare's API. Namespace ids 419x.
   "ratelimits": [
     { "name": "RECEIPT_LIMIT", "namespace_id": "4101", "simple": { "limit": 120, "period": 60 } },
     { "name": "ALERT_LIMIT", "namespace_id": "4111", "simple": { "limit": 300, "period": 60 } },
@@ -115,6 +117,11 @@
       "namespace_id": "4181",
       "simple": { "limit": 30, "period": 60 },
     },
+    {
+      "name": "STATUS_DOMAIN_LIMIT",
+      "namespace_id": "4191",
+      "simple": { "limit": 10, "period": 60 },
+    },
   ],
   // The public status page's snapshots (RFC 0012, src/status-page.ts): each workspace shard pushes its page here on
   // every change, and `GET /status/:slug` reads it, so no visitor ever wakes a shard. Without an `id` this binding is
@@ -147,6 +154,13 @@
   // API_TOKEN_KEY (src/api-tokens.ts) is optional: 32 random bytes, base64url, the HMAC key API tokens are hashed under
   // (RFC 0014); without it they are hashed with SHA-256 alone. Setting it later keeps tokens (each row moves to the
   // keyed digest on its next use); changing or removing it invalidates every token hashed under it.
+  // CF_SAAS_TOKEN, CF_ZONE_ID and CF_SAAS_FALLBACK_ORIGIN (src/status-domain.ts) are optional, all three or none:
+  // custom domains for status pages through Cloudflare for SaaS (RFC 0012 "Custom domains", README "Custom domains").
+  // The token is scoped to "SSL and Certificates: Edit" on that zone alone; the zone id and the fallback origin's
+  // hostname (what owners point their CNAME at) are set like secrets so no account's ids are in this file. They also
+  // need DASHBOARD_URL. Without them the dashboard hides the section and its routes answer 503 `not_configured`.
+  // Custom hostnames never reach this Worker's `fetch`: apps/status-edge holds the SaaS zone's route and calls the
+  // StatusPages entrypoint (src/status-pages.ts), so it deploys after this one.
   // BOOTSTRAP_TOKEN (src/bootstrap.ts) is optional: at least 32 random characters, set only on a new instance until its
   // first owner exists (scripts/create-first-user.mjs, apps/api/README.md "First owner"); without it
   // `POST /setup/first-user` does not exist.
@@ -233,6 +247,11 @@
           "namespace_id": "4183",
           "simple": { "limit": 30, "period": 60 },
         },
+        {
+          "name": "STATUS_DOMAIN_LIMIT",
+          "namespace_id": "4193",
+          "simple": { "limit": 10, "period": 60 },
+        },
       ],
       // `brigade-status-dev`, the dev status page snapshots (RFC 0012).
       "kv_namespaces": [{ "binding": "STATUS", "id": "cc29234582db43538204e0ae375d8ec8" }],
@@ -316,6 +335,11 @@
           "name": "STATUS_MISS_LIMIT",
           "namespace_id": "4182",
           "simple": { "limit": 30, "period": 60 },
+        },
+        {
+          "name": "STATUS_DOMAIN_LIMIT",
+          "namespace_id": "4192",
+          "simple": { "limit": 10, "period": 60 },
         },
       ],
       "secrets": { "required": ["BETTER_AUTH_SECRET"] },

@@ -1,0 +1,53 @@
+// The status page edge (RFC 0012 "Custom domains"): the Worker on the Cloudflare for SaaS zone, which serves a status
+// page at a workspace's own domain. The top-level config is production (`brigade-status-edge`); `dev` is the
+// environment below (`brigade-status-edge-dev`). It needs the API Worker of its environment deployed first (api, then
+// this one), since its one service binding is the API's `StatusPages` entrypoint.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "brigade-status-edge",
+  "main": "./src/index.ts",
+  // Matches apps/api: the installed workerd, so local and deployed behaviour agree.
+  "compatibility_date": "2026-10-19",
+  // Reached only through its route on the SaaS zone, never on its own URL.
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "traces": { "enabled": true, "head_sampling_rate": 0.1 },
+  },
+  "upload_source_maps": true,
+  // No `routes` here: the SaaS zone's `*/*` route is the operator's, added on that zone (apps/status-edge README), so
+  // no zone or hostname is in this file. `wrangler deploy` leaves a route it did not create alone.
+  //
+  // The API's StatusPages entrypoint (apps/api src/status-pages.ts): it renders and caches the page, its feeds and its
+  // subscription routes. One way only: the API never binds to this Worker.
+  "services": [{ "binding": "API", "service": "brigade-api", "entrypoint": "StatusPages" }],
+  // The API's `STATUS` namespace, read only: `host:<hostname>` keys (apps/api src/status-domain.ts). This Worker never
+  // writes it. Without an `id` this binding is for local runs and the tests only; a self-hosted instance gives it the
+  // id of the API's own `STATUS` namespace, or `wrangler deploy` provisions an empty one of its own.
+  "kv_namespaces": [{ "binding": "STATUS" }],
+  // STATUS_MISS_LIMIT: a hostname with no page, 30 a minute per caller address, then 429. The API's namespace (4181),
+  // so a caller's misses here and on `/status/*` count together.
+  "ratelimits": [
+    {
+      "name": "STATUS_MISS_LIMIT",
+      "namespace_id": "4181",
+      "simple": { "limit": 30, "period": 60 },
+    },
+  ],
+  // Bindings are not inherited, so `dev` repeats them.
+  "env": {
+    "dev": {
+      "services": [{ "binding": "API", "service": "brigade-api-dev", "entrypoint": "StatusPages" }],
+      // `brigade-status-dev`, the API's dev namespace (apps/api wrangler.jsonc).
+      "kv_namespaces": [{ "binding": "STATUS", "id": "cc29234582db43538204e0ae375d8ec8" }],
+      "ratelimits": [
+        {
+          "name": "STATUS_MISS_LIMIT",
+          "namespace_id": "4183",
+          "simple": { "limit": 30, "period": 60 },
+        },
+      ],
+    },
+  },
+}

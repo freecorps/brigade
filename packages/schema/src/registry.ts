@@ -71,6 +71,7 @@ import {
 } from "./status.ts";
 import { incidentTimeline } from "./timeline.ts";
 import { allMaintenance, maintenanceMutations, maintenanceServerMutations } from "./maintenance.ts";
+import { statusDomainQuery, statusDomainServerMutations } from "./status-domain.ts";
 import {
   allWebhooks,
   createWebhook,
@@ -165,6 +166,7 @@ export const queries = defineRegistry([
   statusComponents,
   statusIncidentById,
   allMaintenance,
+  statusDomainQuery,
   allWebhooks,
   ...catalogQueries,
   ...followUpQueries,
@@ -213,6 +215,7 @@ export const serverMutations = defineRegistry([
   ...alertSourceMutations,
   configureStatusPage,
   ...maintenanceServerMutations,
+  ...statusDomainServerMutations,
   createWorkspace,
   syncMember,
   remindFollowUps,

@@ -30,6 +30,7 @@
     "@freecorps/brigade-push": "workspace:*",
     "@freecorps/brigade-schema": "workspace:*",
     "@freecorps/brigade-slack": "workspace:*",
+    "@freecorps/brigade-status-edge": "workspace:*",
     "@freecorps/brigade-sync": "workspace:*",
     "@freecorps/brigade-ui": "workspace:*",
     "better-auth": "1.7.13"

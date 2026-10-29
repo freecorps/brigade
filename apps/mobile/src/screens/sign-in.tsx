@@ -6,23 +6,12 @@ import {
   type FieldErrors,
   type SignInField,
 } from "@freecorps/brigade-i18n/auth";
-import { spacing } from "@freecorps/brigade-ui";
 import { router } from "expo-router";
-import { useRef, useState, type ComponentRef } from "react";
-import {
-  AccessibilityInfo,
-  ActivityIndicator,
-  Linking,
-  ScrollView,
-  TextInput,
-  View,
-} from "react-native";
-import { Field, PrimaryButton, TextButton } from "@/components/form";
+import { useRef, useState } from "react";
+import { AccessibilityInfo, Linking } from "react-native";
+import { NativeForm } from "@/components/native-form";
 import { NewWorkspaceForm } from "@/components/new-workspace";
 import { useSessionView } from "@/components/session";
-import { ThemedText } from "@/components/themed-text";
-import { useScreenPadding } from "@/hooks/use-screen-padding";
-import { useTheme } from "@/hooks/use-theme";
 import { authClient, server } from "@/lib/auth-client";
 import { useSignUpMode } from "@/lib/sign-up-mode";
 
@@ -32,54 +21,39 @@ import { useSignUpMode } from "@/lib/sign-up-mode";
  */
 export function SignIn() {
   const view = useSessionView();
-  const colors = useTheme();
-  const padding = useScreenPadding();
+  if (view.kind === "no-workspace") {
+    return (
+      <NewWorkspaceForm
+        intro={m.account_flow({ part: "no_workspace", name: "" })}
+        links={[{ label: m.sign_out(), destructive: true, onPress: () => void view.signOut() }]}
+      />
+    );
+  }
+  if (view.kind === "signed-out") return <SignInForm />;
   return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      keyboardShouldPersistTaps="handled"
-      style={{ backgroundColor: colors.background }}
-      contentContainerStyle={[padding, { gap: spacing[6] }]}
-    >
-      {view.kind === "loading" || view.kind === "ready" ? (
-        <View accessibilityRole="progressbar" style={{ flexDirection: "row", gap: spacing[3] }}>
-          <ActivityIndicator color={colors.mutedForeground} />
-          <ThemedText variant="caption">{m.session_loading()}</ThemedText>
-        </View>
-      ) : view.kind === "no-server" ? (
-        <ThemedText selectable>{m.mobile_session({ part: "no_server" })}</ThemedText>
-      ) : view.kind === "unavailable" ? (
-        <View style={{ gap: spacing[3], alignItems: "flex-start" }}>
-          <ThemedText selectable style={{ color: colors.destructive }}>
-            {m.auth_error_network()}
-          </ThemedText>
-          <TextButton label={m.stack_check_again()} onPress={view.retry} />
-        </View>
-      ) : view.kind === "no-workspace" ? (
-        <View style={{ gap: spacing[5] }}>
-          <ThemedText selectable>{m.account_flow({ part: "no_workspace", name: "" })}</ThemedText>
-          <NewWorkspaceForm />
-          <View style={{ alignItems: "flex-start" }}>
-            <TextButton label={m.sign_out()} onPress={() => void view.signOut()} />
-          </View>
-        </View>
-      ) : (
-        <SignInForm />
-      )}
-    </ScrollView>
+    <NativeForm
+      intro={
+        view.kind === "no-server"
+          ? m.mobile_session({ part: "no_server" })
+          : view.kind === "unavailable"
+            ? m.auth_error_network()
+            : m.session_loading()
+      }
+      fields={[]}
+      links={
+        view.kind === "unavailable" ? [{ label: m.stack_check_again(), onPress: view.retry }] : []
+      }
+    />
   );
 }
 
 function SignInForm() {
-  const colors = useTheme();
   const forgotPassword = server?.forgotPassword;
   const signUpMode = useSignUpMode();
   const [values, setValues] = useState<Record<SignInField, string>>({ email: "", password: "" });
   const [errors, setErrors] = useState<FieldErrors<SignInField>>({});
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const email = useRef<ComponentRef<typeof TextInput>>(null);
-  const password = useRef<ComponentRef<typeof TextInput>>(null);
 
   const change = (field: SignInField) => (text: string) => {
     setValues((current) => ({ ...current, [field]: text }));
@@ -95,7 +69,6 @@ function SignInForm() {
     setErrors(found);
     if (Object.keys(found).length > 0) {
       // To the first field to fix: TalkBack reads its label and error; VoiceOver hears the error once.
-      (found.email ? email : password).current?.focus();
       const first = found.email ?? found.password;
       if (process.env.EXPO_OS === "ios" && first) AccessibilityInfo.announceForAccessibility(first);
       return;
@@ -123,76 +96,58 @@ function SignInForm() {
   };
 
   return (
-    <View style={{ gap: spacing[5] }}>
-      <ThemedText>{m.auth_sign_in_description()}</ThemedText>
-      <Field
-        ref={email}
-        label={m.auth_email_label()}
-        value={values.email}
-        error={errors.email}
-        onChangeText={change("email")}
-        autoCapitalize="none"
-        autoCorrect={false}
-        autoComplete="email"
-        keyboardType="email-address"
-        textContentType="username"
-        returnKeyType="next"
-        submitBehavior="submit"
-        onSubmitEditing={() => password.current?.focus()}
-      />
-      <Field
-        ref={password}
-        label={m.auth_password_label()}
-        value={values.password}
-        error={errors.password}
-        onChangeText={change("password")}
-        secret
-        autoComplete="current-password"
-        textContentType="password"
-        maxLength={PASSWORD_MAX}
-        returnKeyType="go"
-        onSubmitEditing={() => void submit()}
-      />
-      {failure ? (
-        <ThemedText
-          selectable
-          accessibilityLiveRegion="polite"
-          style={{ color: colors.destructive }}
-        >
-          {failure}
-        </ThemedText>
-      ) : null}
-      <PrimaryButton
-        busy={busy}
-        label={busy ? m.auth_signing_in() : m.auth_sign_in_submit()}
-        onPress={() => void submit()}
-      />
-      {forgotPassword ? (
-        // The reset happens on the dashboard, where its email's link lands too.
-        <View style={{ alignItems: "flex-start" }}>
-          <TextButton
-            label={m.reset_page({ part: "forgot_link", email: "" })}
-            onPress={() => void Linking.openURL(forgotPassword).catch(() => {})}
-          />
-        </View>
-      ) : null}
-      {signUpMode === "open" || signUpMode === "invite" ? (
-        <View
-          style={{
-            flexDirection: "row",
-            flexWrap: "wrap",
-            alignItems: "center",
-            columnGap: spacing[2],
-          }}
-        >
-          <ThemedText variant="caption">{m.auth_no_account()}</ThemedText>
-          <TextButton label={m.auth_to_sign_up()} onPress={() => router.push("/sign-up")} />
-        </View>
-      ) : signUpMode === "closed" ? (
-        <ThemedText variant="caption" selectable>
-          {m.auth_error_sign_up_closed()}
-        </ThemedText>
-      ) : null}
-    </View>
+    <NativeForm
+      intro={
+        // Closed: no way to sign up from the app, and the form says so up front.
+        signUpMode === "closed"
+          ? `${m.auth_sign_in_description()}\n\n${m.auth_error_sign_up_closed()}`
+          : m.auth_sign_in_description()
+      }
+      fields={[
+        {
+          key: "email",
+          label: m.auth_email_label(),
+          error: errors.email,
+          autoComplete: "email",
+          keyboardType: "email-address",
+          autoCapitalize: "none",
+          onChange: change("email"),
+        },
+        {
+          key: "password",
+          label: m.auth_password_label(),
+          error: errors.password,
+          secure: true,
+          autoComplete: "current-password",
+          maxLength: PASSWORD_MAX,
+          onChange: change("password"),
+        },
+      ]}
+      problem={failure}
+      submit={{
+        label: busy ? m.auth_signing_in() : m.auth_sign_in_submit(),
+        busy,
+        onPress: () => void submit(),
+      }}
+      links={[
+        ...(forgotPassword
+          ? [
+              {
+                label: m.reset_page({ part: "forgot_link", email: "" }),
+                onPress: () => void Linking.openURL(forgotPassword).catch(() => {}),
+              },
+            ]
+          : []),
+        ...(signUpMode === "open" || signUpMode === "invite"
+          ? [
+              {
+                label: m.auth_to_sign_up(),
+                note: m.auth_no_account(),
+                onPress: () => router.push("/sign-up"),
+              },
+            ]
+          : []),
+      ]}
+    />
   );
 }

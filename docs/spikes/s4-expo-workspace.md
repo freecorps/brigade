@@ -78,7 +78,8 @@ What needed a decision or a workaround:
   than SDK 58's 3.3), and autolinking then compiled them. That added about 2 GB of native build output, with
   versions that do not match the SDK. The app uses none of them yet, so `package.json` excludes them from
   autolinking (`expo.autolinking.exclude`). When the app needs Reanimated, add the three with `expo install` and
-  drop the exclusion.
+  drop the exclusion. `react-native-worklets` is back, installed with `expo install` and autolinked: `@expo/ui`'s
+  `TextInput` updates its text on the UI thread through it.
 - **`npx` does not work in this repository.** npm refuses to run because the root `devEngines` names Bun. Use
   `bunx expo …` or the package scripts.
 - **Windows only: native builds hit the 260-character path limit.** The CMake 3.22.1 that AGP uses by default

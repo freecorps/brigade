@@ -35,7 +35,7 @@ import { fontSize, radius, spacing } from "@freecorps/brigade-ui";
 import { Link } from "expo-router";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { AccessibilityInfo, Pressable, ScrollView, TextInput, View } from "react-native";
-import { Account, PagingNotice } from "@/components/account";
+import { PagingNotice } from "@/components/account";
 import {
   Choice,
   ConnectionStatus,
@@ -413,20 +413,6 @@ function IncidentList({ onReload }: { onReload: () => void }) {
         </Notice>
       ))}
       <StatePanel view={view} errorCode={error?.code} onReload={onReload} />
-      <Account />
-
-      <Link href="/legend" asChild>
-        <Pressable accessibilityRole="link">
-          {/* Sized inside: Link's `asChild` drops a style function on the Pressable. 48pt tall to tap. */}
-          {({ pressed }) => (
-            <View style={{ minHeight: spacing[12], justifyContent: "center" }}>
-              <ThemedText style={{ color: colors.primary, opacity: pressed ? 0.6 : 1 }}>
-                {m.legend_title()}
-              </ThemedText>
-            </View>
-          )}
-        </Pressable>
-      </Link>
       {sheet}
     </ScrollView>
   );

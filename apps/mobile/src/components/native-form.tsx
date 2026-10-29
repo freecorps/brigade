@@ -41,8 +41,9 @@ export type NativeFormProps = {
 };
 
 /**
- * A form as iOS draws one: a SwiftUI `Form`, one section per field with its error or hint under it, the button in
- * its own section and the links as rows. Return moves to the next field, and on the last one submits.
+ * A form in `@expo/ui`'s universal grouped list, where neither platform's own form applies (`.ios` and `.android`
+ * draw those): one section per field with its error or hint under it, the button in its own section and the links
+ * as rows. Return moves to the next field, and on the last one submits.
  */
 export function NativeForm({ intro, fields, problem, submit, links = [] }: NativeFormProps) {
   const colors = useTheme();

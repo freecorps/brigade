@@ -1,5 +1,5 @@
 import { m } from "@freecorps/brigade-i18n";
-import { NativeTabs } from "expo-router/unstable-native-tabs";
+import { NativeTabs } from "expo-router/native-tabs";
 import { useColorScheme } from "react-native";
 import { useTheme } from "@/hooks/use-theme";
 

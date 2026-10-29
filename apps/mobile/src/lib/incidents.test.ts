@@ -9,7 +9,6 @@ import {
 } from "@freecorps/brigade-i18n/incident";
 import type { IncidentRow } from "@freecorps/brigade-schema";
 import { nextStatuses, pickTarget } from "@freecorps/brigade-sync";
-import { titleToRestore } from "./incidents";
 
 // The app words a refusal in the incident's row, or below the list (where it names the incident: `card`).
 const refusalText = (notice: Notice, place: "row" | "list") =>
@@ -49,35 +48,6 @@ test("pickTarget checks a pick against the rows it is given (the screen passes t
     pickTarget([row({ severity: "sev1" })], ID, { kind: "severity", to: "sev1" }),
   ).toBeUndefined();
   expect(pickTarget([], ID, { kind: "severity", to: "sev1" })).toBeUndefined();
-});
-
-test("a title the shard refused comes back only to an empty field, and never for the clock", () => {
-  const declare: Target = { kind: "declare", incidentId: ID, number: null, title: "Checkout down" };
-  const refused = refusalFor(
-    {
-      ok: false,
-      error: { code: "invalid_args", message: "bad", issues: [{ path: "title", message: "x" }] },
-    },
-    declare,
-    "t1",
-  )!;
-  expect(titleToRestore(refused, "")).toBe("Checkout down");
-  expect(titleToRestore(refused, "Typed since")).toBeUndefined();
-  const skew = refusalFor(
-    {
-      ok: false,
-      error: { code: "invalid_args", message: "bad", issues: [{ path: "id", message: "x" }] },
-    },
-    declare,
-    "t2",
-  )!;
-  expect(titleToRestore(skew, "")).toBeUndefined();
-  const forbidden = refusalFor(
-    { ok: false, error: { code: "forbidden", message: "no" } },
-    declare,
-    "t3",
-  )!;
-  expect(titleToRestore(forbidden, "")).toBeUndefined();
 });
 
 test("only the moves the lifecycle allows are offered", () => {

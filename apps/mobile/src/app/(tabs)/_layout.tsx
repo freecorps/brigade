@@ -1,7 +1,6 @@
 import { m } from "@freecorps/brigade-i18n";
 import { NativeTabs } from "expo-router/native-tabs";
-import { useColorScheme } from "react-native";
-import { useTheme } from "@/hooks/use-theme";
+import { useSystemColors } from "@/theme/system-colors";
 
 /**
  * The signed-in app's sections as the system's own tab bar: UITabBarController on iOS (liquid glass on iOS 26),
@@ -9,14 +8,16 @@ import { useTheme } from "@/hooks/use-theme";
  * tabs from the root stack, so a page opens its incident whichever tab is showing.
  */
 export default function TabsLayout() {
-  // Android's Material colours resolve at render: re-render when the scheme flips.
-  useColorScheme();
-  const colors = useTheme();
+  const system = useSystemColors();
   return (
-    <NativeTabs tintColor={colors.primary}>
+    <NativeTabs
+      tintColor={system.tint}
+      backgroundColor={system.bar}
+      indicatorColor={system.indicator}
+    >
       <NativeTabs.Trigger name="(incidents)">
         <NativeTabs.Trigger.Label>{m.nav({ part: "incidents" })}</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="flame" md="emergency" />
+        <NativeTabs.Trigger.Icon sf="flame" md="local_fire_department" />
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="(oncall)">
         <NativeTabs.Trigger.Label>{m.nav({ part: "on_call" })}</NativeTabs.Trigger.Label>

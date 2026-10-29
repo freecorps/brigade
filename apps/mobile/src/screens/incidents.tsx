@@ -1,3 +1,4 @@
+import { FieldGroup, ListItem, RNHostView, Text } from "@expo/ui";
 import { m } from "@freecorps/brigade-i18n";
 import {
   formatAge,
@@ -11,56 +12,43 @@ import { incidentStatusLabels } from "@freecorps/brigade-i18n/labels";
 import {
   can,
   formatIncidentNumber,
-  INCIDENT_TITLE_MAX,
   SEVERITIES,
   type IncidentRow,
   type IncidentStatus,
   type Severity,
 } from "@freecorps/brigade-schema";
 import {
-  checkDeclare,
   nextFailed,
   nextStatuses,
   pickTarget,
   syncView,
   type MutationOutcome,
+  type SyncView,
 } from "@freecorps/brigade-sync";
-import {
-  useConnectionState,
-  useMutation,
-  useQuery,
-  useSyncClient,
-} from "@freecorps/brigade-sync/react";
-import { fontSize, radius, spacing } from "@freecorps/brigade-ui";
-import { Link } from "expo-router";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { AccessibilityInfo, Pressable, ScrollView, TextInput, View } from "react-native";
+import { useConnectionState, useMutation, useQuery } from "@freecorps/brigade-sync/react";
+import { router } from "expo-router";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { AccessibilityInfo, View } from "react-native";
 import { PagingNotice } from "@/components/account";
-import {
-  Choice,
-  ConnectionStatus,
-  Notice,
-  SeverityBadge,
-  StatePanel,
-  StatusBadge,
-  useNow,
-} from "@/components/incident-parts";
 import { useChoiceSheet } from "@/components/choice-sheet";
-import { OnCallStatus } from "@/components/oncall";
-import { Row, Section } from "@/components/section";
+import { ConnectionStatus, StatePanel, useNow } from "@/components/incident-parts";
+import { NativeSeverityBadge, NativeStatusBadge } from "@/components/native-badge";
+import { withRowMenu } from "@/components/row-menu";
+import { DeclareButton } from "@/components/declare-button";
+import { useMember } from "@/components/session";
 import { ThemedText } from "@/components/themed-text";
 import { useLocale } from "@/hooks/use-locale";
-import { useScreenPadding } from "@/hooks/use-screen-padding";
+import { NativeHost } from "@/components/native-host";
 import { useTheme } from "@/hooks/use-theme";
-import { useMember } from "@/components/session";
-import { titleToRestore } from "@/lib/incidents";
+import { onDeclare } from "@/lib/declares";
 import { restoredTarget } from "@/lib/pending";
 import { currentSync } from "@/lib/sync-client";
 
 /**
- * The signed-in member's workspace: its active incidents, live from its shard, with declare and per-row status and
- * severity changes (for those who may make them), each row opening the incident. Changes show at once and settle
- * when the shard confirms them; a refused one rolls back and leaves a message. The account sits at the bottom.
+ * The Incidents tab: the workspace's active incidents, live from its shard, in the system's grouped list. A row opens
+ * its incident; a long press (a context menu on iOS, a dropdown on Android) changes its status or severity, for those
+ * who may. Declaring is the header's + (a form sheet, `src/screens/declare.tsx`). Changes show at once and settle
+ * when the shard confirms them; a refused one rolls back and leaves a message.
  */
 export function Incidents() {
   // A refused list is asked for again only by a new subscriber: "Reload" remounts the list.
@@ -70,20 +58,16 @@ export function Incidents() {
 
 function IncidentList({ onReload }: { onReload: () => void }) {
   const colors = useTheme();
-  const padding = useScreenPadding();
   const { locale } = useLocale();
-  const client = useSyncClient();
   const { role } = useMember();
   const editable = can(role, "incident:update");
   const { rows, status, error } = useQuery("incidents.active", {});
-  const policies = useQuery("escalationPolicies.all", {}).rows;
   const connection = useConnectionState();
   const [failed, setFailed] = useState(false);
   const latched = nextFailed(failed, status, connection);
   if (latched !== failed) setFailed(latched);
   const view = syncView(status, connection, latched);
 
-  const declare = useMutation("incident.declare");
   const setStatus = useMutation("incident.setStatus");
   const setSeverity = useMutation("incident.setSeverity");
   const { choose, sheet } = useChoiceSheet();
@@ -94,7 +78,6 @@ function IncidentList({ onReload }: { onReload: () => void }) {
   useLayoutEffect(() => {
     latest.current = rows;
   }, [rows]);
-  const [title, setTitle] = useState("");
   const [refusals, setRefusals] = useState<Refusal[]>([]);
   // In-flight changes per incident, so the row can say "Saving…" until the shard answers.
   const [busy, setBusy] = useState<ReadonlyMap<string, number>>(new Map());
@@ -122,8 +105,6 @@ function IncidentList({ onReload }: { onReload: () => void }) {
       if (process.env.EXPO_OS === "ios") {
         AccessibilityInfo.announceForAccessibility(noticeText(refusal, "card"));
       }
-      // A title the shard refused comes back to the field, unless something new was typed.
-      setTitle((field) => titleToRestore(refusal, field) ?? field);
     });
   };
 
@@ -169,25 +150,6 @@ function IncidentList({ onReload }: { onReload: () => void }) {
     }
   }, []);
 
-  const [severity, setSeverityChoice] = useState<Severity>("sev3");
-  /** A policy picked by hand (first in the order, RFC 0006 "Who is paged"); "" for the usual one. */
-  const [policyId, setPolicyId] = useState("");
-  const policy = policies.find((one) => one.id === policyId);
-  const [invalid, setInvalid] = useState<"empty" | "invalid" | null>(null);
-  const onDeclare = () => {
-    const id = client.newId("inc");
-    const checked = checkDeclare(id, title, severity);
-    if (!checked.ok) return setInvalid(title.trim() === "" ? "empty" : "invalid");
-    // A policy deleted meanwhile is left out by the shard: the declare still goes through.
-    const args = { ...checked.args, ...(policy && { escalationPolicyId: policy.id }) };
-    setInvalid(null);
-    setTitle("");
-    // Back to the default each time, so a SEV1 chosen once cannot page people again by accident.
-    setSeverityChoice("sev3");
-    setPolicyId("");
-    track(declare(args), { kind: "declare", incidentId: id, number: null, title: args.title });
-  };
-
   // A sheet stays open while the list moves: each pick is checked against the latest rows before it is sent.
   const pickStatus = (id: string, to: IncidentStatus) => {
     const current = pickTarget(latest.current, id, { kind: "status", to });
@@ -229,216 +191,125 @@ function IncidentList({ onReload }: { onReload: () => void }) {
       (to) => pickSeverity(row.id, to),
     );
 
+  // A declare sent from the sheet is followed here, where its refusal can be read.
+  useEffect(
+    () =>
+      onDeclare(({ incidentId, title, outcome }) =>
+        trackRef.current(outcome, { kind: "declare", incidentId, number: null, title }),
+      ),
+    [],
+  );
+
   const now = useNow(20_000);
+  /** The row whose menu is open (Android; iOS's context menu keeps its own). */
+  const [menuFor, setMenuFor] = useState<string | null>(null);
   const listed = new Set(rows.map((row) => row.id));
   const dismiss = (key: string) =>
     setRefusals((current) => current.filter((refusal) => refusal.key !== key));
   const unlisted = refusals.filter((refusal) => !listed.has(refusal.incidentId));
   const sev1 = rows.filter((row) => row.severity === "sev1").length;
+  const summary =
+    status === "ready"
+      ? [
+          m.incidents_active_count({ count: rows.length }),
+          ...(sev1 > 0 ? [m.incidents_sev1_count({ count: sev1 })] : []),
+        ].join(" · ")
+      : undefined;
+
+  const open = (row: IncidentRow) => {
+    if (row.number === null) return;
+    router.push({ pathname: "/incidents/[number]", params: { number: String(row.number) } });
+  };
 
   return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      keyboardShouldPersistTaps="handled"
-      style={{ backgroundColor: colors.background }}
-      contentContainerStyle={[padding, { gap: spacing[6] }]}
-    >
+    <View style={{ flex: 1 }}>
       <PagingNotice />
-      <OnCallStatus />
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing[3] }}>
-        <ConnectionStatus view={view} />
-        {status === "ready" ? (
-          <ThemedText variant="caption" style={{ fontVariant: ["tabular-nums"] }}>
-            {m.incidents_active_count({ count: rows.length })}
-            {sev1 > 0 ? ` · ${m.incidents_sev1_count({ count: sev1 })}` : ""}
-          </ThemedText>
-        ) : null}
-      </View>
-
-      {can(role, "incident:declare") ? (
-        <Section title={m.declare_heading()}>
-          <View style={{ gap: spacing[3] }}>
-            <TextInput
-              value={title}
-              onChangeText={setTitle}
-              placeholder={m.declare_title_placeholder()}
-              placeholderTextColor={colors.mutedForeground}
-              accessibilityLabel={m.declare_title_label()}
-              maxLength={INCIDENT_TITLE_MAX}
-              returnKeyType="done"
-              onSubmitEditing={onDeclare}
-              style={{
-                minHeight: spacing[12],
-                paddingHorizontal: spacing[3],
-                borderRadius: radius.md,
-                borderCurve: "continuous",
-                borderWidth: 1,
-                borderColor: invalid ? colors.destructive : colors.input,
-                color: colors.foreground,
-                fontSize: fontSize.base.size,
-              }}
-            />
-            {invalid ? (
-              <ThemedText selectable style={{ color: colors.destructive }}>
-                {invalid === "empty" ? m.declare_title_empty() : m.declare_title_invalid()}
-              </ThemedText>
-            ) : null}
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing[3] }}>
-              <Choice
-                label={m.declare_severity_label()}
-                value={severityName(severity)}
-                onPress={() =>
-                  choose(
-                    m.declare_severity_label(),
-                    SEVERITIES.map((to) => ({ value: to, label: severityName(to) })),
-                    setSeverityChoice,
-                  )
-                }
-              >
-                <SeverityBadge severity={severity} />
-              </Choice>
-              {policies.length > 0 ? (
-                <Choice
-                  label={m.declare_policy_label()}
-                  value={policy?.name ?? m.declare_policy_usual()}
-                  onPress={() =>
-                    choose(
-                      m.declare_policy_label(),
-                      [
-                        { value: "", label: m.declare_policy_usual() },
-                        ...policies.map((one) => ({ value: one.id, label: one.name })),
-                      ],
-                      setPolicyId,
-                    )
-                  }
-                >
-                  <ThemedText variant="caption" numberOfLines={1} style={{ flexShrink: 1 }}>
-                    {policy?.name ?? m.declare_policy_usual()}
-                  </ThemedText>
-                </Choice>
-              ) : null}
-              <Pressable
-                accessibilityRole="button"
-                onPress={onDeclare}
-                style={({ pressed }) => ({
-                  minHeight: spacing[12],
-                  justifyContent: "center",
-                  paddingHorizontal: spacing[4],
-                  borderRadius: radius.md,
-                  borderCurve: "continuous",
-                  backgroundColor: colors.primary,
-                  opacity: pressed ? 0.8 : 1,
-                })}
-              >
-                <ThemedText style={{ color: colors.primaryForeground }}>
-                  {m.declare_submit_severity({ severity: severity.toUpperCase() })}
-                </ThemedText>
-              </Pressable>
-            </View>
-          </View>
-        </Section>
-      ) : null}
-
-      {rows.length > 0 ? (
-        <Section title={m.incidents_title()} inset={false}>
-          {rows.map((row, index) => (
-            <Row key={row.id} first={index === 0}>
-              <IncidentLink row={row}>
-                <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: spacing[2] }}>
-                  <ThemedText variant="label" style={{ fontVariant: ["tabular-nums"] }}>
-                    {formatIncidentNumber(row.number) ??
+      <NativeHost style={{ flex: 1 }}>
+        <FieldGroup>
+          <FieldGroup.Section>
+            <FieldGroup.SectionHeader>
+              <RNHostView matchContents>
+                <Header view={view} summary={summary} />
+              </RNHostView>
+            </FieldGroup.SectionHeader>
+            {rows.map((row) =>
+              withRowMenu(
+                <ListItem
+                  key={row.id}
+                  onPress={() => open(row)}
+                  leading={<NativeSeverityBadge severity={row.severity} compact />}
+                  trailing={<NativeStatusBadge status={row.status} />}
+                  supportingText={[
+                    formatIncidentNumber(row.number) ??
                       (view === "live"
                         ? m.incident_unnumbered_saving()
-                        : m.incident_unnumbered_not_sent())}
-                  </ThemedText>
-                  <ThemedText variant="caption">
-                    {m.incident_declared({ time: formatAge(row.declaredAt, now, locale) })}
-                  </ThemedText>
-                  {busy.has(row.id) ? (
-                    <ThemedText variant="caption" style={{ color: colors.primary }}>
-                      {view === "live" ? m.incident_change_saving() : m.incident_change_queued()}
-                    </ThemedText>
-                  ) : null}
-                </View>
-                <ThemedText
-                  style={{ color: row.number === null ? colors.foreground : colors.primary }}
+                        : m.incident_unnumbered_not_sent()),
+                    m.incident_declared({ time: formatAge(row.declaredAt, now, locale) }),
+                    ...(busy.has(row.id)
+                      ? [view === "live" ? m.incident_change_saving() : m.incident_change_queued()]
+                      : []),
+                  ].join(" · ")}
                 >
-                  {row.title}
-                </ThemedText>
-              </IncidentLink>
-              <View
-                style={{
-                  flexDirection: "row",
-                  flexWrap: "wrap",
-                  gap: spacing[2],
-                  paddingTop: spacing[1],
-                }}
-              >
-                <Choice
-                  label={m.incident_severity_label()}
-                  value={severityName(row.severity)}
-                  disabled={!editable}
-                  onPress={() => changeSeverity(row)}
-                >
-                  <SeverityBadge severity={row.severity} />
-                </Choice>
-                <Choice
-                  label={m.incident_status_label()}
-                  value={incidentStatusLabels[row.status]()}
-                  disabled={!editable || nextStatuses(row.status).length === 0}
-                  onPress={() => changeStatus(row)}
-                >
-                  <StatusBadge status={row.status} />
-                </Choice>
-              </View>
-              {refusals
-                .filter((refusal) => refusal.incidentId === row.id)
-                .map((refusal) => (
-                  <Notice key={refusal.key} onDismiss={() => dismiss(refusal.key)}>
-                    {noticeText(refusal, "row")}
-                  </Notice>
-                ))}
-            </Row>
-          ))}
-        </Section>
-      ) : status === "ready" ? (
-        <Section title={m.incidents_title()}>
-          <ThemedText>{m.incidents_all_clear()}</ThemedText>
-        </Section>
-      ) : null}
-
-      {unlisted.map((refusal) => (
-        <Notice key={refusal.key} onDismiss={() => dismiss(refusal.key)}>
-          {noticeText(refusal, "card")}
-        </Notice>
-      ))}
+                  <Text numberOfLines={2}>{row.title}</Text>
+                </ListItem>,
+                editable
+                  ? [
+                      {
+                        label: m.incident_status_label(),
+                        disabled: nextStatuses(row.status).length === 0,
+                        onPress: () => changeStatus(row),
+                      },
+                      { label: m.incident_severity_label(), onPress: () => changeSeverity(row) },
+                    ]
+                  : [],
+                {
+                  open: menuFor === row.id,
+                  setOpen: (open) => setMenuFor(open ? row.id : null),
+                },
+              ),
+            )}
+            {rows.length === 0 && status === "ready" ? (
+              <ListItem supportingText={m.incidents_all_clear_hint()}>
+                <Text>{m.incidents_all_clear()}</Text>
+              </ListItem>
+            ) : null}
+          </FieldGroup.Section>
+          {refusals.length > 0 ? (
+            <FieldGroup.Section>
+              {[...refusals.filter((refusal) => listed.has(refusal.incidentId)), ...unlisted].map(
+                (refusal) => (
+                  <ListItem
+                    key={refusal.key}
+                    onPress={() => dismiss(refusal.key)}
+                    trailing={<Text textStyle={{ color: colors.primary }}>{m.dismiss()}</Text>}
+                  >
+                    <Text textStyle={{ color: colors.destructive }}>
+                      {noticeText(refusal, listed.has(refusal.incidentId) ? "row" : "card")}
+                    </Text>
+                  </ListItem>
+                ),
+              )}
+            </FieldGroup.Section>
+          ) : null}
+        </FieldGroup>
+      </NativeHost>
+      {can(role, "incident:declare") ? <DeclareButton /> : null}
       <StatePanel view={view} errorCode={error?.code} onReload={onReload} />
       {sheet}
-    </ScrollView>
+    </View>
   );
 }
 
-/**
- * The row's number and title open the incident. A declare the shard has not numbered yet has no page to open, so
- * it is plain text until it has.
- */
-function IncidentLink({ row, children }: { row: IncidentRow; children: ReactNode }) {
-  if (row.number === null) return <View style={{ gap: spacing[0.5] }}>{children}</View>;
+/** Over the list: whether it is live, and how many are open. */
+function Header({ view, summary }: { view: SyncView; summary: string | undefined }) {
   return (
-    <Link
-      href={{ pathname: "/incidents/[number]", params: { number: String(row.number) } }}
-      asChild
-    >
-      <Pressable
-        accessibilityRole="link"
-        accessibilityHint={m.mobile_session({ part: "open_hint" })}
-        // The title row is short; the hit area is at least 44 points tall.
-        hitSlop={{ top: spacing[2], bottom: spacing[2] }}
-      >
-        {({ pressed }) => (
-          <View style={{ gap: spacing[0.5], opacity: pressed ? 0.6 : 1 }}>{children}</View>
-        )}
-      </Pressable>
-    </Link>
+    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
+      <ConnectionStatus view={view} />
+      {summary ? (
+        <ThemedText variant="caption" style={{ fontVariant: ["tabular-nums"] }}>
+          {summary}
+        </ThemedText>
+      ) : null}
+    </View>
   );
 }

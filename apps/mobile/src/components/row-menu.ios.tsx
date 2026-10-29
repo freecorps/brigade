@@ -11,9 +11,10 @@ export function withRowMenu<P>(row: ReactElement<P>, actions: RowAction[], _menu
   return (
     <ContextMenu key={row.key}>
       <ContextMenu.Items>
-        {actions.map((action) => (
+        {actions.map((action, index) => (
           <Button
-            key={action.label}
+            // Two links to one host read the same: the position tells them apart.
+            key={index}
             label={action.label}
             onPress={action.onPress}
             modifiers={action.disabled ? [disabled(true)] : undefined}

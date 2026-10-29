@@ -237,7 +237,8 @@ function IncidentList({ onReload }: { onReload: () => void }) {
               withRowMenu(
                 <ListItem
                   key={row.id}
-                  onPress={() => open(row)}
+                  // A declare the shard has not numbered yet has no page to open: no tap until it has.
+                  onPress={row.number === null ? undefined : () => open(row)}
                   leading={<NativeSeverityBadge severity={row.severity} compact />}
                   trailing={<NativeStatusBadge status={row.status} />}
                   supportingText={[

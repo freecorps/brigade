@@ -34,6 +34,7 @@ import { useChoiceSheet } from "@/components/choice-sheet";
 import { ConnectionStatus, StatePanel, useNow } from "@/components/incident-parts";
 import { NativeSeverityBadge, NativeStatusBadge } from "@/components/native-badge";
 import { withRowMenu } from "@/components/row-menu";
+import { RowText } from "@/components/row-text";
 import { DeclareButton } from "@/components/declare-button";
 import { useMember } from "@/components/session";
 import { ThemedText } from "@/components/themed-text";
@@ -281,7 +282,7 @@ function IncidentList({ onReload }: { onReload: () => void }) {
                   <ListItem
                     key={refusal.key}
                     onPress={() => dismiss(refusal.key)}
-                    trailing={<Text textStyle={{ color: colors.primary }}>{m.dismiss()}</Text>}
+                    trailing={<RowText color={colors.primary}>{m.dismiss()}</RowText>}
                   >
                     <Text textStyle={{ color: colors.destructive }}>
                       {noticeText(refusal, listed.has(refusal.incidentId) ? "row" : "card")}

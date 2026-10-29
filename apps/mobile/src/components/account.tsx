@@ -373,7 +373,14 @@ export function usePhonePaging() {
     text: pagingText(member.paging),
     problem: pagingProblem(member.paging),
     muted: member.paging === "unsupported",
-    /** What the member can do about it: open the system settings, or try registering again now. */
+    /**
+     * What the member can do about it: open the system settings, or try registering again now. `where` names the
+     * workspace when the trouble is in another one this phone was opened in, as the incident list's notice does.
+     */
+    where:
+      trouble?.name !== undefined
+        ? m.account_flow({ part: "pages_notice_in", name: trouble.name })
+        : undefined,
     fix: !trouble
       ? null
       : trouble.paging === "off"

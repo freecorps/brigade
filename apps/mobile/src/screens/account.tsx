@@ -76,7 +76,10 @@ export function AccountScreen() {
               </Text>
             </ListItem>
             {paging.fix ? (
-              <ListItem onPress={paging.fix.busy ? undefined : paging.fix.run}>
+              <ListItem
+                onPress={paging.fix.busy ? undefined : paging.fix.run}
+                supportingText={paging.where}
+              >
                 <Text textStyle={{ color: colors.primary }}>{paging.fix.label}</Text>
               </ListItem>
             ) : null}

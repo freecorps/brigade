@@ -8,7 +8,7 @@ declare and to change an incident's status or severity; **On call**; and **Accou
 paged, Sign out, the legend). Incidents, calls and sheets open above the tabs from the root stack, so a page opens its
 incident whichever tab is showing. Controls come from `@expo/ui` (SwiftUI on iOS, Jetpack Compose on Android) where it
 has one, and are drawn by the app only where it does not; chrome and grounds use the system's semantic colours
-(`src/theme/colors.ts`), brand, severity and status colours packages/ui's. Each incident
+(`src/theme/colors.ts`), while brand, severity and status colours stay packages/ui's. Each incident
 opens `/incidents/<number>`: severity and status, roles, written updates and the timeline, as on the dashboard. The list
 says whether the member is on call (and until when, or when their next shift is) and opens `/oncall`: their shifts
 and overrides, who every schedule has now, and an override for themselves (`schedule.addOverride`, from now for 1 to

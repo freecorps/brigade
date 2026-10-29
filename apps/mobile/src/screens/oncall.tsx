@@ -1,4 +1,4 @@
-import { m, type Locale } from "@freecorps/brigade-i18n";
+import { m } from "@freecorps/brigade-i18n";
 import { queryErrorReason } from "@freecorps/brigade-i18n/incident";
 import {
   fromNow,
@@ -12,28 +12,18 @@ import {
 import { can, type OverrideRow, type ScheduleRow } from "@freecorps/brigade-schema";
 import type { MutationOutcome } from "@freecorps/brigade-sync";
 import { useMutation, useQuery, useSyncClient } from "@freecorps/brigade-sync/react";
-import { fontWeight, spacing } from "@freecorps/brigade-ui";
+import { FieldGroup, ListItem, Text } from "@expo/ui";
 import { useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, View } from "react-native";
-import { Badge } from "@/components/badge";
+import { Alert, View } from "react-native";
 import { useChoiceSheet } from "@/components/choice-sheet";
-import type { Glyph } from "@/components/glyphs";
-import { Notice } from "@/components/incident-parts";
+import { NativeHost } from "@/components/native-host";
+import { RowText } from "@/components/row-text";
 import { useOnCall } from "@/components/oncall";
-import { Row, Section } from "@/components/section";
 import { useMember } from "@/components/session";
-import { ThemedText } from "@/components/themed-text";
 import { useLocale } from "@/hooks/use-locale";
-import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
 import { useOtherWorkspaces } from "@/components/widget";
 import { COVER_HOURS, coverArgs, queriesStatus, statusTime, type Shift } from "@/lib/oncall";
-
-const GAP_GLYPH: Glyph = {
-  ios: "exclamationmark.triangle.fill",
-  android: "warning",
-  web: "warning",
-};
 
 /** `oncall_mine` with only the inputs the variant uses. */
 const mine = (
@@ -61,7 +51,6 @@ const mine = (
  */
 export function OnCall() {
   const colors = useTheme();
-  const padding = useScreenPadding();
   const { locale, timeZone } = useLocale();
   const { userId, role, workspaceId, workspaceName } = useMember();
   const others = useOtherWorkspaces(userId, workspaceId);
@@ -114,316 +103,190 @@ export function OnCall() {
     const shift = other.shifts.find(([start, end]) => start <= now && (end === null || now < end));
     return shift ? [{ name: other.name, until: shift[1] }] : [];
   });
+  const shiftRow = (shift: Shift, current = false) => {
+    const zone = shift.schedule.timeZone;
+    const lines = current
+      ? []
+      : [
+          handoffTime(shift.start, zone, locale),
+          [viewerTime(shift.start, zone, timeZone, locale), fromNow(shift.start, now, locale)]
+            .filter(Boolean)
+            .join(" · "),
+        ];
+    return (
+      <ListItem
+        key={`${shift.schedule.id}-${shift.start}`}
+        supportingText={[
+          ...lines,
+          ...(shift.end !== null
+            ? untilLines(shift.end, shift.schedule)
+            : current
+              ? [m.oncall_upcoming_none()]
+              : []),
+        ].join("\n")}
+      >
+        <Text>
+          {shift.override
+            ? `${shift.schedule.name} · ${m.oncall_override_badge()}`
+            : shift.schedule.name}
+        </Text>
+      </ListItem>
+    );
+  };
+  const untilLines = (at: number, schedule: ScheduleRow) => [
+    m.oncall_until({ time: handoffTime(at, schedule.timeZone, locale) }),
+    [viewerTime(at, schedule.timeZone, timeZone, locale), fromNow(at, now, locale)]
+      .filter(Boolean)
+      .join(" · "),
+  ];
+  const upcoming = onCall ? view.next : view.next.slice(1);
+
   return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      style={{ backgroundColor: colors.background }}
-      contentContainerStyle={[padding, { gap: spacing[6] }]}
-    >
-      {refusals.map((refusal) => (
-        <Notice
-          key={refusal.key}
-          onDismiss={() =>
-            setRefusals((current) => current.filter((item) => item.key !== refusal.key))
-          }
-        >
-          {refusal.text}
-        </Notice>
-      ))}
-      {status === "error" ? (
-        <ThemedText selectable style={{ color: colors.destructive }}>
-          {queryErrorReason(error?.code)}
-        </ThemedText>
-      ) : null}
-      {loading ? <ActivityIndicator color={colors.primary} /> : null}
+    <View style={{ flex: 1 }}>
+      <NativeHost style={{ flex: 1 }}>
+        <FieldGroup>
+          <FieldGroup.Section>
+            <FieldGroup.SectionHeader>
+              <Text>{mine("workspace", { name: workspaceName })}</Text>
+            </FieldGroup.SectionHeader>
+            {refusals.map((refusal) => (
+              <ListItem
+                key={refusal.key}
+                onPress={() =>
+                  setRefusals((current) => current.filter((item) => item.key !== refusal.key))
+                }
+                trailing={<RowText color={colors.primary}>{m.dismiss()}</RowText>}
+              >
+                <Text textStyle={{ color: colors.destructive }}>{refusal.text}</Text>
+              </ListItem>
+            ))}
+            {status === "error" ? (
+              <ListItem>
+                <Text textStyle={{ color: colors.destructive }}>
+                  {queryErrorReason(error?.code)}
+                </Text>
+              </ListItem>
+            ) : null}
+            {elsewhere.map((other) => (
+              <ListItem key={other.name}>
+                <Text>
+                  {other.until === null
+                    ? mine("elsewhere_open", { name: other.name })
+                    : mine("elsewhere", {
+                        name: other.name,
+                        time: statusTime(other.until, now, locale, timeZone),
+                      })}
+                </Text>
+              </ListItem>
+            ))}
+            {status === "ready" && view.schedules.length === 0 ? (
+              <ListItem>
+                <Text>{m.oncall_empty()}</Text>
+              </ListItem>
+            ) : status === "ready" ? (
+              // Whether the member is on call now, the headline of the tab.
+              <ListItem
+                supportingText={onCall ? undefined : view.next[0] ? undefined : mine("next_none")}
+              >
+                <Text
+                  textStyle={{
+                    fontSize: 20,
+                    fontWeight: "600",
+                    color: onCall ? colors.primary : undefined,
+                  }}
+                >
+                  {onCall ? mine("on_call") : mine("off_call")}
+                </Text>
+              </ListItem>
+            ) : null}
+            {status === "ready" && onCall
+              ? view.current.map((shift) => shiftRow(shift, true))
+              : null}
+            {status === "ready" && !onCall && view.next[0] ? shiftRow(view.next[0]) : null}
+          </FieldGroup.Section>
 
-      <View style={{ gap: spacing[1] }}>
-        <ThemedText variant="caption" selectable numberOfLines={2}>
-          {mine("workspace", { name: workspaceName })}
-        </ThemedText>
-        {elsewhere.map((other) => (
-          <ThemedText key={other.name} selectable style={{ fontWeight: fontWeight.medium }}>
-            {other.until === null
-              ? mine("elsewhere_open", { name: other.name })
-              : mine("elsewhere", {
-                  name: other.name,
-                  time: statusTime(other.until, now, locale, timeZone),
-                })}
-          </ThemedText>
-        ))}
-      </View>
-
-      {status === "ready" && view.schedules.length === 0 ? (
-        <Section title={m.oncall_title()}>
-          <ThemedText>{m.oncall_empty()}</ThemedText>
-        </Section>
-      ) : null}
-
-      {status === "ready" && view.schedules.length > 0 ? (
-        <>
-          <Section title={onCall ? mine("on_call") : mine("off_call")} inset={false}>
-            {onCall ? (
-              view.current.map((shift, index) => (
-                <Row key={shift.schedule.id} first={index === 0}>
-                  <ShiftLine
-                    shift={shift}
-                    now={now}
-                    locale={locale}
-                    viewerZone={timeZone}
-                    current
-                  />
-                </Row>
-              ))
-            ) : (
-              <Row first>
-                {view.next[0] ? (
-                  <ShiftLine shift={view.next[0]} now={now} locale={locale} viewerZone={timeZone} />
-                ) : (
-                  <ThemedText variant="caption">{mine("next_none")}</ThemedText>
-                )}
-              </Row>
-            )}
-          </Section>
-
-          {/* Off call, the first of these is already above. */}
-          {(onCall ? view.next : view.next.slice(1)).length > 0 ? (
-            <Section title={mine("next")} inset={false}>
-              {(onCall ? view.next : view.next.slice(1)).map((shift, index) => (
-                <Row key={`${shift.schedule.id}-${shift.start}`} first={index === 0}>
-                  <ShiftLine shift={shift} now={now} locale={locale} viewerZone={timeZone} />
-                </Row>
-              ))}
-            </Section>
+          {status === "ready" && upcoming.length > 0 ? (
+            <FieldGroup.Section title={mine("next")}>
+              {upcoming.map((shift) => shiftRow(shift))}
+            </FieldGroup.Section>
           ) : null}
 
-          {view.overrides.length > 0 ? (
-            <Section title={mine("overrides")} inset={false}>
-              {view.overrides.map(({ row, schedule }, index) => {
+          {status === "ready" && view.overrides.length > 0 ? (
+            <FieldGroup.Section title={mine("overrides")}>
+              {view.overrides.map(({ row, schedule }) => {
                 const start = viewerTime(row.start, schedule.timeZone, timeZone, locale);
                 const end = viewerTime(row.end, schedule.timeZone, timeZone, locale);
                 return (
-                  <Row key={row.id} first={index === 0}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing[3] }}>
-                      <View style={{ flex: 1, gap: spacing[0.5] }}>
-                        <ThemedText style={{ fontWeight: fontWeight.medium }}>
-                          {schedule.name}
-                        </ThemedText>
-                        <ThemedText
-                          variant="caption"
-                          selectable
-                          style={{ fontVariant: ["tabular-nums"] }}
-                        >
-                          {handoffTime(row.start, schedule.timeZone, locale)} –{" "}
-                          {handoffTime(row.end, schedule.timeZone, locale)}
-                        </ThemedText>
-                        {start && end ? (
-                          <ThemedText variant="caption" style={{ fontVariant: ["tabular-nums"] }}>
-                            {start} – {end}
-                          </ThemedText>
-                        ) : null}
-                      </View>
-                      {canOverride ? (
-                        <TextButton
-                          label={m.oncall_action({ action: "remove" })}
-                          accessibilityLabel={m.oncall_action_on({
-                            action: "remove_override",
-                            // With its start, so two overrides on one schedule read apart.
-                            name: `${schedule.name}, ${handoffTime(row.start, schedule.timeZone, locale)}`,
-                          })}
-                          destructive
-                          onPress={() => remove(row, schedule)}
-                        />
-                      ) : null}
-                    </View>
-                  </Row>
+                  <ListItem
+                    key={row.id}
+                    onPress={canOverride ? () => remove(row, schedule) : undefined}
+                    supportingText={[
+                      `${handoffTime(row.start, schedule.timeZone, locale)} – ${handoffTime(row.end, schedule.timeZone, locale)}`,
+                      ...(start && end ? [`${start} – ${end}`] : []),
+                    ].join("\n")}
+                    trailing={
+                      canOverride ? (
+                        <RowText color={colors.destructive}>
+                          {m.oncall_action({ action: "remove" })}
+                        </RowText>
+                      ) : undefined
+                    }
+                  >
+                    <Text>{schedule.name}</Text>
+                  </ListItem>
                 );
               })}
-            </Section>
+            </FieldGroup.Section>
           ) : null}
 
-          <Section title={m.oncall_heading({ heading: "now" })} inset={false}>
-            {view.schedules.map((item, index) => (
-              <Row key={item.schedule.id} first={index === 0}>
-                <ThemedText style={{ fontWeight: fontWeight.medium }}>
-                  {item.schedule.name}
-                </ThemedText>
-                <ThemedText variant="caption">
-                  {m.oncall_time_zone({
-                    zone: zoneLabel(item.schedule.timeZone),
-                    offset: offsetLabel(item.schedule.timeZone, now),
-                  })}
-                </ThemedText>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    flexWrap: "wrap",
-                    alignItems: "center",
-                    gap: spacing[2],
-                    paddingTop: spacing[1],
-                  }}
-                >
-                  {item.userId === null ? (
-                    <Badge
-                      colors={colors.severity.sev3}
-                      icon={GAP_GLYPH}
-                      label={m.oncall_nobody()}
-                    />
-                  ) : (
-                    <ThemedText selectable style={{ flexShrink: 1 }}>
-                      {name(item.userId)}
-                    </ThemedText>
-                  )}
-                  {item.override ? (
-                    <Badge
-                      colors={{ bg: colors.muted, fg: colors.foreground }}
-                      label={m.oncall_override_badge()}
-                    />
-                  ) : null}
-                </View>
-                {item.until !== null ? (
-                  <Until
-                    at={item.until}
-                    schedule={item.schedule}
-                    now={now}
-                    locale={locale}
-                    viewerZone={timeZone}
-                  />
-                ) : null}
-                {canOverride && item.userId !== userId ? (
-                  <TextButton
-                    label={m.oncall_action({ action: "add_override" })}
-                    accessibilityLabel={m.oncall_action_on({
-                      action: "add_override",
-                      name: item.schedule.name,
-                    })}
-                    onPress={() => cover(item.schedule)}
-                  />
-                ) : null}
-              </Row>
-            ))}
-          </Section>
-        </>
-      ) : null}
+          {status === "ready" && view.schedules.length > 0 ? (
+            <FieldGroup.Section title={m.oncall_heading({ heading: "now" })}>
+              {view.schedules.map((item) => {
+                const mayCover = canOverride && item.userId !== userId;
+                return (
+                  <ListItem
+                    key={item.schedule.id}
+                    onPress={mayCover ? () => cover(item.schedule) : undefined}
+                    supportingText={[
+                      [
+                        item.userId === null ? m.oncall_nobody() : name(item.userId),
+                        ...(item.override ? [m.oncall_override_badge()] : []),
+                      ].join(" · "),
+                      ...(item.until !== null ? untilLines(item.until, item.schedule) : []),
+                      m.oncall_time_zone({
+                        zone: zoneLabel(item.schedule.timeZone),
+                        offset: offsetLabel(item.schedule.timeZone, now),
+                      }),
+                    ].join("\n")}
+                    trailing={
+                      mayCover ? (
+                        <RowText color={colors.primary}>
+                          {m.oncall_action({ action: "add_override" })}
+                        </RowText>
+                      ) : undefined
+                    }
+                  >
+                    <Text
+                      textStyle={
+                        item.userId === null ? { color: colors.severity.sev3.fg } : undefined
+                      }
+                    >
+                      {item.schedule.name}
+                    </Text>
+                  </ListItem>
+                );
+              })}
+            </FieldGroup.Section>
+          ) : null}
 
-      <ThemedText variant="caption">{mine("on_dashboard")}</ThemedText>
+          <FieldGroup.Section>
+            <FieldGroup.SectionFooter>
+              <Text>{loading ? m.incident_page({ part: "loading" }) : mine("on_dashboard")}</Text>
+            </FieldGroup.SectionFooter>
+          </FieldGroup.Section>
+        </FieldGroup>
+      </NativeHost>
       {sheet}
-    </ScrollView>
-  );
-}
-
-/** A shift of the member's: its schedule, when it starts (or, now, until when) in both clocks. */
-function ShiftLine({
-  shift,
-  now,
-  locale,
-  viewerZone,
-  current = false,
-}: {
-  shift: Shift;
-  now: number;
-  locale: Locale;
-  viewerZone: string;
-  current?: boolean;
-}) {
-  const colors = useTheme();
-  const zone = shift.schedule.timeZone;
-  const local = current ? null : viewerTime(shift.start, zone, viewerZone, locale);
-  return (
-    <>
-      <View
-        style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing[2] }}
-      >
-        <ThemedText style={{ fontWeight: fontWeight.medium, flexShrink: 1 }}>
-          {shift.schedule.name}
-        </ThemedText>
-        {shift.override ? (
-          <Badge
-            colors={{ bg: colors.muted, fg: colors.foreground }}
-            label={m.oncall_override_badge()}
-          />
-        ) : null}
-      </View>
-      {current ? null : (
-        <>
-          <ThemedText selectable style={{ fontVariant: ["tabular-nums"] }}>
-            {handoffTime(shift.start, zone, locale)}
-          </ThemedText>
-          <ThemedText variant="caption" style={{ fontVariant: ["tabular-nums"] }}>
-            {local ? `${local} · ` : ""}
-            {fromNow(shift.start, now, locale)}
-          </ThemedText>
-        </>
-      )}
-      {shift.end !== null ? (
-        <Until
-          at={shift.end}
-          schedule={shift.schedule}
-          now={now}
-          locale={locale}
-          viewerZone={viewerZone}
-        />
-      ) : current ? (
-        <ThemedText variant="caption">{m.oncall_upcoming_none()}</ThemedText>
-      ) : null}
-    </>
-  );
-}
-
-/** "until Mon, Nov 2, 9:00 AM GMT-3", then the phone's time when it reads differently, and how far off. */
-function Until({
-  at,
-  schedule,
-  now,
-  locale,
-  viewerZone,
-}: {
-  at: number;
-  schedule: ScheduleRow;
-  now: number;
-  locale: Locale;
-  viewerZone: string;
-}) {
-  const local = viewerTime(at, schedule.timeZone, viewerZone, locale);
-  return (
-    <View>
-      <ThemedText variant="caption" selectable style={{ fontVariant: ["tabular-nums"] }}>
-        {m.oncall_until({ time: handoffTime(at, schedule.timeZone, locale) })}
-      </ThemedText>
-      <ThemedText variant="caption" style={{ fontVariant: ["tabular-nums"] }}>
-        {local ? `${local} · ` : ""}
-        {fromNow(at, now, locale)}
-      </ThemedText>
     </View>
-  );
-}
-
-function TextButton({
-  label,
-  accessibilityLabel,
-  destructive = false,
-  onPress,
-}: {
-  label: string;
-  accessibilityLabel: string;
-  destructive?: boolean;
-  onPress: () => void;
-}) {
-  const colors = useTheme();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      onPress={onPress}
-      style={({ pressed }) => ({
-        minHeight: spacing[12],
-        justifyContent: "center",
-        alignSelf: "flex-start",
-        opacity: pressed ? 0.6 : 1,
-      })}
-    >
-      <ThemedText style={{ color: destructive ? colors.destructive : colors.primary }}>
-        {label}
-      </ThemedText>
-    </Pressable>
   );
 }

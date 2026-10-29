@@ -54,6 +54,7 @@ import { NativeSeverityBadge, NativeStatusBadge } from "@/components/native-badg
 import { NativeHost } from "@/components/native-host";
 import { pagingSection, usePagingData } from "@/components/paging";
 import { withRowMenu, type RowAction } from "@/components/row-menu";
+import { RowText } from "@/components/row-text";
 import { useMember } from "@/components/session";
 import { ThemedText } from "@/components/themed-text";
 import { useLocale } from "@/hooks/use-locale";
@@ -236,7 +237,7 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
         <ListItem
           key={notice.key}
           onPress={() => dismiss(notice.key)}
-          trailing={<Text textStyle={{ color: colors.primary }}>{m.dismiss()}</Text>}
+          trailing={<RowText color={colors.primary}>{m.dismiss()}</RowText>}
         >
           <Text textStyle={{ color: colors.destructive }}>{noticeText(notice, "row")}</Text>
         </ListItem>
@@ -622,7 +623,7 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
                 onPress={() =>
                   setSaid((current) => current.filter((other) => other.key !== one.key))
                 }
-                trailing={<Text textStyle={{ color: colors.primary }}>{m.dismiss()}</Text>}
+                trailing={<RowText color={colors.primary}>{m.dismiss()}</RowText>}
               >
                 <Text textStyle={{ color: colors.destructive }}>{one.text}</Text>
               </ListItem>

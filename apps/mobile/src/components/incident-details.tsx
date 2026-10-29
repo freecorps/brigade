@@ -8,8 +8,7 @@ import {
   type IncidentRow,
 } from "@freecorps/brigade-schema";
 import { useQuery } from "@freecorps/brigade-sync/react";
-import { Row, Section } from "@/components/section";
-import { ThemedText } from "@/components/themed-text";
+import { FieldGroup, ListItem, Text } from "@expo/ui";
 
 const text = (part: Parameters<typeof m.catalog_text>[0]["text"]) =>
   m.catalog_text({ text: part, name: "", reason: "" });
@@ -26,11 +25,13 @@ function valueText(field: CustomFieldRow, value: FieldValue | undefined): string
   );
 }
 
+export type DetailRow = { label: string; value: string; empty: boolean };
+
 /**
- * The incident's type, affected services and custom fields (RFC 0003), read-only: the dashboard edits them. Hidden
- * while the workspace has no catalog and the incident names nothing from one.
+ * The incident's type, affected services and custom fields (RFC 0003), read-only: the dashboard edits them. Null
+ * while the workspace has no catalog and the incident names nothing from one, or while the catalog loads.
  */
-export function IncidentDetails({ row }: { row: IncidentRow }) {
+export function useIncidentDetails(row: IncidentRow): DetailRow[] | null {
   const typesQuery = useQuery("incidentTypes.all", {});
   const servicesQuery = useQuery("services.all", {});
   const fieldsQuery = useQuery("customFields.all", {});
@@ -55,7 +56,7 @@ export function IncidentDetails({ row }: { row: IncidentRow }) {
   }
   const type = typeId ? types.find((one) => one.id === typeId) : undefined;
   const missing = new Set(missingFields(row, types, fields).map((field) => field.id));
-  const rows: { label: string; value: string; empty: boolean }[] = [
+  return [
     {
       label: text("type_label"),
       value: typeId === null ? text("no_type") : (type?.name ?? text("deleted_type")),
@@ -75,16 +76,17 @@ export function IncidentDetails({ row }: { row: IncidentRow }) {
       };
     }),
   ];
+}
+
+/** The details as a native grouped section: each one's name, its value under it. */
+export function detailsSection(rows: DetailRow[]) {
   return (
-    <Section title={text("details_title")} inset={false}>
+    <FieldGroup.Section key="details" title={text("details_title")}>
       {rows.map((one, index) => (
-        <Row key={`${index}:${one.label}`} first={index === 0}>
-          <ThemedText variant="label">{one.label}</ThemedText>
-          <ThemedText variant={one.empty ? "caption" : "body"} selectable>
-            {one.value}
-          </ThemedText>
-        </Row>
+        <ListItem key={`${index}:${one.label}`} supportingText={one.value}>
+          <Text>{one.label}</Text>
+        </ListItem>
       ))}
-    </Section>
+    </FieldGroup.Section>
   );
 }

@@ -1,15 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import type { MutationOutcome } from "@freecorps/brigade-sync";
-import { announceDeclare, onDeclare, type Declared } from "./declares";
+import { channel } from "./channel";
 
-const sent = (incidentId: string): Declared => ({
-  incidentId,
-  title: "Checkout is down",
-  outcome: Promise.resolve({ ok: true } as MutationOutcome),
-});
+const { send: announceDeclare, listen: onDeclare } = channel<{ incidentId: string }>();
+const sent = (incidentId: string) => ({ incidentId });
 
-describe("declares", () => {
-  it("hands a declare to every list listening", () => {
+describe("channel", () => {
+  it("hands a message to every listener", () => {
     const first = vi.fn();
     const second = vi.fn();
     const stopFirst = onDeclare(first);
@@ -22,7 +18,7 @@ describe("declares", () => {
     stopSecond();
   });
 
-  it("keeps a declare sent with no list listening for the next one, once", () => {
+  it("keeps a message sent with nobody listening for the next listener, once", () => {
     const declared = sent("inc_2");
     announceDeclare(declared);
     const late = vi.fn();
@@ -34,7 +30,7 @@ describe("declares", () => {
     expect(later).not.toHaveBeenCalled();
   });
 
-  it("stops handing declares to a list that stopped listening", () => {
+  it("stops handing messages to a listener that stopped", () => {
     const listener = vi.fn();
     const keep = vi.fn();
     onDeclare(listener)();

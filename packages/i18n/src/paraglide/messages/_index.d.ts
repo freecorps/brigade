@@ -135,6 +135,7 @@ export * from './incident_declared.js';
 export * from './incident_label.js';
 export * from './incident_move_failed.js';
 export * from './incident_move_failed_here.js';
+export * from './incident_open_link.js';
 export * from './incident_page.js';
 export * from './incident_page_again.js';
 export * from './incident_quoted_title.js';

@@ -1658,6 +1658,7 @@
       }
     }
   ],
+  "incident_open_link": "Abrir {host}",
   "incident_page_again": [
     {
       "declarations": ["input part", "input reason"],

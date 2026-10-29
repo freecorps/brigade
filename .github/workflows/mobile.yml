@@ -141,6 +141,17 @@ jobs:
         with:
           # App Store Connect takes no beta Xcode builds.
           xcode-version: latest-stable
+      # eas-cli starts its local build plugin with `npx` from apps/mobile, where npm refuses to run under the root
+      # `devEngines` (Bun). Installed with Bun outside the repository instead, at eas-cli's own version, and passed
+      # through eas-cli's EAS_LOCAL_BUILD_PLUGIN_PATH, as scripts/mobile-build.mjs does.
+      - name: EAS local build plugin
+        if: steps.fingerprint.outputs.built != 'true'
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir -p eas-build-plugin && cd eas-build-plugin
+          echo '{ "private": true }' > package.json
+          bun add "eas-cli-local-build-plugin@${EAS_CLI#eas-cli@}"
+          echo "EAS_LOCAL_BUILD_PLUGIN_PATH=$PWD/node_modules/.bin/eas-cli-local-build-plugin" >> "$GITHUB_ENV"
       - name: Build
         if: steps.fingerprint.outputs.built != 'true'
         env:

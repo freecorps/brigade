@@ -152,7 +152,8 @@ describe("what a pattern may not be", () => {
   ])("%j is refused at once", (pattern) => {
     const started = performance.now();
     expect(patternProblem(pattern)).not.toBeNull();
-    expect(performance.now() - started).toBeLessThan(10);
+    // Backtracking would take seconds or never end; 100 ms leaves room for a loaded CI runner (10 ms did not).
+    expect(performance.now() - started).toBeLessThan(100);
   });
 });
 

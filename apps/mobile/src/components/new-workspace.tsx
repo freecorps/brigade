@@ -1,11 +1,8 @@
 import { m } from "@freecorps/brigade-i18n";
 import { WORKSPACE_NAME_MAX, workspaceName } from "@freecorps/brigade-schema";
-import { spacing } from "@freecorps/brigade-ui";
 import { useRef, useState } from "react";
-import { AccessibilityInfo, View } from "react-native";
-import { Field, PrimaryButton } from "@/components/form";
-import { ThemedText } from "@/components/themed-text";
-import { useTheme } from "@/hooks/use-theme";
+import { AccessibilityInfo } from "react-native";
+import { NativeForm, type NativeFormProps } from "@/components/native-form";
 import { authClient, server } from "@/lib/auth-client";
 import { createWorkspace } from "@/lib/workspaces";
 
@@ -23,8 +20,16 @@ export function workspaceNameError(name: string): string | undefined {
  * session moves to it and the phone registers there too, keeping its other workspaces' registrations (RFC 0006
  * "Device registration"). `onDone`: after it is active.
  */
-export function NewWorkspaceForm({ onDone }: { onDone?: () => void }) {
-  const colors = useTheme();
+export function NewWorkspaceForm({
+  onDone,
+  intro,
+  links,
+}: {
+  onDone?: () => void;
+  /** Why the member is asked, above the field. */
+  intro?: string;
+  links?: NativeFormProps["links"];
+}) {
   const [name, setName] = useState("");
   const [error, setError] = useState<string | undefined>();
   const [failure, setFailure] = useState<string | null>(null);
@@ -36,7 +41,8 @@ export function NewWorkspaceForm({ onDone }: { onDone?: () => void }) {
     setFailure(message);
     sending.current = false;
     setBusy(false);
-    if (process.env.EXPO_OS === "ios") AccessibilityInfo.announceForAccessibility(message);
+    // The form's native text has no live region on either platform, so the screen reader says it once.
+    AccessibilityInfo.announceForAccessibility(message);
   };
 
   const submit = async () => {
@@ -76,36 +82,29 @@ export function NewWorkspaceForm({ onDone }: { onDone?: () => void }) {
   };
 
   return (
-    <View style={{ gap: spacing[5] }}>
-      <Field
-        label={m.workspace_name_label()}
-        value={name}
-        error={error}
-        onChangeText={(text) => {
-          setName(text);
-          setError(undefined);
-          setFailure(null);
-        }}
-        placeholder={m.workspace_name_hint()}
-        autoComplete="organization"
-        textContentType="organizationName"
-        returnKeyType="go"
-        onSubmitEditing={() => void submit()}
-      />
-      {failure ? (
-        <ThemedText
-          selectable
-          accessibilityLiveRegion="polite"
-          style={{ color: colors.destructive }}
-        >
-          {failure}
-        </ThemedText>
-      ) : null}
-      <PrimaryButton
-        busy={busy}
-        label={busy ? m.workspace_creating() : m.workspace_create_submit()}
-        onPress={() => void submit()}
-      />
-    </View>
+    <NativeForm
+      intro={intro}
+      fields={[
+        {
+          key: "name",
+          label: m.workspace_name_label(),
+          placeholder: m.workspace_name_hint(),
+          error,
+          autoComplete: "organization",
+          onChange: (text) => {
+            setName(text);
+            setError(undefined);
+            setFailure(null);
+          },
+        },
+      ]}
+      problem={failure}
+      submit={{
+        label: busy ? m.workspace_creating() : m.workspace_create_submit(),
+        busy,
+        onPress: () => void submit(),
+      }}
+      links={links}
+    />
   );
 }

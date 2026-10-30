@@ -241,6 +241,7 @@
   "incident_quoted_title": "“{title}”",
   "incidents_all_clear": "Tudo tranquilo.",
   "incidents_all_clear_hint": "Novos incidentes aparecem aqui assim que forem declarados.",
+  "incidents_all_clear_title": "Tudo tranquilo",
   "incidents_sev1_count": [
     {
       "declarations": [
@@ -1180,6 +1181,8 @@
     }
   ],
   "oncall_empty": "Ainda não há escalas de plantão. Uma escala diz quem está de plantão e quando passa o turno.",
+  "oncall_empty_title": "Nenhuma escala ainda",
+  "oncall_empty_hint": "Uma escala diz quem está de plantão e quando passa o turno.",
   "oncall_not_paging": "As escalas chamam pessoas por meio de uma política de escalonamento (abaixo); sem uma política padrão, as chamadas vão para o comandante do incidente, ou para todos que podem responder.",
   "oncall_nobody": "Ninguém de plantão",
   "oncall_until": "até {time}",

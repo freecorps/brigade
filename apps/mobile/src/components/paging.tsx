@@ -6,7 +6,8 @@ import { memberName, shortCall, shortVerdict, whyText } from "@freecorps/brigade
 import type { IncidentRow } from "@freecorps/brigade-schema";
 import type { WhyVerdict } from "@freecorps/brigade-sync";
 import { useQuery } from "@freecorps/brigade-sync/react";
-import { FieldGroup, ListItem, Text } from "@expo/ui";
+import { FieldGroup, Text } from "@expo/ui";
+import { ListItem } from "@/components/list-item";
 import { router } from "expo-router";
 import type { Glyph } from "@/components/glyphs";
 import { useTheme } from "@/hooks/use-theme";

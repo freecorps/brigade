@@ -7,15 +7,11 @@ import {
   type FieldErrors,
 } from "@freecorps/brigade-i18n/auth";
 import { memberName } from "@freecorps/brigade-schema";
-import { spacing } from "@freecorps/brigade-ui";
 import { router } from "expo-router";
-import { useRef, useState, type ComponentRef } from "react";
-import { AccessibilityInfo, ScrollView, TextInput, View } from "react-native";
-import { Field, PrimaryButton, TextButton } from "@/components/form";
+import { useRef, useState } from "react";
+import { AccessibilityInfo } from "react-native";
+import { NativeForm } from "@/components/native-form";
 import { workspaceNameError } from "@/components/new-workspace";
-import { ThemedText } from "@/components/themed-text";
-import { useScreenPadding } from "@/hooks/use-screen-padding";
-import { useTheme } from "@/hooks/use-theme";
 import { authClient, server } from "@/lib/auth-client";
 import { useSignUpMode } from "@/lib/sign-up-mode";
 import { createWorkspace } from "@/lib/workspaces";
@@ -46,8 +42,6 @@ function checkSignUp(values: Record<SignUpField, string>): FieldErrors<SignUpFie
  * fails, the account is signed in without a workspace and the sign-in screen offers to create one.
  */
 export function SignUp() {
-  const colors = useTheme();
-  const padding = useScreenPadding();
   const [values, setValues] = useState<Record<SignUpField, string>>({
     name: "",
     email: "",
@@ -57,12 +51,6 @@ export function SignUp() {
   const [errors, setErrors] = useState<FieldErrors<SignUpField>>({});
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const refs = {
-    name: useRef<ComponentRef<typeof TextInput>>(null),
-    email: useRef<ComponentRef<typeof TextInput>>(null),
-    password: useRef<ComponentRef<typeof TextInput>>(null),
-    workspace: useRef<ComponentRef<typeof TextInput>>(null),
-  };
   const sending = useRef(false);
   const signUpMode = useSignUpMode();
 
@@ -76,8 +64,8 @@ export function SignUp() {
     setFailure(message);
     sending.current = false;
     setBusy(false);
-    // VoiceOver has no live regions (accessibilityLiveRegion is Android's), so say it once.
-    if (process.env.EXPO_OS === "ios") AccessibilityInfo.announceForAccessibility(message);
+    // The form's native text has no live region on either platform, so the screen reader says it once.
+    AccessibilityInfo.announceForAccessibility(message);
   };
 
   const submit = async () => {
@@ -86,7 +74,6 @@ export function SignUp() {
     setErrors(found);
     const first = FIELDS.find((field) => found[field]);
     if (first) {
-      refs[first].current?.focus();
       const message = found[first];
       if (process.env.EXPO_OS === "ios" && message)
         AccessibilityInfo.announceForAccessibility(message);
@@ -133,122 +120,66 @@ export function SignUp() {
     else router.replace("/");
   };
 
+  const back = () => (router.canGoBack() ? router.back() : router.replace("/sign-in"));
   // Closed: the app has no invitation flow, so no form (RFC 0002 "Sign-up modes"); an invitation's link opens the
   // dashboard, where its owner signs up.
   if (signUpMode === "closed") {
     return (
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        style={{ backgroundColor: colors.background }}
-        contentContainerStyle={[padding, { gap: spacing[5] }]}
-      >
-        <ThemedText selectable>{m.auth_error_sign_up_closed()}</ThemedText>
-        <View style={{ alignItems: "flex-start" }}>
-          <TextButton
-            label={m.auth_to_sign_in()}
-            onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))}
-          />
-        </View>
-      </ScrollView>
+      <NativeForm
+        intro={m.auth_error_sign_up_closed()}
+        fields={[]}
+        links={[{ label: m.auth_to_sign_in(), onPress: back }]}
+      />
     );
   }
 
   return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      keyboardShouldPersistTaps="handled"
-      style={{ backgroundColor: colors.background }}
-      contentContainerStyle={[padding, { gap: spacing[5] }]}
-    >
-      <ThemedText>
-        {signUpMode === "invite" ? m.auth_sign_up_invite_only() : m.auth_sign_up_description()}
-      </ThemedText>
-      <Field
-        ref={refs.name}
-        label={m.auth_name_label()}
-        value={values.name}
-        error={errors.name}
-        onChangeText={change("name")}
-        autoComplete="name"
-        textContentType="name"
-        returnKeyType="next"
-        submitBehavior="submit"
-        onSubmitEditing={() => refs.email.current?.focus()}
-      />
-      <Field
-        ref={refs.email}
-        label={m.auth_email_label()}
-        value={values.email}
-        error={errors.email}
-        onChangeText={change("email")}
-        autoCapitalize="none"
-        autoCorrect={false}
-        autoComplete="email"
-        keyboardType="email-address"
-        textContentType="username"
-        returnKeyType="next"
-        submitBehavior="submit"
-        onSubmitEditing={() => refs.password.current?.focus()}
-      />
-      <Field
-        ref={refs.password}
-        label={m.auth_password_label()}
-        value={values.password}
-        error={errors.password}
-        onChangeText={change("password")}
-        secret
-        autoComplete="new-password"
-        textContentType="newPassword"
-        maxLength={PASSWORD_MAX}
-        returnKeyType="next"
-        submitBehavior="submit"
-        onSubmitEditing={() => refs.workspace.current?.focus()}
-      />
-      {errors.password ? null : (
-        <ThemedText variant="caption" style={{ marginTop: -spacing[3] }}>
-          {m.auth_password_hint()}
-        </ThemedText>
-      )}
-      <Field
-        ref={refs.workspace}
-        label={m.workspace_name_label()}
-        value={values.workspace}
-        error={errors.workspace}
-        onChangeText={change("workspace")}
-        placeholder={m.workspace_name_hint()}
-        autoComplete="organization"
-        textContentType="organizationName"
-        returnKeyType="go"
-        onSubmitEditing={() => void submit()}
-      />
-      {failure ? (
-        <ThemedText
-          selectable
-          accessibilityLiveRegion="polite"
-          style={{ color: colors.destructive }}
-        >
-          {failure}
-        </ThemedText>
-      ) : null}
-      <PrimaryButton
-        busy={busy}
-        label={busy ? m.auth_signing_up() : m.auth_sign_up_submit()}
-        onPress={() => void submit()}
-      />
-      <View
-        style={{
-          flexDirection: "row",
-          flexWrap: "wrap",
-          alignItems: "center",
-          columnGap: spacing[2],
-        }}
-      >
-        <ThemedText variant="caption">{m.auth_have_account()}</ThemedText>
-        <TextButton
-          label={m.auth_to_sign_in()}
-          onPress={() => (router.canGoBack() ? router.back() : router.replace("/sign-in"))}
-        />
-      </View>
-    </ScrollView>
+    <NativeForm
+      intro={signUpMode === "invite" ? m.auth_sign_up_invite_only() : m.auth_sign_up_description()}
+      fields={[
+        {
+          key: "name",
+          label: m.auth_name_label(),
+          error: errors.name,
+          autoComplete: "name",
+          autoCapitalize: "words",
+          onChange: change("name"),
+        },
+        {
+          key: "email",
+          label: m.auth_email_label(),
+          error: errors.email,
+          autoComplete: "email",
+          keyboardType: "email-address",
+          autoCapitalize: "none",
+          onChange: change("email"),
+        },
+        {
+          key: "password",
+          label: m.auth_password_label(),
+          error: errors.password,
+          hint: m.auth_password_hint(),
+          secure: true,
+          autoComplete: "new-password",
+          maxLength: PASSWORD_MAX,
+          onChange: change("password"),
+        },
+        {
+          key: "workspace",
+          label: m.workspace_name_label(),
+          placeholder: m.workspace_name_hint(),
+          error: errors.workspace,
+          autoComplete: "organization",
+          onChange: change("workspace"),
+        },
+      ]}
+      problem={failure}
+      submit={{
+        label: busy ? m.auth_signing_up() : m.auth_sign_up_submit(),
+        busy,
+        onPress: () => void submit(),
+      }}
+      links={[{ label: m.auth_to_sign_in(), note: m.auth_have_account(), onPress: back }]}
+    />
   );
 }

@@ -1,4 +1,5 @@
-import { FieldGroup, ListItem, Switch, Text } from "@expo/ui";
+import { FieldGroup, Switch, Text } from "@expo/ui";
+import { ListItem } from "@/components/list-item";
 import { m } from "@freecorps/brigade-i18n";
 import { router } from "expo-router";
 import { View } from "react-native";

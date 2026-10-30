@@ -8,7 +8,8 @@ import {
   type IncidentRow,
 } from "@freecorps/brigade-schema";
 import { useQuery } from "@freecorps/brigade-sync/react";
-import { FieldGroup, ListItem, Text } from "@expo/ui";
+import { FieldGroup, Text } from "@expo/ui";
+import { ListItem } from "@/components/list-item";
 
 const text = (part: Parameters<typeof m.catalog_text>[0]["text"]) =>
   m.catalog_text({ text: part, name: "", reason: "" });

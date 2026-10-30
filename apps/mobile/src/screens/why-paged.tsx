@@ -1,3 +1,4 @@
+import { Column, FieldGroup, Text } from "@expo/ui";
 import { formatDateTime, m } from "@freecorps/brigade-i18n";
 import {
   entryTime,
@@ -29,28 +30,27 @@ import {
 import { formatIncidentNumber, type IncidentRow } from "@freecorps/brigade-schema";
 import { whyPaged, type WhyDelivery, type WhyPage } from "@freecorps/brigade-sync";
 import { useQuery } from "@freecorps/brigade-sync/react";
-import { fontSize, radius, spacing } from "@freecorps/brigade-ui";
+import { spacing } from "@freecorps/brigade-ui";
 import { Stack, useRouter } from "expo-router";
-import { SymbolView } from "expo-symbols";
-import { useState, type ReactNode } from "react";
-import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
-import { useGlyphSize } from "@/components/badge";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { AccessibilityInfo } from "react-native";
+import { Avatar } from "@/components/avatar";
 import { useChoiceSheet } from "@/components/choice-sheet";
+import { FooterText } from "@/components/footer-text";
 import type { Glyph } from "@/components/glyphs";
 import { useNow } from "@/components/incident-parts";
+import { useListEnd } from "@/components/list-end";
+import { ListItem } from "@/components/list-item";
+import { NativeHost } from "@/components/native-host";
 import { CALL_GLYPH, usePagingData, useTone, VERDICT_GLYPHS } from "@/components/paging";
+import { RowIcon } from "@/components/row-icon";
 import { useMember } from "@/components/session";
-import { ThemedText } from "@/components/themed-text";
 import { useLocale } from "@/hooks/use-locale";
-import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
-import { useSystemColors } from "@/theme/system-colors";
 import { memberChoices } from "@/lib/why";
 
 /** Phones on one page past which each shows only its furthest stage: a team with many phones stays readable. */
 const COMPACT_DEVICES = 3;
-/** How wide the explanation reads on a tablet: a line of text, not the whole screen. */
-const READABLE_WIDTH = 720;
 
 const GLYPHS = {
   member: { ios: "person", android: "person", web: "person" },
@@ -63,13 +63,15 @@ const GLYPHS = {
   email: { ios: "envelope", android: "mail", web: "mail" },
   acked: { ios: "bell.slash", android: "notifications_off", web: "notifications_off" },
   change: { ios: "chevron.up.chevron.down", android: "unfold_more", web: "unfold_more" },
+  miss: { ios: "exclamationmark.circle", android: "error", web: "error" },
 } satisfies Record<string, Glyph>;
 
 /**
  * "Why wasn't I paged?" for one incident and one member (the signed-in one unless `member` names another), step by
- * step, as the dashboard's `?why=<member>` (RFC 0006 "Delivery receipts"): can they be paged at all, which rule paged,
- * each page (were they on it, and if not why; each phone's stages with times and errors, and the calls apart), the
- * phones they have now, the email about a missed page, and the acknowledgement that stopped it.
+ * step, as the dashboard's `?why=<member>` (RFC 0006 "Delivery receipts"), in the system's grouped list: who and the
+ * verdict first; can they be paged at all and which rule paged; each page in its own section (were they on it, and
+ * if not why; each phone's stages with times and errors, and the calls apart); the phones they have now; then the
+ * calls, the email about a missed page, and the acknowledgement that stopped it.
  */
 export function WhyPagedScreen({
   number,
@@ -89,44 +91,34 @@ function ByNumber({ number, userId }: { number: number; userId: string }) {
   if (row) return <Explanation row={row} userId={userId} />;
   if (status === "error") return <Message text={queryErrorReason(error?.code)} />;
   if (status === "ready") return <Message text={m.incident_page({ part: "not_found" })} />;
-  return <Loading />;
+  return <Message text={whyText("loading")} />;
 }
 
+/** The screen's title and its grouped list; `children` are its sections. */
 function Screen({ title, children }: { title: string; children: ReactNode }) {
-  const system = useSystemColors();
-  const padding = useScreenPadding();
+  const listEnd = useListEnd();
   return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      style={{ backgroundColor: system.ground }}
-      contentContainerStyle={padding}
-    >
+    <>
       <Stack.Screen options={{ title }} />
-      <View
-        style={{ width: "100%", maxWidth: READABLE_WIDTH, alignSelf: "center", gap: spacing[6] }}
-      >
-        {children}
-      </View>
-    </ScrollView>
+      <NativeHost style={{ flex: 1 }}>
+        <FieldGroup>
+          {children}
+          {listEnd}
+        </FieldGroup>
+      </NativeHost>
+    </>
   );
 }
 
-function Loading() {
-  const colors = useTheme();
-  return (
-    <Screen title={whyText("title")}>
-      <View accessibilityRole="progressbar" style={{ flexDirection: "row", gap: spacing[3] }}>
-        <ActivityIndicator color={colors.mutedForeground} />
-        <ThemedText variant="caption">{whyText("loading")}</ThemedText>
-      </View>
-    </Screen>
-  );
-}
-
+/** Loading, or why there is nothing to explain: the screen's one row. */
 function Message({ text }: { text: string }) {
   return (
     <Screen title={whyText("title")}>
-      <ThemedText selectable>{text}</ThemedText>
+      <FieldGroup.Section>
+        <ListItem>
+          <Text>{text}</Text>
+        </ListItem>
+      </FieldGroup.Section>
     </Screen>
   );
 }
@@ -135,303 +127,273 @@ function Explanation({ row, userId }: { row: IncidentRow; userId: string }) {
   const colors = useTheme();
   const tone = useTone();
   const router = useRouter();
-  const { locale } = useLocale();
+  const { locale, timeZone } = useLocale();
   const self = useMember();
   const now = useNow(20_000);
-  const verdictGlyph = useGlyphSize(fontSize.base.size);
   const { data, errorCode } = usePagingData(row, now);
   const { choose, sheet } = useChoiceSheet();
   const [allPages, setAllPages] = useState(false);
+  const verdict = data ? whyPaged({ ...data, userId }) : null;
+  const who = data ? people(self.userId, data.members) : null;
+  const said = verdict && who ? verdictText(verdict, memberName(userId, who)) : null;
+  // Another member picked: the screen reader hears their verdict, as the old live region said it.
+  const shown = useRef(userId);
+  useEffect(() => {
+    if (said === null || shown.current === userId) return;
+    shown.current = userId;
+    AccessibilityInfo.announceForAccessibility(said);
+  }, [said, userId]);
   if (errorCode !== undefined) return <Message text={queryErrorReason(errorCode)} />;
-  if (!data) return <Loading />;
+  if (!data || !verdict || !who) return <Message text={whyText("loading")} />;
 
-  const who = people(self.userId, data.members);
-  const why = whyPaged({ ...data, userId });
+  const why = verdict;
   const name = memberName(userId, who);
   const groups = pageGroups(why.pages);
   const grouped = groups.length < why.pages.length;
   const pages = allPages ? why.pages.map((page) => ({ page, earlier: 0 })) : groups;
   const title = userId === self.userId ? whyText("why_title_you") : whyText("why_title", { name });
-  const pick = () =>
-    choose(
-      whyText("pick_member"),
-      memberChoices(data, userId, who, locale)
-        .filter((option) => option.id !== userId)
-        .map((option) => ({ value: option.id, label: option.name })),
-      (member: string) => router.setParams({ member }),
-    );
+  const verdictColor = tone(verdictTone(why.verdict));
+  const others = memberChoices(data, userId, who, locale)
+    .filter((option) => option.id !== userId)
+    .map((option) => ({ value: option.id, label: option.name }));
+  // Alone in the workspace: nobody else to pick, so the row is not a button.
+  const pick =
+    others.length > 0
+      ? () =>
+          choose(whyText("pick_member"), others, (member: string) => router.setParams({ member }))
+      : undefined;
+  const step = (key: string, glyph: Glyph, text: string, color?: string) => (
+    <ListItem key={key} leading={<RowIcon plain glyph={glyph} color={color} />}>
+      <Text textStyle={color ? { color } : undefined}>{text}</Text>
+    </ListItem>
+  );
 
   return (
-    <Screen title={title}>
-      <View style={{ gap: spacing[3] }}>
-        <ThemedText variant="caption" selectable>
-          {`${formatIncidentNumber(row.number) ?? ""} ${row.title}`}
-        </ThemedText>
-        {/* Like the dashboard's member select: one button, read as "Member: Bia". */}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`${whyText("pick_member")}, ${name}`}
-          accessibilityHint={m.mobile_change_hint()}
-          onPress={pick}
-          hitSlop={{ top: spacing[2], bottom: spacing[2] }}
-          style={({ pressed }) => ({
-            flexDirection: "row",
-            alignItems: "center",
-            alignSelf: "flex-start",
-            gap: spacing[1],
-            minHeight: spacing[12],
-            opacity: pressed ? 0.6 : 1,
-          })}
-        >
-          <ThemedText variant="label">{whyText("pick_member")}</ThemedText>
-          <ThemedText style={{ flexShrink: 1, color: colors.primary }}>{name}</ThemedText>
-          <SymbolView name={GLYPHS.change} tintColor={colors.primary} size={verdictGlyph} />
-        </Pressable>
-        <View
-          accessible
-          accessibilityLiveRegion="polite"
-          style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing[2] }}
-        >
-          <View style={{ paddingTop: spacing[0.5] }}>
-            <SymbolView
-              name={VERDICT_GLYPHS[why.verdict]}
-              tintColor={tone(verdictTone(why.verdict))}
-              size={verdictGlyph}
-            />
-          </View>
-          <ThemedText
-            selectable
-            style={{ flex: 1, fontWeight: "600", color: tone(verdictTone(why.verdict)) }}
+    <>
+      <Screen title={title}>
+        <FieldGroup.Section title={`${formatIncidentNumber(row.number) ?? ""} ${row.title}`}>
+          {/* Like the dashboard's member select: the member, and a tap to pick another if there is one. */}
+          <ListItem
+            onPress={pick}
+            leading={<Avatar name={name} />}
+            trailing={
+              pick ? <RowIcon plain glyph={GLYPHS.change} color={colors.primary} /> : undefined
+            }
+            supportingText={whyText("pick_member")}
           >
-            {verdictText(why, name)}
-          </ThemedText>
-        </View>
-      </View>
+            <Text>{name}</Text>
+          </ListItem>
+          <ListItem
+            leading={<RowIcon plain glyph={VERDICT_GLYPHS[why.verdict]} color={verdictColor} />}
+          >
+            <Text textStyle={{ color: verdictColor, fontWeight: "600" }}>{said ?? ""}</Text>
+          </ListItem>
+        </FieldGroup.Section>
 
-      <View style={{ gap: spacing[5] }}>
-        <Step glyph={GLYPHS.member}>{memberText(why.member.status, name)}</Step>
-        <Step glyph={GLYPHS.step}>{ruleText(why.rule)}</Step>
-        {pages.map(({ page, earlier }, index) => (
-          <PageStep
-            key={page.step ?? `interim-${index}`}
-            page={page}
-            earlier={earlier}
-            name={name}
-            who={who}
-            now={now}
-          />
-        ))}
+        <FieldGroup.Section>
+          {step("member", GLYPHS.member, memberText(why.member.status, name))}
+          {step("rule", GLYPHS.step, ruleText(why.rule))}
+        </FieldGroup.Section>
+
+        {pages.map(({ page, earlier }, index) =>
+          pageSection({
+            key: page.step === null ? `interim-${index}` : `step-${page.step}-${index}`,
+            page,
+            earlier,
+            name,
+            who,
+            now,
+            locale,
+            timeZone,
+            muted: colors.mutedForeground,
+            warn: tone("warn"),
+          }),
+        )}
         {grouped ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ expanded: allPages }}
-            onPress={() => setAllPages((current) => !current)}
-            style={({ pressed }) => ({
-              minHeight: spacing[12],
-              justifyContent: "center",
-              alignSelf: "flex-start",
-              marginLeft: verdictGlyph + spacing[3],
-              opacity: pressed ? 0.6 : 1,
-            })}
-          >
-            <ThemedText style={{ color: colors.primary }}>
-              {allPages
-                ? m.incident_page({ part: "show_less" })
-                : whyText("pages_show_all", { detail: String(why.pages.length) })}
-            </ThemedText>
-          </Pressable>
+          <FieldGroup.Section key="all-pages">
+            <ListItem onPress={() => setAllPages((current) => !current)}>
+              <Text textStyle={{ color: colors.primary }}>
+                {allPages
+                  ? m.incident_page({ part: "show_less" })
+                  : whyText("pages_show_all", { detail: String(why.pages.length) })}
+              </Text>
+            </ListItem>
+          </FieldGroup.Section>
         ) : null}
-        <Step glyph={GLYPHS.phone} title={whyText("devices_title")}>
+
+        <FieldGroup.Section title={whyText("devices_title")}>
           {why.devices.length === 0 ? (
-            whyText("devices_none")
+            <ListItem>
+              <Text>{whyText("devices_none")}</Text>
+            </ListItem>
           ) : (
-            <View style={{ gap: spacing[2] }}>
-              {why.devices.map((device) => (
-                <View key={device.id}>
-                  <ThemedText>{deviceLabel(device)}</ThemedText>
-                  <ThemedText variant="caption">
-                    {whyText("seen", { time: formatAge(device.lastSeenAt, now, locale) })}
-                    {device.voip ? ` · ${whyText("calls")}` : ""}
-                  </ThemedText>
-                </View>
-              ))}
-            </View>
+            why.devices.map((device) => (
+              <ListItem
+                key={device.id}
+                leading={<RowIcon plain glyph={GLYPHS.phone} />}
+                supportingText={[
+                  whyText("seen", { time: formatAge(device.lastSeenAt, now, locale) }),
+                  ...(device.voip ? [whyText("calls")] : []),
+                ].join(" · ")}
+              >
+                <Text>{deviceLabel(device)}</Text>
+              </ListItem>
+            ))
           )}
-        </Step>
-        <Step glyph={CALL_GLYPH}>{callChoiceText(why.calls, name)}</Step>
-        {why.email ? <Step glyph={GLYPHS.email}>{emailText(why.email, name)}</Step> : null}
-        {why.acknowledged ? (
-          <Step glyph={GLYPHS.acked}>
-            {whyText("acknowledged", {
-              name: memberName(why.acknowledged.by, who),
-              time: formatAge(why.acknowledged.at, now, locale),
-            })}
-          </Step>
-        ) : null}
-      </View>
-      <ThemedText variant="caption">{whyText("privacy")}</ThemedText>
+        </FieldGroup.Section>
+
+        <FieldGroup.Section>
+          {step("calls", CALL_GLYPH, callChoiceText(why.calls, name))}
+          {why.email ? step("email", GLYPHS.email, emailText(why.email, name)) : null}
+          {why.acknowledged
+            ? step(
+                "acked",
+                GLYPHS.acked,
+                whyText("acknowledged", {
+                  name: memberName(why.acknowledged.by, who),
+                  time: formatAge(why.acknowledged.at, now, locale),
+                }),
+              )
+            : null}
+          <FieldGroup.SectionFooter>
+            <FooterText>{whyText("privacy")}</FooterText>
+          </FieldGroup.SectionFooter>
+        </FieldGroup.Section>
+      </Screen>
       {sheet}
-    </Screen>
+    </>
   );
 }
 
-/** One line of the explanation: a glyph, an optional title, and its text (or what is given). */
-function Step({ glyph, title, children }: { glyph: Glyph; title?: string; children: ReactNode }) {
-  const colors = useTheme();
-  const size = useGlyphSize(fontSize.base.size);
-  return (
-    <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing[3] }}>
-      <View style={{ paddingTop: spacing[0.5] }}>
-        <SymbolView name={glyph} tintColor={colors.mutedForeground} size={size} />
-      </View>
-      <View style={{ flex: 1, gap: spacing[2] }}>
-        {title ? <ThemedText style={{ fontWeight: "600" }}>{title}</ThemedText> : null}
-        {typeof children === "string" ? <ThemedText selectable>{children}</ThemedText> : children}
-      </View>
-    </View>
-  );
-}
-
-function PageStep({
+/**
+ * One page as a section of its own, titled with the page and its time: were they on it (or why not), what missed
+ * them, each phone's push and then the calls, apart, since they ring after the pushes. An element, not a component:
+ * `FieldGroup` takes any child but its own sections for a row.
+ */
+function pageSection({
+  key,
   page,
   earlier,
   name,
   who,
   now,
+  locale,
+  timeZone,
+  muted,
+  warn,
 }: {
+  key: string;
   page: WhyPage;
   /** Pages before this one with the same outcome, folded into it. */
   earlier: number;
   name: string;
   who: People;
   now: number;
+  locale: ReturnType<typeof useLocale>["locale"];
+  timeZone: string;
+  muted: string;
+  warn: string;
 }) {
-  const tone = useTone();
-  const { locale, timeZone } = useLocale();
   const compact = page.deliveries.length > COMPACT_DEVICES;
   const compactCalls = page.calls.length > COMPACT_DEVICES;
+  const at = (value: number) => formatDateTime(value, locale, timeZone, { timeStyle: "medium" });
   return (
-    <Step glyph={GLYPHS.step}>
-      <View style={{ gap: spacing[2] }}>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: spacing[2] }}>
-          <ThemedText style={{ fontWeight: "600" }}>{pageLabel(page)}</ThemedText>
-          <ThemedText variant="caption" style={{ fontVariant: ["tabular-nums"] }}>
-            {entryTime(page.at, now, locale, timeZone)}
-          </ThemedText>
-        </View>
-        {earlier > 0 ? <ThemedText variant="caption">{sameOutcomeText(earlier)}</ThemedText> : null}
-        {targetedText(page, name, who).map((line) => (
-          <ThemedText key={line} selectable>
-            {line}
-          </ThemedText>
-        ))}
-        {page.misses.map((miss) => (
-          <ThemedText key={`${miss.reason}-${miss.at}`} selectable style={{ color: tone("warn") }}>
-            {missText(miss.reason, name)}
-          </ThemedText>
-        ))}
-        {page.deliveries.length > 0 ? (
-          <View style={{ gap: compact ? spacing[2] : spacing[3] }}>
-            {page.deliveries.map((delivery) => (
-              <DeliveryItem key={delivery.row.id} delivery={delivery} compact={compact} />
-            ))}
-          </View>
-        ) : null}
-        {page.calls.length > 0 ? (
-          // Calls apart from the pushes: they ring after them and never change whether the page got through.
-          <View style={{ gap: spacing[2] }}>
-            <ThemedText variant="caption">{whyText("call_note")}</ThemedText>
-            <View style={{ gap: compactCalls ? spacing[2] : spacing[3] }}>
-              {page.calls.map((delivery) => (
-                <DeliveryItem key={delivery.row.id} delivery={delivery} compact={compactCalls} />
-              ))}
-            </View>
-          </View>
-        ) : null}
-      </View>
-    </Step>
+    <FieldGroup.Section
+      key={key}
+      title={`${pageLabel(page)} · ${entryTime(page.at, now, locale, timeZone)}`}
+    >
+      {earlier > 0 ? (
+        <ListItem>
+          <Text textStyle={{ color: muted }}>{sameOutcomeText(earlier)}</Text>
+        </ListItem>
+      ) : null}
+      {targetedText(page, name, who).map((line) => (
+        <ListItem key={line} leading={<RowIcon plain glyph={GLYPHS.step} />}>
+          <Text>{line}</Text>
+        </ListItem>
+      ))}
+      {page.misses.map((miss) => (
+        <ListItem
+          key={`${miss.reason}-${miss.at}`}
+          leading={<RowIcon plain glyph={GLYPHS.miss} color={warn} />}
+        >
+          <Text textStyle={{ color: warn }}>{missText(miss.reason, name)}</Text>
+        </ListItem>
+      ))}
+      {page.deliveries.map((delivery) => deliveryRow({ delivery, compact, at, muted, warn }))}
+      {page.calls.map((delivery) =>
+        deliveryRow({ delivery, compact: compactCalls, at, muted, warn }),
+      )}
+      {page.calls.length > 0 ? (
+        <FieldGroup.SectionFooter>
+          <FooterText>{whyText("call_note")}</FooterText>
+        </FieldGroup.SectionFooter>
+      ) : null}
+    </FieldGroup.Section>
   );
 }
 
 /**
  * One phone's push or call on a page: each stage with its time (only the furthest when `compact`), and why it
- * stopped. A call has no delivered stage, and one never sent was held back because its push never got through.
+ * stopped. A call has no delivered stage, and one never sent was held back because its push never got through. The
+ * lines sit in the row's headline column: Android draws a row with a non-text supporting slot three lines tall.
  */
-function DeliveryItem({
+function deliveryRow({
   delivery: { row, stage, stuck },
   compact,
+  at,
+  muted,
+  warn,
 }: {
   delivery: WhyDelivery;
   compact: boolean;
+  at: (value: number) => string;
+  muted: string;
+  warn: string;
 }) {
-  const colors = useTheme();
-  const tone = useTone();
-  const { locale, timeZone } = useLocale();
   const call = row.kind === "call";
   const reached = stageTimes(row, stuck);
   const furthest = reached.filter((one) => one.at !== null).at(-1)!;
-  const at = (value: number) => formatDateTime(value, locale, timeZone, { timeStyle: "medium" });
-  const line = (label: string, value: string, color?: string, key?: string) => (
-    <View
-      key={key}
-      style={{
-        flexDirection: "row",
-        flexWrap: "wrap",
-        justifyContent: "space-between",
-        columnGap: spacing[3],
-      }}
-    >
-      <ThemedText style={color ? { color } : undefined}>{label}</ThemedText>
-      <ThemedText style={{ fontVariant: ["tabular-nums"], ...(color ? { color } : {}) }}>
-        {value}
-      </ThemedText>
-    </View>
-  );
+  // A stage and its time join with non-breaking spaces, so a narrow row wraps inside the stage's words instead.
+  const line = (stage: string, time: string) => `${stage}\u00a0·\u00a0${time}`;
+  const stages = compact
+    ? // Many phones: each one's furthest stage only, still with its time.
+      [{ text: line(stageText(furthest.stage), at(furthest.at!)), stopped: false }]
+    : reached.map(({ stage: one, at: when, stopped }) => ({
+        text: line(
+          stageText(one),
+          when !== null ? at(when) : whyText(stopped ? "stage_stopped" : "stage_none"),
+        ),
+        stopped: when === null && stopped,
+      }));
+  const problems = [
+    ...(stuck ? [whyText(call ? "call_not_sent" : "stuck_note")] : []),
+    ...deliveryError(row),
+  ];
+  const notes = [
+    ...(stage === "accepted" && !compact && !call ? [whyText("no_receipt")] : []),
+    ...(row.attempts > 1 ? [whyText("attempts", { detail: String(row.attempts) })] : []),
+  ];
   return (
-    <View
-      style={{
-        gap: compact ? spacing[0.5] : spacing[2],
-        padding: compact ? spacing[2] : spacing[3],
-        paddingHorizontal: spacing[3],
-        borderRadius: radius.md,
-        borderCurve: "continuous",
-        backgroundColor: colors.muted,
-      }}
-    >
-      <ThemedText style={{ fontWeight: "600" }}>
-        {call ? callLabel(row) : deviceLabel(row)}
-      </ThemedText>
-      {compact
-        ? // Many phones: each one's furthest stage only, still with its time.
-          line(stageText(furthest.stage), at(furthest.at!))
-        : reached.map(({ stage: one, at: when, stopped }) =>
-            when !== null
-              ? line(stageText(one), at(when), undefined, one)
-              : line(
-                  stageText(one),
-                  whyText(stopped ? "stage_stopped" : "stage_none"),
-                  stopped ? tone("warn") : colors.mutedForeground,
-                  one,
-                ),
-          )}
-      {stuck ? (
-        <ThemedText selectable style={{ color: tone("warn") }}>
-          {whyText(call ? "call_not_sent" : "stuck_note")}
-        </ThemedText>
-      ) : null}
-      {deliveryError(row).map((text) => (
-        <ThemedText key={text} selectable style={{ color: tone("warn") }}>
-          {text}
-        </ThemedText>
-      ))}
-      {stage === "accepted" && !compact && !call ? (
-        <ThemedText variant="caption">{whyText("no_receipt")}</ThemedText>
-      ) : null}
-      {row.attempts > 1 ? (
-        <ThemedText variant="caption">
-          {whyText("attempts", { detail: String(row.attempts) })}
-        </ThemedText>
-      ) : null}
-    </View>
+    <ListItem key={row.id} leading={<RowIcon plain glyph={call ? CALL_GLYPH : GLYPHS.phone} />}>
+      <Column spacing={spacing[0.5]} alignment="start">
+        <Text>{call ? callLabel(row) : deviceLabel(row)}</Text>
+        {stages.map((line) => (
+          <Text key={line.text} textStyle={{ color: line.stopped ? warn : muted, fontSize: 15 }}>
+            {line.text}
+          </Text>
+        ))}
+        {problems.map((text) => (
+          <Text key={text} textStyle={{ color: warn, fontSize: 15 }}>
+            {text}
+          </Text>
+        ))}
+        {notes.map((text) => (
+          <Text key={text} textStyle={{ color: muted, fontSize: 15 }}>
+            {text}
+          </Text>
+        ))}
+      </Column>
+    </ListItem>
   );
 }

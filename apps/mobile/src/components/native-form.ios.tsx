@@ -1,17 +1,9 @@
 import { FieldGroup, TextInput, useNativeState, type TextInputRef } from "@expo/ui";
 import { Button, Text, VStack } from "@expo/ui/swift-ui";
-import {
-  buttonStyle,
-  controlSize,
-  disabled,
-  font,
-  foregroundStyle,
-  frame,
-  listRowBackground,
-  listRowInsets,
-} from "@expo/ui/swift-ui/modifiers";
+import { font, foregroundStyle } from "@expo/ui/swift-ui/modifiers";
 import { useRef } from "react";
 import { NativeHost } from "@/components/native-host";
+import { SubmitButton } from "@/components/submit-button";
 import { useTheme } from "@/hooks/use-theme";
 import type { NativeField, NativeFormProps } from "./native-form";
 
@@ -80,20 +72,7 @@ export function NativeForm({ intro, fields, problem, submit, links = [] }: Nativ
         ) : null}
         {submit ? (
           <FieldGroup.Section>
-            <Button
-              onPress={submit.onPress}
-              modifiers={[
-                buttonStyle("borderedProminent"),
-                controlSize("large"),
-                disabled(submit.busy ?? false),
-                listRowBackground("clear"),
-                listRowInsets({ top: 0, leading: 0, bottom: 0, trailing: 0 }),
-              ]}
-            >
-              <Text modifiers={[font({ weight: "semibold" }), frame({ maxWidth: Infinity })]}>
-                {submit.label}
-              </Text>
-            </Button>
+            <SubmitButton label={submit.label} busy={submit.busy} onPress={submit.onPress} />
             {problem ? (
               <FieldGroup.SectionFooter>
                 <Text modifiers={[foregroundStyle(colors.destructive)]}>{problem}</Text>

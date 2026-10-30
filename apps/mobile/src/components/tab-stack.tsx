@@ -1,6 +1,7 @@
 import { Stack } from "expo-router";
 import { Platform } from "react-native";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
+import { useTheme } from "@/hooks/use-theme";
 import { useSystemColors } from "@/theme/system-colors";
 
 /**
@@ -11,6 +12,8 @@ import { useSystemColors } from "@/theme/system-colors";
  */
 export function TabStack({ name, title }: { name: string; title: string }) {
   const system = useSystemColors();
+  const colors = useTheme();
+  const label = Platform.OS === "ios" ? colors.foreground : (system.label as string);
   const reducedMotion = useReducedMotion();
   return (
     <Stack
@@ -21,8 +24,9 @@ export function TabStack({ name, title }: { name: string; title: string }) {
         headerStyle:
           Platform.OS === "ios" ? undefined : { backgroundColor: system.ground as string },
         headerTintColor: system.tint as string,
-        headerTitleStyle: { color: system.label as string },
-        headerLargeTitleStyle: { color: system.label as string },
+        // iOS takes the theme's foreground: a UIKit semantic colour passed here is resolved once, in light mode.
+        headerTitleStyle: { color: label },
+        headerLargeTitleStyle: { color: label },
         contentStyle: { backgroundColor: system.ground },
         animation: reducedMotion ? "fade" : "default",
       }}

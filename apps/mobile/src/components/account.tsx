@@ -1,3 +1,4 @@
+import { FieldGroup, Text } from "@expo/ui";
 import { m } from "@freecorps/brigade-i18n";
 import {
   CALL_CHOICES,
@@ -8,22 +9,16 @@ import {
   type MemberEmail,
 } from "@freecorps/brigade-schema";
 import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
-import { radius, spacing } from "@freecorps/brigade-ui";
-import { useEffect, useState } from "react";
-import {
-  AccessibilityInfo,
-  ActivityIndicator,
-  Alert,
-  Linking,
-  Pressable,
-  StyleSheet,
-  View,
-} from "react-native";
+import { useEffect, useState, type ReactNode } from "react";
+import { AccessibilityInfo, Alert, Linking } from "react-native";
 import { useChoiceSheet } from "@/components/choice-sheet";
+import type { Glyph } from "@/components/glyphs";
+import { ListItem } from "@/components/list-item";
+import { RowIcon } from "@/components/row-icon";
 import { useMember } from "@/components/session";
-import { ThemedText } from "@/components/themed-text";
 import { useLocale } from "@/hooks/use-locale";
 import { useTheme } from "@/hooks/use-theme";
+import { useSystemColors } from "@/theme/system-colors";
 import { authClient } from "@/lib/auth-client";
 import type { Paging } from "@/lib/device";
 import { caughtUp } from "@/lib/picked";
@@ -73,82 +68,71 @@ function pagingTrouble(
 }
 
 /**
- * At the top of the incident list when this phone does not page the member and they should know, in the open
+ * The incident list's first section when this phone does not page the member and they should know, in the open
  * workspace or another it was opened in: notifications off (with a way to Settings), the phone still another
  * member's, too many phones registered (an older instance), or registering failed. The app keeps trying the phone
- * still another member's and a failure on its own (src/lib/paging.ts); Try again does any of the three now.
+ * still another member's and a failure on its own (src/lib/paging.ts); Try again does any of the three now. An element
+ * for the list, not a component: `FieldGroup` takes any child but its own sections for a row.
  */
-export function PagingNotice() {
+export function usePagingNotice(): ReactNode {
   const member = useMember();
   const { retryPaging } = member;
   const colors = useTheme();
+  const system = useSystemColors();
   const [retrying, setRetrying] = useState(false);
   const trouble = pagingTrouble(member);
-  if (!trouble) return null;
-  const { paging } = trouble;
+  const title =
+    trouble === undefined
+      ? null
+      : trouble.name !== undefined
+        ? m.account_flow({ part: "pages_notice_in", name: trouble.name })
+        : m.mobile_session({ part: "pages_notice_title" });
+  const text = trouble === undefined ? null : pagingText(trouble.paging);
+  // A section's rows have no live region: the screen reader hears the notice once when it appears or changes.
+  useEffect(() => {
+    if (title && text) AccessibilityInfo.announceForAccessibility(`${title}. ${text}`);
+  }, [title, text]);
+  if (!trouble || !title || !text) return null;
+  const settings = trouble.paging === "off";
   const retry = () => {
     setRetrying(true);
     void retryPaging().finally(() => setRetrying(false));
   };
   return (
-    <View
-      accessibilityLiveRegion="polite"
-      style={{
-        gap: spacing[2],
-        padding: spacing[3],
-        borderRadius: radius.md,
-        borderCurve: "continuous",
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: colors.destructive,
-      }}
-    >
-      <ThemedText variant="label" accessibilityRole="header" style={{ color: colors.destructive }}>
-        {trouble.name !== undefined
-          ? m.account_flow({ part: "pages_notice_in", name: trouble.name })
-          : m.mobile_session({ part: "pages_notice_title" })}
-      </ThemedText>
-      <ThemedText selectable>{pagingText(paging)}</ThemedText>
-      {paging === "off" ? (
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => void Linking.openSettings()}
-          style={({ pressed }) => ({
-            minHeight: spacing[12],
-            justifyContent: "center",
-            alignSelf: "flex-start",
-            opacity: pressed ? 0.6 : 1,
-          })}
-        >
-          <ThemedText style={{ color: colors.primary }}>
-            {m.mobile_session({ part: "open_settings" })}
-          </ThemedText>
-        </Pressable>
-      ) : (
-        <Pressable
-          accessibilityRole="button"
-          // Named outright and without `busy`: TalkBack otherwise reads the spinner's "busy" as the button's name.
-          accessibilityLabel={m.mobile_session({ part: "try_again" })}
-          accessibilityState={{ disabled: retrying }}
-          disabled={retrying}
-          onPress={retry}
-          style={({ pressed }) => ({
-            minHeight: spacing[12],
-            flexDirection: "row",
-            alignItems: "center",
-            gap: spacing[2],
-            alignSelf: "flex-start",
-            opacity: pressed ? 0.6 : 1,
-          })}
-        >
-          {retrying ? <ActivityIndicator color={colors.primary} /> : null}
-          <ThemedText style={{ color: colors.primary }}>
-            {m.mobile_session({ part: "try_again" })}
-          </ThemedText>
-        </Pressable>
-      )}
-    </View>
+    <FieldGroup.Section key="paging-notice">
+      <ListItem
+        leading={<RowIcon glyph={PAGING_OFF_GLYPH} color={system.destructive} />}
+        supportingText={text}
+      >
+        <Text textStyle={{ color: system.destructive, fontWeight: "600" }}>{title}</Text>
+      </ListItem>
+      <ListItem
+        onPress={settings ? () => void Linking.openSettings() : retrying ? undefined : retry}
+        leading={
+          <RowIcon
+            plain
+            glyph={settings ? SETTINGS_GLYPH : RETRY_GLYPH}
+            color={retrying ? colors.mutedForeground : colors.primary}
+          />
+        }
+      >
+        <Text textStyle={{ color: retrying ? colors.mutedForeground : colors.primary }}>
+          {settings
+            ? m.mobile_session({ part: "open_settings" })
+            : m.mobile_session({ part: "try_again" })}
+        </Text>
+      </ListItem>
+    </FieldGroup.Section>
   );
 }
+
+const PAGING_OFF_GLYPH: Glyph = {
+  ios: "bell.slash.fill",
+  android: "notifications_off",
+  web: "notifications_off",
+};
+const SETTINGS_GLYPH: Glyph = { ios: "gearshape", android: "settings", web: "settings" };
+const RETRY_GLYPH: Glyph = { ios: "arrow.clockwise", android: "refresh", web: "refresh" };
 
 /**
  * The member's workspaces (Better Auth's organization list), the active one first known even offline, each with
@@ -206,7 +190,7 @@ export function useWorkspaces() {
 }
 
 /**
- * Which pages ring the member's iPhones as a call (RFC 0010), in the open workspace, picked from a sheet and saved
+ * Which pages ring the member's phones as a call (RFC 0010), in the open workspace, picked from a sheet and saved
  * at once (`member.setCalls`; offline, when the phone is next online). The notification comes either way.
  */
 export function useCalls() {
@@ -386,11 +370,13 @@ export function usePhonePaging() {
       : trouble.paging === "off"
         ? {
             label: m.mobile_session({ part: "open_settings" }),
+            kind: "settings" as const,
             busy: false,
             run: () => void Linking.openSettings(),
           }
         : {
             label: m.mobile_session({ part: "try_again" }),
+            kind: "retry" as const,
             busy: retrying,
             run: () => {
               if (retrying) return;

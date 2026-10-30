@@ -15,6 +15,21 @@ import { useTheme } from "@/hooks/use-theme";
 import { pickLocale } from "@/lib/locale";
 import { useSystemColors } from "@/theme/system-colors";
 
+// An incident opened from a page or a link lands above the tabs, so Back goes to the list rather than out of the app.
+export const unstable_settings = { anchor: "(tabs)" };
+
+/**
+ * A form sheet with its grabber; on Android with Material's rounded top corners (28 dp), which the system's sheet
+ * otherwise draws square.
+ */
+const SHEET = {
+  presentation: "formSheet",
+  sheetGrabberVisible: true,
+  ...(process.env.EXPO_OS === "android" ? { sheetCornerRadius: 28 } : {}),
+} as const;
+
+const ios = process.env.EXPO_OS === "ios";
+
 export default function RootLayout() {
   const colors = useTheme();
   const system = useSystemColors();
@@ -46,12 +61,15 @@ export default function RootLayout() {
             <Stack
               key={locale}
               screenOptions={{
-                headerStyle: { backgroundColor: system.ground as string },
-                headerTintColor: system.tint as string,
+                // iOS: the system's own bar, which follows light and dark, and the theme's foreground for the title. A
+                // UIKit semantic colour passed here is resolved once, so the header stayed light in dark mode; the
+                // title, left without a colour, would take the tint.
+                ...(ios ? {} : { headerStyle: { backgroundColor: system.ground as string } }),
                 headerTitleStyle: {
-                  color: system.label as string,
+                  color: ios ? colors.foreground : (system.label as string),
                   fontWeight: fontWeight.semibold,
                 },
+                headerTintColor: system.tint as string,
                 headerShadowVisible: false,
                 contentStyle: { backgroundColor: system.ground },
                 // Reduced motion: no sliding, a short fade instead (packages/ui, Motion).
@@ -68,9 +86,8 @@ export default function RootLayout() {
                   name="incidents/[number]/update"
                   options={{
                     title: m.incident_page({ part: "update_label" }),
-                    presentation: "formSheet",
+                    ...SHEET,
                     sheetAllowedDetents: [0.6, 1],
-                    sheetGrabberVisible: true,
                   }}
                 />
                 <Stack.Screen name="incidents/by-id/[id]" options={{ title: "" }} />
@@ -89,9 +106,8 @@ export default function RootLayout() {
                   name="declare"
                   options={{
                     title: m.declare_heading(),
-                    presentation: "formSheet",
+                    ...SHEET,
                     sheetAllowedDetents: [0.75, 1],
-                    sheetGrabberVisible: true,
                   }}
                 />
                 <Stack.Screen name="legend" options={{ title: m.legend_title() }} />
@@ -100,9 +116,8 @@ export default function RootLayout() {
                   name="new-workspace"
                   options={{
                     title: m.account_flow({ part: "new_title", name: "" }),
-                    presentation: "formSheet",
+                    ...SHEET,
                     sheetAllowedDetents: [0.6, 1],
-                    sheetGrabberVisible: true,
                   }}
                 />
               </Stack.Protected>

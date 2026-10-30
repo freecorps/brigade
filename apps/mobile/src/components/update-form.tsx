@@ -1,6 +1,7 @@
-import { Button, FieldGroup, Text, TextInput, useNativeState } from "@expo/ui";
+import { FieldGroup, TextInput, useNativeState } from "@expo/ui";
+import { FooterText } from "@/components/footer-text";
 import { NativeHost } from "@/components/native-host";
-import { useTheme } from "@/hooks/use-theme";
+import { SubmitButton } from "@/components/submit-button";
 
 export type UpdateFormProps = {
   title: string;
@@ -17,7 +18,6 @@ export type UpdateFormProps = {
 
 /** An update as iOS writes one: a SwiftUI `Form` with a growing text field, its note under it, and the button. */
 export function UpdateForm({
-  title,
   initial,
   placeholder,
   note,
@@ -26,12 +26,12 @@ export function UpdateForm({
   onChange,
   onSubmit,
 }: UpdateFormProps) {
-  const colors = useTheme();
   const body = useNativeState(initial);
   return (
     <NativeHost style={{ flex: 1 }}>
       <FieldGroup>
-        <FieldGroup.Section title={title}>
+        {/* The sheet's own title names it (`title`, set on the screen); no section header repeats it. */}
+        <FieldGroup.Section>
           <TextInput
             value={body}
             onChangeText={onChange}
@@ -42,13 +42,11 @@ export function UpdateForm({
             autoCapitalize="sentences"
           />
           <FieldGroup.SectionFooter>
-            <Text textStyle={problem ? { color: colors.destructive } : undefined}>
-              {problem ?? note}
-            </Text>
+            <FooterText tone={problem ? "destructive" : "default"}>{problem ?? note}</FooterText>
           </FieldGroup.SectionFooter>
         </FieldGroup.Section>
         <FieldGroup.Section>
-          <Button label={submit} onPress={onSubmit} />
+          <SubmitButton label={submit} onPress={onSubmit} />
         </FieldGroup.Section>
       </FieldGroup>
     </NativeHost>

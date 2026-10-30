@@ -10,6 +10,9 @@ import { FieldGroup, Text } from "@expo/ui";
 import { ListItem } from "@/components/list-item";
 import { router } from "expo-router";
 import type { Glyph } from "@/components/glyphs";
+import { Avatar } from "@/components/avatar";
+import { RowChevron } from "@/components/row-chevron";
+import { RowIcon } from "@/components/row-icon";
 import { useTheme } from "@/hooks/use-theme";
 import { pagingList, type PagingData } from "@/lib/why";
 
@@ -32,6 +35,9 @@ export const VERDICT_GLYPHS: Record<WhyVerdict, Glyph> = {
   not_targeted: { ios: "circle.dashed", android: "pending", web: "pending" },
   none: { ios: "circle.dashed", android: "pending", web: "pending" },
 };
+
+/** The member's own paging: why this phone did, or did not, ring. */
+const WHY_GLYPH: Glyph = { ios: "questionmark.circle", android: "help", web: "help" };
 
 export const CALL_GLYPH: Glyph = { ios: "phone", android: "call", web: "call" };
 
@@ -109,7 +115,11 @@ export function pagingSection({
     });
   return (
     <FieldGroup.Section key="paging" title={whyText("title")}>
-      <ListItem onPress={() => open(who.self)}>
+      <ListItem
+        onPress={() => open(who.self)}
+        leading={<RowIcon plain glyph={WHY_GLYPH} color={tint} />}
+        trailing={<RowChevron />}
+      >
         <Text textStyle={{ color: tint }}>{whyText("why_title_you")}</Text>
       </ListItem>
       {rows.length === 0 ? (
@@ -121,6 +131,8 @@ export function pagingSection({
           <ListItem
             key={id}
             onPress={() => open(id)}
+            leading={<Avatar name={memberName(id, who)} />}
+            trailing={<RowChevron />}
             supportingText={[shortVerdict(verdict), ...(call ? [shortCall(call)] : [])].join(" · ")}
           >
             <Text>{memberName(id, who)}</Text>

@@ -758,7 +758,7 @@ describe("who was paged, and why not", () => {
     expect(text).toContain("Call · iPhone · App Store build");
     expect(text).toContain("Brigade stopped calling it. Pages still reach it as notifications.");
     expect(text).toContain("Apple or Google said: BadDeviceToken");
-    expect(text).toContain(`${LONG_NAME}'s iPhones ring as a call for SEV1 pages only`);
+    expect(text).toContain(`${LONG_NAME}'s phones ring as a call for SEV1 pages only`);
     // A call has no "opened on the phone" stage.
     expect(text.match(/Opened on the phone/g)).toHaveLength(1);
   });

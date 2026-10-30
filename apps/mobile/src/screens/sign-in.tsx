@@ -6,7 +6,7 @@ import {
   type FieldErrors,
   type SignInField,
 } from "@freecorps/brigade-i18n/auth";
-import { router } from "expo-router";
+import { router, Stack } from "expo-router";
 import { useRef, useState } from "react";
 import { AccessibilityInfo, Linking } from "react-native";
 import { NativeForm } from "@/components/native-form";
@@ -23,10 +23,14 @@ export function SignIn() {
   const view = useSessionView();
   if (view.kind === "no-workspace") {
     return (
-      <NewWorkspaceForm
-        intro={m.account_flow({ part: "no_workspace", name: "" })}
-        links={[{ label: m.sign_out(), destructive: true, onPress: () => void view.signOut() }]}
-      />
+      <>
+        {/* Signed in, with nothing to sign in to: the screen is creating a workspace, and says so. */}
+        <Stack.Screen options={{ title: m.account_flow({ part: "new_title", name: "" }) }} />
+        <NewWorkspaceForm
+          intro={m.account_flow({ part: "no_workspace", name: "" })}
+          links={[{ label: m.sign_out(), destructive: true, onPress: () => void view.signOut() }]}
+        />
+      </>
     );
   }
   if (view.kind === "signed-out") return <SignInForm />;

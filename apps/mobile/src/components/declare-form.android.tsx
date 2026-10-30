@@ -23,6 +23,7 @@ import { INCIDENT_TITLE_MAX, SEVERITIES } from "@freecorps/brigade-schema";
 import { useEffect, useRef, useState } from "react";
 import type { DeclareFormProps } from "@/components/declare-form";
 import { NativeHost } from "@/components/native-host";
+import { useSystemColors } from "@/theme/system-colors";
 
 export type { DeclareFormProps } from "@/components/declare-form";
 
@@ -44,6 +45,7 @@ export function DeclareForm({
   onDeclare,
 }: DeclareFormProps) {
   const title = useNativeState("");
+  const system = useSystemColors();
   return (
     <NativeHost style={{ flex: 1 }}>
       <Column
@@ -105,7 +107,9 @@ export function DeclareForm({
               </SegmentedButton>
             ))}
           </SingleChoiceSegmentedButtonRow>
-          <Text style={{ typography: "bodyMedium" }}>{severityLabels[severity]()}</Text>
+          <Text style={{ typography: "bodyMedium" }} color={system.secondaryLabel as string}>
+            {severityLabels[severity]()}
+          </Text>
         </Column>
 
         {policies.length > 0 ? (

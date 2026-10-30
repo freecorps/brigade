@@ -4,14 +4,14 @@ The Brigade app for iOS and Android: Expo SDK 58, Expo Router, React Native 0.88
 not Vite (RFC 0002). It opens on sign-in (email and password; accounts are created on the dashboard). Signed in, the
 app is the system's tab bar (Expo Router's `NativeTabs`: UITabBarController on iOS, Material 3's navigation bar on
 Android), each tab with its own stack: **Incidents**, the workspace's live incident list (Brigade Sync, RFC 0004), to
-declare (a form sheet, from the header's + on iOS and a floating action button on Android) and, with a long press
+declare (a form sheet, from the header's + on iOS and a floating action button on Android; a row's severity and status sit under its title) and, with a long press
 on a row (a context menu on iOS, a dropdown on Android), to change an incident's status or severity; **On call** (whether the member is on call, their next shifts and overrides, who
-every schedule has now; a tap on a schedule covers it); and **Account**, a settings screen (workspaces, whether this
+every schedule has now; a tap on a schedule covers it); and **Account**, a settings screen with a glyph for each row (a tile on iOS, a Material Symbol on Android) (workspaces, whether this
 phone is paged, calls, email switches, the legend, Sign out). Incidents, calls and sheets open above the tabs from the root stack, so a page opens its
 incident whichever tab is showing. Controls come from `@expo/ui` (SwiftUI on iOS, Jetpack Compose on Android) where it
 has one, and are drawn by the app only where it does not; chrome and grounds use the system's semantic colours
 (`src/theme/system-colors.ts`), while brand, severity and status colours stay packages/ui's. Each incident
-opens `/incidents/<number>`: severity and status, roles, details, who was paged and the timeline, as on the dashboard, in the system's grouped list; updates are written and edited in a form sheet (`/incidents/<number>/update`), and a long press on one of your own updates edits it, removes it or opens its links. The list
+opens `/incidents/<number>`: severity and status, roles, details, who was paged and the timeline, as on the dashboard, in the system's grouped list; updates are written and edited in a form sheet (`/incidents/<number>/update`, from the header's compose button on iOS and a floating action button on Android), and a long press on one of your own updates edits it, removes it or opens its links. The list
 says whether the member is on call (and until when, or when their next shift is) and opens `/oncall`: their shifts
 and overrides, who every schedule has now, and an override for themselves (`schedule.addOverride`, from now for 1 to
 24 hours) or removing their own. From the Account tab, `/legend` shows the severity and status legend, and a development-only `/intl` route reports Hermes

@@ -44,6 +44,7 @@ import { ThemedText } from "@/components/themed-text";
 import { useLocale } from "@/hooks/use-locale";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
+import { useSystemColors } from "@/theme/system-colors";
 import { memberChoices } from "@/lib/why";
 
 /** Phones on one page past which each shows only its furthest stage: a team with many phones stays readable. */
@@ -92,12 +93,12 @@ function ByNumber({ number, userId }: { number: number; userId: string }) {
 }
 
 function Screen({ title, children }: { title: string; children: ReactNode }) {
-  const colors = useTheme();
+  const system = useSystemColors();
   const padding = useScreenPadding();
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
-      style={{ backgroundColor: colors.background }}
+      style={{ backgroundColor: system.ground }}
       contentContainerStyle={padding}
     >
       <Stack.Screen options={{ title }} />
@@ -165,9 +166,6 @@ function Explanation({ row, userId }: { row: IncidentRow; userId: string }) {
       <View style={{ gap: spacing[3] }}>
         <ThemedText variant="caption" selectable>
           {`${formatIncidentNumber(row.number) ?? ""} ${row.title}`}
-        </ThemedText>
-        <ThemedText variant="heading" accessibilityRole="header">
-          {title}
         </ThemedText>
         {/* Like the dashboard's member select: one button, read as "Member: Bia". */}
         <Pressable

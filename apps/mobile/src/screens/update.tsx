@@ -9,7 +9,7 @@ import {
 } from "@freecorps/brigade-sync";
 import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
+import { router, Stack } from "expo-router";
 import { useState } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { ThemedText } from "@/components/themed-text";
@@ -89,43 +89,46 @@ export function UpdateSheet({ number, entryId }: { number: number | null; entryI
     );
   }
 
+  const title = entryId
+    ? m.incident_update_change({ part: "edit_label", time: "", reason: "" })
+    : m.incident_page({ part: "update_label" });
   return (
-    <UpdateForm
-      key={entryId ?? "new"}
-      title={
-        entryId
-          ? m.incident_update_change({ part: "edit_label", time: "", reason: "" })
-          : m.incident_page({ part: "update_label" })
-      }
-      initial={original}
-      placeholder={m.incident_page({ part: "update_placeholder" })}
-      note={
-        length >= UPDATE_COUNT_FROM
-          ? m.incident_update_length({
-              count: formatNumber(length, locale),
-              max: formatNumber(UPDATE_BODY_MAX, locale),
-            })
-          : entryId
-            ? m.incident_update_change({ part: "status_page_note", time: "", reason: "" })
-            : m.incident_page({ part: "update_hint" })
-      }
-      problem={
-        invalid === null
-          ? null
-          : invalid === "long"
-            ? m.auth_error_too_long({ max: formatNumber(UPDATE_BODY_MAX, locale) })
-            : m.incident_page({ part: invalid === "empty" ? "update_empty" : "update_invalid" })
-      }
-      submit={
-        entryId
-          ? m.incident_update_change({ part: "save", time: "", reason: "" })
-          : m.incident_page({ part: "post" })
-      }
-      onChange={(value) => {
-        setBody(value);
-        if (invalid) setInvalid(null);
-      }}
-      onSubmit={submit}
-    />
+    <>
+      {/* The sheet's title says whether it posts or edits. */}
+      <Stack.Screen options={{ title }} />
+      <UpdateForm
+        key={entryId ?? "new"}
+        title={title}
+        initial={original}
+        placeholder={m.incident_page({ part: "update_placeholder" })}
+        note={
+          length >= UPDATE_COUNT_FROM
+            ? m.incident_update_length({
+                count: formatNumber(length, locale),
+                max: formatNumber(UPDATE_BODY_MAX, locale),
+              })
+            : entryId
+              ? m.incident_update_change({ part: "status_page_note", time: "", reason: "" })
+              : m.incident_page({ part: "update_hint" })
+        }
+        problem={
+          invalid === null
+            ? null
+            : invalid === "long"
+              ? m.auth_error_too_long({ max: formatNumber(UPDATE_BODY_MAX, locale) })
+              : m.incident_page({ part: invalid === "empty" ? "update_empty" : "update_invalid" })
+        }
+        submit={
+          entryId
+            ? m.incident_update_change({ part: "save", time: "", reason: "" })
+            : m.incident_page({ part: "post" })
+        }
+        onChange={(value) => {
+          setBody(value);
+          if (invalid) setInvalid(null);
+        }}
+        onSubmit={submit}
+      />
+    </>
   );
 }

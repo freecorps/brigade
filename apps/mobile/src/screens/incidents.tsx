@@ -1,4 +1,4 @@
-import { FieldGroup, Text } from "@expo/ui";
+import { Column, FieldGroup, Row, Text } from "@expo/ui";
 import { ListItem } from "@/components/list-item";
 import { m } from "@freecorps/brigade-i18n";
 import {
@@ -29,13 +29,15 @@ import { useConnectionState, useMutation, useQuery } from "@freecorps/brigade-sy
 import { router } from "expo-router";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AccessibilityInfo, View } from "react-native";
-import { PagingNotice } from "@/components/account";
+import { usePagingNotice } from "@/components/account";
 import { useChoiceSheet } from "@/components/choice-sheet";
 import { EmptyRow } from "@/components/empty-row";
 import type { Glyph } from "@/components/glyphs";
 import { StatePanel, useNow } from "@/components/incident-parts";
+import { useListEnd } from "@/components/list-end";
 import { ListStatus } from "@/components/list-status";
-import { NativeSeverityBadge, NativeStatusBadge } from "@/components/native-badge";
+import { SeverityPill, StatusPill } from "@/components/pill";
+import { RowChevron } from "@/components/row-chevron";
 import { withRowMenu } from "@/components/row-menu";
 import { RowText } from "@/components/row-text";
 import { DeclareButton } from "@/components/declare-button";
@@ -43,6 +45,7 @@ import { useMember } from "@/components/session";
 import { useLocale } from "@/hooks/use-locale";
 import { NativeHost } from "@/components/native-host";
 import { useTheme } from "@/hooks/use-theme";
+import { fontSize, spacing } from "@freecorps/brigade-ui";
 import { onDeclare } from "@/lib/declares";
 import { restoredTarget } from "@/lib/pending";
 import { currentSync } from "@/lib/sync-client";
@@ -53,6 +56,9 @@ import { currentSync } from "@/lib/sync-client";
  * who may. Declaring is the header's + (a form sheet, `src/screens/declare.tsx`). Changes show at once and settle
  * when the shard confirms them; a refused one rolls back and leaves a message.
  */
+/** Room under the list for the floating Declare button (Android), so the last incident scrolls clear of it. */
+const FAB_ROOM = 88;
+
 /** Nothing open: a shield with a check, as the dashboard's all-clear. */
 const ALL_CLEAR_GLYPH: Glyph = {
   ios: "checkmark.shield",
@@ -211,6 +217,8 @@ function IncidentList({ onReload }: { onReload: () => void }) {
   );
 
   const now = useNow(20_000);
+  const pagingNotice = usePagingNotice();
+  const listEnd = useListEnd(can(role, "incident:declare") ? FAB_ROOM : 0);
   /** The row whose menu is open (Android; iOS's context menu keeps its own). */
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const listed = new Set(rows.map((row) => row.id));
@@ -233,9 +241,9 @@ function IncidentList({ onReload }: { onReload: () => void }) {
 
   return (
     <View style={{ flex: 1 }}>
-      <PagingNotice />
       <NativeHost style={{ flex: 1 }}>
         <FieldGroup>
+          {pagingNotice}
           <FieldGroup.Section>
             <FieldGroup.SectionHeader>
               <ListStatus view={view} summary={summary} />
@@ -246,20 +254,36 @@ function IncidentList({ onReload }: { onReload: () => void }) {
                   key={row.id}
                   // A declare the shard has not numbered yet has no page to open: no tap until it has.
                   onPress={row.number === null ? undefined : () => open(row)}
-                  leading={<NativeSeverityBadge severity={row.severity} compact />}
-                  trailing={<NativeStatusBadge status={row.status} />}
-                  supportingText={[
-                    formatIncidentNumber(row.number) ??
-                      (view === "live"
-                        ? m.incident_unnumbered_saving()
-                        : m.incident_unnumbered_not_sent()),
-                    m.incident_declared({ time: formatAge(row.declaredAt, now, locale) }),
-                    ...(busy.has(row.id)
-                      ? [view === "live" ? m.incident_change_saving() : m.incident_change_queued()]
-                      : []),
-                  ].join(" · ")}
+                  trailing={row.number === null ? undefined : <RowChevron />}
                 >
-                  <Text numberOfLines={2}>{row.title}</Text>
+                  {/* Severity and status under the title, so the title keeps the row's width. One headline column
+                      rather than a supporting line: Material sizes a row with a non-text supporting line as three
+                      lines tall. */}
+                  <Column spacing={spacing[1] + spacing[0.5]} alignment="start">
+                    <Text numberOfLines={2} textStyle={{ fontWeight: "600" }}>
+                      {row.title}
+                    </Text>
+                    <Row spacing={spacing[1] + spacing[0.5]} alignment="center">
+                      <SeverityPill severity={row.severity} />
+                      <StatusPill status={row.status} />
+                      <Text
+                        numberOfLines={1}
+                        textStyle={{ color: colors.mutedForeground, fontSize: fontSize.sm.size }}
+                      >
+                        {[
+                          formatIncidentNumber(row.number) ??
+                            (view === "live"
+                              ? m.incident_unnumbered_saving()
+                              : m.incident_unnumbered_not_sent()),
+                          busy.has(row.id)
+                            ? view === "live"
+                              ? m.incident_change_saving()
+                              : m.incident_change_queued()
+                            : formatAge(row.declaredAt, now, locale),
+                        ].join(" · ")}
+                      </Text>
+                    </Row>
+                  </Column>
                 </ListItem>,
                 editable
                   ? [
@@ -302,6 +326,7 @@ function IncidentList({ onReload }: { onReload: () => void }) {
               )}
             </FieldGroup.Section>
           ) : null}
+          {listEnd}
         </FieldGroup>
       </NativeHost>
       {can(role, "incident:declare") ? <DeclareButton /> : null}

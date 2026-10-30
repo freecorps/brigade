@@ -6,6 +6,7 @@ import { BackHandler, Pressable, ScrollView, View } from "react-native";
 import { ThemedText } from "@/components/themed-text";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
+import { useSystemColors } from "@/theme/system-colors";
 import { callSession } from "@/lib/call";
 import { callStatus } from "@/lib/call-session";
 
@@ -15,6 +16,7 @@ import { callStatus } from "@/lib/call-session";
  */
 export function CallScreen() {
   const colors = useTheme();
+  const system = useSystemColors();
   const padding = useScreenPadding();
   const router = useRouter();
   const state = useSyncExternalStore(callSession.subscribe, callSession.getState);
@@ -37,7 +39,7 @@ export function CallScreen() {
 
   if (!state) {
     return (
-      <View style={[padding, { flex: 1, backgroundColor: colors.background }]}>
+      <View style={[padding, { flex: 1, backgroundColor: system.ground }]}>
         <ThemedText>{m.call_ended()}</ThemedText>
       </View>
     );
@@ -49,7 +51,7 @@ export function CallScreen() {
 
   return (
     <ScrollView
-      style={{ backgroundColor: colors.background }}
+      style={{ backgroundColor: system.ground }}
       contentContainerStyle={[padding, { flexGrow: 1, gap: spacing[6] }]}
     >
       <View style={{ gap: spacing[2] }}>

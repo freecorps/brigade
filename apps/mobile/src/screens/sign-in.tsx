@@ -21,16 +21,27 @@ import { useSignUpMode } from "@/lib/sign-up-mode";
  */
 export function SignIn() {
   const view = useSessionView();
+  // Every view says what the screen is for, so a title set by one never sticks to the next.
+  const title =
+    view.kind === "no-workspace"
+      ? m.account_flow({ part: "new_title", name: "" })
+      : m.auth_sign_in_title();
+  return (
+    <>
+      <Stack.Screen options={{ title }} />
+      <SignInView view={view} />
+    </>
+  );
+}
+
+/** Everything before a member is ready, by the session's view. */
+function SignInView({ view }: { view: ReturnType<typeof useSessionView> }) {
   if (view.kind === "no-workspace") {
     return (
-      <>
-        {/* Signed in, with nothing to sign in to: the screen is creating a workspace, and says so. */}
-        <Stack.Screen options={{ title: m.account_flow({ part: "new_title", name: "" }) }} />
-        <NewWorkspaceForm
-          intro={m.account_flow({ part: "no_workspace", name: "" })}
-          links={[{ label: m.sign_out(), destructive: true, onPress: () => void view.signOut() }]}
-        />
-      </>
+      <NewWorkspaceForm
+        intro={m.account_flow({ part: "no_workspace", name: "" })}
+        links={[{ label: m.sign_out(), destructive: true, onPress: () => void view.signOut() }]}
+      />
     );
   }
   if (view.kind === "signed-out") return <SignInForm />;

@@ -126,7 +126,7 @@ export function AccountScreen() {
               onPress={calls.ready ? calls.pick : undefined}
               supportingText={calls.hint}
               leading={<RowIcon glyph={CALL_GLYPH} color={colors.chart2} />}
-              trailing={<RowChevron />}
+              trailing={calls.ready ? <RowChevron /> : undefined}
             >
               <Text textStyle={{ color: colors.primary }}>{calls.value}</Text>
             </ListItem>

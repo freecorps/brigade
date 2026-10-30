@@ -5,8 +5,9 @@ not Vite (RFC 0002). It opens on sign-in (email and password; accounts are creat
 app is the system's tab bar (Expo Router's `NativeTabs`: UITabBarController on iOS, Material 3's navigation bar on
 Android), each tab with its own stack: **Incidents**, the workspace's live incident list (Brigade Sync, RFC 0004), to
 declare (a form sheet, from the header's + on iOS and a floating action button on Android) and, with a long press
-on a row (a context menu on iOS, a dropdown on Android), to change an incident's status or severity; **On call**; and **Account** (workspace, whether this phone is
-paged, Sign out, the legend). Incidents, calls and sheets open above the tabs from the root stack, so a page opens its
+on a row (a context menu on iOS, a dropdown on Android), to change an incident's status or severity; **On call** (whether the member is on call, their next shifts and overrides, who
+every schedule has now; a tap on a schedule covers it); and **Account**, a settings screen (workspaces, whether this
+phone is paged, calls, email switches, the legend, Sign out). Incidents, calls and sheets open above the tabs from the root stack, so a page opens its
 incident whichever tab is showing. Controls come from `@expo/ui` (SwiftUI on iOS, Jetpack Compose on Android) where it
 has one, and are drawn by the app only where it does not; chrome and grounds use the system's semantic colours
 (`src/theme/system-colors.ts`), while brand, severity and status colours stay packages/ui's. Each incident

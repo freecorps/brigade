@@ -1,4 +1,5 @@
-import { formatNumber, m } from "@freecorps/brigade-i18n";
+import { FieldGroup, ListItem, RNHostView, Text } from "@expo/ui";
+import { m } from "@freecorps/brigade-i18n";
 import {
   entryTime,
   formatAge,
@@ -14,7 +15,6 @@ import {
   severityName,
   type Notice as Refusal,
   type NoticeTarget,
-  type People,
 } from "@freecorps/brigade-i18n/incident";
 import { incidentStatusLabels } from "@freecorps/brigade-i18n/labels";
 import {
@@ -23,92 +23,49 @@ import {
   PAGE_AGAIN_CONFLICTS,
   roleDefinitions,
   SEVERITIES,
-  UPDATE_BODY_MAX,
   UPDATE_REMOVED,
   type IncidentRow,
-  type Role,
   type RoleDefinition,
-  type TimelineRow,
 } from "@freecorps/brigade-schema";
 import {
   adjustBusy,
   assignable,
   bodyParts,
-  checkEdit,
-  checkUpdate,
   nextFailed,
   nextStatuses,
   pageAgainEntries,
   syncView,
   timelineItems,
-  UPDATE_COUNT_FROM,
   updateActions,
-  updateLength,
   type MutationOutcome,
   type SyncView,
   type TimelineItem,
-  type UpdateProblem,
 } from "@freecorps/brigade-sync";
 import { useConnectionState, useMutation, useQuery } from "@freecorps/brigade-sync/react";
-import { fontSize, radius, spacing } from "@freecorps/brigade-ui";
+import { spacing } from "@freecorps/brigade-ui";
 import * as Haptics from "expo-haptics";
-import { Stack } from "expo-router";
-import { useHeaderHeight } from "expo-router/react-navigation";
-import { SymbolView } from "expo-symbols";
-import {
-  createContext,
-  use,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ComponentRef,
-  type ReactNode,
-} from "react";
-import {
-  AccessibilityInfo,
-  ActivityIndicator,
-  Alert,
-  Keyboard,
-  KeyboardAvoidingView,
-  Linking,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
-import { useGlyphSize } from "@/components/badge";
-import { useChoiceSheet, type Choice as SheetChoice } from "@/components/choice-sheet";
-import { IncidentDetails } from "@/components/incident-details";
-import { STATUS_GLYPHS, type Glyph } from "@/components/glyphs";
-import {
-  Choice,
-  ConnectionStatus,
-  Notice,
-  SeverityBadge,
-  StatePanel,
-  StatusBadge,
-  useNow,
-} from "@/components/incident-parts";
-import { PagingSection, usePagingData } from "@/components/paging";
-import { Row, Section } from "@/components/section";
+import { router, Stack } from "expo-router";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { AccessibilityInfo, ActivityIndicator, Alert, Linking, View } from "react-native";
+import { useChoiceSheet } from "@/components/choice-sheet";
+import { detailsSection, useIncidentDetails } from "@/components/incident-details";
+import { ConnectionStatus, StatePanel, useNow } from "@/components/incident-parts";
+import { NativeSeverityBadge, NativeStatusBadge } from "@/components/native-badge";
+import { NativeHost } from "@/components/native-host";
+import { pagingSection, usePagingData } from "@/components/paging";
+import { withRowMenu, type RowAction } from "@/components/row-menu";
+import { RowText } from "@/components/row-text";
 import { useMember } from "@/components/session";
 import { ThemedText } from "@/components/themed-text";
 import { useLocale } from "@/hooks/use-locale";
-import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
 import { restoredTarget } from "@/lib/pending";
 import { currentSync } from "@/lib/sync-client";
+import { onUpdate } from "@/lib/updates";
 import { canPageAgain } from "@/lib/why";
+import { useSystemColors } from "@/theme/system-colors";
 
 const MAX_NOTICES = 5;
-/** How wide the page reads on a tablet: a line of text, not the whole screen. */
-const READABLE_WIDTH = 720;
-/** Lines of an update shown before Show more. */
-const UPDATE_LINES = 12;
 
 /** `/incidents/12` → 12; anything else (zero, signs, leading zeros, too long) is no incident. */
 export function parseIncidentNumber(raw: string): number | null {
@@ -118,9 +75,10 @@ export function parseIncidentNumber(raw: string): number | null {
 }
 
 /**
- * One incident by its number, as the dashboard's incident page (RFC 0003): severity and status (changed from here
- * too), its roles, written updates and the timeline, newest first. Live from the workspace shard; every change
- * shows at once and settles when the shard confirms it.
+ * One incident by its number, as the dashboard's incident page (RFC 0003), in the system's grouped list: its title,
+ * severity and status (changed from here too), roles, details, who was paged and the timeline, newest first. Live
+ * from the workspace shard; every change shows at once and settles when the shard confirms it. Updates are written
+ * and edited in a form sheet (`/incidents/<number>/update`).
  */
 export function IncidentScreen({ number }: { number: number | null }) {
   // A refused incident is asked for again only by a new subscriber: "Reload" remounts it.
@@ -163,110 +121,33 @@ function ByNumber({ number, onReload }: { number: number; onReload: () => void }
   return <Loading />;
 }
 
-/** Scrolls the page so all of a view is above the keyboard, once the keyboard is up. */
-const RevealContext = createContext<(node: ComponentRef<typeof View> | null) => void>(() => {});
-
-/** Space kept between what is revealed and the keyboard. */
-const REVEAL_MARGIN = spacing[3];
-
-/**
- * The incident's scrolling page. The keyboard never covers the update box or Post: iOS insets the scroll view by
- * the keyboard; Android draws edge to edge (the window no longer resizes for it), so the page shrinks above it.
- * Either way only the focused field is scrolled into view, so the form asks for all of itself (`RevealContext`).
- */
-function Screen({ title, children }: { title: string; children: ReactNode }) {
-  const colors = useTheme();
-  const padding = useScreenPadding();
-  const header = useHeaderHeight();
-  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
-  const offset = useRef(0);
-  // Keyboard listeners and scrolls still waiting: leaving the page drops them.
-  const pending = useRef(new Set<() => void>());
-  const reveal = useCallback((node: ComponentRef<typeof View> | null) => {
-    const scrollTo = () => {
-      const page = scroll.current;
-      const keyboard = Keyboard.metrics();
-      if (!node || !page || !keyboard) return;
-      page.getNativeScrollRef()?.measureInWindow((_x, top, _width, height) => {
-        // The visible part of the page ends at the keyboard, or above it where the page shrank (Android).
-        const bottom = Math.min(keyboard.screenY, top + height);
-        node.measureInWindow((_nx, nodeTop, _nwidth, nodeHeight) => {
-          const below = nodeTop + nodeHeight + REVEAL_MARGIN - bottom;
-          if (below > 0) page.scrollTo({ y: offset.current + below, animated: true });
-        });
-      });
-    };
-    // After the keyboard is up and the page has been laid out above it.
-    const settle = () => {
-      const timer = setTimeout(() => {
-        pending.current.delete(cancel);
-        scrollTo();
-      }, 50);
-      const cancel = () => clearTimeout(timer);
-      pending.current.add(cancel);
-    };
-    if (Keyboard.isVisible()) return settle();
-    const stop = () => {
-      shown.remove();
-      clearTimeout(expiry);
-      pending.current.delete(stop);
-    };
-    const shown = Keyboard.addListener("keyboardDidShow", () => {
-      stop();
-      settle();
-    });
-    const expiry = setTimeout(stop, 1_000);
-    pending.current.add(stop);
-  }, []);
-  useEffect(() => {
-    const waiting = pending.current;
-    return () => {
-      for (const cancel of waiting) cancel();
-      waiting.clear();
-    };
-  }, []);
-  const page = (
-    <ScrollView
-      ref={scroll}
-      onScroll={(event) => {
-        offset.current = event.nativeEvent.contentOffset.y;
+/** A page that is not the incident: a title and what to say, on the screen's ground. */
+function Message({ title, children }: { title: string; children: ReactNode }) {
+  const system = useSystemColors();
+  return (
+    <View
+      style={{
+        flex: 1,
+        gap: spacing[3],
+        padding: spacing[6],
+        backgroundColor: system.ground,
       }}
-      scrollEventThrottle={16}
-      contentInsetAdjustmentBehavior="automatic"
-      automaticallyAdjustKeyboardInsets
-      keyboardShouldPersistTaps="handled"
-      style={{ backgroundColor: colors.background }}
-      contentContainerStyle={padding}
     >
       <Stack.Screen options={{ title }} />
-      <View
-        style={{ width: "100%", maxWidth: READABLE_WIDTH, alignSelf: "center", gap: spacing[6] }}
-      >
-        <RevealContext value={reveal}>{children}</RevealContext>
-      </View>
-    </ScrollView>
-  );
-  if (process.env.EXPO_OS !== "android") return page;
-  return (
-    <KeyboardAvoidingView
-      behavior="padding"
-      keyboardVerticalOffset={header}
-      style={{ flex: 1, backgroundColor: colors.background }}
-    >
-      {page}
-    </KeyboardAvoidingView>
+      {children}
+    </View>
   );
 }
 
 function Loading() {
   const colors = useTheme();
   return (
-    <Screen title={m.incident_page({ part: "*" })}>
+    <Message title={m.incident_page({ part: "*" })}>
       <View accessibilityRole="progressbar" style={{ flexDirection: "row", gap: spacing[3] }}>
         <ActivityIndicator color={colors.mutedForeground} />
         <ThemedText variant="caption">{m.incident_page({ part: "loading" })}</ThemedText>
       </View>
-    </Screen>
+    </Message>
   );
 }
 
@@ -278,9 +159,9 @@ function Problem({
   text: string;
 }) {
   return (
-    <Screen title={title}>
+    <Message title={title}>
       <ThemedText selectable>{text}</ThemedText>
-    </Screen>
+    </Message>
   );
 }
 
@@ -289,7 +170,7 @@ type Busy = ReadonlyMap<string, number>;
 
 function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; state: ReactNode }) {
   const colors = useTheme();
-  const { locale } = useLocale();
+  const { locale, timeZone } = useLocale();
   const member = useMember();
   const online = view === "live";
   const editable = can(member.role, "incident:update");
@@ -305,8 +186,9 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
 
   const setStatus = useMutation("incident.setStatus");
   const setSeverity = useMutation("incident.setSeverity");
-  const postUpdate = useMutation("incident.postUpdate");
   const assignRole = useMutation("incident.assignRole");
+  const deleteUpdate = useMutation("incident.deleteUpdate");
+  const pageAgain = useMutation("incident.pageAgain");
 
   const [busy, setBusy] = useState<Busy>(new Map());
   const [notices, setNotices] = useState<Refusal[]>([]);
@@ -352,10 +234,21 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
     notices
       .filter((notice) => kinds.includes(notice.kind))
       .map((notice) => (
-        <Notice key={notice.key} onDismiss={() => dismiss(notice.key)}>
-          {noticeText(notice, "row")}
-        </Notice>
+        <ListItem
+          key={notice.key}
+          onPress={() => dismiss(notice.key)}
+          trailing={<RowText color={colors.primary}>{m.dismiss()}</RowText>}
+        >
+          <Text textStyle={{ color: colors.destructive }}>{noticeText(notice, "row")}</Text>
+        </ListItem>
       ));
+  /** What an update's edit, removal or page again said back: a row on the timeline until dismissed. */
+  const [said, setSaid] = useState<{ key: string; text: string }[]>([]);
+  const say = (text: string) => {
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+    setSaid((current) => [...current, { key: `s${nextKey.current++}`, text }].slice(-MAX_NOTICES));
+    if (process.env.EXPO_OS === "ios") AccessibilityInfo.announceForAccessibility(text);
+  };
 
   const changeStatus = () =>
     choose(
@@ -407,679 +300,371 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
     );
   };
 
+  // An update posted or edited from the sheet is followed here, where its refusal can be read.
+  const trackRef = useRef(track);
+  useLayoutEffect(() => {
+    trackRef.current = track;
+  });
+  useEffect(
+    () =>
+      onUpdate((sent) => {
+        if (sent.incidentId !== row.id) return;
+        if (sent.kind === "post") {
+          void trackRef.current(sent.outcome, { ...latestBase.current, kind: "update" }, "update");
+          return;
+        }
+        void sent.outcome.then((outcome) => {
+          if (outcome.ok) return;
+          // An edit's `conflict` is the same text, or an update removed meanwhile (`UPDATE_REMOVED`).
+          sayRef.current(
+            outcome.error.code === "conflict"
+              ? updateSay(outcome.error.message === UPDATE_REMOVED ? "gone" : "unchanged")
+              : updateSay("edit_failed", mutationErrorReason(outcome.error.code)),
+          );
+        });
+      }),
+    [row.id],
+  );
+  const sayRef = useRef(say);
+  useLayoutEffect(() => {
+    sayRef.current = say;
+  });
+
+  const removeUpdate = (entryId: string) =>
+    Alert.alert(updateSay("remove_title"), updateSay("remove_body"), [
+      { text: updateSay("cancel"), style: "cancel" },
+      {
+        text: updateSay("remove_confirm"),
+        style: "destructive",
+        onPress: () =>
+          void deleteUpdate({ id: row.id, entryId }).then((outcome) => {
+            if (outcome.ok) {
+              void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+                () => {},
+              );
+              return;
+            }
+            say(
+              outcome.error.code === "conflict"
+                ? updateSay("gone")
+                : updateSay("remove_failed", mutationErrorReason(outcome.error.code)),
+            );
+          }),
+      },
+    ]);
+  // It pages people, so the phone asks first (a stray tap in a pocket is likelier than a stray click).
+  const [paging, setPaging] = useState(false);
+  const confirmPageAgain = (entries: string[]) =>
+    Alert.alert(againSay("confirm_title"), againSay("confirm_body"), [
+      { text: m.declare_cancel(), style: "cancel" },
+      {
+        text: againSay("action"),
+        onPress: () => {
+          setPaging(true);
+          void pageAgain({ id: row.id, entries }).then((outcome) => {
+            setPaging(false);
+            if (outcome.ok) {
+              void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+                () => {},
+              );
+              AccessibilityInfo.announceForAccessibility(againSay("done"));
+              return;
+            }
+            const conflict =
+              outcome.error.code === "conflict" ? CONFLICT_PARTS[outcome.error.message] : undefined;
+            say(
+              conflict !== undefined
+                ? m.incident_page_again({ part: conflict, reason: "" })
+                : m.incident_page_again({
+                    part: "failed",
+                    reason: mutationErrorReason(outcome.error.code),
+                  }),
+            );
+          });
+        },
+      },
+    ]);
+
   const now = useNow(20_000);
-  const paging = usePagingData(row, now);
+  const pagingData = usePagingData(row, now);
+  const details = useIncidentDetails(row);
+  const [allPaged, setAllPaged] = useState(false);
+  const timeline = useQuery("incident.timeline", { id: row.id });
+  /** Which timeline rows are open: a long update's whole text, a failed page's names. */
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const toggle = (key: string) =>
+    setOpen((current) => {
+      const next = new Set(current);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  /** The timeline row whose menu is open (Android; iOS's context menu keeps its own). */
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+
   const number = formatIncidentNumber(row.number) ?? "";
   const saving = busy.has("status") || busy.has("severity");
-
-  return (
-    <Screen title={number}>
-      <View style={{ gap: spacing[3] }}>
-        <ConnectionStatus view={view} />
-        {state}
-        <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: spacing[2] }}>
-          <ThemedText variant="caption">
-            {m.incident_declared({ time: formatAge(row.declaredAt, now, locale) })}
-          </ThemedText>
-          {saving ? (
-            <ThemedText variant="caption" style={{ color: colors.mutedForeground }}>
-              {online ? m.incident_change_saving() : m.incident_change_queued()}
-            </ThemedText>
-          ) : null}
-        </View>
-        <ThemedText variant="heading" selectable accessibilityRole="header">
-          {row.title}
-        </ThemedText>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing[3] }}>
-          <Choice
-            label={m.incident_severity_label()}
-            value={severityName(row.severity)}
-            disabled={!editable}
-            onPress={changeSeverity}
-          >
-            <SeverityBadge severity={row.severity} />
-          </Choice>
-          <Choice
-            label={m.incident_status_label()}
-            value={incidentStatusLabels[row.status]()}
-            disabled={!editable || nextStatuses(row.status).length === 0}
-            onPress={changeStatus}
-          >
-            <StatusBadge status={row.status} />
-          </Choice>
-        </View>
-        {noticesFor(["status", "severity"])}
-        {editable ? null : (
-          <ThemedText variant="caption">{m.incident_page({ part: "read_only" })}</ThemedText>
-        )}
-      </View>
-
-      {/* Roles before the timeline: short, and what a responder looks for first. */}
-      <Section title={m.incident_page({ part: "roles" })} inset={false}>
-        {roles.map((role, index) => (
-          <RoleRow
-            key={role.id}
-            first={index === 0}
-            label={roleLabel(role.id, role.name)}
-            holder={row.roles?.[role.id] ?? null}
-            who={who}
-            pending={busy.has(`role/${role.id}`)}
-            // The workspace's own roles are given on the dashboard for now. A removed built-in someone still holds
-            // stays editable, so it can be cleared here too.
-            editable={
-              editable &&
-              role.builtin !== null &&
-              (!role.removed || (row.roles?.[role.id] ?? null) !== null)
-            }
-            onPress={() => changeRole(role, row.roles?.[role.id] ?? null)}
-          />
-        ))}
-      </Section>
-      {members.status === "ready" && assignable(members.rows).length <= 1 ? (
-        <ThemedText variant="caption">{m.incident_page({ part: "no_members" })}</ThemedText>
-      ) : null}
-      {noticesFor(["role"])}
-      <IncidentDetails row={row} />
-      {paging.errorCode !== undefined ? (
-        <ThemedText variant="caption">{queryErrorReason(paging.errorCode)}</ThemedText>
-      ) : paging.data && row.number !== null ? (
-        <PagingSection data={paging.data} number={row.number} who={who} />
-      ) : null}
-
-      <View style={{ gap: spacing[3] }}>
-        <ThemedText variant="label" accessibilityRole="header">
-          {m.incident_page({ part: "timeline" })}
-        </ThemedText>
-        {editable ? (
-          <UpdateForm
-            incidentId={row.id}
-            pending={busy.has("update") && online}
-            onPost={(body) =>
-              track(postUpdate({ id: row.id, body }), { ...base, kind: "update" }, "update")
-            }
-          />
-        ) : null}
-        {noticesFor(["update"])}
-        <Timeline
-          incidentId={row.id}
-          who={who}
-          now={now}
-          unsent={busy.get("update") ?? 0}
-          online={online}
-          pageAgain={canPageAgain(member.role, row) ? row.id : undefined}
-          role={member.role}
-        />
-      </View>
-      {sheet}
-    </Screen>
-  );
-}
-
-const PERSON_GLYPH: Glyph = { ios: "person", android: "person", web: "person" };
-const CHANGE_GLYPH: Glyph = {
-  ios: "chevron.up.chevron.down",
-  android: "unfold_more",
-  web: "unfold_more",
-};
-
-function RoleRow({
-  first,
-  label,
-  holder,
-  who,
-  pending,
-  editable,
-  onPress,
-}: {
-  first: boolean;
-  label: string;
-  holder: string | null;
-  who: People;
-  pending: boolean;
-  editable: boolean;
-  onPress: () => void;
-}) {
-  const colors = useTheme();
-  const glyph = useGlyphSize(fontSize.sm.size);
-  const name = holder === null ? m.incident_page({ part: "nobody" }) : personName(holder, who);
-  const content = (
-    <Row first={first}>
-      <ThemedText variant="label">{label}</ThemedText>
-      {/* Top-aligned, as the timeline's glyphs: a long name wraps under itself, not around the icon. */}
-      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing[2] }}>
-        <View style={{ paddingTop: spacing[0.5] }}>
-          <SymbolView name={PERSON_GLYPH} tintColor={colors.mutedForeground} size={glyph} />
-        </View>
-        <ThemedText
-          style={{
-            flex: 1,
-            color: holder === null ? colors.mutedForeground : colors.foreground,
-          }}
-        >
-          {name}
-        </ThemedText>
-        {pending ? <ActivityIndicator size="small" color={colors.mutedForeground} /> : null}
-        {/* Opens a choice, as the badges' chevron says. */}
-        {editable ? (
-          <SymbolView name={CHANGE_GLYPH} tintColor={colors.mutedForeground} size={glyph} />
-        ) : null}
-      </View>
-    </Row>
-  );
-  if (!editable)
-    return (
-      <View accessible accessibilityLabel={`${label}, ${name}`}>
-        {content}
-      </View>
-    );
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${label}, ${name}`}
-      accessibilityHint={m.mobile_session({ part: "assign_hint" })}
-      onPress={onPress}
-      style={({ pressed }) => ({ backgroundColor: pressed ? colors.accent : "transparent" })}
-    >
-      {content}
-    </Pressable>
-  );
-}
-
-/**
- * A text box and Post. Text the shard would refuse is caught here and stays; a refusal from the shard gives the
- * text back unless something new was typed. `pending`: a post is on its way (offline, the timeline says it waits
- * instead). Focused, the whole form scrolls above the keyboard, Post included.
- */
-function UpdateForm({
-  incidentId,
-  pending,
-  onPost,
-}: {
-  incidentId: string;
-  pending: boolean;
-  onPost: (body: string) => Promise<Refusal | undefined>;
-}) {
-  const colors = useTheme();
-  const { locale } = useLocale();
-  const [body, setBody] = useState("");
-  const [invalid, setInvalid] = useState<UpdateProblem | null>(null);
-  const reveal = use(RevealContext);
-  const form = useRef<ComponentRef<typeof View>>(null);
-  const focused = useRef(false);
-  // No `maxLength`: it would cut a pasted update short without a word. The count shows near the limit instead.
-  const length = updateLength(body);
-  const counting = length >= UPDATE_COUNT_FROM;
-  const over = length > UPDATE_BODY_MAX;
-
-  const submit = () => {
-    const checked = checkUpdate(incidentId, body);
-    if (!checked.ok) return setInvalid(checked.reason);
-    setInvalid(null);
-    const typed = body;
-    setBody("");
-    void onPost(checked.args.body).then((notice) => {
-      if (notice) setBody((current) => (current === "" ? typed : current));
+  const writeUpdate = (entryId?: string) =>
+    row.number !== null &&
+    router.push({
+      pathname: "/incidents/[number]/update",
+      params: { number: String(row.number), ...(entryId ? { entry: entryId } : {}) },
     });
-  };
 
-  return (
-    <View ref={form} style={{ gap: spacing[2] }}>
-      <TextInput
-        value={body}
-        onFocus={() => {
-          focused.current = true;
-          reveal(form.current);
-        }}
-        onBlur={() => {
-          focused.current = false;
-        }}
-        // A growing draft pushes Post down: keep all of the form above the keyboard while typing.
-        onContentSizeChange={() => {
-          if (focused.current) reveal(form.current);
-        }}
-        onChangeText={(text) => {
-          setBody(text);
-          if (invalid) setInvalid(null);
-        }}
-        multiline
-        placeholder={m.incident_page({ part: "update_placeholder" })}
-        placeholderTextColor={colors.mutedForeground}
-        accessibilityLabel={m.incident_page({ part: "update_label" })}
-        accessibilityHint={m.incident_page({ part: "update_hint" })}
-        style={{
-          minHeight: spacing[16] + spacing[8],
-          maxHeight: spacing[16] * 4,
-          paddingHorizontal: spacing[3],
-          paddingTop: spacing[3],
-          paddingBottom: spacing[3],
-          borderRadius: radius.md,
-          borderCurve: "continuous",
-          borderWidth: 1,
-          borderColor: invalid ? colors.destructive : colors.input,
-          color: colors.foreground,
-          fontSize: fontSize.base.size,
-          textAlignVertical: "top",
-        }}
-      />
-      {invalid ? (
-        <ThemedText
-          selectable
-          accessibilityLiveRegion="polite"
-          style={{ color: colors.destructive }}
-        >
-          {invalid === "long"
-            ? m.auth_error_too_long({ max: formatNumber(UPDATE_BODY_MAX, locale) })
-            : m.incident_page({ part: invalid === "empty" ? "update_empty" : "update_invalid" })}
-        </ThemedText>
-      ) : null}
-      <View
-        style={{
-          flexDirection: "row",
-          flexWrap: "wrap",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: spacing[3],
-        }}
-      >
-        <ThemedText
-          variant="caption"
-          style={{ flexShrink: 1, ...(over ? { color: colors.destructive } : {}) }}
-        >
-          {counting
-            ? m.incident_update_length({
-                count: formatNumber(length, locale),
-                max: formatNumber(UPDATE_BODY_MAX, locale),
-              })
-            : m.incident_page({ part: "update_hint" })}
-        </ThemedText>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ busy: pending }}
-          onPress={submit}
-          style={({ pressed }) => ({
-            minHeight: spacing[12],
-            flexDirection: "row",
-            alignItems: "center",
-            gap: spacing[2],
-            paddingHorizontal: spacing[4],
-            borderRadius: radius.md,
-            borderCurve: "continuous",
-            backgroundColor: colors.primary,
-            opacity: pressed ? 0.8 : 1,
-          })}
-        >
-          {pending ? <ActivityIndicator color={colors.primaryForeground} /> : null}
-          <ThemedText style={{ color: colors.primaryForeground }}>
-            {m.incident_page({ part: "post" })}
-          </ThemedText>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-/** An entry of a kind a newer shard wrote that this build does not know yet (an app store build lags the server). */
-const UNKNOWN_ENTRY_GLYPH: Glyph = {
-  ios: "circle.dotted",
-  android: "radio_button_unchecked",
-  web: "radio_button_unchecked",
-};
-
-const ENTRY_GLYPHS: Record<Exclude<TimelineRow["kind"], "status_changed">, Glyph> = {
-  declared: { ios: "plus.circle", android: "add_circle", web: "add_circle" },
-  severity_changed: { ios: "gauge.with.dots.needle.67percent", android: "speed", web: "speed" },
-  renamed: { ios: "character.cursor.ibeam", android: "title", web: "title" },
-  acknowledged: { ios: "bell.slash", android: "notifications_off", web: "notifications_off" },
-  role_assigned: PERSON_GLYPH,
-  update: { ios: "text.bubble", android: "chat", web: "chat" },
-  alert_resolved: { ios: "heart.text.square", android: "monitor_heart", web: "monitor_heart" },
-  alert_grouped: { ios: "bell.badge", android: "notification_add", web: "notification_add" },
-  alerts_resolved: { ios: "checkmark.circle", android: "check_circle", web: "check_circle" },
-  page_failed: { ios: "phone.down", android: "phone_missed", web: "phone_missed" },
-  email_failed: { ios: "envelope.badge", android: "unsubscribe", web: "unsubscribe" },
-  slack_failed: {
-    ios: "exclamationmark.bubble",
-    android: "feedback",
-    web: "feedback",
-  },
-  status_published: { ios: "globe", android: "public", web: "public" },
-  status_corrected: { ios: "pencil.line", android: "edit", web: "edit" },
-  escalated: { ios: "bell.and.waves.left.and.right", android: "campaign", web: "campaign" },
-  paged_again: { ios: "phone.arrow.up.right", android: "phone_forwarded", web: "phone_forwarded" },
-  escalation_exhausted: { ios: "hourglass", android: "hourglass_empty", web: "hourglass_empty" },
-  escalation_once: { ios: "hourglass", android: "hourglass_empty", web: "hourglass_empty" },
-  type_changed: { ios: "tag", android: "label", web: "label" },
-  services_changed: { ios: "square.stack.3d.up", android: "layers", web: "layers" },
-  field_changed: { ios: "square.and.pencil", android: "edit_note", web: "edit_note" },
-  follow_up: { ios: "checklist", android: "checklist", web: "checklist" },
-  postmortem: { ios: "doc.text", android: "description", web: "description" },
-};
-
-/**
- * The incident's timeline, newest first: one line per change, and an update's text under its line. The member's
- * `unsent` newest updates are still on their way (applied here, not yet confirmed by the shard), and say so.
- */
-function Timeline({
-  incidentId,
-  who,
-  now,
-  unsent,
-  online,
-  pageAgain,
-  role,
-}: {
-  incidentId: string;
-  who: People;
-  now: number;
-  unsent: number;
-  online: boolean;
-  /** The incident's id when the member may page a failed page again; undefined offers nothing. */
-  pageAgain?: string;
-  /** The member's role, for what they may do to an update (`updateActions`). */
-  role: Role;
-}) {
-  const colors = useTheme();
-  const glyphSize = useGlyphSize(fontSize.base.size);
-  const { locale, timeZone } = useLocale();
-  const { rows, status, pending } = useQuery("incident.timeline", { id: incidentId });
-  if (rows.length === 0) {
-    return status === "ready" ? (
-      <ThemedText variant="caption">{m.incident_page({ part: "timeline_empty" })}</ThemedText>
-    ) : null;
-  }
-  const entries = [...rows].reverse();
+  const entries = [...timeline.rows].reverse();
   // Pages one run could not send for the same reason are one line (a SEV1 can fail for most of the workspace).
   const items = timelineItems(entries);
   // Unconfirmed changes are re-applied after the shard's rows, so the member's unsent updates are the newest ones.
+  const unsent = busy.get("update") ?? 0;
   const waiting = new Set<string>();
-  if (pending) {
+  if (timeline.pending) {
     for (const entry of entries) {
       if (waiting.size >= unsent) break;
       if (entry.kind === "update" && entry.actor === who.self) waiting.add(entry.id);
     }
   }
-  return (
-    <View
-      style={{
-        backgroundColor: colors.card,
-        borderColor: colors.border,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: radius.xl,
-        borderCurve: "continuous",
-        overflow: "hidden",
-      }}
-    >
-      {items.map((item, index) => {
-        const entry = item.kind === "entry" ? item.entry : item.entries[0];
-        const glyph =
-          (entry.kind === "status_changed"
-            ? STATUS_GLYPHS[entry.to]
-            : (ENTRY_GLYPHS as Partial<Record<string, Glyph>>)[entry.kind]) ?? UNKNOWN_ENTRY_GLYPH;
-        const tint =
-          entry.kind === "page_failed" ||
-          entry.kind === "email_failed" ||
-          entry.kind === "slack_failed"
-            ? colors.destructive
-            : (entry.kind === "update" && !entry.removed) ||
-                entry.kind === "status_published" ||
-                entry.kind === "status_corrected"
-              ? colors.primary
-              : colors.mutedForeground;
-        return (
-          <Row key={item.kind === "entry" ? entry.id : item.key} first={index === 0}>
-            <View style={{ flexDirection: "row", gap: spacing[3] }}>
-              <View style={{ paddingTop: spacing[0.5] }}>
-                <SymbolView name={glyph} tintColor={tint} size={glyphSize} />
-              </View>
-              <View style={{ flex: 1, gap: spacing[1] }}>
-                <ThemedText selectable>{itemText(item, who)}</ThemedText>
-                {waiting.has(entry.id) ? (
-                  <ThemedText
-                    variant="caption"
-                    accessibilityLiveRegion="polite"
-                    style={{ color: colors.mutedForeground }}
-                  >
-                    {m.mobile_session({ part: online ? "update_sending" : "update_waiting" })}
-                  </ThemedText>
-                ) : (
-                  <ThemedText variant="caption" style={{ fontVariant: ["tabular-nums"] }}>
-                    {entryTime(entry.at, now, locale, timeZone)}
-                    {entry.kind === "update" && entry.edited && !entry.removed
-                      ? ` · ${m.incident_update_change({ part: "edited", time: "", reason: "" })}`
-                      : ""}
-                  </ThemedText>
-                )}
-                {entry.kind === "update" ? (
-                  entry.removed ? null : (
-                    <WrittenUpdate
-                      incidentId={incidentId}
-                      entry={entry}
-                      actions={
-                        waiting.has(entry.id)
-                          ? { edit: false, remove: false }
-                          : updateActions(entry, who.self, role)
-                      }
-                    />
-                  )
-                ) : entry.kind === "status_published" || entry.kind === "status_corrected" ? (
-                  <UpdateBody body={entry.body} />
-                ) : null}
-                {item.kind === "pages_failed" ? <FailedNames item={item} who={who} /> : null}
-                {pageAgain === undefined ? null : (
-                  <PageAgain incidentId={pageAgain} entries={pageAgainEntries(item, rows)} />
-                )}
-              </View>
-            </View>
-          </Row>
-        );
-      })}
-    </View>
-  );
-}
+  const mayPageAgain = canPageAgain(member.role, row);
 
-const MORE_GLYPH: Glyph = { ios: "ellipsis.circle", android: "more_horiz", web: "more_horiz" };
-
-type WrittenUpdateRow = Extract<TimelineRow, { kind: "update" }>;
-
-/**
- * A written update's text, with a More button (and a long press on the text) for Edit (its author) and Remove (its
- * author, owners and admins), as on the dashboard. Edit swaps the text for a field in place; Remove asks first. Both
- * are optimistic: a refusal puts the text back and says why. Editing never changes the status page.
- */
-function WrittenUpdate({
-  incidentId,
-  entry,
-  actions,
-}: {
-  incidentId: string;
-  entry: WrittenUpdateRow;
-  actions: { edit: boolean; remove: boolean };
-}) {
-  const colors = useTheme();
-  const { locale } = useLocale();
-  const glyph = useGlyphSize(fontSize.base.size);
-  const { choose, sheet } = useChoiceSheet();
-  const editUpdate = useMutation("incident.editUpdate");
-  const deleteUpdate = useMutation("incident.deleteUpdate");
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(entry.body);
-  const [invalid, setInvalid] = useState<UpdateProblem | null>(null);
-  const [refused, setRefused] = useState<string | null>(null);
-  const reveal = use(RevealContext);
-  const form = useRef<ComponentRef<typeof View>>(null);
-  const say = (part: string, reason = "") => m.incident_update_change({ part, time: "", reason });
-  // An edit's `conflict` is the same text, or an update removed meanwhile (`UPDATE_REMOVED`).
-  const refuse = (
-    code: Parameters<typeof mutationErrorReason>[0],
-    failed: string,
-    message = "",
-  ) => {
-    const text =
-      code === "conflict"
-        ? say(failed === "edit_failed" && message !== UPDATE_REMOVED ? "unchanged" : "gone")
-        : say(failed, mutationErrorReason(code));
-    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-    setRefused(text);
-    if (process.env.EXPO_OS === "ios") AccessibilityInfo.announceForAccessibility(text);
-  };
-
-  const save = () => {
-    if (draft === entry.body) return setEditing(false);
-    const checked = checkEdit(incidentId, entry.id, draft);
-    if (!checked.ok) return setInvalid(checked.reason);
-    const typed = draft;
-    setEditing(false);
-    setRefused(null);
-    void editUpdate(checked.args).then((outcome) => {
-      if (outcome.ok) return;
-      refuse(outcome.error.code, "edit_failed", outcome.error.message);
-      if (outcome.error.code === "invalid_args") {
-        setDraft(typed);
-        setEditing(true);
+  const timelineRow = (item: TimelineItem) => {
+    const entry = item.kind === "entry" ? item.entry : item.entries[0];
+    const key = item.kind === "entry" ? entry.id : item.key;
+    const failed =
+      entry.kind === "page_failed" ||
+      entry.kind === "email_failed" ||
+      entry.kind === "slack_failed";
+    const body =
+      entry.kind === "update" && !entry.removed
+        ? entry.body
+        : entry.kind === "status_published" || entry.kind === "status_corrected"
+          ? entry.body
+          : null;
+    const expanded = open.has(key);
+    const names =
+      item.kind === "pages_failed" && expanded
+        ? pagesFailedNames(item, who, locale).map(({ name }) => name)
+        : [];
+    const time = waiting.has(entry.id)
+      ? m.mobile_session({ part: online ? "update_sending" : "update_waiting" })
+      : [
+          entryTime(entry.at, now, locale, timeZone),
+          ...(entry.kind === "update" && entry.edited && !entry.removed
+            ? [m.incident_update_change({ part: "edited", time: "", reason: "" })]
+            : []),
+        ].join(" · ");
+    const actions: RowAction[] = [];
+    const allowed = waiting.has(entry.id)
+      ? { edit: false, remove: false }
+      : updateActions(entry, who.self, member.role);
+    if (allowed.edit)
+      actions.push({ label: updateSay("edit"), onPress: () => writeUpdate(entry.id) });
+    if (allowed.remove) {
+      actions.push({ label: updateSay("remove"), onPress: () => removeUpdate(entry.id) });
+    }
+    for (const part of body ? bodyParts(body) : []) {
+      if ("url" in part) {
+        actions.push({
+          label: m.incident_open_link({ host: hostOf(part.url) }),
+          onPress: () => void Linking.openURL(part.url).catch(() => {}),
+        });
       }
-    });
-  };
-  const remove = () => {
-    setRefused(null);
-    void deleteUpdate({ id: incidentId, entryId: entry.id }).then((outcome) => {
-      if (outcome.ok) {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-        return;
-      }
-      refuse(outcome.error.code, "remove_failed");
-    });
-  };
-  const confirmRemove = () =>
-    Alert.alert(say("remove_title"), say("remove_body"), [
-      { text: say("cancel"), style: "cancel" },
-      { text: say("remove_confirm"), style: "destructive", onPress: remove },
-    ]);
-  const offered = actions.edit || actions.remove;
-  const openActions = () => {
-    const choices: SheetChoice<"edit" | "remove">[] = [];
-    if (actions.edit) choices.push({ value: "edit", label: say("edit") });
-    if (actions.remove) choices.push({ value: "remove", label: say("remove") });
-    choose(say("actions"), choices, (picked) => {
-      if (picked === "remove") return confirmRemove();
-      setDraft(entry.body);
-      setInvalid(null);
-      setRefused(null);
-      setEditing(true);
-    });
-  };
-
-  if (editing) {
-    return (
-      <View ref={form} style={{ gap: spacing[2] }}>
-        <TextInput
-          value={draft}
-          autoFocus
-          onFocus={() => reveal(form.current)}
-          onContentSizeChange={() => reveal(form.current)}
-          onChangeText={(text) => {
-            setDraft(text);
-            if (invalid) setInvalid(null);
-          }}
-          multiline
-          accessibilityLabel={say("edit_label")}
-          accessibilityHint={say("status_page_note")}
-          style={{
-            minHeight: spacing[16] + spacing[8],
-            maxHeight: spacing[16] * 4,
-            padding: spacing[3],
-            borderRadius: radius.md,
-            borderCurve: "continuous",
-            borderWidth: 1,
-            borderColor: invalid ? colors.destructive : colors.input,
-            color: colors.foreground,
-            fontSize: fontSize.base.size,
-            textAlignVertical: "top",
-          }}
-        />
-        {invalid ? (
-          <ThemedText
-            selectable
-            accessibilityLiveRegion="polite"
-            style={{ color: colors.destructive }}
-          >
-            {invalid === "long"
-              ? m.auth_error_too_long({ max: formatNumber(UPDATE_BODY_MAX, locale) })
-              : m.incident_page({ part: invalid === "empty" ? "update_empty" : "update_invalid" })}
-          </ThemedText>
-        ) : null}
-        <ThemedText variant="caption">{say("status_page_note")}</ThemedText>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing[2] }}>
-          <Pressable
-            accessibilityRole="button"
-            onPress={save}
-            style={({ pressed }) => ({
-              minHeight: spacing[12],
-              justifyContent: "center",
-              paddingHorizontal: spacing[4],
-              borderRadius: radius.md,
-              borderCurve: "continuous",
-              backgroundColor: colors.primary,
-              opacity: pressed ? 0.8 : 1,
-            })}
-          >
-            <ThemedText style={{ color: colors.primaryForeground }}>{say("save")}</ThemedText>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setEditing(false)}
-            style={({ pressed }) => ({
-              minHeight: spacing[12],
-              justifyContent: "center",
-              paddingHorizontal: spacing[4],
-              opacity: pressed ? 0.6 : 1,
-            })}
-          >
-            <ThemedText style={{ color: colors.primary }}>{say("cancel")}</ThemedText>
-          </Pressable>
-        </View>
-      </View>
-    );
-  }
-
-  return (
-    <View style={{ gap: spacing[1], alignItems: "flex-start" }}>
-      <Pressable
-        disabled={!offered}
-        onLongPress={openActions}
-        accessible={false}
-        style={{ alignSelf: "stretch" }}
+    }
+    const again = mayPageAgain ? pageAgainEntries(item, timeline.rows) : [];
+    if (again.length > 0) {
+      actions.push({
+        label: againSay(paging ? "pending" : "action"),
+        disabled: paging,
+        onPress: () => confirmPageAgain(again),
+      });
+    }
+    const longBody = body !== null && (body.length > LONG_UPDATE || body.split("\n").length > 6);
+    const tappable = item.kind === "pages_failed" || longBody;
+    return withRowMenu(
+      <ListItem
+        key={key}
+        onPress={tappable ? () => toggle(key) : undefined}
+        supportingText={[
+          ...(body ? [expanded || !longBody ? body : clip(body)] : []),
+          ...names,
+          ...(tappable
+            ? [
+                m.incident_page({
+                  part:
+                    item.kind === "pages_failed"
+                      ? expanded
+                        ? "hide_names"
+                        : "show_names"
+                      : expanded
+                        ? "show_less"
+                        : "show_more",
+                }),
+              ]
+            : []),
+          time,
+        ].join("\n")}
       >
-        <UpdateBody body={entry.body} />
-      </Pressable>
-      {offered ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={say("actions")}
-          onPress={openActions}
-          hitSlop={spacing[2]}
-          style={({ pressed }) => ({
-            minHeight: spacing[12],
-            minWidth: spacing[12],
-            justifyContent: "center",
-            opacity: pressed ? 0.6 : 1,
-          })}
-        >
-          <SymbolView name={MORE_GLYPH} tintColor={colors.mutedForeground} size={glyph} />
-        </Pressable>
-      ) : null}
-      {refused ? (
-        <ThemedText
-          selectable
-          accessibilityLiveRegion="polite"
-          style={{ color: colors.destructive }}
-        >
-          {refused}
-        </ThemedText>
-      ) : null}
+        <Text textStyle={failed ? { color: colors.destructive } : undefined}>
+          {itemText(item, who)}
+        </Text>
+      </ListItem>,
+      actions,
+      { open: menuFor === key, setOpen: (shown) => setMenuFor(shown ? key : null) },
+    );
+  };
+
+  return (
+    <View style={{ flex: 1 }}>
+      <Stack.Screen options={{ title: number }} />
+      <NativeHost style={{ flex: 1 }}>
+        <FieldGroup>
+          <FieldGroup.Section>
+            <FieldGroup.SectionHeader>
+              <RNHostView matchContents>
+                <View style={{ gap: spacing[1] }}>
+                  <ConnectionStatus view={view} />
+                  {state}
+                </View>
+              </RNHostView>
+            </FieldGroup.SectionHeader>
+            <ListItem
+              supportingText={[
+                m.incident_declared({ time: formatAge(row.declaredAt, now, locale) }),
+                ...(saving
+                  ? [online ? m.incident_change_saving() : m.incident_change_queued()]
+                  : []),
+              ].join(" · ")}
+            >
+              <Text textStyle={{ fontSize: 20, fontWeight: "600" }}>{row.title}</Text>
+            </ListItem>
+            <ListItem
+              onPress={editable ? changeSeverity : undefined}
+              trailing={<NativeSeverityBadge severity={row.severity} />}
+            >
+              <Text>{m.incident_severity_label()}</Text>
+            </ListItem>
+            <ListItem
+              onPress={editable && nextStatuses(row.status).length > 0 ? changeStatus : undefined}
+              trailing={<NativeStatusBadge status={row.status} />}
+            >
+              <Text>{m.incident_status_label()}</Text>
+            </ListItem>
+            {noticesFor(["status", "severity"])}
+            {editable ? null : (
+              <FieldGroup.SectionFooter>
+                <Text>{m.incident_page({ part: "read_only" })}</Text>
+              </FieldGroup.SectionFooter>
+            )}
+          </FieldGroup.Section>
+
+          {/* Roles before the timeline: short, and what a responder looks for first. */}
+          <FieldGroup.Section title={m.incident_page({ part: "roles" })}>
+            {roles.map((role) => {
+              const holder = row.roles?.[role.id] ?? null;
+              // The workspace's own roles are given on the dashboard for now. A removed built-in someone still
+              // holds stays editable, so it can be cleared here too.
+              const changeable =
+                editable && role.builtin !== null && (!role.removed || holder !== null);
+              const name =
+                holder === null ? m.incident_page({ part: "nobody" }) : personName(holder, who);
+              return (
+                <ListItem
+                  key={role.id}
+                  onPress={changeable ? () => changeRole(role, holder) : undefined}
+                  supportingText={
+                    busy.has(`role/${role.id}`)
+                      ? `${name} · ${online ? m.incident_change_saving() : m.incident_change_queued()}`
+                      : name
+                  }
+                >
+                  <Text>{roleLabel(role.id, role.name)}</Text>
+                </ListItem>
+              );
+            })}
+            {noticesFor(["role"])}
+            {members.status === "ready" && assignable(members.rows).length <= 1 ? (
+              <FieldGroup.SectionFooter>
+                <Text>{m.incident_page({ part: "no_members" })}</Text>
+              </FieldGroup.SectionFooter>
+            ) : null}
+          </FieldGroup.Section>
+
+          {details ? detailsSection(details) : null}
+
+          {pagingData.errorCode !== undefined ? (
+            <FieldGroup.Section key="paging-error">
+              <ListItem>
+                <Text>{queryErrorReason(pagingData.errorCode)}</Text>
+              </ListItem>
+            </FieldGroup.Section>
+          ) : pagingData.data && row.number !== null ? (
+            pagingSection({
+              data: pagingData.data,
+              number: row.number,
+              who,
+              all: allPaged,
+              onAll: () => setAllPaged((all) => !all),
+              tint: colors.primary,
+            })
+          ) : null}
+
+          <FieldGroup.Section title={m.incident_page({ part: "timeline" })}>
+            {editable ? (
+              <ListItem
+                onPress={() => writeUpdate()}
+                supportingText={m.incident_page({ part: "update_hint" })}
+              >
+                <Text textStyle={{ color: colors.primary, fontWeight: "600" }}>
+                  {m.incident_page({ part: "update_label" })}
+                </Text>
+              </ListItem>
+            ) : null}
+            {noticesFor(["update"])}
+            {said.map((one) => (
+              <ListItem
+                key={one.key}
+                onPress={() =>
+                  setSaid((current) => current.filter((other) => other.key !== one.key))
+                }
+                trailing={<RowText color={colors.primary}>{m.dismiss()}</RowText>}
+              >
+                <Text textStyle={{ color: colors.destructive }}>{one.text}</Text>
+              </ListItem>
+            ))}
+            {items.map(timelineRow)}
+            {items.length === 0 && timeline.status === "ready" ? (
+              <ListItem>
+                <Text>{m.incident_page({ part: "timeline_empty" })}</Text>
+              </ListItem>
+            ) : null}
+          </FieldGroup.Section>
+        </FieldGroup>
+      </NativeHost>
       {sheet}
     </View>
   );
 }
+
+/** Characters of an update shown before Show more. */
+const LONG_UPDATE = 600;
+
+/** A long update cut at a word near `LONG_UPDATE`, with an ellipsis. */
+function clip(body: string): string {
+  const cut = body.slice(0, LONG_UPDATE);
+  const space = cut.lastIndexOf(" ");
+  return `${space > LONG_UPDATE * 0.8 ? cut.slice(0, space) : cut}…`;
+}
+
+/** A link's host, to name it in a menu ("Open status.example.com"). */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+const updateSay = (part: string, reason = "") =>
+  m.incident_update_change({ part, time: "", reason });
+const againSay = (part: "action" | "pending" | "confirm_title" | "confirm_body" | "done") =>
+  m.incident_page_again({ part, reason: "" });
 
 /** What each of `incident.pageAgain`'s refusals says (`PAGE_AGAIN_CONFLICTS`, its error messages). */
 const CONFLICT_PARTS: Partial<Record<string, "already" | "acked" | "resolved">> = {
@@ -1087,214 +672,3 @@ const CONFLICT_PARTS: Partial<Record<string, "already" | "acked" | "resolved">> 
   [PAGE_AGAIN_CONFLICTS.acknowledged]: "acked",
   [PAGE_AGAIN_CONFLICTS.inactive]: "resolved",
 };
-
-const PAGE_AGAIN_GLYPH: Glyph = {
-  ios: "phone.arrow.up.right",
-  android: "phone_forwarded",
-  web: "phone_forwarded",
-};
-
-/**
- * "Page again" under a failed page (`incident.pageAgain`), as on the dashboard: a new page to the members it missed,
- * or to whoever the lost page was for. It pages people, so the phone asks first (a stray tap in a pocket is likelier
- * than a stray click). Gone once the shard's `paged_again` entry lands; a refusal says why, under the button.
- */
-function PageAgain({ incidentId, entries }: { incidentId: string; entries: string[] }) {
-  const colors = useTheme();
-  const glyph = useGlyphSize(fontSize.base.size);
-  const pageAgain = useMutation("incident.pageAgain");
-  const [pending, setPending] = useState(false);
-  const [refused, setRefused] = useState<string | null>(null);
-  if (entries.length === 0) return null;
-  const say = (part: "action" | "pending" | "confirm_title" | "confirm_body" | "done") =>
-    m.incident_page_again({ part, reason: "" });
-  const send = () => {
-    setPending(true);
-    setRefused(null);
-    void pageAgain({ id: incidentId, entries }).then((outcome) => {
-      setPending(false);
-      if (outcome.ok) {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-        AccessibilityInfo.announceForAccessibility(say("done"));
-        return;
-      }
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-      const conflict =
-        outcome.error.code === "conflict" ? CONFLICT_PARTS[outcome.error.message] : undefined;
-      const text =
-        conflict !== undefined
-          ? m.incident_page_again({ part: conflict, reason: "" })
-          : m.incident_page_again({
-              part: "failed",
-              reason: mutationErrorReason(outcome.error.code),
-            });
-      setRefused(text);
-      if (process.env.EXPO_OS === "ios") AccessibilityInfo.announceForAccessibility(text);
-    });
-  };
-  const confirm = () =>
-    Alert.alert(say("confirm_title"), say("confirm_body"), [
-      { text: m.declare_cancel(), style: "cancel" },
-      { text: say("action"), onPress: send },
-    ]);
-  return (
-    <View style={{ alignItems: "flex-start", gap: spacing[1], paddingTop: spacing[1] }}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ busy: pending, disabled: pending }}
-        disabled={pending}
-        onPress={confirm}
-        style={({ pressed }) => ({
-          minHeight: spacing[12],
-          flexDirection: "row",
-          alignItems: "center",
-          gap: spacing[2],
-          paddingHorizontal: spacing[4],
-          borderRadius: radius.md,
-          borderCurve: "continuous",
-          borderWidth: 1,
-          borderColor: colors.input,
-          backgroundColor: pressed ? colors.accent : "transparent",
-        })}
-      >
-        {pending ? (
-          <ActivityIndicator color={colors.foreground} />
-        ) : (
-          <SymbolView name={PAGE_AGAIN_GLYPH} tintColor={colors.foreground} size={glyph} />
-        )}
-        <ThemedText>{say(pending ? "pending" : "action")}</ThemedText>
-      </Pressable>
-      {refused ? (
-        <ThemedText
-          selectable
-          accessibilityLiveRegion="polite"
-          style={{ color: colors.destructive }}
-        >
-          {refused}
-        </ThemedText>
-      ) : null}
-    </View>
-  );
-}
-
-/** Who a group of failed pages was for, behind Show names. */
-function FailedNames({
-  item,
-  who,
-}: {
-  item: Extract<TimelineItem, { kind: "pages_failed" }>;
-  who: People;
-}) {
-  const { locale } = useLocale();
-  const [open, setOpen] = useState(false);
-  return (
-    <View style={{ alignItems: "flex-start" }}>
-      {/* Above the list, so closing a long one leaves the button where it was tapped. */}
-      <TextButton expanded={open} onPress={() => setOpen((shown) => !shown)}>
-        {m.incident_page({ part: open ? "hide_names" : "show_names" })}
-      </TextButton>
-      {/* One text per name, spaced apart, so a name that wraps never reads as two people. */}
-      {open ? (
-        <View style={{ alignSelf: "stretch", gap: spacing[1] }}>
-          {pagesFailedNames(item, who, locale).map(({ id, name }) => (
-            <ThemedText key={id} selectable variant="caption">
-              {name}
-            </ThemedText>
-          ))}
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-/** A link-styled button that opens or closes something, 48 dp tall however short its text. */
-function TextButton({
-  expanded,
-  onPress,
-  children,
-}: {
-  expanded: boolean;
-  onPress: () => void;
-  children: string;
-}) {
-  const colors = useTheme();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ expanded }}
-      onPress={onPress}
-      style={({ pressed }) => ({
-        minHeight: spacing[12],
-        justifyContent: "center",
-        opacity: pressed ? 0.6 : 1,
-      })}
-    >
-      <ThemedText style={{ color: colors.primary }}>{children}</ThemedText>
-    </Pressable>
-  );
-}
-
-/**
- * An update's text, with its links tappable (opened in the browser), clamped to `UPDATE_LINES` lines with Show more
- * when it is longer, so one long update does not push the rest of the timeline away.
- */
-function UpdateBody({ body }: { body: string }) {
-  const colors = useTheme();
-  const [expanded, setExpanded] = useState(false);
-  const [long, setLong] = useState(false);
-  const parts = bodyParts(body).map((part, index) =>
-    "url" in part ? (
-      <Text
-        key={index}
-        accessibilityRole="link"
-        onPress={() => void Linking.openURL(part.url).catch(() => {})}
-        style={{ color: colors.primary, textDecorationLine: "underline" }}
-      >
-        {part.url}
-      </Text>
-    ) : (
-      part.text
-    ),
-  );
-  return (
-    <View style={{ gap: spacing[1], alignItems: "flex-start" }}>
-      <View
-        style={{
-          alignSelf: "stretch",
-          backgroundColor: colors.muted,
-          borderRadius: radius.md,
-          borderCurve: "continuous",
-          paddingHorizontal: spacing[3],
-          paddingVertical: spacing[2],
-        }}
-      >
-        {/* Laid out unclamped and unseen, to count its lines: a clamped text reports at most the clamp, so a
-            text of exactly UPDATE_LINES lines could not be told from a longer one. */}
-        <ThemedText
-          aria-hidden
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-          pointerEvents="none"
-          onTextLayout={(event) => setLong(event.nativeEvent.lines.length > UPDATE_LINES)}
-          style={{
-            position: "absolute",
-            opacity: 0,
-            left: spacing[3],
-            right: spacing[3],
-            top: spacing[2],
-          }}
-        >
-          {body}
-        </ThemedText>
-        <ThemedText selectable numberOfLines={expanded ? undefined : UPDATE_LINES}>
-          {parts}
-        </ThemedText>
-      </View>
-      {long || expanded ? (
-        <TextButton expanded={expanded} onPress={() => setExpanded((open) => !open)}>
-          {m.incident_page({ part: expanded ? "show_less" : "show_more" })}
-        </TextButton>
-      ) : null}
-    </View>
-  );
-}

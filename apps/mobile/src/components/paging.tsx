@@ -2,26 +2,13 @@
 // receipts"): the same rows and the same `whyPaged` as the dashboard's paging card and `?why=<member>`.
 import { m } from "@freecorps/brigade-i18n";
 import type { People } from "@freecorps/brigade-i18n/incident";
-import {
-  callTone,
-  memberName,
-  shortCall,
-  shortVerdict,
-  verdictTone,
-  whyText,
-} from "@freecorps/brigade-i18n/why-paged";
+import { memberName, shortCall, shortVerdict, whyText } from "@freecorps/brigade-i18n/why-paged";
 import type { IncidentRow } from "@freecorps/brigade-schema";
-import type { WhyCall, WhyVerdict } from "@freecorps/brigade-sync";
+import type { WhyVerdict } from "@freecorps/brigade-sync";
 import { useQuery } from "@freecorps/brigade-sync/react";
-import { fontSize, spacing } from "@freecorps/brigade-ui";
-import { Link } from "expo-router";
-import { SymbolView } from "expo-symbols";
-import { useState, type ReactNode } from "react";
-import { Pressable, View } from "react-native";
-import { useGlyphSize } from "@/components/badge";
+import { FieldGroup, ListItem, Text } from "@expo/ui";
+import { router } from "expo-router";
 import type { Glyph } from "@/components/glyphs";
-import { Row, Section } from "@/components/section";
-import { ThemedText } from "@/components/themed-text";
 import { useTheme } from "@/hooks/use-theme";
 import { pagingList, type PagingData } from "@/lib/why";
 
@@ -46,8 +33,6 @@ export const VERDICT_GLYPHS: Record<WhyVerdict, Glyph> = {
 };
 
 export const CALL_GLYPH: Glyph = { ios: "phone", android: "call", web: "call" };
-const WHY_GLYPH: Glyph = { ios: "questionmark.circle", android: "help", web: "help" };
-const OPEN_GLYPH: Glyph = { ios: "chevron.right", android: "chevron_right", web: "chevron_right" };
 
 /** A word's colour: good news, a warning, or neutral, as the dashboard's. */
 export function useTone(): (tone: "ok" | "warn" | "neutral") => string {
@@ -94,169 +79,62 @@ export function usePagingData(
 }
 
 /**
- * The incident screen's "Who was paged": the member's own paging first, then everyone who can respond (and anyone
- * else a page touched) with what paging did with them in a word, whoever needs a look first; each row opens the
- * step-by-step explanation.
+ * The incident screen's "Who was paged" as a native grouped section: the member's own paging first, then everyone
+ * who can respond (and anyone else a page touched) with what paging did with them in a word, whoever needs a look
+ * first; each row opens the step-by-step explanation. `all` lists everyone past the first few.
  */
-export function PagingSection({
+export function pagingSection({
   data,
   number,
   who,
+  all,
+  onAll,
+  tint,
 }: {
   data: PagingData;
   number: number;
   who: People;
+  all: boolean;
+  onAll: () => void;
+  /** The colour of the member's own row, a link. */
+  tint: string;
 }) {
-  const colors = useTheme();
-  const glyph = useGlyphSize(fontSize.base.size);
-  const [all, setAll] = useState(false);
   const rows = pagingList(data);
   const shown = all ? rows : rows.slice(0, LIST_LIMIT);
+  const open = (userId: string) =>
+    router.push({
+      pathname: "/incidents/[number]/why",
+      params: { number: String(number), member: userId },
+    });
   return (
-    <View style={{ gap: spacing[2] }}>
-      <Section title={whyText("title")} inset={false}>
-        <WhyRow number={number} userId={who.self} first label={whyText("why_title_you")}>
-          <SymbolView name={WHY_GLYPH} tintColor={colors.primary} size={glyph} />
-          <ThemedText style={{ flex: 1, color: colors.primary }}>
-            {whyText("why_title_you")}
-          </ThemedText>
-        </WhyRow>
-        {rows.length === 0 ? (
-          <Row>
-            <ThemedText variant="caption">{whyText("empty")}</ThemedText>
-          </Row>
-        ) : (
-          shown.map(({ id, verdict, call }) => (
-            <MemberRow key={id} number={number} id={id} verdict={verdict} call={call} who={who} />
-          ))
-        )}
-      </Section>
+    <FieldGroup.Section key="paging" title={whyText("title")}>
+      <ListItem onPress={() => open(who.self)}>
+        <Text textStyle={{ color: tint }}>{whyText("why_title_you")}</Text>
+      </ListItem>
+      {rows.length === 0 ? (
+        <ListItem>
+          <Text>{whyText("empty")}</Text>
+        </ListItem>
+      ) : (
+        shown.map(({ id, verdict, call }) => (
+          <ListItem
+            key={id}
+            onPress={() => open(id)}
+            supportingText={[shortVerdict(verdict), ...(call ? [shortCall(call)] : [])].join(" · ")}
+          >
+            <Text>{memberName(id, who)}</Text>
+          </ListItem>
+        ))
+      )}
       {rows.length > LIST_LIMIT ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ expanded: all }}
-          onPress={() => setAll((current) => !current)}
-          style={({ pressed }) => ({
-            minHeight: spacing[12],
-            justifyContent: "center",
-            alignSelf: "flex-start",
-            opacity: pressed ? 0.6 : 1,
-          })}
-        >
-          <ThemedText style={{ color: colors.primary }}>
+        <ListItem onPress={onAll}>
+          <Text textStyle={{ color: tint }}>
             {all
               ? m.incident_page({ part: "show_less" })
               : m.members_show_all({ count: rows.length })}
-          </ThemedText>
-        </Pressable>
+          </Text>
+        </ListItem>
       ) : null}
-    </View>
-  );
-}
-
-/** One member: the name on its own line (a long pt-BR name never loses to the words), what paging did below it. */
-function MemberRow({
-  number,
-  id,
-  verdict,
-  call,
-  who,
-}: {
-  number: number;
-  id: string;
-  verdict: WhyVerdict;
-  call: WhyCall | null;
-  who: People;
-}) {
-  const tone = useTone();
-  const glyph = useGlyphSize(fontSize.sm.size);
-  const name = memberName(id, who);
-  const words = [shortVerdict(verdict), ...(call ? [shortCall(call)] : [])].join(", ");
-  return (
-    <WhyRow number={number} userId={id} label={`${name}, ${words}`}>
-      <View style={{ flex: 1, gap: spacing[0.5] }}>
-        <ThemedText>{name}</ThemedText>
-        <View
-          style={{
-            flexDirection: "row",
-            flexWrap: "wrap",
-            columnGap: spacing[3],
-            rowGap: spacing[0.5],
-          }}
-        >
-          <Word glyph={VERDICT_GLYPHS[verdict]} color={tone(verdictTone(verdict))} size={glyph}>
-            {shortVerdict(verdict)}
-          </Word>
-          {/* The calls in a word, next to what the pages did: never in its place. */}
-          {call ? (
-            <Word glyph={CALL_GLYPH} color={tone(callTone(call))} size={glyph}>
-              {shortCall(call)}
-            </Word>
-          ) : null}
-        </View>
-      </View>
-    </WhyRow>
-  );
-}
-
-function Word({
-  glyph,
-  color,
-  size,
-  children,
-}: {
-  glyph: Glyph;
-  color: string;
-  size: number;
-  children: string;
-}) {
-  return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing[1] }}>
-      <SymbolView name={glyph} tintColor={color} size={size} />
-      <ThemedText variant="caption" style={{ color }}>
-        {children}
-      </ThemedText>
-    </View>
-  );
-}
-
-/** A row that opens one member's explanation, with a chevron as list rows that push a screen have. */
-function WhyRow({
-  number,
-  userId,
-  label,
-  first = false,
-  children,
-}: {
-  number: number;
-  userId: string;
-  label: string;
-  first?: boolean;
-  children: ReactNode;
-}) {
-  const colors = useTheme();
-  const glyph = useGlyphSize(fontSize.sm.size);
-  return (
-    <Link
-      href={{
-        pathname: "/incidents/[number]/why",
-        params: { number: String(number), member: userId },
-      }}
-      asChild
-    >
-      <Pressable
-        accessibilityRole="link"
-        accessibilityLabel={label}
-        accessibilityHint={whyText("open_hint")}
-        style={({ pressed }) => ({ backgroundColor: pressed ? colors.accent : "transparent" })}
-      >
-        <Row first={first}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing[2] }}>
-            {children}
-            <SymbolView name={OPEN_GLYPH} tintColor={colors.mutedForeground} size={glyph} />
-          </View>
-        </Row>
-      </Pressable>
-    </Link>
+    </FieldGroup.Section>
   );
 }

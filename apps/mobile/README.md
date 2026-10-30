@@ -10,7 +10,7 @@ paged, Sign out, the legend). Incidents, calls and sheets open above the tabs fr
 incident whichever tab is showing. Controls come from `@expo/ui` (SwiftUI on iOS, Jetpack Compose on Android) where it
 has one, and are drawn by the app only where it does not; chrome and grounds use the system's semantic colours
 (`src/theme/system-colors.ts`), while brand, severity and status colours stay packages/ui's. Each incident
-opens `/incidents/<number>`: severity and status, roles, written updates and the timeline, as on the dashboard. The list
+opens `/incidents/<number>`: severity and status, roles, details, who was paged and the timeline, as on the dashboard, in the system's grouped list; updates are written and edited in a form sheet (`/incidents/<number>/update`), and a long press on one of your own updates edits it, removes it or opens its links. The list
 says whether the member is on call (and until when, or when their next shift is) and opens `/oncall`: their shifts
 and overrides, who every schedule has now, and an override for themselves (`schedule.addOverride`, from now for 1 to
 24 hours) or removing their own. From the Account tab, `/legend` shows the severity and status legend, and a development-only `/intl` route reports Hermes

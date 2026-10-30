@@ -29,9 +29,10 @@ export function withRowMenu<P extends Row>(
       <DropdownMenu expanded={menu.open} onDismissRequest={() => menu.setOpen(false)}>
         <DropdownMenu.Trigger>{trailing}</DropdownMenu.Trigger>
         <DropdownMenu.Items>
-          {actions.map((action) => (
+          {actions.map((action, index) => (
             <DropdownMenuItem
-              key={action.label}
+              // Two links to one host read the same: the position tells them apart.
+              key={index}
               enabled={!action.disabled}
               onClick={() => {
                 menu.setOpen(false);

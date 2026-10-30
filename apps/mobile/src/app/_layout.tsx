@@ -13,9 +13,11 @@ import { LocaleContext } from "@/hooks/use-locale";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { useTheme } from "@/hooks/use-theme";
 import { pickLocale } from "@/lib/locale";
+import { useSystemColors } from "@/theme/system-colors";
 
 export default function RootLayout() {
   const colors = useTheme();
+  const system = useSystemColors();
   const reducedMotion = useReducedMotion();
   const languages = useLocales().map((locale) => locale.languageTag);
   const timeZone = useCalendars()[0]?.timeZone ?? "UTC";
@@ -44,11 +46,14 @@ export default function RootLayout() {
             <Stack
               key={locale}
               screenOptions={{
-                headerStyle: { backgroundColor: colors.background },
-                headerTintColor: colors.foreground,
-                headerTitleStyle: { color: colors.foreground, fontWeight: fontWeight.semibold },
+                headerStyle: { backgroundColor: system.ground as string },
+                headerTintColor: system.tint as string,
+                headerTitleStyle: {
+                  color: system.label as string,
+                  fontWeight: fontWeight.semibold,
+                },
                 headerShadowVisible: false,
-                contentStyle: { backgroundColor: colors.background },
+                contentStyle: { backgroundColor: system.ground },
                 // Reduced motion: no sliding, a short fade instead (packages/ui, Motion).
                 animation: reducedMotion ? "fade" : "default",
               }}
@@ -59,6 +64,15 @@ export default function RootLayout() {
                 <Stack.Screen name="(tabs)" options={{ headerShown: false, title: "" }} />
                 <Stack.Screen name="incidents/[number]/index" options={{ title: "" }} />
                 <Stack.Screen name="incidents/[number]/why" options={{ title: "" }} />
+                <Stack.Screen
+                  name="incidents/[number]/update"
+                  options={{
+                    title: m.incident_page({ part: "update_label" }),
+                    presentation: "formSheet",
+                    sheetAllowedDetents: [0.6, 1],
+                    sheetGrabberVisible: true,
+                  }}
+                />
                 <Stack.Screen name="incidents/by-id/[id]" options={{ title: "" }} />
                 <Stack.Screen name="push" options={{ title: m.push_title() }} />
                 <Stack.Screen name="call-test" options={{ title: m.call_test_title() }} />

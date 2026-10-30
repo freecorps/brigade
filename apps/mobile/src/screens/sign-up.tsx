@@ -167,6 +167,8 @@ export function SignUp() {
         {
           key: "workspace",
           label: m.workspace_name_label(),
+          // What the account will own, apart from who it is.
+          section: m.workspace_label(),
           placeholder: m.workspace_name_hint(),
           error: errors.workspace,
           autoComplete: "organization",

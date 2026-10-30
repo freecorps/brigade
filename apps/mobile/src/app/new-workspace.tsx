@@ -6,6 +6,7 @@ import { NewWorkspaceForm } from "@/components/new-workspace";
 export default function NewWorkspaceRoute() {
   return (
     <NewWorkspaceForm
+      title={m.account_flow({ part: "new_title", name: "" })}
       intro={m.account_flow({ part: "new_description", name: "" })}
       onDone={() => (router.canGoBack() ? router.back() : router.replace("/"))}
     />

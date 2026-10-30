@@ -124,7 +124,12 @@ export default function RootLayout() {
               {/* Signing in, and every state before a member is ready (loading, no workspace, offline), and signing
                 up: sign-in is first, so a guarded route always lands there. */}
               <Stack.Protected guard={!signedIn}>
-                <Stack.Screen name="sign-in" options={{ title: m.auth_sign_in_title() }} />
+                {/* No header: the form heads itself with the app's icon and its title (NativeForm's `brand`), and
+                  has nothing to go back to. */}
+                <Stack.Screen
+                  name="sign-in"
+                  options={{ title: m.auth_sign_in_title(), headerShown: false }}
+                />
                 <Stack.Screen name="sign-up" options={{ title: m.auth_sign_up_title() }} />
               </Stack.Protected>
             </Stack>

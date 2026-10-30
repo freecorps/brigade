@@ -22,10 +22,16 @@ export function workspaceNameError(name: string): string | undefined {
  */
 export function NewWorkspaceForm({
   onDone,
+  brand,
+  title,
   intro,
   links,
 }: {
   onDone?: () => void;
+  /** The app's icon and this title above the form, on the sign-in screen (`NativeForm`). */
+  brand?: string;
+  /** The sheet's title, for Android's sheet, which has no header (`NativeForm`). */
+  title?: string;
   /** Why the member is asked, above the field. */
   intro?: string;
   links?: NativeFormProps["links"];
@@ -83,6 +89,8 @@ export function NewWorkspaceForm({
 
   return (
     <NativeForm
+      brand={brand}
+      title={title}
       intro={intro}
       fields={[
         {

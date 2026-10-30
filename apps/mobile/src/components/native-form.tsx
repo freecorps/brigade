@@ -13,6 +13,8 @@ export type NativeField = {
   error?: string;
   /** Under the field when there is no error. */
   hint?: string;
+  /** Starts a group of its own under this title (sign-up's workspace, apart from the account's fields). */
+  section?: string;
   secure?: boolean;
   /** What a password manager fills in (`textContentType` on iOS, `contentType` on Android). */
   autoComplete?: NonNullable<TextInputProps["autoComplete"]>;
@@ -23,6 +25,16 @@ export type NativeField = {
 };
 
 export type NativeFormProps = {
+  /**
+   * The app's icon and this title above the form, for a screen that hides its header (sign-in): the first thing a
+   * member sees of Brigade.
+   */
+  brand?: string;
+  /**
+   * A sheet's title, which Android's form sheet has no header for: the form draws it as Material's headline, as the
+   * declare sheet does. iOS's sheet and the web preview have a header.
+   */
+  title?: string;
   /** What the form is for, above it. */
   intro?: string;
   fields: NativeField[];
@@ -38,12 +50,19 @@ export type NativeFormProps = {
  * draw those): one section per field with its error or hint under it, the button in its own section and the links
  * as rows. Return moves to the next field, and on the last one submits.
  */
-export function NativeForm({ intro, fields, problem, submit, links = [] }: NativeFormProps) {
+export function NativeForm({ brand, intro, fields, problem, submit, links = [] }: NativeFormProps) {
   const colors = useTheme();
   const refs = useRef<(TextInputRef | null)[]>([]);
   return (
     <NativeHost style={{ flex: 1 }}>
       <FieldGroup>
+        {brand ? (
+          <FieldGroup.Section>
+            <ListItem>
+              <Text textStyle={{ fontSize: 22, fontWeight: "700" }}>{brand}</Text>
+            </ListItem>
+          </FieldGroup.Section>
+        ) : null}
         {intro ? (
           <FieldGroup.Section>
             <ListItem>

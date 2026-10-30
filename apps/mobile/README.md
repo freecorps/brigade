@@ -78,7 +78,8 @@ repository root:
 
 ```bash
 vp run mobile:install                    # build and install on a phone over USB or Wi-Fi (asks platform, variant, phone)
-vp run mobile:install --platform android --variant release --device Pixel
+vp run mobile:install --yes              # iOS, release against the hosted Brigade, no questions
+vp run mobile:install --platform android --variant development --device Pixel
 vp run mobile:build                      # eas build --local: a signed .ipa / .apk / .aab in ~/brigade-builds
 vp run mobile:install --from ~/brigade-builds/brigade-ios-preview-<commit>.ipa
 ```
@@ -86,8 +87,11 @@ vp run mobile:install --from ~/brigade-builds/brigade-ios-preview-<commit>.ipa
 - **`mobile:install`** (`scripts/mobile-install.mjs`) runs `expo prebuild`, then `xcodebuild` or Gradle, then
   installs with `xcrun devicectl` (iPhone) or `adb` (Android device or emulator) and opens the app. The
   `development` variant is the dev client: start Metro (`vp run start` here) and `vp run dev` at the root; on
-  Android the script runs `adb reverse` for both ports. The `release` variant embeds the JavaScript and needs
-  `EXPO_PUBLIC_BRIGADE_URL` at build time to sign in. Flags: `--device <name or id>`, `--clean`, `--no-build`,
+  Android the script runs `adb reverse` for both ports. The `release` variant (the default) embeds the JavaScript
+  and talks to the hosted Brigade, the `EXPO_PUBLIC_BRIGADE_URL` repository variable the release workflow uses
+  (read with `gh`); `EXPO_PUBLIC_BRIGADE_URL` in the environment points it elsewhere. It ignores a local `.env` and
+  checks the built bundle points at that server. On Android it signs with the key in
+  `~/.brigade/keystore.properties`, and refuses a production build without it (the debug key is public). Flags: `--device <name or id>`, `--clean`, `--no-build`,
   `--build-only`, `--no-launch`, `--from <artifact>`, `--yes`.
   - iOS signs with Xcode automatic signing, from an Apple account signed into Xcode with the Freecorps team (or
     `--team` / `IOS_TEAM_ID`); xcodebuild registers the iPhone and makes the development profile. The phone needs

@@ -3,8 +3,8 @@
 // no build credits.
 //
 //   vp run mobile:install                               asks: platform, variant, phone
-//   vp run mobile:install --yes                         iOS (Android off macOS), development, no questions
-//   vp run mobile:install --platform android --variant release
+//   vp run mobile:install --yes                         iOS (Android off macOS), release against production, no questions
+//   vp run mobile:install --platform android --variant development
 //   vp run mobile:install --device "Pixel"              part of the name, or the UDID / adb serial
 //   vp run mobile:install --clean                       regenerate the native project first
 //   vp run mobile:install --no-build                    reinstall the last build
@@ -14,21 +14,28 @@
 // Variants:
 //   development  the dev client (Debug): loads JavaScript from Metro (`vp run --filter @freecorps/brigade-mobile
 //                start`), and in development the app signs in and syncs through the dev server on the Metro host.
-//   release      Release with the JavaScript embedded, no Metro. It needs EXPO_PUBLIC_BRIGADE_URL (the dashboard's
-//                origin) at build time; without it sign-in says the build has no server.
+//   release      Release with the JavaScript embedded, no Metro, against the hosted Brigade: the
+//                EXPO_PUBLIC_BRIGADE_URL repository variable the release workflow builds with (read with `gh`).
+//                EXPO_PUBLIC_BRIGADE_URL in the environment points it at another origin instead. A local .env is
+//                ignored, and the script checks the built bundle points where it should.
 //
 // iOS needs macOS with Xcode, so elsewhere Android is the default. iOS signs with Xcode automatic signing: an
 // Apple account signed into Xcode (Settings > Accounts) with a paid team, picked from Xcode's accounts when
 // there is one, else from --team or IOS_TEAM_ID. xcodebuild registers the phone and makes the development
-// profile itself. IOS_XCODE (a path to an Xcode.app) overrides the newest installed Xcode.
+// profile itself. With the App Store Connect API key in EXPO_ASC_API_KEY_PATH / EXPO_ASC_KEY_ID /
+// EXPO_ASC_ISSUER_ID (the variables EAS reads), xcodebuild provisions every target without an account in Xcode.
+// IOS_XCODE (a path to an Xcode.app) overrides the newest installed Xcode.
 //
 // Android needs the Android SDK (ANDROID_HOME, or Android Studio's default location) and a JDK (JAVA_HOME, or the
-// one bundled with Android Studio). Local builds are signed with the debug key, so they cannot update an install
-// signed by EAS (and the other way round): uninstall first.
+// one bundled with Android Studio). A release build against production is signed with the key in
+// ~/.brigade/keystore.properties (storeFile, storePassword, keyAlias, keyPassword): the debug key is public, and an
+// APK signed with it could replace the app and keep its signed-in session. Development builds use the debug key,
+// so they cannot update an install signed with another key (and the other way round): uninstall first.
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
+import { homedir, tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import {
   androidToolchain,
@@ -56,6 +63,27 @@ const options = parseOptions(import.meta.url, {
 });
 const interactive = process.stdin.isTTY && !options.yes;
 const building = !options["no-build"] && !options.from;
+const releaseKeystore = join(homedir(), ".brigade/keystore.properties");
+
+/**
+ * The server a release build talks to: EXPO_PUBLIC_BRIGADE_URL from the environment, else the repository variable
+ * the release workflow (.github/workflows/mobile.yml) builds with.
+ */
+function releaseServer() {
+  const own = process.env.EXPO_PUBLIC_BRIGADE_URL?.trim();
+  if (own) return { url: own, production: false };
+  let url = "";
+  try {
+    url = capture("gh", ["variable", "get", "EXPO_PUBLIC_BRIGADE_URL"]).trim();
+  } catch {
+    // Said below.
+  }
+  assert.ok(
+    url,
+    "Could not read the EXPO_PUBLIC_BRIGADE_URL repository variable with `gh` (install it and run `gh auth login`), or set EXPO_PUBLIC_BRIGADE_URL to the server's origin.",
+  );
+  return { url, production: true };
+}
 
 async function chooseDevice(devices, kind) {
   const label = (item) => `${item.name} (${item.model}${item.os ? `, ${item.os}` : ""}) ${item.id}`;
@@ -145,9 +173,10 @@ function iosDevice(item) {
   };
 }
 
-async function installIos(variant) {
+async function installIos(variant, target) {
   const { name: xcodeName, developerDir } = xcode();
   const env = { ...process.env, DEVELOPER_DIR: developerDir };
+  const buildEnv = { ...env, ...target, EXPO_NO_DOTENV: "1" };
 
   let device;
   if (!options["build-only"]) {
@@ -182,7 +211,7 @@ async function installIos(variant) {
   let app = options.from ?? join(derived, `Build/Products/${configuration}-iphoneos/Brigade.app`);
   if (building) {
     const team = iosTeam();
-    await prebuild("ios", env);
+    await prebuild("ios", buildEnv);
     await mkdir(join(derived, "logs"), { recursive: true });
     const log = join(derived, "logs/xcodebuild.log");
     await rm(app, { recursive: true, force: true });
@@ -204,11 +233,12 @@ async function installIos(variant) {
         derived,
         "-allowProvisioningUpdates",
         "-allowProvisioningDeviceRegistration",
+        ...appStoreConnectKeyArgs(),
         `DEVELOPMENT_TEAM=${team}`,
         "CODE_SIGN_STYLE=Automatic",
         "build",
       ],
-      { cwd: join(mobile, "ios"), env, log },
+      { cwd: join(mobile, "ios"), env: buildEnv, log },
     ).catch((error) => {
       // Seen with a newly installed Xcode beta, which saw no account although another Xcode had one.
       throw new Error(
@@ -217,6 +247,7 @@ async function installIos(variant) {
     });
   }
   assert.ok(existsSync(app), `${app} is missing; build first (drop --no-build).`);
+  if (variant === "release") assertServer(readFileSync(join(app, "main.jsbundle")), target);
   if (!device) return console.log(`\nBuilt ${app}`);
 
   console.log(`\nInstalling on ${device.name}.`);
@@ -260,7 +291,34 @@ async function installIos(variant) {
   }
 }
 
-async function installAndroid(variant) {
+/**
+ * Lets xcodebuild create and refresh the development profiles of every target (the app, the Notification Service
+ * Extension, the widget) without an Apple account in Xcode, through the App Store Connect API key EAS uses too.
+ * Without EAS's variables Xcode falls back to its signed-in account.
+ */
+function appStoreConnectKeyArgs() {
+  const {
+    EXPO_ASC_API_KEY_PATH: path,
+    EXPO_ASC_KEY_ID: id,
+    EXPO_ASC_ISSUER_ID: issuer,
+  } = process.env;
+  if (!path || !id || !issuer) return [];
+  assert.ok(existsSync(path), `EXPO_ASC_API_KEY_PATH points at ${path}, which does not exist.`);
+  return [
+    "-authenticationKeyPath",
+    path,
+    "-authenticationKeyID",
+    id,
+    "-authenticationKeyIssuerID",
+    issuer,
+  ];
+}
+
+async function installAndroid(variant, target, production) {
+  assert.ok(
+    !building || !production || existsSync(releaseKeystore),
+    `${releaseKeystore} not found. A release build against production needs the release key: the debug key is public. Add it, or point EXPO_PUBLIC_BRIGADE_URL at another server.`,
+  );
   const toolchain = androidToolchain();
   const { adb } = toolchain;
   assert.ok(
@@ -268,6 +326,7 @@ async function installAndroid(variant) {
     `${adb} is missing; install "Android SDK Platform-Tools" from Android Studio's SDK Manager.`,
   );
   const env = { ...process.env, ...toolchain.env };
+  const buildEnv = { ...env, ...target, EXPO_NO_DOTENV: "1" };
 
   let device;
   if (!options["build-only"]) {
@@ -300,7 +359,8 @@ async function installAndroid(variant) {
   const type = variant === "release" ? "release" : "debug";
   const apk = options.from ?? join(android, `app/build/outputs/apk/${type}/app-${type}.apk`);
   if (building) {
-    await prebuild("android", env);
+    await prebuild("android", buildEnv);
+    if (type === "release") applyReleaseSigning(join(android, "app/build.gradle"));
     await mkdir(join(android, "build/logs"), { recursive: true });
     const log = join(android, "build/logs/gradle.log");
     await rm(apk, { force: true });
@@ -313,10 +373,19 @@ async function installAndroid(variant) {
         "--console=plain",
         "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g",
       ],
-      { cwd: android, env, log },
+      { cwd: android, env: buildEnv, log },
     );
   }
   assert.ok(existsSync(apk), `${apk} is missing; build first (drop --no-build).`);
+  if (variant === "release") {
+    // The APK is a zip; the bundle is one entry of it.
+    assertServer(
+      execFileSync("unzip", ["-p", apk, "assets/index.android.bundle"], {
+        maxBuffer: 256 * 1024 * 1024,
+      }),
+      target,
+    );
+  }
   if (!device) return console.log(`\nBuilt ${apk}`);
 
   console.log(`\nInstalling on ${device.name}.`);
@@ -359,6 +428,53 @@ async function installAndroid(variant) {
       console.warn("Installed, but could not open it: unlock the phone and tap Brigade.");
     }
   }
+}
+
+/** `expo prebuild` rewrites android/ from the template, so this runs after every one. */
+function applyReleaseSigning(gradleFile) {
+  if (!existsSync(releaseKeystore)) {
+    console.warn(`\n${releaseKeystore} not found: signing Release with the debug key.`);
+    return;
+  }
+  let gradle = readFileSync(gradleFile, "utf8");
+  if (gradle.includes("brigadeKeystoreProps")) return;
+  const debugConfig = /( {8}debug \{\n {12}storeFile file\('debug\.keystore'\)[\s\S]*? {8}\}\n)/;
+  const releaseUsesDebug =
+    /( {8}release \{\n(?: {12}\/\/.*\n)*) {12}signingConfig signingConfigs\.debug/;
+  assert.ok(
+    debugConfig.test(gradle) && releaseUsesDebug.test(gradle) && gradle.includes("\nandroid {"),
+    "android/app/build.gradle no longer matches the template this script patches; update applyReleaseSigning.",
+  );
+  gradle = gradle
+    .replace(
+      debugConfig,
+      `$1        release {
+            storeFile file(brigadeKeystoreProps.getProperty('storeFile'))
+            storePassword brigadeKeystoreProps.getProperty('storePassword')
+            keyAlias brigadeKeystoreProps.getProperty('keyAlias')
+            keyPassword brigadeKeystoreProps.getProperty('keyPassword')
+        }
+`,
+    )
+    .replace(releaseUsesDebug, "$1            signingConfig signingConfigs.release")
+    .replace(
+      "\nandroid {",
+      `
+def brigadeKeystoreProps = new Properties()
+new File(System.getProperty('user.home'), '.brigade/keystore.properties').withInputStream { brigadeKeystoreProps.load(it) }
+
+android {`,
+    );
+  writeFileSync(gradleFile, gradle);
+  console.log("Signing Release with the key in ~/.brigade.");
+}
+
+/** A reused build (or a stale native project) could point at another server. */
+function assertServer(bundle, target) {
+  assert.ok(
+    bundle.includes(target.EXPO_PUBLIC_BRIGADE_URL),
+    `The build does not point at ${target.EXPO_PUBLIC_BRIGADE_URL}; rebuild without --no-build.`,
+  );
 }
 
 async function prebuild(platform, env) {
@@ -412,22 +528,29 @@ try {
         interactive,
         "Variant?",
         [
+          { value: "release", label: "Release (JavaScript embedded, against the hosted Brigade)" },
           { value: "development", label: "Development (dev client; JavaScript from Metro)" },
-          { value: "release", label: "Release (JavaScript embedded, no Metro)" },
         ],
-        "development",
+        "release",
       )));
   assert.ok(
     ["development", "release", "artifact"].includes(variant),
     `--variant must be development or release, not ${variant}.`,
   );
-  if (variant === "release" && building && !process.env.EXPO_PUBLIC_BRIGADE_URL) {
-    console.warn(
-      "\nEXPO_PUBLIC_BRIGADE_URL is not set: this build will have no server to sign in to.",
-    );
-  }
-  console.log(`\n${platform === "ios" ? "iOS" : "Android"}, ${options.from ?? variant}.`);
-  await (platform === "ios" ? installIos(variant) : installAndroid(variant));
+  const server = variant === "release" ? releaseServer() : undefined;
+  // eas.json's production profile sets the same pair.
+  const target = server
+    ? {
+        EXPO_PUBLIC_BRIGADE_URL: server.url,
+        EXPO_PUBLIC_BRIGADE_ENV: server.production ? "production" : "development",
+      }
+    : {};
+  console.log(
+    `\n${platform === "ios" ? "iOS" : "Android"}, ${options.from ?? variant}${server ? ` against ${server.url}${server.production ? " (production)" : ""}` : ""}.`,
+  );
+  await (platform === "ios"
+    ? installIos(variant, target)
+    : installAndroid(variant, target, server?.production));
   if (variant === "development" && !options["build-only"]) {
     console.log(
       "\nStart Metro with `vp run --filter @freecorps/brigade-mobile start` and the dev server with `vp run dev`.",

@@ -2,6 +2,7 @@ import { Button, Column, OutlinedTextField, Text, useNativeState } from "@expo/u
 import { fillMaxWidth, paddingAll, verticalScroll } from "@expo/ui/jetpack-compose/modifiers";
 import type { UpdateFormProps } from "@/components/update-form";
 import { NativeHost } from "@/components/native-host";
+import { SheetHandle } from "@/components/sheet-handle";
 
 export type { UpdateFormProps } from "@/components/update-form";
 
@@ -23,6 +24,7 @@ export function UpdateForm({
         verticalArrangement={{ spacedBy: 20 }}
         modifiers={[fillMaxWidth(), paddingAll(24), verticalScroll()]}
       >
+        <SheetHandle />
         <Text style={{ typography: "headlineSmall" }}>{title}</Text>
         <OutlinedTextField
           value={body}

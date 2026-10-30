@@ -23,6 +23,7 @@ import { INCIDENT_TITLE_MAX, SEVERITIES } from "@freecorps/brigade-schema";
 import { useEffect, useRef, useState } from "react";
 import type { DeclareFormProps } from "@/components/declare-form";
 import { NativeHost } from "@/components/native-host";
+import { SheetHandle } from "@/components/sheet-handle";
 import { useSystemColors } from "@/theme/system-colors";
 
 export type { DeclareFormProps } from "@/components/declare-form";
@@ -52,6 +53,7 @@ export function DeclareForm({
         verticalArrangement={{ spacedBy: 20 }}
         modifiers={[fillMaxWidth(), paddingAll(24), verticalScroll()]}
       >
+        <SheetHandle />
         <Text style={{ typography: "headlineSmall" }}>{m.declare_heading()}</Text>
         <OutlinedTextField
           value={title}

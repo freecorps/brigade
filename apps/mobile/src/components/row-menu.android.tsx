@@ -2,6 +2,8 @@ import { DropdownMenu, DropdownMenuItem, Text } from "@expo/ui/jetpack-compose";
 import { combinedClickable } from "@expo/ui/jetpack-compose/modifiers";
 import type { ModifierConfig } from "@expo/ui/jetpack-compose/modifiers";
 import { cloneElement, type ReactElement, type ReactNode } from "react";
+import { Appearance } from "react-native";
+import { themeFor } from "@/lib/theme";
 import type { MenuState, RowAction } from "./row-menu";
 
 export type { MenuState, RowAction } from "./row-menu";
@@ -18,6 +20,8 @@ export function withRowMenu<P extends Row>(
   menu: MenuState,
 ) {
   if (actions.length === 0) return row;
+  // A function, not a component, so no hook: the theme for the scheme now (the list re-renders when it flips).
+  const destructive = themeFor(Appearance.getColorScheme()).destructive;
   const { onPress, trailing, modifiers = [] } = row.props;
   return cloneElement(row, {
     onPress: undefined,
@@ -40,7 +44,7 @@ export function withRowMenu<P extends Row>(
               }}
             >
               <DropdownMenuItem.Text>
-                <Text>{action.label}</Text>
+                <Text color={action.destructive ? destructive : undefined}>{action.label}</Text>
               </DropdownMenuItem.Text>
             </DropdownMenuItem>
           ))}

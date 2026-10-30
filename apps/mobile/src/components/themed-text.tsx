@@ -8,6 +8,8 @@ const variants = {
   label: { size: fontSize.sm, weight: fontWeight.medium, muted: true },
   caption: { size: fontSize.sm, weight: fontWeight.regular, muted: true },
   heading: { size: fontSize.lg, weight: fontWeight.semibold, muted: false },
+  /** A screen's one subject (the incident on the call screen): iOS's title 2, Material's headline small. */
+  title: { size: fontSize["2xl"], weight: fontWeight.semibold, muted: false },
 } as const;
 
 export type TextVariant = keyof typeof variants;

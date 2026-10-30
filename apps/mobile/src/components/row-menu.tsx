@@ -1,6 +1,12 @@
 import type { ReactElement } from "react";
 
-export type RowAction = { label: string; disabled?: boolean; onPress: () => void };
+export type RowAction = {
+  label: string;
+  disabled?: boolean;
+  /** Removes something (an update): in the system's destructive red, as each platform marks one. */
+  destructive?: boolean;
+  onPress: () => void;
+};
 
 /** Which row's menu is open, kept by the list: a menu is part of its row, not a component of its own. */
 export type MenuState = { open: boolean; setOpen: (open: boolean) => void };

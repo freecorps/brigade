@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BrandMark } from "@/components/brand-mark";
 import type { NativeField, NativeFormProps } from "@/components/native-form";
 import { NativeHost } from "@/components/native-host";
+import { SheetHandle } from "@/components/sheet-handle";
 import { useTheme } from "@/hooks/use-theme";
 import { useSystemColors } from "@/theme/system-colors";
 
@@ -59,6 +60,7 @@ export function NativeForm({
           ...(brand ? [padding(0, top, 0, 0)] : []),
         ]}
       >
+        {title && !brand ? <SheetHandle /> : null}
         {title && !brand ? <Text style={{ typography: "headlineSmall" }}>{title}</Text> : null}
         {brand ? (
           <RNHostView matchContents={{ vertical: true }}>

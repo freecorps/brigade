@@ -4,6 +4,7 @@
 import { m, type Locale } from "@freecorps/brigade-i18n";
 import type { MutationOutcome } from "@freecorps/brigade-sync";
 import { mutationErrorReason } from "@freecorps/brigade-i18n/incident";
+import { SEVERITIES, type Severity } from "@freecorps/brigade-schema";
 
 export type ActiveCall = {
   id: string;
@@ -44,6 +45,19 @@ export function callScript(call: Pick<ActiveCall, "title" | "body">, locale: Loc
 }
 
 const trimStop = (text: string) => text.trim().replace(/[.!?。]+$/u, "");
+
+/**
+ * The call's title split for the call screen: the severity it starts with, and the rest. The API writes a page's
+ * title in codes, not words (`SEV1 · INC-12`, `apps/api/src/notify.ts`), so the screen can show the severity as the
+ * app's badge. A title without a severity code comes back whole, as `rest`.
+ */
+export function callHeading(title: string): { severity: Severity | null; rest: string } {
+  const [first = "", ...others] = title.split(" · ");
+  const code = first.trim().toLowerCase();
+  if (!(SEVERITIES as readonly string[]).includes(code))
+    return { severity: null, rest: title.trim() };
+  return { severity: code as Severity, rest: others.join(" · ").trim() };
+}
 
 /**
  * Android's key codes for 1: the number row's (`KEYCODE_1`) and the numeric keypad's (`KEYCODE_NUMPAD_1`). A

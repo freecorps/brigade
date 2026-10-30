@@ -467,7 +467,11 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
     if (allowed.edit)
       actions.push({ label: updateSay("edit"), onPress: () => writeUpdate(entry.id) });
     if (allowed.remove) {
-      actions.push({ label: updateSay("remove"), onPress: () => removeUpdate(entry.id) });
+      actions.push({
+        label: updateSay("remove"),
+        destructive: true,
+        onPress: () => removeUpdate(entry.id),
+      });
     }
     for (const part of body ? bodyParts(body) : []) {
       if ("url" in part) {

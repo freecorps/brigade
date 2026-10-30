@@ -1,14 +1,18 @@
 import { m } from "@freecorps/brigade-i18n";
+import { severityLabels } from "@freecorps/brigade-i18n/labels";
 import { radius, spacing } from "@freecorps/brigade-ui";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { BackHandler, Pressable, ScrollView, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Badge } from "@/components/badge";
+import { SEV1_GLYPH } from "@/components/glyphs";
 import { ThemedText } from "@/components/themed-text";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
 import { useSystemColors } from "@/theme/system-colors";
 import { callSession } from "@/lib/call";
-import { callStatus } from "@/lib/call-session";
+import { callHeading, callStatus } from "@/lib/call-session";
 
 /**
  * The answered call (spike S6): the incident being read aloud, Acknowledge (or 1 on CallKit's keypad, or on a hardware
@@ -18,6 +22,7 @@ export function CallScreen() {
   const colors = useTheme();
   const system = useSystemColors();
   const padding = useScreenPadding();
+  const { bottom } = useSafeAreaInsets();
   const router = useRouter();
   const state = useSyncExternalStore(callSession.subscribe, callSession.getState);
 
@@ -39,37 +44,75 @@ export function CallScreen() {
 
   if (!state) {
     return (
-      <View style={[padding, { flex: 1, backgroundColor: system.ground }]}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        style={{ flex: 1, backgroundColor: system.ground }}
+        contentContainerStyle={padding}
+      >
         <ThemedText>{m.call_ended()}</ThemedText>
-      </View>
+      </ScrollView>
     );
   }
 
   const { call, ack, ended } = state;
   const canAck = !ended && (ack.kind === "idle" || ack.kind === "failed");
   const status = callStatus(state);
+  const heading = callHeading(call.title);
 
+  // The incident scrolls under iOS's header (it sat behind the bar); the actions stay at the bottom, above the home
+  // indicator or the navigation bar, however long the incident's title.
   return (
-    <ScrollView
-      style={{ backgroundColor: system.ground }}
-      contentContainerStyle={[padding, { flexGrow: 1, gap: spacing[6] }]}
-    >
-      <View style={{ gap: spacing[2] }}>
-        <ThemedText variant="label">{m.call_ringing()}</ThemedText>
-        <ThemedText variant="heading" accessibilityRole="header">
-          {call.title}
-        </ThemedText>
-        <ThemedText>{call.body}</ThemedText>
-      </View>
-      <ThemedText
-        variant="caption"
-        accessibilityLiveRegion="polite"
-        style={ack.kind === "failed" ? { color: colors.destructive } : undefined}
+    <View style={{ flex: 1, backgroundColor: system.ground }}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        style={{ flex: 1 }}
+        contentContainerStyle={[padding, { gap: spacing[4] }]}
       >
-        {status}
-      </ThemedText>
-      <View style={{ flex: 1 }} />
-      <View style={{ gap: spacing[3] }}>
+        {/* The incident is the screen: what kind of page, its severity as the app marks it, then its title, large. */}
+        <View style={{ gap: spacing[3] }}>
+          <ThemedText variant="label">{m.call_ringing()}</ThemedText>
+          <View
+            style={{
+              flexDirection: "row",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: spacing[2],
+            }}
+          >
+            {heading.severity ? (
+              <Badge
+                colors={colors.severity[heading.severity]}
+                code={heading.severity.toUpperCase()}
+                icon={heading.severity === "sev1" ? SEV1_GLYPH : undefined}
+                label={severityLabels[heading.severity]()}
+              />
+            ) : null}
+            {heading.rest ? (
+              <ThemedText variant="label" style={{ fontVariant: ["tabular-nums"] }}>
+                {heading.rest}
+              </ThemedText>
+            ) : null}
+          </View>
+          <ThemedText variant="title" accessibilityRole="header">
+            {call.body}
+          </ThemedText>
+        </View>
+        <ThemedText
+          variant="caption"
+          accessibilityLiveRegion="polite"
+          style={ack.kind === "failed" ? { color: system.destructive } : undefined}
+        >
+          {status}
+        </ThemedText>
+      </ScrollView>
+      <View
+        style={{
+          gap: spacing[3],
+          paddingTop: spacing[3],
+          paddingHorizontal: padding.paddingHorizontal,
+          paddingBottom: spacing[4] + bottom,
+        }}
+      >
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ disabled: !canAck }}
@@ -109,15 +152,15 @@ export function CallScreen() {
             borderRadius: radius.xl,
             borderCurve: "continuous",
             borderWidth: 1,
-            borderColor: colors.destructive,
+            borderColor: system.destructive,
             opacity: pressed ? 0.7 : 1,
           })}
         >
-          <ThemedText style={{ color: colors.destructive }}>
+          <ThemedText style={{ color: system.destructive }}>
             {ended ? m.dismiss() : m.call_hang_up()}
           </ThemedText>
         </Pressable>
       </View>
-    </ScrollView>
+    </View>
   );
 }

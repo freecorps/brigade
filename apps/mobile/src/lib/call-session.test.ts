@@ -2,6 +2,7 @@ import { setLocale } from "@freecorps/brigade-i18n";
 import type { MutationOutcome } from "@freecorps/brigade-sync";
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import {
+  callHeading,
   callScript,
   CallSession,
   callStatus,
@@ -41,6 +42,19 @@ function setup(
   );
   return { session, acks, spoken, ended, release };
 }
+
+describe("callHeading", () => {
+  test("splits the severity code from the incident number", () => {
+    expect(callHeading("SEV1 · INC-12")).toEqual({ severity: "sev1", rest: "INC-12" });
+    expect(callHeading("SEV4 · INC-1284")).toEqual({ severity: "sev4", rest: "INC-1284" });
+  });
+
+  test("keeps a severity without a number, and a title without a severity whole", () => {
+    expect(callHeading("SEV2")).toEqual({ severity: "sev2", rest: "" });
+    expect(callHeading("Checkout down")).toEqual({ severity: null, rest: "Checkout down" });
+    expect(callHeading("SEV9 · INC-1")).toEqual({ severity: null, rest: "SEV9 · INC-1" });
+  });
+});
 
 describe("callScript", () => {
   test("reads the incident, then how to acknowledge, in the user's language", () => {

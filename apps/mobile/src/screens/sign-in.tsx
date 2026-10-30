@@ -91,8 +91,8 @@ function SignInForm() {
     setFailure(message);
     sending.current = false;
     setBusy(false);
-    // VoiceOver has no live regions (accessibilityLiveRegion is Android's), so say it once.
-    if (process.env.EXPO_OS === "ios") AccessibilityInfo.announceForAccessibility(message);
+    // The form's native text has no live region on either platform, so the screen reader says it once.
+    AccessibilityInfo.announceForAccessibility(message);
   };
 
   return (

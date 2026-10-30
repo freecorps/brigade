@@ -1,14 +1,7 @@
-import {
-  Button,
-  FieldGroup,
-  ListItem,
-  Text,
-  TextInput,
-  useNativeState,
-  type TextInputRef,
-} from "@expo/ui";
+import { Button, FieldGroup, Text, TextInput, useNativeState, type TextInputRef } from "@expo/ui";
 import { useRef } from "react";
 import type { KeyboardTypeOptions, TextInputProps } from "react-native";
+import { ListItem } from "@/components/list-item";
 import { NativeHost } from "@/components/native-host";
 import { useTheme } from "@/hooks/use-theme";
 
@@ -127,7 +120,7 @@ function FormField({
       autoComplete={field.autoComplete}
       keyboardType={field.keyboardType}
       autoCapitalize={field.autoCapitalize}
-      autoCorrect={field.autoCapitalize === "none" ? false : undefined}
+      autoCorrect={field.secure || field.autoCapitalize === "none" ? false : undefined}
       maxLength={field.maxLength}
       returnKeyType={last ? "go" : "next"}
       onSubmitEditing={onNext}

@@ -154,7 +154,7 @@ function FormField({
       autoComplete={field.autoComplete}
       keyboardType={field.keyboardType}
       autoCapitalize={field.autoCapitalize}
-      autoCorrect={field.autoCapitalize === "none" ? false : undefined}
+      autoCorrect={field.secure || field.autoCapitalize === "none" ? false : undefined}
       maxLength={field.maxLength}
       returnKeyType={last ? "go" : "next"}
       onSubmitEditing={onNext}

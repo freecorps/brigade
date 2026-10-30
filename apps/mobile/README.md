@@ -2,12 +2,17 @@
 
 The Brigade app for iOS and Android: Expo SDK 58, Expo Router, React Native 0.88 on Hermes. It is bundled by Metro,
 not Vite (RFC 0002). It opens on sign-in (email and password; accounts are created on the dashboard). Signed in, the
-home screen is the member's workspace: its live incident list (Brigade Sync, RFC 0004), to declare and to change an
-incident's status or severity, and the account (workspace, whether this phone is paged, Sign out). Each incident
+app is the system's tab bar (Expo Router's `NativeTabs`: UITabBarController on iOS, Material 3's navigation bar on
+Android), each tab with its own stack: **Incidents**, the workspace's live incident list (Brigade Sync, RFC 0004), to
+declare and to change an incident's status or severity; **On call**; and **Account** (workspace, whether this phone is
+paged, Sign out, the legend). Incidents, calls and sheets open above the tabs from the root stack, so a page opens its
+incident whichever tab is showing. Controls come from `@expo/ui` (SwiftUI on iOS, Jetpack Compose on Android) where it
+has one, and are drawn by the app only where it does not; chrome and grounds use the system's semantic colours
+(`src/theme/colors.ts`), while brand, severity and status colours stay packages/ui's. Each incident
 opens `/incidents/<number>`: severity and status, roles, written updates and the timeline, as on the dashboard. The list
 says whether the member is on call (and until when, or when their next shift is) and opens `/oncall`: their shifts
 and overrides, who every schedule has now, and an override for themselves (`schedule.addOverride`, from now for 1 to
-24 hours) or removing their own. From the list, `/legend` shows the severity and status legend, and a development-only `/intl` route reports Hermes
+24 hours) or removing their own. From the Account tab, `/legend` shows the severity and status legend, and a development-only `/intl` route reports Hermes
 `Intl` support. Another development-only route, `/push`, shows the
 APNs device token and the device public key that encrypted pushes are sealed to. Spike write-ups:
 [S4](../../docs/spikes/s4-expo-workspace.md), [S3](../../docs/spikes/s3-sync-engine.md),

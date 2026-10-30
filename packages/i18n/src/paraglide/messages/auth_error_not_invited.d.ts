@@ -5,7 +5,7 @@ export type Auth_Error_Not_InvitedInputs = {};
 /**
 * | output |
 * | --- |
-* | "This address has no invitation. Sign up with the address the invitation was sent to." |
+* | "This address has no open invitation. Sign up with the address the invitation was sent to, or ask an owner to send it again if it ran out." |
 *
 * @param {Auth_Error_Not_InvitedInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

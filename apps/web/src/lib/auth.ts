@@ -29,9 +29,9 @@ export {
 } from "@freecorps/brigade-i18n/auth";
 
 /**
- * What to tell the user about a failed sign-up. Answering an invitation (`invited`), a refused address can only be
- * one with no invitation, most likely not the one it was sent to: that is what they need to hear, not "ask an owner
- * for an invitation" (RFC 0002 "Sign-up modes").
+ * What to tell the user about a failed sign-up. Answering an invitation (`invited`), a refused address is one with no
+ * pending invitation: most likely not the one it was sent to, or the invitation ran out. That is what they need to
+ * hear, not "ask an owner for an invitation" (RFC 0002 "Sign-up modes").
  */
 export function signUpErrorMessage(error: AuthFailure, invited: boolean): string {
   if (invited && error?.code === "SIGN_UP_CLOSED") return m.auth_error_not_invited();

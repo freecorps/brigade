@@ -16,6 +16,8 @@ import { FieldGroup, ListItem, Text } from "@expo/ui";
 import { useState } from "react";
 import { Alert, View } from "react-native";
 import { useChoiceSheet } from "@/components/choice-sheet";
+import { EmptyRow } from "@/components/empty-row";
+import type { Glyph } from "@/components/glyphs";
 import { NativeHost } from "@/components/native-host";
 import { RowText } from "@/components/row-text";
 import { useOnCall } from "@/components/oncall";
@@ -24,6 +26,13 @@ import { useLocale } from "@/hooks/use-locale";
 import { useTheme } from "@/hooks/use-theme";
 import { useOtherWorkspaces } from "@/components/widget";
 import { COVER_HOURS, coverArgs, queriesStatus, statusTime, type Shift } from "@/lib/oncall";
+
+/** No schedules yet: a calendar with a clock. */
+const NO_SCHEDULES_GLYPH: Glyph = {
+  ios: "calendar.badge.clock",
+  android: "calendar_clock",
+  web: "calendar_clock",
+};
 
 /** `oncall_mine` with only the inputs the variant uses. */
 const mine = (
@@ -180,9 +189,11 @@ export function OnCall() {
               </ListItem>
             ))}
             {status === "ready" && view.schedules.length === 0 ? (
-              <ListItem>
-                <Text>{m.oncall_empty()}</Text>
-              </ListItem>
+              <EmptyRow
+                title={m.oncall_empty_title()}
+                description={m.oncall_empty_hint()}
+                glyph={NO_SCHEDULES_GLYPH}
+              />
             ) : status === "ready" ? (
               // Whether the member is on call now, the headline of the tab.
               <ListItem

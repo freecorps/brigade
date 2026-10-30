@@ -156,15 +156,22 @@ const OFFLINE = {
   tone: "muted" as const,
 };
 
-/** Calm by design: a word and a small glyph, never a banner, since a reconnect usually fixes itself. */
-export function ConnectionStatus({ view }: { view: SyncView }) {
+/** What the connection line says for `view`: its word, its glyph (none for a dot), and their colour. */
+export function useConnection(view: SyncView) {
   const colors = useTheme();
-  const glyphSize = useGlyphSize(fontSize.sm.size);
   const online = useOnline();
   const { text, glyph, tone } =
     online || view === "live" || view === "refused" ? CONNECTION[view] : OFFLINE;
   const color =
     tone === "ok" ? colors.primary : tone === "bad" ? colors.destructive : colors.mutedForeground;
+  return { text: text(), glyph, tone, color };
+}
+
+/** Calm by design: a word and a small glyph, never a banner, since a reconnect usually fixes itself. */
+export function ConnectionStatus({ view }: { view: SyncView }) {
+  const colors = useTheme();
+  const glyphSize = useGlyphSize(fontSize.sm.size);
+  const { text, glyph, tone, color } = useConnection(view);
   return (
     <View
       accessible
@@ -185,7 +192,7 @@ export function ConnectionStatus({ view }: { view: SyncView }) {
         />
       )}
       <ThemedText variant="label" style={{ color: tone === "ok" ? colors.foreground : color }}>
-        {text()}
+        {text}
       </ThemedText>
     </View>
   );

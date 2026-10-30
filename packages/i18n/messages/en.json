@@ -241,6 +241,7 @@
   "incident_quoted_title": "“{title}”",
   "incidents_all_clear": "All clear.",
   "incidents_all_clear_hint": "New incidents show up here as soon as they're declared.",
+  "incidents_all_clear_title": "All clear",
   "incidents_sev1_count": [
     {
       "declarations": [
@@ -1180,6 +1181,8 @@
     }
   ],
   "oncall_empty": "No on-call schedules yet. A schedule says who is on call and when they hand off.",
+  "oncall_empty_title": "No schedules yet",
+  "oncall_empty_hint": "A schedule says who is on call and when they hand off.",
   "oncall_not_paging": "Schedules page people through an escalation policy (below); without a default policy, pages go to the incident's commander, or to everyone who can respond.",
   "oncall_nobody": "Nobody on call",
   "oncall_until": "until {time}",

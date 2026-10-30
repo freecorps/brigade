@@ -1,4 +1,4 @@
-import { FieldGroup, ListItem, RNHostView, Text } from "@expo/ui";
+import { FieldGroup, ListItem, Text } from "@expo/ui";
 import { m } from "@freecorps/brigade-i18n";
 import {
   formatAge,
@@ -23,7 +23,6 @@ import {
   pickTarget,
   syncView,
   type MutationOutcome,
-  type SyncView,
 } from "@freecorps/brigade-sync";
 import { useConnectionState, useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { router } from "expo-router";
@@ -31,13 +30,15 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AccessibilityInfo, View } from "react-native";
 import { PagingNotice } from "@/components/account";
 import { useChoiceSheet } from "@/components/choice-sheet";
-import { ConnectionStatus, StatePanel, useNow } from "@/components/incident-parts";
+import { EmptyRow } from "@/components/empty-row";
+import type { Glyph } from "@/components/glyphs";
+import { StatePanel, useNow } from "@/components/incident-parts";
+import { ListStatus } from "@/components/list-status";
 import { NativeSeverityBadge, NativeStatusBadge } from "@/components/native-badge";
 import { withRowMenu } from "@/components/row-menu";
 import { RowText } from "@/components/row-text";
 import { DeclareButton } from "@/components/declare-button";
 import { useMember } from "@/components/session";
-import { ThemedText } from "@/components/themed-text";
 import { useLocale } from "@/hooks/use-locale";
 import { NativeHost } from "@/components/native-host";
 import { useTheme } from "@/hooks/use-theme";
@@ -51,6 +52,13 @@ import { currentSync } from "@/lib/sync-client";
  * who may. Declaring is the header's + (a form sheet, `src/screens/declare.tsx`). Changes show at once and settle
  * when the shard confirms them; a refused one rolls back and leaves a message.
  */
+/** Nothing open: a shield with a check, as the dashboard's all-clear. */
+const ALL_CLEAR_GLYPH: Glyph = {
+  ios: "checkmark.shield",
+  android: "verified_user",
+  web: "verified_user",
+};
+
 export function Incidents() {
   // A refused list is asked for again only by a new subscriber: "Reload" remounts the list.
   const [attempt, setAttempt] = useState(0);
@@ -229,9 +237,7 @@ function IncidentList({ onReload }: { onReload: () => void }) {
         <FieldGroup>
           <FieldGroup.Section>
             <FieldGroup.SectionHeader>
-              <RNHostView matchContents>
-                <Header view={view} summary={summary} />
-              </RNHostView>
+              <ListStatus view={view} summary={summary} />
             </FieldGroup.SectionHeader>
             {rows.map((row) =>
               withRowMenu(
@@ -271,9 +277,11 @@ function IncidentList({ onReload }: { onReload: () => void }) {
               ),
             )}
             {rows.length === 0 && status === "ready" ? (
-              <ListItem supportingText={m.incidents_all_clear_hint()}>
-                <Text>{m.incidents_all_clear()}</Text>
-              </ListItem>
+              <EmptyRow
+                title={m.incidents_all_clear_title()}
+                description={m.incidents_all_clear_hint()}
+                glyph={ALL_CLEAR_GLYPH}
+              />
             ) : null}
           </FieldGroup.Section>
           {refusals.length > 0 ? (
@@ -298,20 +306,6 @@ function IncidentList({ onReload }: { onReload: () => void }) {
       {can(role, "incident:declare") ? <DeclareButton /> : null}
       <StatePanel view={view} errorCode={error?.code} onReload={onReload} />
       {sheet}
-    </View>
-  );
-}
-
-/** Over the list: whether it is live, and how many are open. */
-function Header({ view, summary }: { view: SyncView; summary: string | undefined }) {
-  return (
-    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
-      <ConnectionStatus view={view} />
-      {summary ? (
-        <ThemedText variant="caption" style={{ fontVariant: ["tabular-nums"] }}>
-          {summary}
-        </ThemedText>
-      ) : null}
     </View>
   );
 }

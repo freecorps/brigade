@@ -1,9 +1,10 @@
-import { Button, FieldGroup, Picker, Text, TextInput, useNativeState } from "@expo/ui";
+import { FieldGroup, Picker, TextInput, useNativeState } from "@expo/ui";
 import { m } from "@freecorps/brigade-i18n";
 import { severityName } from "@freecorps/brigade-i18n/incident";
 import { INCIDENT_TITLE_MAX, SEVERITIES, type Severity } from "@freecorps/brigade-schema";
+import { FooterText } from "@/components/footer-text";
 import { NativeHost } from "@/components/native-host";
-import { useTheme } from "@/hooks/use-theme";
+import { SubmitButton } from "@/components/submit-button";
 
 export type DeclareFormProps = {
   severity: Severity;
@@ -35,7 +36,6 @@ export function DeclareForm({
   onTitle,
   onDeclare,
 }: DeclareFormProps) {
-  const colors = useTheme();
   const field = useNativeState("");
   return (
     <NativeHost style={{ flex: 1 }}>
@@ -54,9 +54,9 @@ export function DeclareForm({
           {/* Why the title cannot go yet, under the field. */}
           {invalid ? (
             <FieldGroup.SectionFooter>
-              <Text textStyle={{ color: colors.destructive }}>
+              <FooterText tone="destructive">
                 {invalid === "empty" ? m.declare_title_empty() : m.declare_title_invalid()}
-              </Text>
+              </FooterText>
             </FieldGroup.SectionFooter>
           ) : null}
         </FieldGroup.Section>
@@ -91,7 +91,7 @@ export function DeclareForm({
           </FieldGroup.Section>
         ) : null}
         <FieldGroup.Section>
-          <Button
+          <SubmitButton
             label={m.declare_submit_severity({ severity: severity.toUpperCase() })}
             onPress={onDeclare}
           />

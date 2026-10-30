@@ -1837,8 +1837,8 @@
         "text=short_call_sending": "Chamando",
         "text=short_call_failed": "Chamada falhou",
         "text=short_call_not_sent": "Chamada não enviada",
-        "text=calls_choice_sev1_sev2": "Os iPhones de {name} tocam como chamada em acionamentos SEV1 e escalonamentos SEV2",
-        "text=calls_choice_sev1": "Os iPhones de {name} tocam como chamada só em acionamentos SEV1",
+        "text=calls_choice_sev1_sev2": "Os telefones de {name} tocam como chamada em acionamentos SEV1 e escalonamentos SEV2",
+        "text=calls_choice_sev1": "Os telefones de {name} tocam como chamada só em acionamentos SEV1",
         "text=calls_choice_never": "{name} desligou as chamadas: os acionamentos chegam só como notificações",
         "text=*": "Quem foi acionado"
       }

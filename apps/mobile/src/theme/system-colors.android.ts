@@ -22,5 +22,6 @@ export function useSystemColors(): SystemColors {
     label: material.onSurface,
     secondaryLabel: material.onSurfaceVariant,
     tint: material.primary,
+    destructive: material.error as string,
   };
 }

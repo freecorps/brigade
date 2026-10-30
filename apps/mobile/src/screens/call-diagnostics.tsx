@@ -9,6 +9,7 @@ import { Row, Section } from "@/components/section";
 import { ThemedText } from "@/components/themed-text";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
+import { useSystemColors } from "@/theme/system-colors";
 import { BrigadeCall, type RingStatus } from "../../modules/brigade-call";
 
 const RING_DELAY_MS = 10_000;
@@ -21,6 +22,7 @@ const ROUTE_TEXT = {
 
 export function CallDiagnostics() {
   const colors = useTheme();
+  const system = useSystemColors();
   const padding = useScreenPadding();
   const { rows } = useQuery("incidents.active", {});
   const incident = rows.find((row) => row.acknowledgedAt == null) ?? rows[0];
@@ -89,7 +91,7 @@ export function CallDiagnostics() {
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
-      style={{ backgroundColor: colors.background }}
+      style={{ backgroundColor: system.ground }}
       contentContainerStyle={[padding, { gap: spacing[6] }]}
     >
       <Section title={m.call_test_title()} inset={false}>

@@ -71,7 +71,7 @@ export function callTone(call: WhyCall): "ok" | "warn" | "neutral" {
   return call === "failed" || call === "not_sent" ? "warn" : "neutral";
 }
 
-/** Which pages ring the member's iPhones as a call, as they chose it. */
+/** Which pages ring the member's phones as a call, as they chose it. */
 export function callChoiceText(choice: CallChoice, name: string): string {
   return say(`calls_choice_${choice}`, { name });
 }

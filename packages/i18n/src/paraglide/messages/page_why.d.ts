@@ -115,8 +115,8 @@ export type Page_WhyInputs = {
 * | "short_call_sending" | "Calling" |
 * | "short_call_failed" | "Call failed" |
 * | "short_call_not_sent" | "Call not sent" |
-* | "calls_choice_sev1_sev2" | "{name}'s iPhones ring as a call for SEV1 pages and SEV2 escalations" |
-* | "calls_choice_sev1" | "{name}'s iPhones ring as a call for SEV1 pages only" |
+* | "calls_choice_sev1_sev2" | "{name}'s phones ring as a call for SEV1 pages and SEV2 escalations" |
+* | "calls_choice_sev1" | "{name}'s phones ring as a call for SEV1 pages only" |
 * | "calls_choice_never" | "{name} turned calls off: pages come as notifications only" |
 * | * | "Who was paged" |
 *

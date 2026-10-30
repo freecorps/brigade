@@ -12,6 +12,7 @@ import { ThemedText } from "@/components/themed-text";
 import { useLocale } from "@/hooks/use-locale";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
+import { useSystemColors } from "@/theme/system-colors";
 
 /** Sample counts for the plural message: zero, one, few, and a count that needs a separator. */
 const SAMPLE_COUNTS = [0, 1, 3, 1284];
@@ -19,6 +20,7 @@ const HOUR = 60 * 60 * 1000;
 
 export function Overview() {
   const colors = useTheme();
+  const system = useSystemColors();
   const padding = useScreenPadding();
   const { locale, timeZone } = useLocale();
   // A sample incident declared three hours before the screen opened.
@@ -28,7 +30,7 @@ export function Overview() {
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
-      style={{ backgroundColor: colors.background }}
+      style={{ backgroundColor: system.ground }}
       contentContainerStyle={[padding, { gap: spacing[6] }]}
     >
       <ThemedText variant="caption">{m.mobile_overview_description()}</ThemedText>

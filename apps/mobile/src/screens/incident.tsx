@@ -1,4 +1,4 @@
-import { FieldGroup, RNHostView, Text } from "@expo/ui";
+import { Column, FieldGroup, RNHostView, Text } from "@expo/ui";
 import { ListItem } from "@/components/list-item";
 import { m } from "@freecorps/brigade-i18n";
 import {
@@ -18,6 +18,7 @@ import {
   type NoticeTarget,
 } from "@freecorps/brigade-i18n/incident";
 import { incidentStatusLabels } from "@freecorps/brigade-i18n/labels";
+import { memberName } from "@freecorps/brigade-i18n/why-paged";
 import {
   can,
   formatIncidentNumber,
@@ -50,7 +51,14 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { AccessibilityInfo, ActivityIndicator, Alert, Linking, View } from "react-native";
 import { useChoiceSheet } from "@/components/choice-sheet";
 import { detailsSection, useIncidentDetails } from "@/components/incident-details";
-import { ConnectionStatus, StatePanel, useNow } from "@/components/incident-parts";
+import { Avatar } from "@/components/avatar";
+import { FooterText } from "@/components/footer-text";
+import type { Glyph } from "@/components/glyphs";
+import { StatePanel, useNow } from "@/components/incident-parts";
+import { useListEnd } from "@/components/list-end";
+import { ListStatus } from "@/components/list-status";
+import { RowIcon } from "@/components/row-icon";
+import { UpdateButton } from "@/components/update-button";
 import { NativeSeverityBadge, NativeStatusBadge } from "@/components/native-badge";
 import { NativeHost } from "@/components/native-host";
 import { pagingSection, usePagingData } from "@/components/paging";
@@ -387,6 +395,7 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
     ]);
 
   const now = useNow(20_000);
+  const listEnd = useListEnd(editable ? FAB_ROOM : 0);
   const pagingData = usePagingData(row, now);
   const details = useIncidentDetails(row);
   const [allPaged, setAllPaged] = useState(false);
@@ -482,6 +491,13 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
       <ListItem
         key={key}
         onPress={tappable ? () => toggle(key) : undefined}
+        leading={
+          <RowIcon
+            plain
+            glyph={timelineGlyph(entry.kind)}
+            color={failed ? colors.destructive : undefined}
+          />
+        }
         supportingText={[
           ...(body ? [expanded || !longBody ? body : clip(body)] : []),
           ...names,
@@ -518,12 +534,14 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
         <FieldGroup>
           <FieldGroup.Section>
             <FieldGroup.SectionHeader>
-              <RNHostView matchContents>
-                <View style={{ gap: spacing[1] }}>
-                  <ConnectionStatus view={view} />
-                  {state}
-                </View>
-              </RNHostView>
+              <Column spacing={spacing[1]} alignment="start">
+                <ListStatus view={view} summary={undefined} />
+                {view === "live" || view === "connecting" ? null : (
+                  <RNHostView matchContents>
+                    <View>{state}</View>
+                  </RNHostView>
+                )}
+              </Column>
             </FieldGroup.SectionHeader>
             <ListItem
               supportingText={[
@@ -550,7 +568,7 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
             {noticesFor(["status", "severity"])}
             {editable ? null : (
               <FieldGroup.SectionFooter>
-                <Text>{m.incident_page({ part: "read_only" })}</Text>
+                <FooterText>{m.incident_page({ part: "read_only" })}</FooterText>
               </FieldGroup.SectionFooter>
             )}
           </FieldGroup.Section>
@@ -569,6 +587,7 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
                 <ListItem
                   key={role.id}
                   onPress={changeable ? () => changeRole(role, holder) : undefined}
+                  leading={<Avatar name={holder === null ? null : memberName(holder, who)} />}
                   supportingText={
                     busy.has(`role/${role.id}`)
                       ? `${name} · ${online ? m.incident_change_saving() : m.incident_change_queued()}`
@@ -582,7 +601,7 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
             {noticesFor(["role"])}
             {members.status === "ready" && assignable(members.rows).length <= 1 ? (
               <FieldGroup.SectionFooter>
-                <Text>{m.incident_page({ part: "no_members" })}</Text>
+                <FooterText>{m.incident_page({ part: "no_members" })}</FooterText>
               </FieldGroup.SectionFooter>
             ) : null}
           </FieldGroup.Section>
@@ -607,16 +626,6 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
           ) : null}
 
           <FieldGroup.Section title={m.incident_page({ part: "timeline" })}>
-            {editable ? (
-              <ListItem
-                onPress={() => writeUpdate()}
-                supportingText={m.incident_page({ part: "update_hint" })}
-              >
-                <Text textStyle={{ color: colors.primary, fontWeight: "600" }}>
-                  {m.incident_page({ part: "update_label" })}
-                </Text>
-              </ListItem>
-            ) : null}
             {noticesFor(["update"])}
             {said.map((one) => (
               <ListItem
@@ -636,8 +645,10 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
               </ListItem>
             ) : null}
           </FieldGroup.Section>
+          {listEnd}
         </FieldGroup>
       </NativeHost>
+      <UpdateButton enabled={editable && row.number !== null} onPress={() => writeUpdate()} />
       {sheet}
     </View>
   );
@@ -673,3 +684,31 @@ const CONFLICT_PARTS: Partial<Record<string, "already" | "acked" | "resolved">> 
   [PAGE_AGAIN_CONFLICTS.acknowledged]: "acked",
   [PAGE_AGAIN_CONFLICTS.inactive]: "resolved",
 };
+
+/** Room under the list for the floating Post an update button (Android), so the newest entry scrolls clear of it. */
+const FAB_ROOM = 88;
+
+/** Each timeline entry's mark, by what happened; anything else is a plain dot. */
+const TIMELINE_GLYPHS: Partial<Record<string, Glyph>> = {
+  declared: { ios: "flame", android: "local_fire_department", web: "local_fire_department" },
+  update: { ios: "text.bubble", android: "chat_bubble", web: "chat_bubble" },
+  status_changed: { ios: "arrow.triangle.2.circlepath", android: "sync", web: "sync" },
+  severity_changed: { ios: "exclamationmark.triangle", android: "warning", web: "warning" },
+  role_assigned: { ios: "person.badge.plus", android: "person_add", web: "person_add" },
+  acknowledged: { ios: "hand.raised", android: "front_hand", web: "front_hand" },
+  renamed: { ios: "pencil", android: "edit", web: "edit" },
+  paged: { ios: "bell", android: "notifications", web: "notifications" },
+  paged_again: { ios: "bell.badge", android: "notification_add", web: "notification_add" },
+  page_failed: { ios: "bell.slash", android: "notifications_off", web: "notifications_off" },
+  email_failed: { ios: "envelope.badge", android: "mail", web: "mail" },
+  slack_failed: { ios: "exclamationmark.bubble", android: "sms_failed", web: "sms_failed" },
+  status_published: { ios: "megaphone", android: "campaign", web: "campaign" },
+  status_corrected: { ios: "megaphone", android: "campaign", web: "campaign" },
+  follow_up: { ios: "checklist", android: "checklist", web: "checklist" },
+  postmortem: { ios: "doc.text", android: "description", web: "description" },
+};
+const DEFAULT_GLYPH: Glyph = { ios: "circle.fill", android: "circle", web: "circle" };
+
+function timelineGlyph(kind: string): Glyph {
+  return TIMELINE_GLYPHS[kind] ?? DEFAULT_GLYPH;
+}

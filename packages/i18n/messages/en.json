@@ -1837,8 +1837,8 @@
         "text=short_call_sending": "Calling",
         "text=short_call_failed": "Call failed",
         "text=short_call_not_sent": "Call not sent",
-        "text=calls_choice_sev1_sev2": "{name}'s iPhones ring as a call for SEV1 pages and SEV2 escalations",
-        "text=calls_choice_sev1": "{name}'s iPhones ring as a call for SEV1 pages only",
+        "text=calls_choice_sev1_sev2": "{name}'s phones ring as a call for SEV1 pages and SEV2 escalations",
+        "text=calls_choice_sev1": "{name}'s phones ring as a call for SEV1 pages only",
         "text=calls_choice_never": "{name} turned calls off: pages come as notifications only",
         "text=*": "Who was paged"
       }

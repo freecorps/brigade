@@ -7,6 +7,7 @@ import { Row, Section } from "@/components/section";
 import { ThemedText } from "@/components/themed-text";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
+import { useSystemColors } from "@/theme/system-colors";
 import { pagingText } from "@/components/account";
 import { useMember } from "@/components/session";
 import { BrigadePush } from "../../modules/brigade-push";
@@ -43,6 +44,7 @@ function loadPushInfo(set: (field: Field, value: string) => void): void {
 
 export function PushDiagnostics() {
   const colors = useTheme();
+  const system = useSystemColors();
   const padding = useScreenPadding();
   const { paging } = useMember();
   const [info, setInfo] = useState<PushInfo>({});
@@ -85,7 +87,7 @@ export function PushDiagnostics() {
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
-      style={{ backgroundColor: colors.background }}
+      style={{ backgroundColor: system.ground }}
       contentContainerStyle={[padding, { gap: spacing[6] }]}
     >
       {BrigadePush ? null : <ThemedText>{m.push_unavailable()}</ThemedText>}

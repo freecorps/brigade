@@ -115,8 +115,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "short_call_sending" | "Calling" |
 * | "short_call_failed" | "Call failed" |
 * | "short_call_not_sent" | "Call not sent" |
-* | "calls_choice_sev1_sev2" | "{name}'s iPhones ring as a call for SEV1 pages and SEV2 escalations" |
-* | "calls_choice_sev1" | "{name}'s iPhones ring as a call for SEV1 pages only" |
+* | "calls_choice_sev1_sev2" | "{name}'s phones ring as a call for SEV1 pages and SEV2 escalations" |
+* | "calls_choice_sev1" | "{name}'s phones ring as a call for SEV1 pages only" |
 * | "calls_choice_never" | "{name} turned calls off: pages come as notifications only" |
 * | * | "Who was paged" |
 *
@@ -232,8 +232,8 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "short_call_sending") return /** @type {LocalizedString} */ (`Chamando`);
 		if (i?.text === "short_call_failed") return /** @type {LocalizedString} */ (`Chamada falhou`);
 		if (i?.text === "short_call_not_sent") return /** @type {LocalizedString} */ (`Chamada não enviada`);
-		if (i?.text === "calls_choice_sev1_sev2") return /** @type {LocalizedString} */ (`Os iPhones de ${i?.name} tocam como chamada em acionamentos SEV1 e escalonamentos SEV2`);
-		if (i?.text === "calls_choice_sev1") return /** @type {LocalizedString} */ (`Os iPhones de ${i?.name} tocam como chamada só em acionamentos SEV1`);
+		if (i?.text === "calls_choice_sev1_sev2") return /** @type {LocalizedString} */ (`Os telefones de ${i?.name} tocam como chamada em acionamentos SEV1 e escalonamentos SEV2`);
+		if (i?.text === "calls_choice_sev1") return /** @type {LocalizedString} */ (`Os telefones de ${i?.name} tocam como chamada só em acionamentos SEV1`);
 		if (i?.text === "calls_choice_never") return /** @type {LocalizedString} */ (`${i?.name} desligou as chamadas: os acionamentos chegam só como notificações`);
 		return /** @type {LocalizedString} */ (`Quem foi acionado`)
 	}
@@ -343,8 +343,8 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "short_call_sending") return /** @type {LocalizedString} */ (`Calling`);
 		if (i?.text === "short_call_failed") return /** @type {LocalizedString} */ (`Call failed`);
 		if (i?.text === "short_call_not_sent") return /** @type {LocalizedString} */ (`Call not sent`);
-		if (i?.text === "calls_choice_sev1_sev2") return /** @type {LocalizedString} */ (`${i?.name}'s iPhones ring as a call for SEV1 pages and SEV2 escalations`);
-		if (i?.text === "calls_choice_sev1") return /** @type {LocalizedString} */ (`${i?.name}'s iPhones ring as a call for SEV1 pages only`);
+		if (i?.text === "calls_choice_sev1_sev2") return /** @type {LocalizedString} */ (`${i?.name}'s phones ring as a call for SEV1 pages and SEV2 escalations`);
+		if (i?.text === "calls_choice_sev1") return /** @type {LocalizedString} */ (`${i?.name}'s phones ring as a call for SEV1 pages only`);
 		if (i?.text === "calls_choice_never") return /** @type {LocalizedString} */ (`${i?.name} turned calls off: pages come as notifications only`);
 		return /** @type {LocalizedString} */ (`Who was paged`)
 	}

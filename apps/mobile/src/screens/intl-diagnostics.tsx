@@ -15,6 +15,7 @@ import { ThemedText } from "@/components/themed-text";
 import { useLocale } from "@/hooks/use-locale";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
+import { useSystemColors } from "@/theme/system-colors";
 import { nativeIntl } from "@/intl/native";
 import { INTL_FEATURES, type IntlFeature } from "@/intl/probe";
 import { currentIntl } from "@/intl/setup";
@@ -47,6 +48,7 @@ function engineName(): string {
 
 export function IntlDiagnostics() {
   const colors = useTheme();
+  const system = useSystemColors();
   const padding = useScreenPadding();
   const { timeZone } = useLocale();
   const [now] = useState(() => Date.now());
@@ -60,7 +62,7 @@ export function IntlDiagnostics() {
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
-      style={{ backgroundColor: colors.background }}
+      style={{ backgroundColor: system.ground }}
       contentContainerStyle={[padding, { gap: spacing[6] }]}
     >
       <View style={{ gap: spacing[1] }}>

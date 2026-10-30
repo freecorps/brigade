@@ -6,7 +6,7 @@ import {
   type FieldErrors,
   type SignInField,
 } from "@freecorps/brigade-i18n/auth";
-import { router } from "expo-router";
+import { router, Stack } from "expo-router";
 import { useRef, useState } from "react";
 import { AccessibilityInfo, Linking } from "react-native";
 import { NativeForm } from "@/components/native-form";
@@ -21,6 +21,21 @@ import { useSignUpMode } from "@/lib/sign-up-mode";
  */
 export function SignIn() {
   const view = useSessionView();
+  // Every view says what the screen is for, so a title set by one never sticks to the next.
+  const title =
+    view.kind === "no-workspace"
+      ? m.account_flow({ part: "new_title", name: "" })
+      : m.auth_sign_in_title();
+  return (
+    <>
+      <Stack.Screen options={{ title }} />
+      <SignInView view={view} />
+    </>
+  );
+}
+
+/** Everything before a member is ready, by the session's view. */
+function SignInView({ view }: { view: ReturnType<typeof useSessionView> }) {
   if (view.kind === "no-workspace") {
     return (
       <NewWorkspaceForm

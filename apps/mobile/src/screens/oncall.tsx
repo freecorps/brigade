@@ -17,7 +17,11 @@ import { ListItem } from "@/components/list-item";
 import { useState } from "react";
 import { Alert, View } from "react-native";
 import { useChoiceSheet } from "@/components/choice-sheet";
+import { Avatar } from "@/components/avatar";
 import { EmptyRow } from "@/components/empty-row";
+import { FooterText } from "@/components/footer-text";
+import { useListEnd } from "@/components/list-end";
+import { RowIcon } from "@/components/row-icon";
 import type { Glyph } from "@/components/glyphs";
 import { NativeHost } from "@/components/native-host";
 import { RowText } from "@/components/row-text";
@@ -27,6 +31,14 @@ import { useLocale } from "@/hooks/use-locale";
 import { useTheme } from "@/hooks/use-theme";
 import { useOtherWorkspaces } from "@/components/widget";
 import { COVER_HOURS, coverArgs, queriesStatus, statusTime, type Shift } from "@/lib/oncall";
+
+/** The tab's headline: on call now, or not. */
+const ON_CALL_GLYPH: Glyph = {
+  ios: "bell.badge.fill",
+  android: "notifications_active",
+  web: "notifications_active",
+};
+const OFF_CALL_GLYPH: Glyph = { ios: "moon.zzz.fill", android: "bedtime", web: "bedtime" };
 
 /** No schedules yet: a calendar with a clock. */
 const NO_SCHEDULES_GLYPH: Glyph = {
@@ -74,6 +86,7 @@ export function OnCall() {
   const addOverride = useMutation("schedule.addOverride");
   const removeOverride = useMutation("schedule.removeOverride");
   const { choose, sheet } = useChoiceSheet();
+  const listEnd = useListEnd();
   const [refusals, setRefusals] = useState<{ key: string; text: string }[]>([]);
   const canOverride = can(role, "schedule:override");
 
@@ -150,15 +163,15 @@ export function OnCall() {
       .join(" · "),
   ];
   const upcoming = onCall ? view.next : view.next.slice(1);
+  // Every schedule in one zone: said once under "On call now" rather than on each row.
+  const zones = new Set(view.schedules.map((item) => item.schedule.timeZone));
+  const oneZone = zones.size === 1 ? [...zones][0]! : null;
 
   return (
     <View style={{ flex: 1 }}>
       <NativeHost style={{ flex: 1 }}>
         <FieldGroup>
-          <FieldGroup.Section>
-            <FieldGroup.SectionHeader>
-              <Text>{mine("workspace", { name: workspaceName })}</Text>
-            </FieldGroup.SectionHeader>
+          <FieldGroup.Section title={mine("workspace", { name: workspaceName })}>
             {refusals.map((refusal) => (
               <ListItem
                 key={refusal.key}
@@ -198,11 +211,18 @@ export function OnCall() {
             ) : status === "ready" ? (
               // Whether the member is on call now, the headline of the tab.
               <ListItem
+                leading={
+                  <RowIcon
+                    plain
+                    glyph={onCall ? ON_CALL_GLYPH : OFF_CALL_GLYPH}
+                    color={onCall ? colors.primary : colors.mutedForeground}
+                  />
+                }
                 supportingText={onCall ? undefined : view.next[0] ? undefined : mine("next_none")}
               >
                 <Text
                   textStyle={{
-                    fontSize: 20,
+                    fontSize: 17,
                     fontWeight: "600",
                     color: onCall ? colors.primary : undefined,
                   }}
@@ -259,16 +279,26 @@ export function OnCall() {
                   <ListItem
                     key={item.schedule.id}
                     onPress={mayCover ? () => cover(item.schedule) : undefined}
+                    leading={
+                      <Avatar
+                        name={item.userId === null ? null : memberLabel(members.rows, item.userId)}
+                      />
+                    }
                     supportingText={[
                       [
                         item.userId === null ? m.oncall_nobody() : name(item.userId),
                         ...(item.override ? [m.oncall_override_badge()] : []),
                       ].join(" · "),
                       ...(item.until !== null ? untilLines(item.until, item.schedule) : []),
-                      m.oncall_time_zone({
-                        zone: zoneLabel(item.schedule.timeZone),
-                        offset: offsetLabel(item.schedule.timeZone, now),
-                      }),
+                      // One zone for every schedule is said once, under the section.
+                      ...(oneZone
+                        ? []
+                        : [
+                            m.oncall_time_zone({
+                              zone: zoneLabel(item.schedule.timeZone),
+                              offset: offsetLabel(item.schedule.timeZone, now),
+                            }),
+                          ]),
                     ].join("\n")}
                     trailing={
                       mayCover ? (
@@ -288,14 +318,32 @@ export function OnCall() {
                   </ListItem>
                 );
               })}
+              <FieldGroup.SectionFooter>
+                <FooterText>
+                  {[
+                    ...(oneZone
+                      ? [
+                          m.oncall_time_zone({
+                            zone: zoneLabel(oneZone),
+                            offset: offsetLabel(oneZone, now),
+                          }),
+                        ]
+                      : []),
+                    mine("on_dashboard"),
+                  ].join("\n")}
+                </FooterText>
+              </FieldGroup.SectionFooter>
             </FieldGroup.Section>
-          ) : null}
-
-          <FieldGroup.Section>
-            <FieldGroup.SectionFooter>
-              <Text>{loading ? m.incident_page({ part: "loading" }) : mine("on_dashboard")}</Text>
-            </FieldGroup.SectionFooter>
-          </FieldGroup.Section>
+          ) : (
+            <FieldGroup.Section>
+              <FieldGroup.SectionFooter>
+                <FooterText>
+                  {loading ? m.incident_page({ part: "loading" }) : mine("on_dashboard")}
+                </FooterText>
+              </FieldGroup.SectionFooter>
+            </FieldGroup.Section>
+          )}
+          {listEnd}
         </FieldGroup>
       </NativeHost>
       {sheet}

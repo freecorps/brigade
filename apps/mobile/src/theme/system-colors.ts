@@ -15,6 +15,8 @@ export type SystemColors = {
   secondaryLabel: ColorValue;
   /** Buttons, links and the selected tab. */
   tint: ColorValue;
+  /** A destructive action's words (Sign out), as the system writes one: a plain string, for `@expo/ui` text. */
+  destructive: string;
 };
 
 export function useSystemColors(): SystemColors {
@@ -26,5 +28,6 @@ export function useSystemColors(): SystemColors {
     label: colors.foreground,
     secondaryLabel: colors.mutedForeground,
     tint: colors.primary,
+    destructive: colors.destructive,
   };
 }

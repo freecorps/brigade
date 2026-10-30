@@ -24,7 +24,7 @@ export default function TabsLayout() {
         <NativeTabs.Trigger.Icon sf="calendar.badge.clock" md="calendar_clock" />
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="(account)">
-        <NativeTabs.Trigger.Label>{m.nav({ part: "account" })}</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Label>{m.mobile_session({ part: "account" })}</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="person.crop.circle" md="account_circle" />
       </NativeTabs.Trigger>
     </NativeTabs>

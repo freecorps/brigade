@@ -1,4 +1,5 @@
-import { ListItem, Text } from "@expo/ui";
+import { Text } from "@expo/ui";
+import { ListItem } from "@/components/list-item";
 import type { Glyph } from "@/components/glyphs";
 
 export type EmptyRowProps = {

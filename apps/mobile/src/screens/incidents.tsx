@@ -1,4 +1,5 @@
-import { FieldGroup, ListItem, Text } from "@expo/ui";
+import { FieldGroup, Text } from "@expo/ui";
+import { ListItem } from "@/components/list-item";
 import { m } from "@freecorps/brigade-i18n";
 import {
   formatAge,

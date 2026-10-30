@@ -12,7 +12,8 @@ import {
 import { can, type OverrideRow, type ScheduleRow } from "@freecorps/brigade-schema";
 import type { MutationOutcome } from "@freecorps/brigade-sync";
 import { useMutation, useQuery, useSyncClient } from "@freecorps/brigade-sync/react";
-import { FieldGroup, ListItem, Text } from "@expo/ui";
+import { FieldGroup, Text } from "@expo/ui";
+import { ListItem } from "@/components/list-item";
 import { useState } from "react";
 import { Alert, View } from "react-native";
 import { useChoiceSheet } from "@/components/choice-sheet";

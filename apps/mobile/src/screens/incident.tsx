@@ -648,7 +648,7 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
           {listEnd}
         </FieldGroup>
       </NativeHost>
-      {editable && row.number !== null ? <UpdateButton onPress={() => writeUpdate()} /> : null}
+      <UpdateButton enabled={editable && row.number !== null} onPress={() => writeUpdate()} />
       {sheet}
     </View>
   );

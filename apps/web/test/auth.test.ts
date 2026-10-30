@@ -16,6 +16,7 @@ import {
   resetSignUpMode,
   saveLocale,
   signOutDashboard,
+  signUpErrorMessage,
   switchWorkspace,
 } from "../src/lib/auth";
 import { pageTitle } from "../src/lib/page-title";
@@ -146,6 +147,23 @@ describe("server failures", () => {
     await setLocale("pt-BR");
     expect(authErrorMessage({ status: 403, code: "SIGN_UP_CLOSED" }, "sign-up")).toBe(
       "O cadastro está fechado nesta instância — peça um convite a um proprietário.",
+    );
+  });
+});
+
+describe("a sign-up answering an invitation", () => {
+  test("a refused address is told to use the invited one, or to have a lapsed invitation sent again", async () => {
+    const closed = { status: 403, code: "SIGN_UP_CLOSED" };
+    expect(signUpErrorMessage(closed, true)).toBe(
+      "This address has no open invitation. Sign up with the address the invitation was sent to, or ask an owner to send it again if it ran out.",
+    );
+    expect(signUpErrorMessage(closed, false)).toBe(authErrorMessage(closed, "sign-up"));
+    expect(signUpErrorMessage({ status: 429 }, true)).toBe(
+      "Too many attempts. Wait a minute and try again.",
+    );
+    await setLocale("pt-BR");
+    expect(signUpErrorMessage(closed, true)).toBe(
+      "Este endereço não tem um convite em aberto. Crie a conta com o endereço para o qual o convite foi enviado ou, se ele expirou, peça a um proprietário para enviá-lo de novo.",
     );
   });
 });

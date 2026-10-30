@@ -3,9 +3,11 @@
 // error wording the forms use (tested in test/auth.test.ts).
 import { m, type Locale } from "@freecorps/brigade-i18n";
 import {
+  authErrorMessage,
   checkEmail,
   checkPassword,
   readSignUpMode,
+  type AuthFailure,
   type FieldErrors,
   type SignUpMode,
 } from "@freecorps/brigade-i18n/auth";
@@ -25,6 +27,16 @@ export {
   type SignInField,
   type SignUpMode,
 } from "@freecorps/brigade-i18n/auth";
+
+/**
+ * What to tell the user about a failed sign-up. Answering an invitation (`invited`), a refused address is one with no
+ * pending invitation: most likely not the one it was sent to, or the invitation ran out. That is what they need to
+ * hear, not "ask an owner for an invitation" (RFC 0002 "Sign-up modes").
+ */
+export function signUpErrorMessage(error: AuthFailure, invited: boolean): string {
+  if (invited && error?.code === "SIGN_UP_CLOSED") return m.auth_error_not_invited();
+  return authErrorMessage(error, "sign-up");
+}
 
 /** What a user may type as their name; Better Auth itself does not cap it. */
 export const NAME_MAX = 80;

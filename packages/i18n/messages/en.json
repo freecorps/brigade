@@ -2034,6 +2034,7 @@
   "auth_error_email_not_verified": "Confirm your email first: open the link Brigade sent you, then sign in. Lost the link? Reset your password, which confirms your email too.",
   "auth_sign_up_invited_description": "Use the address the invitation was sent to. After you confirm it, you can accept the invitation.",
   "auth_error_sign_up_closed": "Sign-up is closed on this instance — ask an owner for an invitation.",
+  "auth_error_not_invited": "This address has no open invitation. Sign up with the address the invitation was sent to, or ask an owner to send it again if it ran out.",
   "auth_sign_up_closed_title": "Sign-up is closed",
   "auth_sign_up_invite_only": "Only an address with a pending invitation can create an account here.",
   "email_reset": [

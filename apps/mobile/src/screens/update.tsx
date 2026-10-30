@@ -68,6 +68,12 @@ export function UpdateSheet({ number, entryId }: { number: number | null; entryI
     router.back();
   };
 
+  // The sheet's title says whether it posts or edits, from the first render: loading and a removed update too.
+  const title = entryId
+    ? m.incident_update_change({ part: "edit_label", time: "", reason: "" })
+    : m.incident_page({ part: "update_label" });
+  const header = <Stack.Screen options={{ title }} />;
+
   // Nothing to write to until the incident is here, and an edit starts from the update's own text: until both have
   // loaded the sheet waits, rather than showing an empty field or dropping a tap on the button.
   const waiting = !incident || (entryId !== undefined && !entry);
@@ -76,6 +82,7 @@ export function UpdateSheet({ number, entryId }: { number: number | null; entryI
       number === null || (entryId !== undefined && incident && timeline.status === "ready");
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
+        {header}
         {gone ? (
           <ThemedText selectable>
             {entryId !== undefined && incident
@@ -89,13 +96,9 @@ export function UpdateSheet({ number, entryId }: { number: number | null; entryI
     );
   }
 
-  const title = entryId
-    ? m.incident_update_change({ part: "edit_label", time: "", reason: "" })
-    : m.incident_page({ part: "update_label" });
   return (
     <>
-      {/* The sheet's title says whether it posts or edits. */}
-      <Stack.Screen options={{ title }} />
+      {header}
       <UpdateForm
         key={entryId ?? "new"}
         title={title}

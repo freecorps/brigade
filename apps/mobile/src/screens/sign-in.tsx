@@ -39,6 +39,7 @@ function SignInView({ view }: { view: ReturnType<typeof useSessionView> }) {
   if (view.kind === "no-workspace") {
     return (
       <NewWorkspaceForm
+        brand={m.account_flow({ part: "new_title", name: "" })}
         intro={m.account_flow({ part: "no_workspace", name: "" })}
         links={[{ label: m.sign_out(), destructive: true, onPress: () => void view.signOut() }]}
       />
@@ -47,6 +48,7 @@ function SignInView({ view }: { view: ReturnType<typeof useSessionView> }) {
   if (view.kind === "signed-out") return <SignInForm />;
   return (
     <NativeForm
+      brand={m.auth_sign_in_title()}
       intro={
         view.kind === "no-server"
           ? m.mobile_session({ part: "no_server" })
@@ -112,6 +114,7 @@ function SignInForm() {
 
   return (
     <NativeForm
+      brand={m.auth_sign_in_title()}
       intro={
         // Closed: no way to sign up from the app, and the form says so up front.
         signUpMode === "closed"

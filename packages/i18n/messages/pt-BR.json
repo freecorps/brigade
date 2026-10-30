@@ -2034,6 +2034,7 @@
   "auth_error_email_not_verified": "Confirme seu email primeiro: abra o link que o Brigade enviou e depois entre. Perdeu o link? Redefina sua senha, o que também confirma seu email.",
   "auth_sign_up_invited_description": "Use o endereço para o qual o convite foi enviado. Depois de confirmá-lo, você pode aceitar o convite.",
   "auth_error_sign_up_closed": "O cadastro está fechado nesta instância — peça um convite a um proprietário.",
+  "auth_error_not_invited": "Este endereço não tem convite. Crie a conta com o endereço para o qual o convite foi enviado.",
   "auth_sign_up_closed_title": "Cadastro fechado",
   "auth_sign_up_invite_only": "Aqui, só um endereço com convite pendente pode criar uma conta.",
   "email_reset": [

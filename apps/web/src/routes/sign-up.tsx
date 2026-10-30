@@ -15,6 +15,7 @@ import {
   openWorkspace,
   type FieldErrors,
   type SignUpField,
+  signUpErrorMessage,
   useSignUpMode,
 } from "@/lib/auth";
 import { isInvitationId } from "@/lib/invitations";
@@ -119,12 +120,12 @@ function SignUp() {
         ...(invitation ? { callbackURL: `/invitations/${invitation}` } : {}),
       });
       if (error) {
-        setFailure(authErrorMessage(error, "sign-up"));
+        setFailure(signUpErrorMessage(error, Boolean(invitation)));
         setBusy(false);
         return;
       }
     } catch {
-      setFailure(authErrorMessage(null, "sign-up"));
+      setFailure(signUpErrorMessage(null, Boolean(invitation)));
       setBusy(false);
       return;
     }

@@ -158,6 +158,7 @@ export * from './incident_update_length.js';
 export * from './incident_updates_announced.js';
 export * from './incidents_active_count.js';
 export * from './incidents_all_clear.js';
+export * from './incidents_all_clear_hint.js';
 export * from './incidents_sev1_count.js';
 export * from './incidents_title.js';
 export * from './intl_description.js';

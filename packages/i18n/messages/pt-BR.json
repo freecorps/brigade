@@ -240,6 +240,7 @@
   "sync_error_limit_reached": "Você chegou ao limite para isso.",
   "incident_quoted_title": "“{title}”",
   "incidents_all_clear": "Tudo tranquilo.",
+  "incidents_all_clear_hint": "Novos incidentes aparecem aqui assim que forem declarados.",
   "incidents_sev1_count": [
     {
       "declarations": [

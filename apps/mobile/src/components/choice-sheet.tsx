@@ -1,27 +1,20 @@
 import { m } from "@freecorps/brigade-i18n";
-import { radius, spacing } from "@freecorps/brigade-ui";
 import { useState, type ReactNode } from "react";
-import {
-  ActionSheetIOS,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  useColorScheme,
-  useWindowDimensions,
-  View,
-} from "react-native";
-import { ThemedText } from "@/components/themed-text";
-import { useTheme } from "@/hooks/use-theme";
+import { ActionSheetIOS, useColorScheme } from "react-native";
+import { ChoiceDialog } from "@/components/choice-dialog";
 
 export type Choice<T> = { value: T; label: string };
 
-type Request = { title: string; choices: Choice<unknown>[]; pick: (value: unknown) => void };
+export type Request = {
+  title: string;
+  choices: Choice<unknown>[];
+  pick: (value: unknown) => void;
+};
 
 /**
- * Pick one of a few values. iOS shows the system action sheet; Android a plain dialog with one row per choice,
- * since React Native has no native list dialog there; a long list (every member, for a role) scrolls inside it,
- * with Cancel always in view. Render `sheet` once in the screen.
+ * Pick one of a few values. iOS shows the system action sheet; Android Material's modal bottom sheet, one row per
+ * choice (`choice-dialog.android.tsx`); a long list (every member, for a role) scrolls inside it. Render `sheet`
+ * once in the screen.
  */
 export function useChoiceSheet(): {
   choose: <T>(title: string, choices: Choice<T>[], pick: (value: T) => void) => void;
@@ -47,94 +40,6 @@ export function useChoiceSheet(): {
     }
     setRequest({ title, choices, pick: pick as (value: unknown) => void });
   };
-  const sheet = request ? (
-    <ChoiceDialog request={request} onClose={() => setRequest(null)} />
-  ) : null;
+  const sheet = <ChoiceDialog request={request} onClose={() => setRequest(null)} />;
   return { choose, sheet };
-}
-
-function ChoiceDialog({ request, onClose }: { request: Request; onClose: () => void }) {
-  const colors = useTheme();
-  const dark = useColorScheme() === "dark";
-  const { height } = useWindowDimensions();
-  return (
-    <Modal transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <View style={{ flex: 1, justifyContent: "center", padding: spacing[6] }}>
-        {/* The backdrop closes the dialog on touch; screen readers use the Cancel row (or Back) instead. */}
-        <Pressable
-          accessible={false}
-          importantForAccessibility="no"
-          onPress={onClose}
-          // Darker in dark mode, where a light scrim barely separates the card from the page.
-          style={[
-            StyleSheet.absoluteFill,
-            { backgroundColor: dark ? "rgba(0, 0, 0, 0.7)" : "rgba(0, 0, 0, 0.4)" },
-          ]}
-        />
-        <View
-          style={{
-            maxHeight: height * 0.7,
-            backgroundColor: colors.card,
-            borderRadius: radius.xl,
-            borderCurve: "continuous",
-            borderWidth: dark ? StyleSheet.hairlineWidth : 0,
-            borderColor: colors.border,
-            paddingVertical: spacing[2],
-            overflow: "hidden",
-          }}
-        >
-          <ThemedText
-            variant="label"
-            accessibilityRole="header"
-            style={{ paddingHorizontal: spacing[6], paddingVertical: spacing[3] }}
-          >
-            {request.title}
-          </ThemedText>
-          <ScrollView style={{ flexGrow: 0 }} persistentScrollbar>
-            {request.choices.map((choice) => (
-              <DialogRow
-                key={String(choice.value)}
-                label={choice.label}
-                onPress={() => {
-                  onClose();
-                  request.pick(choice.value);
-                }}
-              />
-            ))}
-          </ScrollView>
-          <DialogRow label={m.declare_cancel()} muted onPress={onClose} />
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-function DialogRow({
-  label,
-  muted = false,
-  onPress,
-}: {
-  label: string;
-  muted?: boolean;
-  onPress: () => void;
-}) {
-  const colors = useTheme();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => ({
-        minHeight: spacing[12],
-        justifyContent: "center",
-        paddingHorizontal: spacing[6],
-        // A long name wraps; it keeps clear of the separators.
-        paddingVertical: spacing[2],
-        backgroundColor: pressed ? colors.accent : "transparent",
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: colors.border,
-      })}
-    >
-      <ThemedText variant={muted ? "caption" : "body"}>{label}</ThemedText>
-    </Pressable>
-  );
 }

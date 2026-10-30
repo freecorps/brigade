@@ -4,11 +4,12 @@ The Brigade app for iOS and Android: Expo SDK 58, Expo Router, React Native 0.88
 not Vite (RFC 0002). It opens on sign-in (email and password; accounts are created on the dashboard). Signed in, the
 app is the system's tab bar (Expo Router's `NativeTabs`: UITabBarController on iOS, Material 3's navigation bar on
 Android), each tab with its own stack: **Incidents**, the workspace's live incident list (Brigade Sync, RFC 0004), to
-declare and to change an incident's status or severity; **On call**; and **Account** (workspace, whether this phone is
+declare (a form sheet, from the header's + on iOS and a floating action button on Android) and, with a long press
+on a row (a context menu on iOS, a dropdown on Android), to change an incident's status or severity; **On call**; and **Account** (workspace, whether this phone is
 paged, Sign out, the legend). Incidents, calls and sheets open above the tabs from the root stack, so a page opens its
 incident whichever tab is showing. Controls come from `@expo/ui` (SwiftUI on iOS, Jetpack Compose on Android) where it
 has one, and are drawn by the app only where it does not; chrome and grounds use the system's semantic colours
-(`src/theme/colors.ts`), while brand, severity and status colours stay packages/ui's. Each incident
+(`src/theme/system-colors.ts`), while brand, severity and status colours stay packages/ui's. Each incident
 opens `/incidents/<number>`: severity and status, roles, written updates and the timeline, as on the dashboard. The list
 says whether the member is on call (and until when, or when their next shift is) and opens `/oncall`: their shifts
 and overrides, who every schedule has now, and an override for themselves (`schedule.addOverride`, from now for 1 to

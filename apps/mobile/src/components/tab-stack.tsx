@@ -1,17 +1,13 @@
 import { Stack } from "expo-router";
-import { useColorScheme } from "react-native";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
-import { useTheme } from "@/hooks/use-theme";
-import { colors as system } from "@/theme/colors";
+import { useSystemColors } from "@/theme/system-colors";
 
 /**
  * A tab's own stack, opening on its screen `name` under the system's header: a large title that folds into the
- * bar as the screen scrolls on iOS, Material's top app bar on Android.
+ * bar as the screen scrolls on iOS, Material's top app bar on Android, both on the screen's own ground.
  */
 export function TabStack({ name, title }: { name: string; title: string }) {
-  // Android's Material colours resolve at render: re-render when the scheme flips.
-  useColorScheme();
-  const colors = useTheme();
+  const system = useSystemColors();
   const reducedMotion = useReducedMotion();
   return (
     <Stack
@@ -19,10 +15,11 @@ export function TabStack({ name, title }: { name: string; title: string }) {
         headerLargeTitle: true,
         headerLargeTitleShadowVisible: false,
         headerShadowVisible: false,
-        headerTintColor: colors.primary,
-        headerTitleStyle: { color: system.label },
-        headerLargeTitleStyle: { color: system.label },
-        contentStyle: { backgroundColor: colors.background },
+        headerStyle: { backgroundColor: system.ground as string },
+        headerTintColor: system.tint as string,
+        headerTitleStyle: { color: system.label as string },
+        headerLargeTitleStyle: { color: system.label as string },
+        contentStyle: { backgroundColor: system.ground },
         animation: reducedMotion ? "fade" : "default",
       }}
     >

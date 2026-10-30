@@ -26,7 +26,8 @@ export function Badge({
   colors: BadgeColors;
   code?: string;
   icon?: Glyph;
-  label: string;
+  /** Left out for a compact badge, which shows the code alone. */
+  label?: string;
 }) {
   const glyph = useGlyphSize(fontSize.sm.size);
   // The gap grows with the text, as the glyph does.
@@ -34,7 +35,7 @@ export function Badge({
   return (
     <View
       accessible
-      accessibilityLabel={code ? `${code}, ${label}` : label}
+      accessibilityLabel={[code, label].filter(Boolean).join(", ")}
       style={{
         flexDirection: "row",
         alignItems: "center",
@@ -67,16 +68,18 @@ export function Badge({
           {code}
         </Text>
       ) : null}
-      <Text
-        style={{
-          color: colors.fg,
-          fontSize: fontSize.sm.size,
-          lineHeight: fontSize.sm.lineHeight,
-          fontWeight: fontWeight.medium,
-        }}
-      >
-        {label}
-      </Text>
+      {label ? (
+        <Text
+          style={{
+            color: colors.fg,
+            fontSize: fontSize.sm.size,
+            lineHeight: fontSize.sm.lineHeight,
+            fontWeight: fontWeight.medium,
+          }}
+        >
+          {label}
+        </Text>
+      ) : null}
     </View>
   );
 }

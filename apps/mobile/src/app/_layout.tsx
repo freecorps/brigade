@@ -71,6 +71,15 @@ export default function RootLayout() {
                     headerBackVisible: false,
                   }}
                 />
+                <Stack.Screen
+                  name="declare"
+                  options={{
+                    title: m.declare_heading(),
+                    presentation: "formSheet",
+                    sheetAllowedDetents: [0.75, 1],
+                    sheetGrabberVisible: true,
+                  }}
+                />
                 <Stack.Screen name="legend" options={{ title: m.legend_title() }} />
                 <Stack.Screen name="intl" options={{ title: m.intl_title() }} />
                 <Stack.Screen

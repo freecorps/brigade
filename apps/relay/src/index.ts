@@ -18,6 +18,7 @@ import {
   type ServiceAccount,
 } from "./fcm.ts";
 import { deepHealth } from "./deep-health.ts";
+import { sendWithin } from "./deadline.ts";
 
 /**
  * Spike S1 relay (RFC 0006): `POST /send` takes a device token and an already encrypted envelope and forwards
@@ -67,6 +68,12 @@ const ENVIRONMENTS: readonly ApnsEnvironment[] = ["sandbox", "production"];
 const MAX_TTL_SECONDS = 30 * 24 * 60 * 60;
 /** A request body far above any valid send: a device token and a sealed 2 KB plaintext. */
 const MAX_BODY_BYTES = 8 * 1024;
+/**
+ * How long APNs or FCM gets to answer one send: under the API's own 10 s for the whole call (apps/api
+ * `RELAY_TIMEOUT_MS`), token exchange included, so a provider that hangs is a 502 the API can retry, not a call it
+ * abandons.
+ */
+const PROVIDER_TIMEOUT_MS = 5000;
 
 // One per isolate: the provider token is the same for every request (APNs throttles frequent refreshes).
 const tokens = new ApnsTokenCache();
@@ -208,7 +215,7 @@ export async function handle(
   const started = Date.now();
   let response: Response;
   try {
-    response = await send(apnsRequest);
+    response = await sendWithin(send, apnsRequest, PROVIDER_TIMEOUT_MS);
   } catch (error) {
     // Never logs the device token or the envelope.
     console.error(JSON.stringify({ message: "APNs fetch failed", error: String(error) }));
@@ -276,7 +283,7 @@ async function sendFcm(
       return json({ error: "invalid_body", detail: String(error) }, 400);
     }
     try {
-      response = await send(request);
+      response = await sendWithin(send, request, PROVIDER_TIMEOUT_MS);
     } catch (error) {
       // Never logs the registration token or the envelope.
       console.error(JSON.stringify({ message: "FCM fetch failed", error: String(error) }));

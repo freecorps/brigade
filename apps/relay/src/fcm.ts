@@ -1,5 +1,6 @@
 import { toBase64url, type PushEnvelope } from "@freecorps/brigade-push";
 import { pemToDer, type PushKind, type Urgency } from "./apns.ts";
+import { sendWithin } from "./deadline.ts";
 
 /**
  * Firebase Cloud Messaging over its HTTP v1 API, for Android (RFC 0006). The relay authenticates as a Google service
@@ -108,6 +109,12 @@ export class GoogleAuthError extends Error {
   }
 }
 
+/**
+ * How long Google gets to answer a token exchange. Every Android send in the isolate waits on the one exchange in
+ * flight (`GoogleTokenCache`), so one that hangs must fail soon, and be dropped, rather than hold them all.
+ */
+export const TOKEN_TIMEOUT_MS = 4000;
+
 /** A token is reused until this long before Google says it expires. */
 export const ACCESS_TOKEN_MARGIN_MS = 5 * 60 * 1000;
 
@@ -169,7 +176,8 @@ async function fetchAccessToken(
   }
   let response: Response;
   try {
-    response = await send(
+    response = await sendWithin(
+      send,
       new Request(account.tokenUri, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -178,6 +186,7 @@ async function fetchAccessToken(
           assertion,
         }).toString(),
       }),
+      TOKEN_TIMEOUT_MS,
     );
   } catch (error) {
     throw new GoogleAuthError("unreachable", String(error));

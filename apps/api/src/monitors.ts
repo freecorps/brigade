@@ -22,6 +22,7 @@ import {
 } from "@freecorps/brigade-schema";
 import type { MutationResultMessage } from "@freecorps/brigade-sync/protocol";
 import type { CheckConfig } from "./check.ts";
+import { within } from "./deadline.ts";
 import { probeName, type ProbeDO, type ProbeReport } from "./probe.ts";
 import type { Shard } from "./shard.ts";
 import type { RowChange } from "./store.ts";
@@ -32,6 +33,12 @@ export const MONITOR_TICK_MS = 60 * 1000;
 export const REPUSH_MS = 10 * 60 * 1000;
 /** A region that reported nothing for this long is pushed again and logged as stalled. */
 export const STALE_MS = 3 * REPORT_EVERY_MS;
+/**
+ * How long a probe gets to take its checks. The push runs in the shard's alarm, before the drain and the escalations
+ * after it, and pushes to a stalled region on every tick: a probe whose region is in trouble must not hold them up.
+ * Past this it is a failed push, tried again on the next tick.
+ */
+export const PROBE_PUSH_TIMEOUT_MS = 5000;
 
 const SCHEMA = `
   create table if not exists probe_pushes (
@@ -289,7 +296,11 @@ export class Monitoring {
           const stub = this.options.probes.getByName(probeName(workspaceId, region), {
             locationHint: region,
           });
-          const { ok } = await stub.configure(workspaceId, region, checks);
+          const { ok } = await within(
+            stub.configure(workspaceId, region, checks),
+            PROBE_PUSH_TIMEOUT_MS,
+            "probe configure",
+          );
           if (!ok) throw new Error("probe refused the config");
         } catch (error) {
           log("probe push failed", { region, error });

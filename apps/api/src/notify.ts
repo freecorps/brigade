@@ -9,6 +9,7 @@
 
 import { sealPush, type PushContent, type PushReceipt } from "@freecorps/brigade-push";
 import { formatIncidentNumber, type DeliveryError } from "@freecorps/brigade-schema";
+import { within } from "./deadline.ts";
 import { emailSender, type EmailEnv, type EmailSender } from "./email.ts";
 import { asksForEmail, asksForReminder, asksForRotationEmail } from "./mailer.ts";
 import { emailRetryDelay, notifyEmail, type EmailNotifyEnv } from "./notify-email.ts";
@@ -93,6 +94,14 @@ export type ConsumerTiming = {
 };
 /** How long the relay gets per send. */
 export const RELAY_TIMEOUT_MS = 10_000;
+/**
+ * How long the workspace's shard gets to plan a page or record its outcome. A shard that hangs (a Durable Objects
+ * incident) would otherwise hold the whole batch, pages and all, until the runtime ends the invocation; past this the
+ * call is an error like any other, and the page is retried. Planning and recording are safe to repeat.
+ */
+export const SHARD_CALL_TIMEOUT_MS = 20_000;
+/** How long the watchdog gets to record a proved heartbeat; past it the beat is logged as not recorded. */
+export const WATCHDOG_CALL_TIMEOUT_MS = 10_000;
 /** How long the relay's token check gets when the dead-man switch's heartbeat comes through. */
 export const RELAY_HEALTH_TIMEOUT_MS = 5000;
 /** How long the beat's one D1 read gets. */
@@ -390,7 +399,11 @@ export async function proveHeartbeat(
   const [relay, d1] = await Promise.all([relayHealth(env, send), d1Health(env.DB)]);
   const checks: BeatChecks = { apns: relay.apns, fcm: relay.fcm, d1 };
   try {
-    await env.WATCHDOG.getByName(WATCHDOG_NAME).proved(event.time, relay.relay, undefined, checks);
+    await within(
+      env.WATCHDOG.getByName(WATCHDOG_NAME).proved(event.time, relay.relay, undefined, checks),
+      WATCHDOG_CALL_TIMEOUT_MS,
+      "proved",
+    );
   } catch (error) {
     log("heartbeat could not be recorded", { event: event.id, error: String(error) });
   }
@@ -533,7 +546,7 @@ export async function notifyPush(
   // Most events page nobody (the delivery rows' own `notification.*` among them): no shard call for those.
   if (!asksForPage(event)) return false;
   const workspace = env.WORKSPACE.getByName(event.workspaceId);
-  const plan = await workspace.planPage(event);
+  const plan = await within<PagePlan>(workspace.planPage(event), SHARD_CALL_TIMEOUT_MS, "planPage");
   if (!plan.send) return false;
   const receipts = receiptUrl(env.DASHBOARD_URL);
   // Every redelivery of this event rings under the same call id, so a phone rings for it once (RFC 0010).
@@ -544,11 +557,15 @@ export async function notifyPush(
     ),
   );
   const final = !sent.some((one) => one.retry) || attempts >= MAX_PAGE_ATTEMPTS;
-  await workspace.recordPage(
-    event,
-    sent.map((one) => one.outcome),
-    final,
-    plan.skipped,
+  await within(
+    workspace.recordPage(
+      event,
+      sent.map((one) => one.outcome),
+      final,
+      plan.skipped,
+    ),
+    SHARD_CALL_TIMEOUT_MS,
+    "recordPage",
   );
   return !final;
 }

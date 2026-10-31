@@ -3,6 +3,7 @@
 // `brigade-events` Queue (`OutboxDrain`), deleting rows only after the send succeeds: at-least-once, in `seq` order.
 
 import { newId, type Actor, type DomainEvent, type RandomBytes } from "@freecorps/brigade-schema";
+import { within } from "./deadline.ts";
 
 /** RFC 0005's envelope. */
 export type BrigadeEvent<T = unknown> = {
@@ -82,6 +83,12 @@ export const DRAIN_BATCHES_PER_RUN = 10;
 /** Backoff after a failed send: doubles from the first to the last, with jitter. */
 export const DRAIN_RETRY_FIRST_MS = 1000;
 export const DRAIN_RETRY_MAX_MS = 5 * 60 * 1000;
+/**
+ * How long one `sendBatch` gets. A Queue that never answers would otherwise hold the drain, and with it the shard's
+ * alarm (every escalation level after it), for as long as the runtime lets the alarm run; past this it is a failed
+ * send that backs off like any other. The batch may still have gone: it goes again, and consumers de-duplicate.
+ */
+export const DRAIN_SEND_TIMEOUT_MS = 10_000;
 /** The backlog is logged on every failure, and as an error once it passes this many rows. */
 export const OUTBOX_BACKLOG_ALERT = 1000;
 
@@ -102,6 +109,7 @@ export class OutboxDrain {
     private readonly send: OutboxSend,
     private readonly log: (message: string, fields: Record<string, unknown>) => void,
     private readonly jitter: () => number = Math.random,
+    private readonly sendTimeoutMs = DRAIN_SEND_TIMEOUT_MS,
   ) {
     sql.exec(DRAIN_SCHEMA);
   }
@@ -141,10 +149,14 @@ export class OutboxDrain {
         const last = rows.at(-1)!.seq;
         try {
           if (rows.some((row) => row.body !== null)) {
-            await this.send(
-              rows.flatMap((row) =>
-                row.body === null ? [] : [{ body: row.body, contentType: "json" as const }],
+            await within(
+              this.send(
+                rows.flatMap((row) =>
+                  row.body === null ? [] : [{ body: row.body, contentType: "json" as const }],
+                ),
               ),
+              this.sendTimeoutMs,
+              "sendBatch",
             );
           }
         } catch (error) {

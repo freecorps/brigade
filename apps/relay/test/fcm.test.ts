@@ -12,6 +12,7 @@ import {
   signGoogleAssertion,
 } from "../src/fcm.ts";
 import { handle, type RelayEnv } from "../src/index.ts";
+import { hang } from "./hang.ts";
 
 // A throwaway RSA key in a service account's shape; never a real one. example.com, not Google's domains.
 const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -427,6 +428,34 @@ describe("POST /send to an Android device", () => {
     expect(await refused.json()).toEqual({ error: "relay_misconfigured" });
     expect(google.fcmRequests).toHaveLength(0);
   });
+
+  test("a token exchange that hangs fails every send waiting on it soon, and is not cached", async () => {
+    const other = { ...env, FCM_SERVICE_ACCOUNT: serviceAccount({ private_key_id: "key-11" }) };
+    const started = Date.now();
+    const [first, second] = await Promise.all([
+      handle(post(await sendBody()), other, hang),
+      handle(post(await sendBody()), other, hang),
+    ]);
+    expect(await first.json()).toMatchObject({ error: "fcm_unreachable" });
+    expect(await second.json()).toMatchObject({ error: "fcm_unreachable" });
+    // Under the API's 10 s for the whole call (apps/api RELAY_TIMEOUT_MS).
+    expect(Date.now() - started).toBeLessThan(9000);
+    // Google answering again: the next send gets a token and goes to FCM.
+    const google = fakeGoogle();
+    const back = await handle(post(await sendBody()), other, google.send);
+    expect(back.status).toBe(200);
+  }, 20_000);
+
+  test("FCM that never answers is fcm_unreachable", async () => {
+    const other = { ...env, FCM_SERVICE_ACCOUNT: serviceAccount({ private_key_id: "key-12" }) };
+    const response = await handle(post(await sendBody()), other, async (request) =>
+      request.url === TOKEN_URI
+        ? Response.json({ access_token: "x", expires_in: 3599 })
+        : hang(request),
+    );
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ error: "fcm_unreachable" });
+  }, 15_000);
 
   test("a relay without FCM_SERVICE_ACCOUNT refuses Android sends as misconfigured", async () => {
     const google = fakeGoogle();

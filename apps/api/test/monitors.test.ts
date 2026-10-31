@@ -23,6 +23,7 @@ import {
 } from "../src/check.ts";
 import { AlertIntake, REROUTE_RETRY_MS } from "../src/alert-intake.ts";
 import { receiveHeartbeat } from "../src/index.ts";
+import { PROBE_PUSH_TIMEOUT_MS } from "../src/monitors.ts";
 import { probeName, type ProbeDO, type ProbeReport } from "../src/probe.ts";
 import { Shard } from "../src/shard.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
@@ -897,6 +898,42 @@ describe("monitor down → alert → incident", () => {
     }
   });
 
+  test("a probe that never answers its push fails it in time, and the alarm goes on to the drain", async () => {
+    const ws = await workspace();
+    await ws.run("monitor.createHttp", {
+      id: newId("mon", Date.now(), random),
+      name: "Checkout",
+      url: "https://example.com/health",
+      method: "GET",
+      expectedStatus: null,
+      keyword: null,
+      intervalSeconds: 60,
+      timeoutSeconds: 5,
+      regions: ["weur"],
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await runInDurableObject(ws.stub, async (instance: WorkspaceDO) => {
+        const monitoring = Reflect.get(instance, "monitoring") as object;
+        const options = Reflect.get(monitoring, "options") as Record<string, unknown>;
+        options.probes = { getByName: () => ({ configure: () => new Promise(() => {}) }) };
+        let drained = false;
+        const drain = Reflect.get(instance, "drainOutbox") as () => Promise<void>;
+        Reflect.set(instance, "drainOutbox", () => {
+          drained = true;
+          return drain.call(instance);
+        });
+        const started = Date.now();
+        await instance.alarm();
+        expect(Date.now() - started).toBeLessThan(PROBE_PUSH_TIMEOUT_MS + 3000);
+        expect(drained).toBe(true);
+      });
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("probe push failed"));
+    } finally {
+      error.mockRestore();
+    }
+  }, 20_000);
+
   test("a probe connects to at most six targets at once, and closes every socket", async () => {
     const ws = await workspace();
     const stub = probe(ws.id, "apac");
@@ -1271,6 +1308,35 @@ describe("heartbeats", () => {
       clock.mockRestore();
     }
   });
+
+  test("a D1 that never answers does not hold a ping: the lookup gives up and the shard decides", async () => {
+    const ws = await workspace();
+    const monitorId = newId("mon", Date.now(), random);
+    const secret = newHeartbeatSecret(random);
+    await ws.run("monitor.createHeartbeat", {
+      id: monitorId,
+      name: "Nightly backup",
+      intervalSeconds: 60,
+      graceSeconds: 30,
+      tokenHash: await sha256Hex(secret),
+    });
+    const hung = {
+      prepare: () => ({ bind: () => ({ first: () => new Promise(() => {}) }) }),
+    } as unknown as D1Database;
+    const token = heartbeatToken(ws.id, monitorId, secret);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = await receiveHeartbeat(
+        new Request(`http://localhost/heartbeat/${token}`, { method: "POST" }),
+        { ...env, DB: hung },
+        token,
+      );
+      expect(response.status).toBe(202);
+      expect(errors).toHaveBeenCalledWith(expect.stringContaining("workspace lookup failed"));
+    } finally {
+      errors.mockRestore();
+    }
+  }, 15_000);
 
   test("a D1 failure does not drop a real ping: the shard still decides", async () => {
     const ws = await workspace();

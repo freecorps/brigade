@@ -75,7 +75,12 @@ export async function handle(request: Request, env: Upstreams): Promise<Response
 async function apiRequest(url: URL, request: Request): Promise<Request | undefined> {
   const length = request.headers.get("Content-Length");
   const declared = length === null ? Number.NaN : Number(length);
-  if (!request.body || !Number.isSafeInteger(declared) || declared > BUFFERED_BODY_MAX) {
+  if (
+    !request.body ||
+    !Number.isSafeInteger(declared) ||
+    declared < 0 ||
+    declared > BUFFERED_BODY_MAX
+  ) {
     return new Request(url, request);
   }
   let body: ArrayBuffer;
@@ -84,12 +89,11 @@ async function apiRequest(url: URL, request: Request): Promise<Request | undefin
   } catch {
     return undefined;
   }
-  return new Request(url, {
-    method: request.method,
-    headers: request.headers,
-    body,
-    redirect: request.redirect,
-  });
+  // The length of what was read: HTTP framing keeps it the declared one, and the API is told what it gets either way.
+  // A mismatch is forwarded, never refused: an alert's body must still reach the API to page.
+  const headers = new Headers(request.headers);
+  headers.set("Content-Length", String(body.byteLength));
+  return new Request(url, { method: request.method, headers, body, redirect: request.redirect });
 }
 
 /** The client's upload broke off before its body was read: nothing to forward. */

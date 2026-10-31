@@ -197,6 +197,38 @@ describe("API call bodies", () => {
     }
   });
 
+  test("a negative declared length is streamed, not read first", async () => {
+    const { env } = bindings();
+    const { body, state } = streamed(["a", "b", "c"]);
+    const api = upstream(() => new Response(null, { status: 202 }));
+    await handle(
+      new Request("http://web.test/api/alerts/token", {
+        method: "POST",
+        headers: { "content-length": "-1" },
+        body,
+        duplex: "half",
+      } as RequestInit),
+      { ...env, API: api.binding },
+    );
+    expect(state.pulled).toBeLessThan(3);
+    expect(api.seen).toHaveLength(1);
+  });
+
+  test("the forwarded length is the length of the bytes read", async () => {
+    const { env } = bindings();
+    const api = upstream(() => new Response(null, { status: 202 }));
+    await handle(
+      new Request("http://web.test/api/alerts/token", {
+        method: "POST",
+        headers: { "content-length": "7" },
+        body: '{"a":1}',
+      }),
+      { ...env, API: api.binding },
+    );
+    expect(api.seen[0]?.headers.get("content-length")).toBe("7");
+    expect(await api.seen[0]?.text()).toBe('{"a":1}');
+  });
+
   test("an upload that breaks off while it is read is a 400, forwarded to nobody", async () => {
     const { env } = bindings();
     const { body } = streamed(['{"a":'], true);

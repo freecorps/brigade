@@ -4,7 +4,7 @@ import { env, exports } from "cloudflare:workers";
 import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { isId, MEMBER_NAME_MAX, newId, type Actor } from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
-import { afterEach, describe, expect, test } from "vite-plus/test";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import {
   APP_ORIGIN,
   INVALID_LOCALE_CODE,
@@ -178,6 +178,23 @@ describe("Better Auth routes", () => {
     const cookie = await sessionCookie(address, PASSWORD);
     expect(cookie).toContain("better-auth.session_token=");
     expect((await session(cookie))?.user).toMatchObject({ id: user.id, email: address });
+  });
+
+  test("Better Auth gets the request's origin as its base URL, so it never warns that none is set", async () => {
+    const said: string[] = [];
+    const spies = (["log", "info", "warn", "error"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
+        said.push(args.map(String).join(" "));
+      }),
+    );
+    try {
+      // Signing up and in through it still works as before (the origin is what Better Auth derived anyway).
+      const ana = await signUp("Ana");
+      expect((await session(ana.cookie))?.user.id).toBe(ana.user.id);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+    expect(said.filter((line) => line.includes("Base URL is not set"))).toEqual([]);
   });
 
   test("sign-in with the password gives a new session; a wrong password does not", async () => {

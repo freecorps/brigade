@@ -117,6 +117,137 @@ describe("web worker routing", () => {
   });
 });
 
+/** A body streamed in `chunks`, noting how many the reader asked for (`pulled`). */
+function streamed(chunks: string[], fail = false) {
+  const state = { pulled: 0 };
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (state.pulled === chunks.length) {
+        if (fail) controller.error(new Error("connection reset"));
+        else controller.close();
+        return;
+      }
+      controller.enqueue(encoder.encode(chunks[state.pulled++]));
+    },
+  });
+  return { body, state };
+}
+
+describe("API call bodies", () => {
+  test("a body with a declared length reaches the API as the same bytes, read before it is forwarded", async () => {
+    const { env } = bindings();
+    const bytes = new Uint8Array([0, 255, 128, 10, 13, 0xc3, 0x28]);
+    const received: Uint8Array[] = [];
+    const api = upstream(async (request) => {
+      received.push(new Uint8Array(await request.arrayBuffer()));
+      return new Response(null, { status: 202 });
+    });
+    const response = await handle(
+      new Request("http://web.test/api/alerts/token", {
+        method: "POST",
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-length": String(bytes.length),
+          "x-signature": "sig",
+        },
+        body: bytes,
+      }),
+      { ...env, API: api.binding },
+    );
+    expect(response.status).toBe(202);
+    expect(received).toEqual([bytes]);
+    expect(api.seen[0]?.headers.get("x-signature")).toBe("sig");
+    expect(new URL(api.seen[0]!.url).pathname).toBe("/alerts/token");
+  });
+
+  test("the API answering without reading the body leaves no upload half-sent: it was read in full first", async () => {
+    const { env } = bindings();
+    const { body, state } = streamed(['{"query":', '"{ __schema }"', "}"]);
+    const api = upstream(() => Response.json({ error: "not_found" }, { status: 404 }));
+    const request = new Request("http://web.test/api/graphql", {
+      method: "POST",
+      headers: { "content-length": "26" },
+      body,
+      duplex: "half",
+    } as RequestInit);
+    const response = await handle(request, { ...env, API: api.binding });
+    expect(response.status).toBe(404);
+    expect(state.pulled).toBe(3);
+  });
+
+  test("a body with no declared length, or one over the limit, is streamed as before, not read first", async () => {
+    const { env } = bindings();
+    // One byte over the proxy's `BUFFERED_BODY_MAX` (1 MiB).
+    for (const headers of [{}, { "content-length": String(1024 * 1024 + 1) }]) {
+      const { body, state } = streamed(["a", "b", "c"]);
+      const api = upstream(() => new Response(null, { status: 202 }));
+      await handle(
+        new Request("http://web.test/api/alerts/token", {
+          method: "POST",
+          headers,
+          body,
+          duplex: "half",
+        } as RequestInit),
+        { ...env, API: api.binding },
+      );
+      // The API never read it, so neither did the proxy.
+      expect(state.pulled, JSON.stringify(headers)).toBeLessThan(3);
+      expect(api.seen).toHaveLength(1);
+    }
+  });
+
+  test("a negative declared length is streamed, not read first", async () => {
+    const { env } = bindings();
+    const { body, state } = streamed(["a", "b", "c"]);
+    const api = upstream(() => new Response(null, { status: 202 }));
+    await handle(
+      new Request("http://web.test/api/alerts/token", {
+        method: "POST",
+        headers: { "content-length": "-1" },
+        body,
+        duplex: "half",
+      } as RequestInit),
+      { ...env, API: api.binding },
+    );
+    expect(state.pulled).toBeLessThan(3);
+    expect(api.seen).toHaveLength(1);
+  });
+
+  test("the forwarded length is the length of the bytes read", async () => {
+    const { env } = bindings();
+    const api = upstream(() => new Response(null, { status: 202 }));
+    await handle(
+      new Request("http://web.test/api/alerts/token", {
+        method: "POST",
+        headers: { "content-length": "7" },
+        body: '{"a":1}',
+      }),
+      { ...env, API: api.binding },
+    );
+    expect(api.seen[0]?.headers.get("content-length")).toBe("7");
+    expect(await api.seen[0]?.text()).toBe('{"a":1}');
+  });
+
+  test("an upload that breaks off while it is read is a 400, forwarded to nobody", async () => {
+    const { env } = bindings();
+    const { body } = streamed(['{"a":'], true);
+    const api = upstream(() => new Response(null, { status: 202 }));
+    const response = await handle(
+      new Request("http://web.test/api/alerts/token", {
+        method: "POST",
+        headers: { "content-length": "20" },
+        body,
+        duplex: "half",
+      } as RequestInit),
+      { ...env, API: api.binding },
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "bad_request" });
+    expect(api.seen).toHaveLength(0);
+  });
+});
+
 describe("status page routing", () => {
   test("forwards /status/* to the API unchanged, never the SPA", async () => {
     const { api, assets, env } = bindings();

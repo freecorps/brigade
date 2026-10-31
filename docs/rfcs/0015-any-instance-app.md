@@ -44,24 +44,27 @@ Instance ──(5) POST /v1/send { handle, envelope, … }, signed with the inst
   the instance's life, even after a key rotation (below).
 - **Every call is signed.** Headers `Brigade-Instance`, `Brigade-Key` (the public key), `Brigade-Timestamp` (Unix
   seconds) and `Brigade-Signature` (Ed25519, base64url) over
-  `METHOD \n path-with-query \n timestamp \n hex(SHA-256(body))`: the method in upper case, the path with its query
-  string (`/v1/health?deep=1`), the timestamp in decimal Unix seconds, and the lower-case hex SHA-256 of the exact
+  `METHOD \n path-with-query \n instance \n timestamp \n hex(SHA-256(body))`: the method in upper case, the path
+  with its query string (`/v1/health?deep=1`), the instance id (so a request cannot be re-addressed to another
+  instance that lists the same key), the timestamp in decimal Unix seconds, and the lower-case hex SHA-256 of the exact
   body bytes (of no bytes for a request without a body). The relay refuses a timestamp more than 5 minutes off. Replays inside that window only repeat a push and stay under the rate limits; no nonce
   store.
 - **Checking a signature needs no storage on the paging path.** If SHA-256 of the presented key gives the instance
   id, the key is the original one and is checked against the signature alone. Only a rotated key needs a lookup
   (below). So the relay can verify a send while its storage is down.
-- **Registration** (`POST /v1/instances`, signed): records the instance in the relay's registry (Workers KV) with the
+- **Registration** (`POST /v1/instances`, signed): records the instance in the relay's registry (a Durable Object per instance, `RegistryDO`, so a check and its update are one atomic
+  step: the code's tries, key changes and revocation never race) with the
   terms version accepted and a contact address (where Freecorps writes before limiting or revoking). **Decided
   (D3):** an instance must register, and so accept the terms, before it can mint handles or send: an unknown id
   answers `403 instance_unregistered`. Registering, minting a handle and rotating keys read the registry and **fail
-  closed** on a KV error (`503 registry_unavailable`): an unknown id never gets a handle. A send needs no
+  closed** when the registry cannot answer (`503 registry_unavailable`): an unknown id never gets a handle. A send needs no
   registration read, because the handle it carries could only have been minted for a registered instance; it checks
   only revocation, below.
 - **Revocation** is a registry entry (`revoked`), read through a per-isolate cache of 60 s. On a send, a registry
-  read that fails is _fail open_ (not revoked, logged): a KV outage must not stop every self-hosted page. Everything
+  read that fails is _fail open_ (not revoked, logged): a registry outage must not stop every self-hosted page. Everything
   else fails closed.
-- **Key rotation.** `POST /v1/instances/keys`, signed with a key the instance already has, adds a new key (and later retires the
+- **Key rotation.** `POST /v1/instances/keys`, signed with a key the instance already has and carrying a signature by
+  the new key over the instance id (proof that the caller holds it), adds a new key (and later retires the
   old one). A rotated key is looked up in the registry (cached). Losing the key without rotating means a new instance
   id: every phone pairs again the next time it opens the app (see "Dead ends").
 
@@ -227,7 +230,8 @@ asks which, and can be run again later:
 
 1. **Freecorps' relay (recommended).**
    - Shows the terms' address and summary and asks to accept them.
-   - Asks for a contact address. The relay emails it a 6-digit code (valid 15 minutes, 5 tries), which the script
+   - Asks for a contact address. The relay emails it a 6-digit code (valid 15 minutes, 5 tries; at most 3 codes an hour
+     per instance and per address, so free instance ids buy neither more mail to one address nor more guesses), which the script
      asks for: the contact is real, and it is the "sign-in" to the relay. No API key to copy or leak: the instance's
      key pair is its credential.
    - Makes the instance key, registers it (`POST /v1/instances` with the terms version, the contact and the code),
@@ -344,7 +348,7 @@ does it.
 ## Order of work
 
 1. Relay: `/v1/instances` (with the emailed code and closed registration), `/v1/handles`, `/v1/send`, signatures,
-   registry in KV, limits; tests with fake APNs/FCM.
+   registry in a Durable Object, limits; tests with fake APNs/FCM.
 2. Envelope v2 (sealed `iat`, `origin`, `urgency`; key id) in `packages/push`, the iOS extension and Android; the
    app accepts v1 and v2.
 3. Instance: `device.register` with `handle`/`tag`, the notifier on `/v1/send`, `/config` additions, watchdog

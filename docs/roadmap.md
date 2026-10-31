@@ -592,6 +592,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Left (decided, Q23; RFC 0002 "Environments"): the setup wizard running those steps, the custom domains' and
     `setup:first-user`.
 - [ ] Hosted push relay with terms of service
+- [ ] One store app for every instance (RFC 0015): instance registration, handles and signed sends on the relay;
+      the sealed envelope v2 and a device key per instance; several instances on one phone; the instance picked by
+      address or QR, and sign-in by QR approved on the dashboard; `vp run setup:relay` for Freecorps' relay (terms,
+      contact confirmed by email) or the company's own; which relay is in use shown on the dashboard and in the app;
+      our instance and the apps in the field moved off raw tokens. Before the store release.
 - [ ] App Store / Play Store release (after CLA is in place)
 - [ ] Public site + docs (en, pt-BR); contribution guide; community translations
 - [ ] More chat providers (Teams, Discord, Mattermost), UnifiedPush

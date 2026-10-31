@@ -103,8 +103,8 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   `QUOTA_EXCEEDED` (429), `UNAVAILABLE`
   and `INTERNAL` (5xx) are retried, like APNs' 429 and 5xx; FCM or Google's token endpoint out of reach is `502
   fcm_unreachable`, retried; so is one that does not answer in time (the token exchange gets 4 s, since every
-  Android send in the isolate waits on the one in flight; APNs and FCM get 5 s per send, so the whole call stays under
-  the instance's 10 s); a missing or refused service account is `500 relay_misconfigured`. The delivery rows keep
+  Android send in the isolate waits on the one in flight; APNs and FCM get 5 s per send, and an FCM call, its retry
+  after a 401 included, gets 9 s in all, so the whole call stays under the instance's 10 s); a missing or refused service account is `500 relay_misconfigured`. The delivery rows keep
   their names (`apns_refused`, `apns_unavailable` mean the push service, Apple's or Google's) and FCM's code as the
   reason. Tests: `apps/relay/test/fcm.test.ts` (a fake token endpoint and a fake FCM), `apps/api/test/notify.test.ts`.
 - **The relay is part of this repo** (`apps/relay`). Anyone can run their own with their own store credentials.

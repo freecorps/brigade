@@ -18,7 +18,7 @@ import {
   type ServiceAccount,
 } from "./fcm.ts";
 import { deepHealth } from "./deep-health.ts";
-import { sendWithin } from "./deadline.ts";
+import { sendWithin, within } from "./deadline.ts";
 
 /**
  * Spike S1 relay (RFC 0006): `POST /send` takes a device token and an already encrypted envelope and forwards
@@ -74,6 +74,11 @@ const MAX_BODY_BYTES = 8 * 1024;
  * abandons.
  */
 const PROVIDER_TIMEOUT_MS = 5000;
+/**
+ * The whole of one FCM send, the retry after a 401 included (another token exchange and send): each step gets what is
+ * left of it, so the call stays under the API's 10 s.
+ */
+const FCM_CALL_BUDGET_MS = 9000;
 
 // One per isolate: the provider token is the same for every request (APNs throttles frequent refreshes).
 const tokens = new ApnsTokenCache();
@@ -261,11 +266,16 @@ async function sendFcm(
     return json({ error: "invalid_body", detail: String(error) }, 400);
   }
   const started = Date.now();
+  const left = () => Math.max(0, FCM_CALL_BUDGET_MS - (Date.now() - started));
   let response: Response | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
     let accessToken: string;
     try {
-      accessToken = await googleTokens.get(account, Date.now(), send);
+      accessToken = await within(
+        googleTokens.get(account, Date.now(), send),
+        left(),
+        () => new GoogleAuthError("unreachable", "token exchange: out of time"),
+      );
     } catch (error) {
       const unreachable = error instanceof GoogleAuthError && error.kind === "unreachable";
       // Never the assertion or a token.
@@ -283,7 +293,7 @@ async function sendFcm(
       return json({ error: "invalid_body", detail: String(error) }, 400);
     }
     try {
-      response = await sendWithin(send, request, PROVIDER_TIMEOUT_MS);
+      response = await sendWithin(send, request, Math.min(PROVIDER_TIMEOUT_MS, left()));
     } catch (error) {
       // Never logs the registration token or the envelope.
       console.error(JSON.stringify({ message: "FCM fetch failed", error: String(error) }));
@@ -291,7 +301,9 @@ async function sendFcm(
     }
     if (response.status !== 401) break;
     await googleTokens.clear(accessToken);
-    if (attempt === 0) await response.body?.cancel();
+    // No time left for another exchange and send: the 401 is the answer.
+    if (attempt === 1 || left() === 0) break;
+    await response.body?.cancel();
   }
   const answer = response!;
   const text = await answer.text();

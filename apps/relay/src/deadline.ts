@@ -21,3 +21,18 @@ export async function sendWithin(
     clearTimeout(timer);
   }
 }
+
+/** `promise`, or a rejection with `late()` once `ms` passed without an answer. */
+export async function within<T>(promise: Promise<T>, ms: number, late: () => Error): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(late()), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}

@@ -2683,6 +2683,63 @@ describe("a page the Queue does not bring", () => {
     );
   });
 
+  test("a page watch that cannot be written never stops the declaration", async () => {
+    const ws = await workspace();
+    await runInDurableObject(ws.stub, (_instance: WorkspaceDO, state) => {
+      state.storage.sql.exec("drop table page_pending");
+    });
+    const { event } = await declareInShard(ws);
+    expect(event).toBeDefined();
+    expect(logged()).toContainEqual(
+      expect.objectContaining({ message: "watching a page for the queue failed", event: event.id }),
+    );
+  });
+
+  test("a plan that throws keeps the page watched; a local send that throws comes back on its own", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const { event } = await declareInShard(ws);
+    const broken = () => {
+      throw new Error("storage hiccup");
+    };
+    await runInDurableObject(ws.stub, (instance: WorkspaceDO) => {
+      Reflect.set(Reflect.get(instance, "pager") as object, "plan", broken);
+    });
+    // The Queue brings it but the plan throws: retried by the Queue, and still watched by the shard.
+    const queue = relay();
+    expect((await deliver(event, queue.send)).retried).toHaveLength(1);
+    expect(await pending(ws)).toEqual([expect.objectContaining({ event_id: event.id, tries: 0 })]);
+    // The shard's own send throws too: leased, one try spent, due again a minute later.
+    const local = relay();
+    const before = Date.now();
+    await graceOver(ws, local.send);
+    const [row] = await pending(ws);
+    expect(row).toMatchObject({ event_id: event.id, tries: 1 });
+    expect(row!.due).toBeGreaterThanOrEqual(before + 60_000 - 5000);
+    expect(logged()).toContainEqual(
+      expect.objectContaining({ message: "sending a page from the shard failed", event: event.id }),
+    );
+  });
+
+  test("every page due goes out in one alarm, past the first 20", async () => {
+    const ws = await workspace();
+    const { event } = await declareInShard(ws);
+    await runInDurableObject(ws.stub, (_instance: WorkspaceDO, state) => {
+      // 24 more pages for incidents that no longer exist: each is planned, finds nothing, and is done.
+      for (let n = 0; n < 24; n++) {
+        const copy = { ...event, id: `${event.id}_${n}`, subject: `inc_gone_${n}` };
+        state.storage.sql.exec(
+          "insert into page_pending (event_id, event, due) values (?, ?, 0)",
+          copy.id,
+          JSON.stringify(copy),
+        );
+      }
+    });
+    expect(await pending(ws)).toHaveLength(25);
+    await graceOver(ws, relay().send);
+    expect(await pending(ws)).toEqual([]);
+  });
+
   test("events that do not page are not waited for", async () => {
     const ws = await workspace();
     const { incident } = await declareInShard(ws, "sev4");

@@ -453,8 +453,6 @@ export class Pager {
     const { sql } = this.options.storage;
     this.prune(now);
     if (!asksForPage(event)) return { send: false, reason: "not_a_page" };
-    // Reached the shard: the Queue (or the shard itself) has it, nothing to send on the Queue's behalf.
-    this.arrived(event.id);
     if (this.done(event.id)) return { send: false, reason: "done" };
     const incident = this.options.shard.store.get("incidents", event.subject!);
     if (!incident) return { send: false, reason: "not_found" };
@@ -1459,7 +1457,6 @@ export class Pager {
    */
   deadLettered(event: BrigadeEvent, now: number): DeadLetterResult {
     if (!asksForPage(event)) return "not_a_page";
-    this.arrived(event.id);
     if (this.done(event.id)) return "settled";
     if (event.type === RELEASED) {
       // A lower-urgency push released after a hold: the page it waited behind went out, and the incident's next push
@@ -1563,15 +1560,27 @@ export class Pager {
     let due: number | undefined;
     for (const event of events) {
       if (!asksForPage(event)) continue;
-      due = now + PAGE_QUEUE_GRACE_MS;
-      this.options.storage.sql.exec(
-        "insert into page_pending (event_id, event, due) values (?, ?, ?) on conflict do nothing",
-        event.id,
-        JSON.stringify(event),
-        due,
-      );
+      // Never in the commit's way: a row that cannot be written leaves the page to the Queue alone, as before.
+      try {
+        due = now + PAGE_QUEUE_GRACE_MS;
+        this.options.storage.sql.exec(
+          "insert into page_pending (event_id, event, due) values (?, ?, ?) on conflict do nothing",
+          event.id,
+          JSON.stringify(event),
+          due,
+        );
+      } catch (error) {
+        this.options.log("watching a page for the queue failed", {
+          event: event.id,
+          error: String(error),
+        });
+      }
     }
-    if (due !== undefined) this.options.wake(due);
+    try {
+      if (due !== undefined) this.options.wake(due);
+    } catch (error) {
+      this.options.log("arming the page watch failed", { error: String(error) });
+    }
   }
 
   /** When the next page the Queue has not brought is due to go from the shard; null with none. */
@@ -1583,8 +1592,10 @@ export class Pager {
   }
 
   /**
-   * The pages the Queue has not brought to the shard in time, oldest first, each taken off the list: the caller sends
-   * it (`WorkspaceDO.pageLocally`) and puts it back with `retryLocally` when that should be tried again.
+   * The pages the Queue has not brought to the shard in time, oldest first, each leased to the caller
+   * (`WorkspaceDO.pageLocally`): its row stays, due again `PAGE_LOCAL_RETRY_MS` later with one more try, so a send
+   * that throws or never finishes (the object evicted) comes back on its own. The caller ends it with `arrived` once
+   * the page went, or it had all its tries. A row that cannot be read is dropped and logged.
    */
   overdue(now: number): { event: BrigadeEvent; tries: number }[] {
     const { sql } = this.options.storage;
@@ -1594,31 +1605,35 @@ export class Pager {
         now,
       )
       .toArray();
-    for (const row of rows) sql.exec("delete from page_pending where event_id = ?", row.event_id);
-    return rows.map((row) => ({ event: JSON.parse(row.event) as BrigadeEvent, tries: row.tries }));
+    const leased: { event: BrigadeEvent; tries: number }[] = [];
+    for (const row of rows) {
+      let event: BrigadeEvent;
+      try {
+        event = JSON.parse(row.event) as BrigadeEvent;
+      } catch (error) {
+        this.options.log("a page watched for the queue could not be read", {
+          event: row.event_id,
+          error: String(error),
+        });
+        this.arrived(row.event_id);
+        continue;
+      }
+      sql.exec(
+        "update page_pending set due = ?, tries = tries + 1 where event_id = ?",
+        now + PAGE_LOCAL_RETRY_MS,
+        row.event_id,
+      );
+      leased.push({ event, tries: row.tries + 1 });
+    }
+    if (leased.length > 0) this.options.wake(now + PAGE_LOCAL_RETRY_MS);
+    return leased;
   }
 
   /**
-   * A page the shard sent itself that should go again (a device the relay could not reach yet) while the Queue
-   * still has not brought it: a minute later, up to `PAGE_LOCAL_TRIES` in all. False when it has had them all.
+   * The page `eventId` needs nothing more on the Queue's behalf: it reached the shard from the Queue (`planPage` or
+   * the dead-letter consumer, once their plan or record went through), or the shard sent it itself.
    */
-  retryLocally(event: BrigadeEvent, tries: number, now: number): boolean {
-    if (tries >= PAGE_LOCAL_TRIES) return false;
-    const due = now + PAGE_LOCAL_RETRY_MS;
-    this.options.storage.sql.exec(
-      `insert into page_pending (event_id, event, due, tries) values (?, ?, ?, ?)
-       on conflict do update set due = excluded.due, tries = excluded.tries`,
-      event.id,
-      JSON.stringify(event),
-      due,
-      tries,
-    );
-    this.options.wake(due);
-    return true;
-  }
-
-  /** `event` reached the shard from the Queue: nothing to send on its behalf. */
-  private arrived(eventId: string): void {
+  arrived(eventId: string): void {
     this.options.storage.sql.exec("delete from page_pending where event_id = ?", eventId);
   }
 

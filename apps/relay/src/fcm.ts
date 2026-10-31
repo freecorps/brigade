@@ -134,8 +134,11 @@ export class GoogleTokenCache {
     const id = `${account.clientEmail}\n${account.privateKeyId}`;
     const cached = this.#token;
     if (cached !== undefined && cached.account === id) {
-      const token = await cached.value.catch(() => undefined);
-      if (token && now < token.expiresAt - ACCESS_TOKEN_MARGIN_MS) return token.token;
+      // An exchange in flight that fails fails every send waiting on it, together: starting another one each would
+      // put their timeouts end to end. A failed exchange is dropped from the cache (below), so the next send tries
+      // again.
+      const token = await cached.value;
+      if (now < token.expiresAt - ACCESS_TOKEN_MARGIN_MS) return token.token;
       if (this.#token === cached) this.#token = undefined;
     }
     if (this.#token === undefined || this.#token.account !== id) {

@@ -431,13 +431,19 @@ describe("POST /send to an Android device", () => {
 
   test("a token exchange that hangs fails every send waiting on it soon, and is not cached", async () => {
     const other = { ...env, FCM_SERVICE_ACCOUNT: serviceAccount({ private_key_id: "key-11" }) };
+    const exchanges: string[] = [];
+    const counted = (request: Request) => {
+      exchanges.push(request.url);
+      return hang(request);
+    };
+    const bodies = await Promise.all([sendBody(), sendBody(), sendBody()]);
     const started = Date.now();
-    const [first, second] = await Promise.all([
-      handle(post(await sendBody()), other, hang),
-      handle(post(await sendBody()), other, hang),
-    ]);
-    expect(await first.json()).toMatchObject({ error: "fcm_unreachable" });
-    expect(await second.json()).toMatchObject({ error: "fcm_unreachable" });
+    const answers = await Promise.all(bodies.map((body) => handle(post(body), other, counted)));
+    // One exchange for all of them, failing them together.
+    expect(exchanges).toEqual([TOKEN_URI]);
+    for (const answer of answers) {
+      expect(await answer.json()).toMatchObject({ error: "fcm_unreachable" });
+    }
     // Under the API's 10 s for the whole call (apps/api RELAY_TIMEOUT_MS).
     expect(Date.now() - started).toBeLessThan(9000);
     // Google answering again: the next send gets a token and goes to FCM.

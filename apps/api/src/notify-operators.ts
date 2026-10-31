@@ -1,19 +1,17 @@
 // The instance operators' email (RFC 0007 "Watching the watcher", Q19): each `brigade.status_changed` the watchdog
 // writes (the paging self-check turned degraded, back to ok, or unknown) goes by email to the addresses in
-// `OPERATOR_EMAILS`, through the same sender as every other email. Capped by the watchdog
-// (`OPERATOR_EMAIL_HOURLY_CAP` events an hour, each once), never retried, and never in a page's way: the consumer runs
-// it alongside the batch's pages and acks the event whatever happens.
+// `OPERATOR_EMAILS`, through the same sender as every other email. The watchdog sends it itself as the status changes
+// (src/watchdog.ts `emailOperators`), not the Queue's consumer: a stalled Queue is one of the things it reports. It
+// caps them (`OPERATOR_EMAIL_HOURLY_CAP` an hour) and tries a failed one again on the next beats.
 
 import type { EmailSender } from "./email.ts";
 import { renderOperatorStatusEmail } from "./email-templates.ts";
 import type { BrigadeEvent } from "./outbox.ts";
-import { STATUS_EVENT, WATCHDOG_NAME } from "./watchdog.ts";
 
 /** The most operators one status change is emailed to. */
 export const MAX_OPERATOR_RECIPIENTS = 10;
 
 export type OperatorEnv = {
-  WATCHDOG?: Env["WATCHDOG"];
   /**
    * The instance's operators, comma-separated addresses (a secret or a variable; no address is in the repo). Empty or
    * unset: nobody is emailed, and the logs still say it.
@@ -36,46 +34,42 @@ export function operatorAddresses(raw: string | undefined): string[] {
   return [...seen];
 }
 
-/** Emails the operators about a status change. Never throws. */
+/** What one attempt came to: `sent` to at least one operator; `skipped`, nobody to email or no sender; `failed`. */
+export type OperatorEmailOutcome = "sent" | "skipped" | "failed";
+
+/** Emails the operators about a status change (a `brigade.status_changed` event). Never throws. */
 export async function notifyOperators(
   event: BrigadeEvent,
   env: OperatorEnv,
   mail: EmailSender | undefined,
-): Promise<void> {
-  if (event.type !== STATUS_EVENT) return;
+): Promise<OperatorEmailOutcome> {
   const to = operatorAddresses(env.OPERATOR_EMAILS);
-  if (to.length === 0 || !mail || !env.WATCHDOG) return;
+  if (to.length === 0 || !mail) return "skipped";
   const data = (event.data ?? {}) as { status?: unknown; reasons?: unknown };
   const status =
     data.status === "ok" || data.status === "degraded" || data.status === "unknown"
       ? data.status
       : undefined;
-  if (!status) return;
+  if (!status) return "skipped";
   const reasons = Array.isArray(data.reasons)
     ? data.reasons.filter((one): one is string => typeof one === "string")
     : [];
-  try {
-    if (!(await env.WATCHDOG.getByName(WATCHDOG_NAME).claimOperatorEmail(event.id))) {
-      log("operator email not sent: capped or sent already", { event: event.id });
-      return;
-    }
-  } catch (error) {
-    log("operator email not sent: the watchdog could not be asked", { error: String(error) });
-    return;
-  }
   const results = await Promise.all(
-    to.map((email) =>
-      mail
+    to.map(async (email) => {
+      try {
         // About paging itself failing: never dropped by the daily ceiling (src/email-ceiling.ts).
-        .send({
+        return await mail.send({
           ...renderOperatorStatusEmail({ status, reasons }, { email }, "en"),
           priority: "paging",
-        })
-        .catch((error: unknown) => ({ ok: false as const, retry: false, code: String(error) })),
-    ),
+        });
+      } catch (error) {
+        return { ok: false as const, retry: false, code: String(error) };
+      }
+    }),
   );
   const failed = results.filter((result) => !result.ok).length;
   if (failed > 0) log("operator email failed", { event: event.id, failed, of: to.length });
+  return failed < to.length ? "sent" : "failed";
 }
 
 function log(message: string, fields: Record<string, unknown>): void {

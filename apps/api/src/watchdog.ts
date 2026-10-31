@@ -9,6 +9,8 @@
 
 import { DurableObject } from "cloudflare:workers";
 import type { Actor } from "@freecorps/brigade-schema";
+import { emailSender, type EmailEnv, type EmailSender } from "./email.ts";
+import { notifyOperators, type OperatorEnv } from "./notify-operators.ts";
 import { OUTBOX_SCHEMA, OutboxDrain, writeOutbox, type BrigadeEvent } from "./outbox.ts";
 
 /** The single watchdog object's name. */
@@ -38,6 +40,11 @@ export const PING_TIMEOUT_MS = 5000;
  * flaps does not flood their inboxes; the rest are only logged.
  */
 export const OPERATOR_EMAIL_HOURLY_CAP = 6;
+/** How many times the watchdog tries one status change's email, a minute apart (a beat), before it gives up. */
+export const OPERATOR_EMAIL_TRIES = 5;
+/** Just under the cron's minute, so a failure on a proof (a few seconds after its beat) is tried on the next beat. */
+const OPERATOR_EMAIL_RETRY_MS = 50 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 /**
  * A deeper check (APNs, FCM, D1) failing transiently on this many proved beats in a row degrades the status and stops
  * the pings; fewer change nothing, so one slow answer does not page the operators.
@@ -89,18 +96,22 @@ export type PagingHealth = {
   external: { configured: boolean; lastPingAt: string | null; lastPingOk: boolean | null };
 };
 
-export type WatchdogEnv = {
-  EVENTS: Queue;
-  /**
-   * The external check's ping URL (a healthchecks.io-style check, a self-hosted one, …): a secret, so no real
-   * service is named in the repo. Optional: without it the watchdog still runs and the dashboard still shows it.
-   */
-  DEAD_MAN_URL?: string;
-};
+export type WatchdogEnv = EmailEnv &
+  OperatorEnv & {
+    EVENTS: Queue;
+    /**
+     * The external check's ping URL (a healthchecks.io-style check, a self-hosted one, …): a secret, so no real
+     * service is named in the repo. Optional: without it the watchdog still runs and the dashboard still shows it.
+     */
+    DEAD_MAN_URL?: string;
+  };
 
 const STATE_SCHEMA = `
   create table if not exists watchdog_state (key text primary key, value text not null) without rowid;
   create table if not exists operator_emails (event_id text primary key, at integer not null) without rowid;
+  create table if not exists operator_email_queue (
+    event_id text primary key, event text not null, tries integer not null, next_at integer not null
+  ) without rowid;
 `;
 
 type Keys =
@@ -127,6 +138,10 @@ export class WatchdogDO extends DurableObject<Env> {
   private readonly drainPaused: boolean;
   /** `PING_TIMEOUT_MS`; a field so tests can shorten it. */
   private pingTimeoutMs = PING_TIMEOUT_MS;
+  /** The operators' email sender; a field so tests can stand one in. */
+  private mail: () => EmailSender | undefined = () => emailSender(this.env as WatchdogEnv);
+  /** Whether `emailOperators` is running, so a beat and a proof close together do not send the same email twice. */
+  private emailing = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -161,6 +176,7 @@ export class WatchdogDO extends DurableObject<Env> {
       this.settle(now);
       return heartbeat!;
     });
+    this.ctx.waitUntil(this.emailOperators(now));
     await this.armDrain(now);
     return event.id;
   }
@@ -194,6 +210,7 @@ export class WatchdogDO extends DurableObject<Env> {
       this.settle(now);
       return failed;
     });
+    this.ctx.waitUntil(this.emailOperators(now));
     await this.armDrain(now);
     const pages = relay === "ok" && !failing;
     if (pages && now - beatAt <= MAX_PROOF_LATENCY_MS) this.ctx.waitUntil(this.ping(now));
@@ -202,26 +219,66 @@ export class WatchdogDO extends DurableObject<Env> {
   }
 
   /**
-   * Whether the consumer may email the operators about the status change `eventId` (RPC): once per event (a
-   * redelivery is refused) and at most `OPERATOR_EMAIL_HOURLY_CAP` events an hour.
+   * Emails the operators each status change waiting in `operator_email_queue` (`settle` puts it there, in the same
+   * transaction as the change), from here, not through the outbox, the Queue and the consumer: a stalled Queue is one
+   * of the things it reports, and an email waiting in it would arrive with the recovery. Runs in `waitUntil` after
+   * every beat and proof, so one that failed, or never finished (the object evicted mid-send), is tried again a minute
+   * later, up to `OPERATOR_EMAIL_TRIES` times. At most `OPERATOR_EMAIL_HOURLY_CAP` changes an hour are emailed; the rest
+   * are only logged. Never throws.
    */
-  async claimOperatorEmail(eventId: string, now = Date.now()): Promise<boolean> {
+  private async emailOperators(now: number): Promise<void> {
+    if (this.emailing) return;
+    this.emailing = true;
     const sql = this.ctx.storage.sql;
-    return this.ctx.storage.transactionSync(() => {
-      sql.exec("delete from operator_emails where at < ?", now - 24 * 60 * 60 * 1000);
-      if (sql.exec("select 1 from operator_emails where event_id = ?", eventId).toArray().length) {
-        return false;
-      }
-      const { sent } = sql
-        .exec<{ sent: number }>(
-          "select count(*) as sent from operator_emails where at > ?",
-          now - 60 * 60 * 1000,
+    try {
+      const due = sql
+        .exec<{ event_id: string; event: string; tries: number }>(
+          "select event_id, event, tries from operator_email_queue where next_at <= ? order by next_at",
+          now,
         )
-        .one();
-      if (sent >= OPERATOR_EMAIL_HOURLY_CAP) return false;
-      sql.exec("insert into operator_emails (event_id, at) values (?, ?)", eventId, now);
-      return true;
-    });
+        .toArray();
+      for (const row of due) {
+        sql.exec("delete from operator_emails where at < ?", now - 24 * 60 * 60 * 1000);
+        const { sent } = sql
+          .exec<{ sent: number }>(
+            "select count(*) as sent from operator_emails where at > ?",
+            now - HOUR_MS,
+          )
+          .one();
+        if (sent >= OPERATOR_EMAIL_HOURLY_CAP) {
+          log("operator email not sent: capped", { event: row.event_id });
+          sql.exec("delete from operator_email_queue where event_id = ?", row.event_id);
+          continue;
+        }
+        const outcome = await notifyOperators(
+          JSON.parse(row.event) as BrigadeEvent,
+          this.env as WatchdogEnv,
+          this.mail(),
+        );
+        if (outcome === "sent") {
+          sql.exec(
+            "insert or ignore into operator_emails (event_id, at) values (?, ?)",
+            row.event_id,
+            now,
+          );
+        }
+        if (outcome !== "failed" || row.tries + 1 >= OPERATOR_EMAIL_TRIES) {
+          if (outcome === "failed")
+            log("operator email given up", { event: row.event_id, tries: row.tries + 1 });
+          sql.exec("delete from operator_email_queue where event_id = ?", row.event_id);
+        } else {
+          sql.exec(
+            "update operator_email_queue set tries = tries + 1, next_at = ? where event_id = ?",
+            now + OPERATOR_EMAIL_RETRY_MS,
+            row.event_id,
+          );
+        }
+      }
+    } catch (error) {
+      log("operator email failed", { error: String(error) });
+    } finally {
+      this.emailing = false;
+    }
   }
 
   /** `GET /health/paging`: the state now, with the cron's silence counted too. */
@@ -288,10 +345,10 @@ export class WatchdogDO extends DurableObject<Env> {
   }
 
   /**
-   * Recomputes the status and, when it or its reasons changed, writes `brigade.status_changed` to the outbox and logs
-   * it (Workers Logs alerts can watch for `paging pipeline degraded`). Runs only on a beat or a proof, so `no_beat`
-   * (no beat is what runs it) is never logged or evented: only `GET /health/paging` and the external check see it.
-   * Call inside a transaction.
+   * Recomputes the status and, when it or its reasons changed, writes `brigade.status_changed` to the outbox and to
+   * the operators' email queue (`emailOperators`), and logs it (Workers Logs alerts can watch for `paging pipeline
+   * degraded`). Runs only on a beat or a proof, so `no_beat` (no beat is what runs it) is never logged or evented:
+   * only `GET /health/paging` and the external check see it. Call inside a transaction.
    */
   private settle(now: number): void {
     const { status, reasons } = this.health(now);
@@ -302,12 +359,22 @@ export class WatchdogDO extends DurableObject<Env> {
     this.set("reasons", key);
     // The first beat (nothing to unknown) is not a change anyone needs to hear about.
     if (previous === null && status === "unknown") return;
-    this.write([{ type: STATUS_EVENT, data: { status, previous, reasons } }], now, 0);
+    const [change] = this.write(
+      [{ type: STATUS_EVENT, data: { status, previous, reasons } }],
+      now,
+      0,
+    );
     log(status === "degraded" ? "paging pipeline degraded" : "paging pipeline status changed", {
       status,
       previous,
       reasons,
     });
+    this.ctx.storage.sql.exec(
+      "insert into operator_email_queue (event_id, event, tries, next_at) values (?, ?, 0, ?)",
+      change!.id,
+      JSON.stringify(change),
+      now,
+    );
   }
 
   private write(events: { type: string; data: unknown }[], now: number, version: number) {

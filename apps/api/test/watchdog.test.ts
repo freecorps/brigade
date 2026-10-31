@@ -12,7 +12,7 @@ import {
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 import worker from "../src/index.ts";
 import { withEmailCeiling } from "../src/email-ceiling.ts";
-import type { EmailSender, OutgoingEmail } from "../src/email.ts";
+import type { EmailResult, EmailSender, OutgoingEmail } from "../src/email.ts";
 import { consumeEvents, type Fetch, type NotifyEnv } from "../src/notify.ts";
 import { operatorAddresses } from "../src/notify-operators.ts";
 import { OutboxDrain, type BrigadeEvent } from "../src/outbox.ts";
@@ -21,12 +21,14 @@ import {
   HEARTBEAT_EVENT,
   MAX_PROOF_LATENCY_MS,
   OPERATOR_EMAIL_HOURLY_CAP,
+  OPERATOR_EMAIL_TRIES,
   pagingStatus,
   pingUrl,
   STATUS_EVENT,
   SYSTEM_WORKSPACE,
   TRANSIENT_FAILURES_TO_DEGRADE,
   WATCHDOG_NAME,
+  type BeatChecks,
   type WatchdogDO,
 } from "../src/watchdog.ts";
 import { sessionCookie } from "./session.ts";
@@ -593,60 +595,135 @@ describe("the heartbeat, end to end", () => {
     expect(pings()).toHaveLength(7);
   });
 
-  test("OPERATOR_EMAILS are emailed each status change, once per event and capped per hour", async () => {
-    const { stub, notifyEnv } = watchdog();
+  /** A mail sender that records what it sent; `answer` decides each send. */
+  function mailbox(answer: () => EmailResult = () => ({ ok: true })) {
     const sent: OutgoingEmail[] = [];
+    let tries = 0;
     const mail: EmailSender = {
       id: "test",
       async send(email) {
-        sent.push(email);
-        return { ok: true };
+        tries++;
+        const result = answer();
+        if (result.ok) sent.push(email);
+        return result;
       },
     };
-    const change = (n: number, data: object): BrigadeEvent => ({
-      id: `evt_status_${n}`,
-      type: STATUS_EVENT,
-      source: `brigade://${SYSTEM_WORKSPACE}/watchdog`,
-      workspaceId: SYSTEM_WORKSPACE,
-      time: new Date().toISOString(),
-      actor: { kind: "system", id: "sys_watchdog" },
-      data,
-      specversion: "1.0",
+    return { sent, mail, tries: () => tries };
+  }
+
+  /** A watchdog that emails `operators` itself through `mail`, and helpers to drive its status. */
+  async function emailingWatchdog(mail: EmailSender, operators = "ops@example.com") {
+    const dog = watchdog();
+    await runInDurableObject(dog.stub, (instance: WatchdogDO) => {
+      Reflect.set(instance, "env", { ...env, OPERATOR_EMAILS: operators });
+      Reflect.set(instance, "mail", () => mail);
     });
-    const operators = {
-      ...notifyEnv(),
-      WATCHDOG: { getByName: () => stub } as unknown as NotifyEnv["WATCHDOG"],
-      OPERATOR_EMAILS: " ops@example.com, not an address ,oncall@example.test,Ops@Example.com",
+    /** The status changes still waiting to be emailed. */
+    const waiting = () =>
+      runInDurableObject(dog.stub, (_instance: WatchdogDO, state) =>
+        state.storage.sql
+          .exec<{ tries: number }>("select tries from operator_email_queue")
+          .toArray(),
+      );
+    /** Lets the emails a beat or a proof started in `waitUntil` finish. */
+    const flushed = (left = 0) =>
+      vi.waitFor(async () => expect(await waiting()).toHaveLength(left));
+    /** Beats at `minute` and proves that beat a second later: ok (or as `checks` say). */
+    const proveAt = async (minute: number, checks?: BeatChecks) => {
+      await dog.stub.beat(NOW + minute * MINUTE);
+      const newest = (await dog.heartbeats()).at(-1)!;
+      await dog.stub.proved(newest.time, "ok", NOW + minute * MINUTE + 1000, checks);
     };
-    const degraded = change(1, {
-      status: "degraded",
-      previous: "ok",
-      reasons: ["apns_failing", "d1_failing"],
-    });
-    // Redelivered in the same batch and again later: one email per operator.
-    const result = await deliver([degraded, degraded], operators, relay().send, mail);
-    expect(result.explicitAcks.sort()).toEqual(["msg-0", "msg-1"]);
-    await deliver([degraded], operators, relay().send, mail);
-    expect(sent.map((one) => one.to.email).sort()).toEqual([
+    return { ...dog, waiting, flushed, proveAt };
+  }
+
+  test("a stalled queue: the watchdog emails the operators itself as the status degrades", async () => {
+    const { sent, mail } = mailbox();
+    const { stub, heartbeats, events, notifyEnv, flushed, proveAt } = await emailingWatchdog(mail);
+    await proveAt(0);
+    // Unknown to ok is a change too.
+    await flushed();
+    expect(sent.map((one) => one.subject)).toEqual([
+      "Brigade's paging self-check is back to normal",
+    ]);
+    // The Queue stops: beats keep coming, none comes back, and nothing is drained.
+    for (let minute = 1; minute <= 4; minute++) await stub.beat(NOW + minute * MINUTE);
+    await flushed();
+    expect(sent).toHaveLength(2);
+    expect(sent[1]!.subject).toBe("Brigade's paging self-check is degraded");
+    expect(sent[1]!.to.email).toBe("ops@example.com");
+    // The Queue comes back: the backlog proves the newest beat, back to ok, emailed from the watchdog too.
+    await stub.proved((await heartbeats()).at(-1)!.time, "ok", NOW + 4 * MINUTE + 5000);
+    await flushed();
+    expect(sent.map((one) => one.subject).at(-1)).toBe(
+      "Brigade's paging self-check is back to normal",
+    );
+    // The changes the Queue held send nothing more through the consumer.
+    const changes = (await events()).filter((event) => event.type === STATUS_EVENT);
+    expect(changes).toHaveLength(3);
+    const result = await deliver(changes, notifyEnv(), relay().send, mail);
+    expect(result.explicitAcks).toHaveLength(3);
+    expect(sent).toHaveLength(3);
+  });
+
+  test("an email that failed is tried again on the next beats, then given up", async () => {
+    let down = 2;
+    const box = mailbox(() =>
+      down-- > 0 ? { ok: false, retry: true, code: "E_INTERNAL_SERVER_ERROR" } : { ok: true },
+    );
+    const { stub, heartbeats, waiting, flushed, proveAt } = await emailingWatchdog(box.mail);
+    await proveAt(0);
+    await vi.waitFor(async () => expect(await waiting()).toEqual([{ tries: 1 }]));
+    // Not again within the minute (a proof a moment later), then on the next beats until it goes.
+    await stub.proved((await heartbeats())[0]!.time, "ok", NOW + 2000);
+    expect(box.tries()).toBe(1);
+    await stub.beat(NOW + MINUTE);
+    await vi.waitFor(async () => expect(await waiting()).toEqual([{ tries: 2 }]));
+    await stub.beat(NOW + 2 * MINUTE);
+    await flushed();
+    expect(box.sent.map((one) => one.subject)).toEqual([
+      "Brigade's paging self-check is back to normal",
+    ]);
+
+    // An email that never goes is given up after OPERATOR_EMAIL_TRIES tries.
+    const never = mailbox(() => ({ ok: false, retry: true, code: "E_INTERNAL_SERVER_ERROR" }));
+    const other = await emailingWatchdog(never.mail);
+    await other.proveAt(0);
+    for (let n = 1; n < OPERATOR_EMAIL_TRIES; n++) {
+      await vi.waitFor(async () => expect(await other.waiting()).toEqual([{ tries: n }]));
+      await other.proveAt(n);
+    }
+    await other.flushed();
+    expect(never.tries()).toBe(OPERATOR_EMAIL_TRIES);
+  });
+
+  test("OPERATOR_EMAILS are emailed each status change, once each, capped per hour", async () => {
+    const { sent, mail } = mailbox();
+    const { flushed, proveAt } = await emailingWatchdog(
+      mail,
+      " ops@example.com, not an address ,oncall@example.test,Ops@Example.com",
+    );
+    await proveAt(0);
+    await flushed();
+    await proveAt(1, { apns: "error", fcm: "ok", d1: "error" });
+    await flushed();
+    const to = (subject: string) =>
+      sent
+        .filter((one) => one.subject === subject)
+        .map((one) => one.to.email)
+        .sort();
+    expect(to("Brigade's paging self-check is degraded")).toEqual([
       "oncall@example.test",
       "ops@example.com",
     ]);
-    expect(sent[0]!.subject).toBe("Brigade's paging self-check is degraded");
-    expect(sent[0]!.text).toContain("Apple's push service refused the relay's key");
-    expect(sent[0]!.text).toContain("The database (D1) didn't answer a simple read.");
-    // Capped: at most OPERATOR_EMAIL_HOURLY_CAP changes an hour are emailed; the rest only logged.
-    for (let n = 2; n <= OPERATOR_EMAIL_HOURLY_CAP + 2; n++) {
-      await deliver(
-        [change(n, { status: n % 2 ? "degraded" : "ok", reasons: [] })],
-        operators,
-        relay().send,
-        mail,
-      );
+    const degraded = sent.find((one) => one.subject === "Brigade's paging self-check is degraded")!;
+    expect(degraded.text).toContain("Apple's push service refused the relay's key");
+    expect(degraded.text).toContain("The database (D1) didn't answer a simple read.");
+    // Flapping: ok and degraded in turn, one change a minute. At most OPERATOR_EMAIL_HOURLY_CAP are emailed.
+    for (let minute = 2; minute <= OPERATOR_EMAIL_HOURLY_CAP + 3; minute++) {
+      await proveAt(minute, minute % 2 ? { apns: "error", fcm: "ok", d1: "ok" } : undefined);
+      await flushed();
     }
-    expect(sent).toHaveLength(OPERATOR_EMAIL_HOURLY_CAP * 2);
-    // Without OPERATOR_EMAILS, or without email set up, nothing is sent and the event is still acked.
-    const quiet = await deliver([change(99, { status: "ok" })], notifyEnv(), relay().send, mail);
-    expect(quiet.explicitAcks).toEqual(["msg-0"]);
     expect(sent).toHaveLength(OPERATOR_EMAIL_HOURLY_CAP * 2);
     expect(operatorAddresses("a@example.com,,  c@example.test ,x")).toEqual([
       "a@example.com",
@@ -658,16 +735,22 @@ describe("the heartbeat, end to end", () => {
     ]);
   });
 
+  test("without OPERATOR_EMAILS, or without email set up, nothing is sent and nothing waits", async () => {
+    const { sent, mail } = mailbox();
+    const nobody = await emailingWatchdog(mail, "");
+    await nobody.proveAt(0);
+    await nobody.flushed();
+    const unset = await emailingWatchdog(mail);
+    await runInDurableObject(unset.stub, (instance: WatchdogDO) => {
+      Reflect.set(instance, "mail", () => undefined);
+    });
+    await unset.proveAt(0);
+    await unset.flushed();
+    expect(sent).toEqual([]);
+  });
+
   test("the operators' email is sent past the instance's daily email ceiling", async () => {
-    const { stub, notifyEnv } = watchdog();
-    const sent: OutgoingEmail[] = [];
-    const inner: EmailSender = {
-      id: "test",
-      async send(email) {
-        sent.push(email);
-        return { ok: true };
-      },
-    };
+    const inner = mailbox();
     // A ceiling of one, already used up today.
     const day = new Date().toISOString().slice(0, 10);
     await env.DB.prepare(
@@ -675,27 +758,14 @@ describe("the heartbeat, end to end", () => {
     )
       .bind(day)
       .run();
-    const mail = withEmailCeiling(inner, env.DB, 1);
+    const mail = withEmailCeiling(inner.mail, env.DB, 1);
     expect(
       (await mail.send({ to: { email: "x@example.com" }, subject: "s", text: "t", html: "h" })).ok,
     ).toBe(false);
-    const operators = {
-      ...notifyEnv(),
-      WATCHDOG: { getByName: () => stub } as unknown as NotifyEnv["WATCHDOG"],
-      OPERATOR_EMAILS: "ops@example.com",
-    };
-    const event: BrigadeEvent = {
-      id: "evt_status_ceiling",
-      type: STATUS_EVENT,
-      source: `brigade://${SYSTEM_WORKSPACE}/watchdog`,
-      workspaceId: SYSTEM_WORKSPACE,
-      time: new Date().toISOString(),
-      actor: { kind: "system", id: "sys_watchdog" },
-      data: { status: "degraded", previous: "ok", reasons: ["d1_failing"] },
-      specversion: "1.0",
-    };
-    await deliver([event], operators, relay().send, mail);
-    expect(sent.map((one) => one.to.email)).toEqual(["ops@example.com"]);
+    const { flushed, proveAt } = await emailingWatchdog(mail);
+    await proveAt(0);
+    await flushed();
+    expect(inner.sent.map((one) => one.to.email)).toEqual(["ops@example.com"]);
   });
 
   test("other system events are acked and never reach a shard", async () => {

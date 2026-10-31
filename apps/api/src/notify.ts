@@ -41,7 +41,6 @@ import { SideConnections, SLACK_CONNECTIONS } from "./side-connections.ts";
 import { asksForSlack } from "./slack.ts";
 import { asksForStatusEmail } from "./status-mail.ts";
 import { asksForWebhookEmail, asksForWebhooks } from "./webhooks.ts";
-import { notifyOperators, type OperatorEnv } from "./notify-operators.ts";
 import {
   HEARTBEAT_EVENT,
   isSystemEvent,
@@ -104,7 +103,6 @@ export type NotifyEnv = EmailEnv &
   SaasEnv &
   DedicatedEnv &
   EmailNotifyEnv &
-  OperatorEnv &
   SlackNotifyEnv &
   StatusNotifyEnv &
   WebhookNotifyEnv & {
@@ -184,8 +182,8 @@ export async function consumeEvents(
     batch.messages.map(async (message) => {
       // The dead-man switch's own events (src/watchdog.ts): never a shard's, never a page.
       if (isSystemEvent(message.body)) {
-        if (message.body.type === STATUS_EVENT) await notifyOperators(message.body, env, mail);
-        else await proveHeartbeat(message.body, env, send);
+        // `brigade.status_changed` is emailed by the watchdog itself (src/notify-operators.ts); nothing to do here.
+        if (message.body.type !== STATUS_EVENT) await proveHeartbeat(message.body, env, send);
         return message.ack();
       }
       const event = parseEvent(message.body);
@@ -377,8 +375,7 @@ export async function consumeDeadLetters(
  * A `brigade.heartbeat` came through the outbox and the Queue: checks the relay is up and takes the send token, and
  * tells the watchdog, which pings the external check. Never throws, and the message is acked either way: a lost heartbeat is a minute of
  * silence, and the next one is already on its way. With it go the beat's deeper checks (Q19): the push providers,
- * through the relay's `GET /health?deep=1`, and one cheap D1 read, side by side. `brigade.status_changed` goes to the
- * operators' email instead (src/notify-operators.ts).
+ * through the relay's `GET /health?deep=1`, and one cheap D1 read, side by side.
  */
 export async function proveHeartbeat(
   event: BrigadeEvent,

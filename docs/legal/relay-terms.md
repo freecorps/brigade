@@ -2,13 +2,13 @@
 > This is a draft of the terms for Freecorps' hosted push relay, written so self-hosted instances have something to
 > read and point at while the relay is built. It has not been reviewed by counsel, it binds no one, and it will be
 > replaced by the final text (on the project's site) before any instance is told to use the hosted relay. Bracketed
-> parts (`[…]`) are still to be filled in. Version: `draft-2026-11`.
+> parts (`[…]`) are still to be filled in: the relay's contact address, the privacy policy and the status page. Version: `draft-2026-11`.
 >
 > Portuguese: [relay-terms.pt-BR.md](relay-terms.pt-BR.md).
 
 # Terms of service of the Brigade push relay
 
-These terms cover the push relay that Freecorps Tecnologia da Informação LTDA ("Freecorps", "we") runs for Brigade instances ("the
+These terms cover the push relay that Freecorps Tecnologia da Informação LTDA, a Brazilian limited liability company (CNPJ 63.113.119/0001-90) ("Freecorps", "we"), runs for Brigade instances ("the
 relay"). They apply to whoever runs an instance and registers it with the relay ("you"). The Brigade software
 itself is under its own open-source licenses (AGPL-3.0 and MIT); these terms are about the service only.
 
@@ -54,10 +54,10 @@ on them (section 7).
 ## 5. What we see and keep
 
 - **About your instance:** its id and public key, the terms version you accepted, your contact address, and counts
-  of what it sent (per minute, kept [30 days]).
+  of what it sent (per minute, kept 30 days).
 - **About phones:** when a phone asks for a handle, its push token (sealed inside the handle, never stored by us
-  separately) and its IP address (in logs kept [7 days]).
-- **About notifications:** the handle, the urgency, the time and Apple's or Google's answer, in logs kept [7 days].
+  separately) and its IP address (in logs kept 7 days).
+- **About notifications:** the handle, the urgency, the time and Apple's or Google's answer, in logs kept 7 days.
   Never their content, which we cannot read.
 
 We do not sell any of it or use it for advertising. We use it to run the relay, to enforce these terms and to answer
@@ -76,21 +76,33 @@ at [address].
 ## 7. Limiting, suspending and ending
 
 - We can limit or suspend an instance that breaks section 4 or puts the relay or the app at risk. Unless the harm is
-  ongoing, we write to the contact address first and give you [7 days] to fix it.
-- You can stop using the relay at any time; ask us at [address] to delete your registration.
-- We can stop offering the relay with [90 days'] notice to every registered contact.
+  ongoing, we write to the contact address first and give you 7 days to fix it.
+- You can stop using the relay at any time; ask us at the contact address (section 11) to delete your registration.
+- We can stop offering the relay with 90 days' notice to every registered contact.
 
 ## 8. Changes to these terms
 
 We publish each new version with its date. For changes that reduce what you get or add obligations, we write to the
-contact address [30 days] before they apply; using the relay after that means you accept them.
+contact address 30 days before they apply; using the relay after that means you accept them.
 
 ## 9. Liability
 
 The relay is provided as is, free of charge. To the extent the law allows, Freecorps is not liable for notifications
-that were delayed, lost or not sent, nor for what follows from them. [Limitation and jurisdiction clauses, to be
-written with counsel; governing law: Brazil, courts of [city].]
+that were delayed, lost or not sent, nor for what follows from them, including lost profits, revenue, goodwill,
+business opportunities or data. Where liability cannot be excluded, it will not exceed BRL 100 in total for all
+claims during the 12 months before the event that gave rise to the claim.
 
-## 10. Contact
+## 10. Law and disputes
 
-[contact address for the relay]
+These terms are governed by the laws of the Federative Republic of Brazil and the State of São Paulo. The United
+Nations Convention on Contracts for the International Sale of Goods does not apply. Before bringing a claim, each
+party makes a good-faith effort to resolve it for at least 30 days. The courts of Campinas, State of São Paulo,
+Brazil, have exclusive jurisdiction.
+
+## 11. Contact
+
+Freecorps Tecnologia da Informação LTDA
+Rua Cecilia Feres Zogbi, 484, Casa 20, Barão Geraldo
+Campinas, SP, 13084-140, Brazil
+
+Questions, legal notices and requests about your registration: [contact address for the relay].

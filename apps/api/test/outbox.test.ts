@@ -117,12 +117,14 @@ describe("OutboxDrain", () => {
         const log = (message: string, fields: Record<string, unknown>) =>
           logs.push({ message, ...fields });
         const never: OutboxSend = () => new Promise(() => {});
-        const drain = new OutboxDrain(sql, never, log, () => 1, 20);
+        const drain = new OutboxDrain(sql, never, log, () => 1, 2000);
         const before = ids(sql);
         expect(await drain.drain(NOW)).toBe(0);
-        // Kept, backed off, and tried again once the backoff ends.
+        // Kept, and backed off from when the send gave up, not from when the drain started: right after the
+        // timeout it does not send again.
         expect(ids(sql)).toEqual(before);
-        expect(drain.retryAt()).toBeGreaterThan(NOW);
+        expect(drain.retryAt()).toBeGreaterThanOrEqual(NOW + 2000 + DRAIN_RETRY_FIRST_MS);
+        expect(await drain.drain(NOW + 2000)).toBe(0);
         const { batches, send } = recorder();
         const later = new OutboxDrain(sql, send, log, () => 1, 20);
         expect(await later.drain(drain.retryAt()!)).toBe(2);

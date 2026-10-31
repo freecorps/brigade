@@ -147,6 +147,7 @@ export class OutboxDrain {
         const rows = this.next();
         if (rows.length === 0) break;
         const last = rows.at(-1)!.seq;
+        const started = Date.now();
         try {
           if (rows.some((row) => row.body !== null)) {
             await within(
@@ -160,7 +161,9 @@ export class OutboxDrain {
             );
           }
         } catch (error) {
-          this.failed(now, error);
+          // From when it failed, not when the drain started: a send that timed out took its whole bound, which
+          // would otherwise eat the first backoff and send again at once.
+          this.failed(now + (Date.now() - started), error);
           return sent;
         }
         // Only after the send resolved. A crash before this line sends the batch again (at-least-once).

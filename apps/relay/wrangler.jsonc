@@ -13,8 +13,15 @@
     "traces": { "enabled": false },
   },
   "upload_source_maps": true,
-  // Production APNs; the app's build sets `aps-environment` to match.
-  "vars": { "APNS_ENVIRONMENT": "production", "APNS_TOPIC": "app.freecorps.brigade" },
+  // Production APNs; the app's build sets `aps-environment` to match. RELAY_TERMS_VERSION is the hosted relay's terms
+  // version a registration must accept (RFC 0015, decision D5). The registry (KV `REGISTRY`) and the
+  // contact code's email (`EMAIL`, `EMAIL_FROM`) are optional and not bound yet: without them `/v1/` answers 503
+  // and `/send` is unchanged (README "Instance registration").
+  "vars": {
+    "APNS_ENVIRONMENT": "production",
+    "APNS_TOPIC": "app.freecorps.brigade",
+    "RELAY_TERMS_VERSION": "draft-2026-11",
+  },
   // Set with `wrangler secret put` from files outside the repository; never in this file. `FCM_SERVICE_ACCOUNT` (the
   // Google service account's JSON key, for Android) is optional: without it the relay serves iPhones only (README).
   "secrets": { "required": ["APNS_KEY", "APNS_KEY_ID", "APNS_TEAM_ID", "RELAY_SEND_TOKEN"] },
@@ -23,7 +30,11 @@
       // `brigade-relay-dev` on workers.dev, for the spike. Every send needs the bearer token.
       "workers_dev": true,
       // Development builds (Xcode, the Simulator) get sandbox device tokens.
-      "vars": { "APNS_ENVIRONMENT": "sandbox", "APNS_TOPIC": "app.freecorps.brigade" },
+      "vars": {
+        "APNS_ENVIRONMENT": "sandbox",
+        "APNS_TOPIC": "app.freecorps.brigade",
+        "RELAY_TERMS_VERSION": "draft-2026-11",
+      },
       "secrets": { "required": ["APNS_KEY", "APNS_KEY_ID", "APNS_TEAM_ID", "RELAY_SEND_TOKEN"] },
     },
   },

@@ -3,7 +3,8 @@
 The push relay (RFC 0006): a Cloudflare Worker that forwards encrypted pushes to APNs (iPhones) and FCM (Android). It
 never sees content, only a device token, an envelope sealed with
 [`@freecorps/brigade-push`](../../packages/push/README.md) and an urgency. For now it is spike S1's relay
-([write-up](../../docs/spikes/s1-apns-encryption.md)) plus FCM: no instance registration, handles or rate limits yet.
+([write-up](../../docs/spikes/s1-apns-encryption.md)) plus FCM, and instance registration (RFC 0015, see "Instance
+registration"); no handles, `/v1/send` or rate limits yet.
 
 | Route                | Response                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -64,6 +65,56 @@ HTTP/1.1, so unlike APNs it also works from `vp dev`.
 4. Set it on the relay as the `FCM_SERVICE_ACCOUNT` secret: the whole JSON text, e.g. in the secrets file passed to
    `wrangler deploy --secrets-file` (as a JSON string value) or with `wrangler secret put FCM_SERVICE_ACCOUNT <
    key.json`. A relay without it still serves iPhones.
+
+## Instance registration
+
+RFC 0015 section 1: each instance has an Ed25519 key pair and an id derived from its first public key
+(`ins_` + 22 base64url characters of its SHA-256). Every `/v1/` call is signed with it: `Brigade-Instance`,
+`Brigade-Key`, `Brigade-Timestamp`, `Brigade-Signature`, made and checked by `signRequest`/`verifyRequest` in
+[`@freecorps/brigade-push`](../../packages/push/src/instance.ts), which documents the signed string. A bad signature
+is `401 bad_signature`, a missing header `401 missing_signature`, a timestamp more than 5 minutes off `401
+stale_timestamp`. Bodies are JSON, at most 8 KB.
+
+| Route                        | Body                         | Answers                                                                                                                                                                                                                                                                                                           |
+| ---------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /v1/instances/contact` | `{ contact }`                | Emails a 6-digit code to `contact` (valid 15 minutes, 5 tries, at most 3 codes an hour per instance): `200 { sent, expiresInSeconds }`; `400 invalid_contact`, `429 too_many_codes` (with `Retry-After`), `502 email_failed`, `503 not_configured` without `EMAIL`/`EMAIL_FROM`                                   |
+| `POST /v1/instances`         | `{ terms, contact, code }`   | Registers the original key: `201 { instance, status, terms, termsCurrent }`, `200` when already registered (and `terms`, if current, is recorded as accepted); `409 terms_outdated { terms }` unless `terms` is `RELAY_TERMS_VERSION`; `400 code_invalid { triesLeft }` or `code_expired`; `403 instance_revoked` |
+| `POST /v1/instances/keys`    | `{ add?, retire? }`          | Signed with a key in the record. Adds a raw public key (base64url, at most 3 keys, `409 too_many_keys`), retires one other than the signer's (`409 cannot_retire_signer`, `400 unknown_key`): `200 { instance, keys }`                                                                                            |
+| `GET /v1/instances/me`       | none (signed as empty bytes) | `200 { instance, status, terms, termsCurrent }`; `403 instance_unregistered` or `instance_revoked`                                                                                                                                                                                                                |
+
+Every route answers `503 not_configured` without the `REGISTRY` binding, and `503 registry_unavailable` when KV
+fails: registration and anything that grants a capability fail closed. Only the send path's revocation check
+(`isRevoked` in `src/registry.ts`, for `/v1/send` later) fails open, so a KV outage never stops a page. Records are
+cached per isolate for 60 s, so a revocation takes up to a minute to apply. `/send` and `/health` do not use any of
+this.
+
+**Closed registration** (`RELAY_REGISTRATION=closed`, a company's own relay): `POST /v1/instances` and
+`/v1/instances/contact` answer `403 registration_closed`. The setup script writes the instance's record directly:
+
+```bash
+# Key `instance:<instance id>`; the value is the record. `keys` holds the raw public key, base64url.
+bunx wrangler kv key put --binding REGISTRY --remote "instance:ins_AAAAAAAAAAAAAAAAAAAAAA" \
+  '{"status":"registered","keys":["<public key>"],"terms":"closed","contact":null,"registeredAt":"2026-11-01T00:00:00.000Z"}'
+```
+
+Revoking is the same record with `"status":"revoked"` and `"revokedAt"`. Pending codes live at `code:<instance id>`
+(hashed with the instance id, expiring after an hour).
+
+### Bindings to create
+
+None are in `wrangler.jsonc` yet, since creating them needs the Cloudflare account's owner and production deploys on
+merge. Until they are added `/v1/` answers `503 not_configured`.
+
+1. A KV namespace for each environment (`bunx wrangler kv namespace create brigade-relay-registry`, and `-dev`),
+   bound as `REGISTRY`: `"kv_namespaces": [{ "binding": "REGISTRY", "id": "<namespace id>" }]` at the top level and
+   under `env.dev`.
+2. For the hosted relay's contact code: the `send_email` binding `"send_email": [{ "name": "EMAIL" }]` and the
+   `EMAIL_FROM` var or secret, a bare address on a domain onboarded to Cloudflare Email Sending (as `apps/api`).
+   An own relay with closed registration needs neither.
+3. `RELAY_TERMS_VERSION` is already a var (`draft-2026-11`, RFC 0015 decision D5); `RELAY_REGISTRATION` is
+   `open` unless set to `closed`.
+
+Then `vp run cf-typegen`, since the generated `Env` changes.
 
 ## Configuration
 

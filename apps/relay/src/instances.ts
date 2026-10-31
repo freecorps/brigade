@@ -177,7 +177,7 @@ async function requestCode(
       caller.now,
     );
   } catch (error) {
-    // The instance's object did not answer: no code was stored, so none goes out and the slot goes back.
+    // The instance's object did not answer or could not keep the code: none goes out, and the slot goes back.
     await release();
     throw error;
   }

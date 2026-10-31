@@ -93,6 +93,7 @@ export class RegistryDO extends DurableObject {
     // Check and update with no await in between, so no other call runs inside them; only the alarm is awaited.
     const allowed = this.canRequestCode(signer, now);
     if (!allowed.ok) return allowed;
+    const previous = this.ctx.storage.kv.get<PendingCode>("code");
     this.ctx.storage.kv.put("sent", [...this.recentSends(now, HOUR_MS), now]);
     const pending: PendingCode = {
       contact,
@@ -103,7 +104,17 @@ export class RegistryDO extends DurableObject {
     };
     this.ctx.storage.kv.put("code", pending);
     // An instance that never registers leaves nothing behind (`alarm`).
-    await this.ctx.storage.setAlarm(now + HOUR_MS);
+    try {
+      await this.ctx.storage.setAlarm(now + HOUR_MS);
+    } catch (error) {
+      // No code goes out, so the instance's count and its previous code are as they were.
+      const sent = this.ctx.storage.kv.get<number[]>("sent") ?? [];
+      const index = sent.lastIndexOf(now);
+      if (index !== -1) this.ctx.storage.kv.put("sent", sent.toSpliced(index, 1));
+      if (previous === undefined) this.ctx.storage.kv.delete("code");
+      else this.ctx.storage.kv.put("code", previous);
+      throw error;
+    }
     return { ok: true };
   }
 

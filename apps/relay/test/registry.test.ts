@@ -35,7 +35,9 @@ function fakeRegistry() {
         storage: {
           kv,
           setAlarm: async (at: number) => {
-            if (registry.failingAlarms) throw new Error("alarm not set");
+            if (registry.failingAlarms === true || registry.failingAlarms === name) {
+              throw new Error("alarm not set");
+            }
             alarms.set(name, at);
           },
           deleteAll: async () => {
@@ -51,8 +53,8 @@ function fakeRegistry() {
   };
   const registry = {
     failing: false,
-    /** `setAlarm` throws, as storage that cannot be written would. */
-    failingAlarms: false,
+    /** `setAlarm` throws, as storage that cannot be written would: on every object, or on the one named. */
+    failingAlarms: false as boolean | string,
     /** Methods that throw as an unreachable object would, while the others answer. */
     failingMethods: new Set<string>(),
     /** How many times each method was called, on any object. */
@@ -890,6 +892,21 @@ describe("cache lifetime and failed alarms", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test("a code whose alarm could not be set leaves the instance's count and code as they were", async () => {
+    const { registry, email, askCode } = setup();
+    const key = await generateInstanceKey();
+    registry.failingAlarms = `instance:${key.instance}`;
+    expect((await askCode(key)).status).toBe(503);
+    expect(email.sent).toEqual([]);
+    const storage = registry.storage(`instance:${key.instance}`);
+    expect(storage.get("sent")).toEqual([]);
+    expect(storage.get("code")).toBeUndefined();
+    // The address got no code either, so its slot went back.
+    expect(registry.storage(await contactObject("oncall@example.com")).get("sent")).toEqual([]);
+    registry.failingAlarms = false;
+    expect((await askCode(key)).status).toBe(200);
   });
 
   test("an address slot whose alarm could not be set goes back", async () => {

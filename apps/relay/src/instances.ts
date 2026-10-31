@@ -93,9 +93,14 @@ export async function instanceRoutes(
   // for or guesses, and how many object reads it forces (a key a record does not list is read again each time).
   if (env.CODE_LIMIT) {
     const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
-    if (!(await env.CODE_LIMIT.limit({ key: ip })).success) {
-      return json({ error: "rate_limited" }, 429, { "Retry-After": "60" });
+    let allowed = true;
+    try {
+      allowed = (await env.CODE_LIMIT.limit({ key: ip })).success;
+    } catch (error) {
+      // Best effort, like the binding itself: a limiter that fails lets the call through to the object's own limits.
+      console.error(JSON.stringify({ message: "rate limiter failed", error: String(error) }));
     }
+    if (!allowed) return json({ error: "rate_limited" }, 429, { "Retry-After": "60" });
   }
   const bytes = await readBody(request);
   if (bytes === null) return json({ error: "invalid_body" }, 400);

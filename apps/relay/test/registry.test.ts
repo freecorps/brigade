@@ -822,6 +822,16 @@ describe("limits on codes", () => {
     expect((await register(other, "c@example.com")).status).toBe(201);
     expect((await call(other, "GET", "/v1/instances/me")).status).toBe(200);
   });
+
+  test("a rate limiter that fails lets the call through to the object's own limits", async () => {
+    const limiter = {
+      async limit(): Promise<{ success: boolean }> {
+        throw new Error("rate limiter unavailable");
+      },
+    };
+    const { askCode } = setup({ CODE_LIMIT: limiter });
+    expect((await askCode(await generateInstanceKey())).status).toBe(200);
+  });
 });
 
 describe("the per-isolate cache", () => {

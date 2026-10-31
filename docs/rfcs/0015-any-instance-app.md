@@ -38,6 +38,10 @@ Instance ──(5) POST /v1/send { handle, envelope, … }, signed with the inst
 
 ### 1. Instance identity on the relay
 
+Built (apps/relay `src/instances.ts`, `src/registry.ts`; signing in `packages/push` `src/instance.ts`): the signed
+`/v1/instances` routes, the registry in `RegistryDO`, codes by email and the limits below. Handles and `/v1/send` come
+next.
+
 - **The instance key.** Each instance has an Ed25519 key pair; the private key is a secret
   (`RELAY_INSTANCE_KEY`, PKCS#8, base64url), made by the setup script. Workers' WebCrypto signs with Ed25519.
 - **The instance id** is derived from the first public key: `ins_` + base64url(SHA-256(publicKey))[0..22]. Stable for
@@ -352,8 +356,8 @@ does it.
 
 ## Order of work
 
-1. Relay: `/v1/instances` (with the emailed code and closed registration), `/v1/handles`, `/v1/send`, signatures,
-   registry in a Durable Object, limits; tests with fake APNs/FCM.
+1. Relay: `/v1/instances` (with the emailed code and closed registration), signatures and the registry in a
+   Durable Object (built); then `/v1/handles`, `/v1/send` and their limits, tested with fake APNs/FCM.
 2. Envelope v2 (sealed `iat`, `origin`, `urgency`; key id) in `packages/push`, the iOS extension and Android; the
    app accepts v1 and v2.
 3. Instance: `device.register` with `handle`/`tag`, the notifier on `/v1/send`, `/config` additions, watchdog

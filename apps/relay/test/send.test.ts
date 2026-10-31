@@ -2,6 +2,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { generateRecipient, sealPush, toBase64url } from "@freecorps/brigade-push";
 import { describe, expect, test } from "vite-plus/test";
 import { handle, type RelayEnv } from "../src/index.ts";
+import { hang } from "./hang.ts";
 
 const env: RelayEnv = {
   APNS_ENVIRONMENT: "sandbox",
@@ -87,6 +88,15 @@ describe("POST /send", () => {
     expect(response.status).toBe(502);
     expect(await response.json()).toMatchObject({ error: "apns_unreachable" });
   });
+
+  test("APNs that never answers is a 502 apns_unreachable within the API's own timeout", async () => {
+    const started = Date.now();
+    const response = await handle(post(await sendBody()), env, hang);
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ error: "apns_unreachable" });
+    // Under the API's 10 s for the whole call (apps/api RELAY_TIMEOUT_MS).
+    expect(Date.now() - started).toBeLessThan(9000);
+  }, 15_000);
 
   test("needs the bearer token", async () => {
     const apns = fakeApns();

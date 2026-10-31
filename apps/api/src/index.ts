@@ -63,6 +63,7 @@ import { pruneEmailDays } from "./email-ceiling.ts";
 import { instanceAccess, serveConfig, type AccessEnv } from "./sign-up.ts";
 import { BOOTSTRAP_PATH, bootstrapFirstUser } from "./bootstrap.ts";
 import { forgetSessionEnd, recordSessionEnd, sweepSessionEnds } from "./session-end.ts";
+import { within } from "./deadline.ts";
 import { DEVICES_REGISTER_PATH, registerDevices } from "./device-route.ts";
 import {
   IDEMPOTENCY_KEY_HEADER,
@@ -1529,6 +1530,9 @@ const knownWorkspaces = new Map<string, number>();
 const KNOWN_WORKSPACE_MS = 10 * 60 * 1000;
 const KNOWN_WORKSPACES_MAX = 10_000;
 
+/** How long `workspaceExists` waits on D1 before failing like a D1 error. */
+const WORKSPACE_LOOKUP_TIMEOUT_MS = 1500;
+
 /**
  * Whether a Better Auth organization (a workspace) has this id. Only a hit is cached: a made-up id costs one
  * indexed D1 read, and no Durable Object.
@@ -1540,10 +1544,13 @@ export async function workspaceExists(
 ): Promise<boolean> {
   const expires = knownWorkspaces.get(id);
   if (expires !== undefined && expires > now) return true;
-  const row = await db
-    .prepare('select 1 as found from "organization" where "id" = ?')
-    .bind(id)
-    .first();
+  // Bounded: alert intake and heartbeat pings wait on it, and their callers fail open on an error (a D1 that hangs
+  // must not drop an alert, or page someone for a beat that came in).
+  const row = await within(
+    db.prepare('select 1 as found from "organization" where "id" = ?').bind(id).first(),
+    WORKSPACE_LOOKUP_TIMEOUT_MS,
+    "workspace lookup",
+  );
   if (!row) {
     knownWorkspaces.delete(id);
     return false;

@@ -201,7 +201,9 @@ Decided with the drain (`apps/api/src/outbox.ts`):
   per alarm run; more waits for the next run, set for right away. An event over 120 KB (the Queue's message limit is
   128 KB) is logged and dropped, so it cannot block the shard; no event comes near it today.
 - **Failure.** A failed send keeps every row and backs off from 1 s, doubling to 5 minutes, with jitter (half to all
-  of the step) so shards that failed together do not retry together. The backlog is logged on every failure, as an
+  of the step) so shards that failed together do not retry together. A send the Queue has not answered in 10 s
+  (`DRAIN_SEND_TIMEOUT_MS`) counts as failed, so a Queue that hangs never holds the shard's alarm, and the escalation
+  levels it fires; the batch may have gone, and goes again (consumers de-duplicate). The backlog is logged on every failure, as an
   error past 1000 rows.
 - **At-least-once.** If the object dies after a send resolved and before its rows are deleted, the rows go again
   with the same `event.id`: the idempotency key. The message body is the envelope as written, as JSON.

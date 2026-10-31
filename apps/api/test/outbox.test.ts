@@ -109,6 +109,30 @@ describe("OutboxDrain", () => {
     );
   });
 
+  test("a Queue that never answers is a failed send that backs off, not a drain that hangs", async () => {
+    await withDrain(
+      2,
+      async () => {},
+      async (_drain, sql, logs) => {
+        const log = (message: string, fields: Record<string, unknown>) =>
+          logs.push({ message, ...fields });
+        const never: OutboxSend = () => new Promise(() => {});
+        const drain = new OutboxDrain(sql, never, log, () => 1, 2000);
+        const before = ids(sql);
+        expect(await drain.drain(NOW)).toBe(0);
+        // Kept, and backed off from when the send gave up, not from when the drain started: right after the
+        // timeout it does not send again.
+        expect(ids(sql)).toEqual(before);
+        expect(drain.retryAt()).toBeGreaterThanOrEqual(NOW + 2000 + DRAIN_RETRY_FIRST_MS);
+        expect(await drain.drain(NOW + 2000)).toBe(0);
+        const { batches, send } = recorder();
+        const later = new OutboxDrain(sql, send, log, () => 1, 20);
+        expect(await later.drain(drain.retryAt()!)).toBe(2);
+        expect(batches).toEqual([before]);
+      },
+    );
+  });
+
   test(`batches hold at most ${DRAIN_BATCH} events and go in order; one run sends at most ${DRAIN_BATCHES_PER_RUN}`, async () => {
     const { batches, send } = recorder();
     await withDrain(250, send, async (drain, sql) => {

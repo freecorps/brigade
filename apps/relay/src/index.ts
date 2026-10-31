@@ -18,6 +18,7 @@ import {
   type ServiceAccount,
 } from "./fcm.ts";
 import { deepHealth } from "./deep-health.ts";
+import { sendWithin, within } from "./deadline.ts";
 
 /**
  * Spike S1 relay (RFC 0006): `POST /send` takes a device token and an already encrypted envelope and forwards
@@ -67,6 +68,19 @@ const ENVIRONMENTS: readonly ApnsEnvironment[] = ["sandbox", "production"];
 const MAX_TTL_SECONDS = 30 * 24 * 60 * 60;
 /** A request body far above any valid send: a device token and a sealed 2 KB plaintext. */
 const MAX_BODY_BYTES = 8 * 1024;
+/**
+ * How long APNs or FCM gets to answer one send: under the API's own 10 s for the whole call (apps/api
+ * `RELAY_TIMEOUT_MS`), token exchange included, so a provider that hangs is a 502 the API can retry, not a call it
+ * abandons.
+ */
+const PROVIDER_TIMEOUT_MS = 5000;
+/**
+ * The whole of one FCM send, the retry after a 401 included (another token exchange and send): each step gets what is
+ * left of it, so the call stays under the API's 10 s.
+ */
+const FCM_CALL_BUDGET_MS = 9000;
+/** The least of that budget worth a retry after a 401; with less, the instance retries instead. */
+const FCM_RETRY_MIN_MS = 1000;
 
 // One per isolate: the provider token is the same for every request (APNs throttles frequent refreshes).
 const tokens = new ApnsTokenCache();
@@ -208,7 +222,7 @@ export async function handle(
   const started = Date.now();
   let response: Response;
   try {
-    response = await send(apnsRequest);
+    response = await sendWithin(send, apnsRequest, PROVIDER_TIMEOUT_MS);
   } catch (error) {
     // Never logs the device token or the envelope.
     console.error(JSON.stringify({ message: "APNs fetch failed", error: String(error) }));
@@ -254,11 +268,16 @@ async function sendFcm(
     return json({ error: "invalid_body", detail: String(error) }, 400);
   }
   const started = Date.now();
+  const left = () => Math.max(0, FCM_CALL_BUDGET_MS - (Date.now() - started));
   let response: Response | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
     let accessToken: string;
     try {
-      accessToken = await googleTokens.get(account, Date.now(), send);
+      accessToken = await within(
+        googleTokens.get(account, Date.now(), send),
+        left(),
+        () => new GoogleAuthError("unreachable", "token exchange: out of time"),
+      );
     } catch (error) {
       const unreachable = error instanceof GoogleAuthError && error.kind === "unreachable";
       // Never the assertion or a token.
@@ -276,7 +295,7 @@ async function sendFcm(
       return json({ error: "invalid_body", detail: String(error) }, 400);
     }
     try {
-      response = await send(request);
+      response = await sendWithin(send, request, Math.min(PROVIDER_TIMEOUT_MS, left()));
     } catch (error) {
       // Never logs the registration token or the envelope.
       console.error(JSON.stringify({ message: "FCM fetch failed", error: String(error) }));
@@ -284,7 +303,16 @@ async function sendFcm(
     }
     if (response.status !== 401) break;
     await googleTokens.clear(accessToken);
-    if (attempt === 0) await response.body?.cancel();
+    if (attempt === 1) break;
+    await response.body?.cancel();
+    // Too little time left for another exchange and send. Not the 401 itself, which the instance takes as a refusal
+    // for good: the token was dropped above, so the instance's retry gets a fresh one.
+    if (left() < FCM_RETRY_MIN_MS) {
+      return json(
+        { error: "fcm_unreachable", detail: "access token refused, no time left to retry" },
+        502,
+      );
+    }
   }
   const answer = response!;
   const text = await answer.text();

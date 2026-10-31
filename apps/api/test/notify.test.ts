@@ -38,6 +38,7 @@ import {
   MAX_PAGE_ATTEMPTS,
   QUEUE_MAX_RETRIES,
   retryDelay,
+  SHARD_CALL_TIMEOUT_MS,
   type Fetch,
   type NotifyEnv,
 } from "../src/notify.ts";
@@ -1362,6 +1363,28 @@ describe("when paging fails (the paging path's fallback)", () => {
     expect((await deliver(event, relay().send, { environment: broken })).retried).toEqual([
       { msgId: "msg-0", delaySeconds: retryDelay(1) },
     ]);
+  });
+
+  test("a shard that never answers is retried like an unreachable one, without holding the batch", async () => {
+    const ws = await workspace();
+    const { event } = await ws.declare(MONITOR_ACTOR);
+    const hung = {
+      WORKSPACE: { getByName: () => ({ planPage: () => new Promise(() => {}) }) },
+    } as unknown as Parameters<typeof consumeEvents>[1];
+    vi.useFakeTimers();
+    try {
+      const result = deliver(event, relay().send, { environment: hung });
+      await vi.advanceTimersByTimeAsync(SHARD_CALL_TIMEOUT_MS);
+      expect((await result).retried).toEqual([{ msgId: "msg-0", delaySeconds: retryDelay(1) }]);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(logged()).toContainEqual(
+      expect.objectContaining({
+        message: "event handling failed",
+        error: expect.stringContaining("planPage: no answer"),
+      }),
+    );
   });
 
   test("the last delivery before the dead-letter queue logs `page dead-lettered` with the event and incident", async () => {

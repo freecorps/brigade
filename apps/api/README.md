@@ -584,13 +584,26 @@ deploy that includes it, since the subscribe, manage and notification queries re
 
 ## Custom domains
 
-RFC 0012 "Custom domains". Optional: a status page served at a workspace's own domain through Cloudflare for SaaS
-custom hostnames. The API keeps the domains (`src/status-domain.ts`, the client in `src/status-domain-cf.ts`, the
-alarm's re-checks in `src/status-domain-check.ts`) and renders the page for the edge (`src/status-pages.ts`, the
-`StatusPages` entrypoint); a separate Worker, `brigade-status-edge` ([apps/status-edge](../status-edge/README.md)),
-takes the custom hostnames' traffic. The API Worker's own `fetch` never serves a custom hostname. Off until all of
-these exist; the setup wizard will do the same steps. Nothing here runs on its own, and Brigade never creates these
-resources:
+RFC 0012 "Custom domains". Optional: a status page served at a workspace's own domain, in either of two ways, or
+both:
+
+- **Cloudflare for SaaS custom hostnames**: any domain an owner points a CNAME at. For an instance that serves other
+  people's domains; it needs a zone of its own (below).
+- **Dedicated hostnames** ("Dedicated hostnames" below): a few hostnames the operator attaches to the edge Worker
+  themselves, such as `status.example.com` beside a dashboard at `brigade.example.com`. For an instance a company runs
+  for itself; no extra zone, token or Cloudflare API call.
+
+The API keeps the domains (`src/status-domain.ts`, the Cloudflare client in `src/status-domain-cf.ts`, the dedicated
+hostnames' check in `src/status-domain-edge.ts`, the alarm's re-checks in `src/status-domain-check.ts`) and renders
+the page for the edge (`src/status-pages.ts`, the `StatusPages` entrypoint); a separate Worker,
+`brigade-status-edge` ([apps/status-edge](../status-edge/README.md)), takes the custom hostnames' traffic. The API
+Worker's own `fetch` never serves a custom hostname. Both ways need `DASHBOARD_URL` (already set for email links; its
+hostname is never a page's) and **D1** `migrations/0015_status_custom_host.sql` (which workspace holds each
+hostname). Nothing here runs on its own, and Brigade never creates these resources.
+
+### Cloudflare for SaaS
+
+Off until all of these exist; the setup wizard will do the same steps:
 
 1. **A zone of its own for Cloudflare for SaaS** on the instance's account, with Cloudflare for SaaS enabled. Never
    the dashboard's zone or the operator's main zone: step 3 routes every hostname on it (`*/*`) to the edge Worker,
@@ -604,14 +617,11 @@ resources:
 4. **An API token** scoped to "SSL and Certificates: Edit" on that zone alone (custom hostnames need nothing more).
 5. **The settings**, each with `wrangler secret put <NAME>` on the API (add `--env` for dev or staging):
 
-   | Secret                    | What                                                        |
-   | ------------------------- | ----------------------------------------------------------- |
-   | `CF_SAAS_TOKEN`           | The token from step 4                                       |
-   | `CF_ZONE_ID`              | The zone's id (step 1)                                      |
-   | `CF_SAAS_FALLBACK_ORIGIN` | The fallback origin's hostname (step 2), shown to owners    |
-   | `DASHBOARD_URL`           | Already set for email links; its hostname is never a page's |
-
-6. **D1**: apply `migrations/0015_status_custom_host.sql` (which workspace holds each hostname).
+   | Secret                    | What                                                     |
+   | ------------------------- | -------------------------------------------------------- |
+   | `CF_SAAS_TOKEN`           | The token from step 4                                    |
+   | `CF_ZONE_ID`              | The zone's id (step 1)                                   |
+   | `CF_SAAS_FALLBACK_ORIGIN` | The fallback origin's hostname (step 2), shown to owners |
 
 Owners and admins then add a domain on the dashboard's Custom domain card and create the records it shows; the shard
 checks again on its own (pending: from a minute, backing off to hourly, for 7 days; active: daily), and "Check again"
@@ -626,7 +636,46 @@ A domain left pending or failed for more than 7 days is freed on its own: anothe
 Cloudflare and takes it over (RFC 0012 "Custom domains").
 
 **Turning it off** means removing the `*/*` route (or the edge Worker) as well as the three secrets: with the
-secrets gone the dashboard hides the card, but the route would keep answering every hostname on the zone.
+secrets gone the dashboard hides the card (unless dedicated hostnames are set), but the route would keep answering
+every hostname on the zone. A domain added this way while it was on can then be neither checked nor removed
+(`503 not_configured`) until the secrets are back.
+
+### Dedicated hostnames
+
+For each hostname, with its zone active on the instance's Cloudflare account:
+
+1. **Deploy the edge Worker**: the API first, then `apps/status-edge` (its `STATUS` binding takes the API's namespace
+   id).
+2. **Attach the hostname to it as a Custom Domain**: the dashboard's Workers & Pages → `brigade-status-edge` →
+   Settings → Domains & Routes → Add → Custom Domain. Cloudflare creates the DNS record and the certificate; the
+   hostname must not have a DNS record of its own already. Leave `wrangler.jsonc` without `routes`: with none,
+   `wrangler deploy` publishes none and keeps the dashboard's Custom Domains, while a `custom_domain` route there would
+   replace them with the file's.
+3. **List it** on the API, comma-separated: `wrangler secret put STATUS_HOSTNAMES` (add `--env` for dev). A secret, so
+   no hostname is in the repository.
+
+A listed hostname may sit under the instance's own domain (a sibling of the dashboard's hostname), or be the apex of
+a domain, since no CNAME is involved; it may never be the dashboard's hostname, anything under it or a parent of it,
+nor in the SaaS zone. Entries that break those rules, or are not hostnames, are left out and logged ("a
+STATUS_HOSTNAMES entry is left out").
+
+The dashboard's Custom domain card lists the hostnames no other workspace holds, or holds but could have taken over
+(pending for more than 7 days); an owner or admin picks one with a press, and the first workspace to pick it holds
+it. Every workspace sees the list, so on an instance whose workspaces are not all your own, any of them can pick a
+hostname first. Brigade then reaches `https://<hostname>/robots.txt`: the edge
+answers that itself with an `X-Brigade-Status-Edge` header, and the domain is active at once. Anything else answering
+there (not attached yet, another site, an error page, no answer) leaves it pending ("not attached"), checked again
+like a Cloudflare one, and "Check again" asks at once. An active domain is never set back by one answer (a WAF rule's
+403, a rate limit, a timeout would take a working page down): the shard's alarm sets it back to pending only after 8
+misses in a row, about two hours, which is how a detached Custom Domain shows on the dashboard. Removing it deletes nothing at Cloudflare:
+detaching the Custom Domain is the operator's. A hostname left pending for more than 7 days can be taken over like any
+other.
+
+Removing a hostname from `STATUS_HOSTNAMES` hides it from the card for new picks; a page that already has it keeps it
+until it is removed there, and stops serving once the Custom Domain is detached. **Turning it off** means removing the
+pages' domains on the card first, then the secret and the Custom Domains: with no hostname listed (and no Cloudflare
+for SaaS) the card is hidden and its routes answer `503 not_configured`, so a domain left on a page could no longer be
+removed there.
 
 ## Webhooks
 

@@ -11,8 +11,14 @@ export type Status_Domain_CardInputs = {
 * | --- | --- |
 * | "title" | "Custom domain" |
 * | "description" | "Serve the status page at your own address, such as status.example.com. Cloudflare issues its certificate once the DNS records below are in place." |
+* | "description_dedicated" | "Serve the status page at your own address, on a domain this Brigade instance is set up to serve." |
 * | "not_set_up" | "Set up the status page first to give it a domain." |
 * | "none" | "The status page has no domain of its own." |
+* | "none_free" | "Every domain this Brigade instance is set up to serve is in use by another status page." |
+* | "listed_title" | "Ready on this instance" |
+* | "listed_hint" | "Set up by whoever runs this Brigade instance, so there are no DNS records to create." |
+* | "use" | "Use" |
+* | "other_title" | "Or a domain of your own" |
 * | "viewer" | "Owners and admins can add or remove the domain." |
 * | "hostname_label" | "Domain" |
 * | "hostname_hint" | "A subdomain you control, such as status.example.com. Point a CNAME at {name}." |
@@ -23,6 +29,7 @@ export type Status_Domain_CardInputs = {
 * | "state_failed" | "Failed" |
 * | "explain_pending" | "Create these DNS records where your domain is hosted, then check again. It can take a few minutes after the records are in place." |
 * | "explain_active" | "The status page is served at this domain." |
+* | "explain_pending_dedicated" | "Brigade can't reach the status page at this domain yet. Check again once it's attached." |
 * | "explain_failed" | "Cloudflare couldn't verify the domain. Check the records, then check again, or remove the domain and add it again." |
 * | "records_title" | "DNS records to create" |
 * | "record_name" | "Name" |
@@ -40,6 +47,7 @@ export type Status_Domain_CardInputs = {
 * | "error_hostname_taken" | "That domain is already in use by another status page." |
 * | "error_domain_exists" | "The status page already has a domain. Remove it first." |
 * | "error_not_configured" | "This Brigade instance has no custom domains set up." |
+* | "error_not_listed" | "This Brigade instance only serves the domains whoever runs it set up." |
 * | "error_forbidden" | "Only owners and admins can change the domain." |
 * | "error_rate_limited" | "Too many changes in a minute. Try again shortly." |
 * | "error_not_found" | "The domain is no longer on the status page." |
@@ -55,6 +63,7 @@ export type Status_Domain_CardInputs = {
 * | "reason_blocked" | "Cloudflare blocked this domain. Remove it, or use another one." |
 * | "reason_deleted" | "Cloudflare no longer has this domain. Remove it and add it again." |
 * | "reason_other" | "Cloudflare reported a problem with the domain. Check the records, then check again." |
+* | "reason_not_attached" | "The domain doesn't reach this instance's status page edge. Whoever runs Brigade needs to attach it to the brigade-status-edge Worker as a Custom Domain." |
 * | "error_failed" | "Couldn't save. Try again." |
 * | * | "Custom domain" |
 *

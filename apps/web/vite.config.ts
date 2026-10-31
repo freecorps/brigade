@@ -43,6 +43,7 @@ function localSecrets(): Record<string, string> {
     "MAX_MONITORS",
     "SIGNUP",
     "BOOTSTRAP_TOKEN",
+    "STATUS_HOSTNAMES",
   ];
   return Object.fromEntries(
     names.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : [])),

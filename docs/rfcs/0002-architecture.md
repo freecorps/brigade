@@ -51,8 +51,9 @@ and pushes it from its alarm, so it lags by seconds, longer while a push fails a
 apps/
   api/         Cloudflare Worker: HTTP/WS entry, Durable Objects, queue consumers      (AGPL-3.0)
   relay/       Push relay Worker (RFC 0006)                                            (AGPL-3.0)
-  status-edge/ Status page edge Worker on the Cloudflare for SaaS zone: serves a page  (AGPL-3.0)
-               at its own domain through the API's StatusPages entrypoint (RFC 0012)
+  status-edge/ Status page edge Worker on the Cloudflare for SaaS zone and dedicated   (AGPL-3.0)
+               hostnames: serves a page at its own domain through the API's
+               StatusPages entrypoint (RFC 0012)
   web/         Dashboard SPA (React + Vite) on Workers static assets, plus a small     (AGPL-3.0)
                Worker that forwards /api/* to the api Worker (service binding)
   mobile/      Expo app (iOS/Android)                                                  (AGPL-3.0)

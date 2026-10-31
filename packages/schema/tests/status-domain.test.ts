@@ -167,6 +167,43 @@ describe("status page domains", () => {
     expect(store.scan("status_domain")).toEqual([]);
   });
 
+  test("a dedicated hostname has no Cloudflare id and no records; a check about a Cloudflare one changes nothing", () => {
+    const store = ready();
+    const dedicated = {
+      hostname: "status.acme.test",
+      cloudflareId: null,
+      state: "pending",
+      records: [],
+      error: "not_attached",
+    };
+    expect(run(store, "statusDomain.add", dedicated)).toMatchObject({
+      ok: true,
+      events: [{ type: "status_domain.added", data: { hostname: "status.acme.test" } }],
+    });
+    expect(store.get("status_domain", "status_domain")).toMatchObject({
+      cloudflareId: null,
+      records: [],
+      error: "not_attached",
+    });
+    const checked = { ...dedicated, state: "active", error: null };
+    // An answer about a Cloudflare hostname is about another domain than this one.
+    expect(run(store, "statusDomain.check", { ...checked, cloudflareId: "cfh-1" })).toMatchObject({
+      error: { code: "not_found" },
+    });
+    expect(run(store, "statusDomain.check", checked)).toMatchObject({
+      ok: true,
+      events: [{ data: { state: "active", previous: "pending" } }],
+    });
+    expect(store.get("status_domain", "status_domain")).toMatchObject({
+      state: "active",
+      error: null,
+    });
+    // An empty id is neither: refused.
+    expect(run(ready(), "statusDomain.add", { ...dedicated, cloudflareId: "" })).toMatchObject({
+      error: { code: "invalid_args" },
+    });
+  });
+
   test("only hostnames: no address, no single label, no bad label", () => {
     expect(isStatusHostname("status.acme.test")).toBe(true);
     expect(isStatusHostname("xn--ls8h.test")).toBe(true);

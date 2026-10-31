@@ -308,7 +308,10 @@ export class WorkspaceDO extends DurableObject<Env> {
   private readonly invitations: Invitations;
   private readonly status: StatusPublisher;
   private readonly statusMail: StatusMailer;
-  /** The status page's own domain, re-checked at Cloudflare from the alarm (src/status-domain-check.ts). */
+  /**
+   * The status page's own domain, re-checked from the alarm (src/status-domain-check.ts): at Cloudflare, or at the
+   * edge for a dedicated hostname.
+   */
   private readonly domains: DomainChecker;
   /** The next reminder of follow-ups due (`nextReminder`), or undefined when it must be read again. */
   private reminderAt: { at: number | null } | undefined;
@@ -443,7 +446,8 @@ export class WorkspaceDO extends DurableObject<Env> {
       committed: (version, changes) => this.broadcast(version, changes, undefined),
       wake: (at) => this.wake(at, "status page push"),
     });
-    // The status page's own domain (RFC 0012 "Custom domains"): asked about again until Cloudflare settles it.
+    // The status page's own domain (RFC 0012 "Custom domains"): asked about again until Cloudflare settles it, or the
+    // edge answers at a dedicated hostname.
     this.domains = new DomainChecker({
       shard: this.shard,
       sql: ctx.storage.sql,
@@ -756,7 +760,7 @@ export class WorkspaceDO extends DurableObject<Env> {
 
   /**
    * A change to the status page's own domain (RPC from src/status-domain.ts, once the route checked the role in D1 and
-   * Cloudflare answered): `statusDomain.add`, `.check` or `.remove` as the member, with its event. A token the shard
+   * Cloudflare, or the edge at a dedicated hostname, answered): `statusDomain.add`, `.check` or `.remove` as the member, with its event. A token the shard
    * no longer backs and a member removed within the tombstone are refused as for the page's settings.
    */
   async changeStatusDomain(
@@ -789,14 +793,14 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /**
-   * Gives up the page's domain to another workspace's takeover (RPC from src/status-domain.ts, once Cloudflare's
+   * Gives up the page's domain to another workspace's takeover (RPC from src/status-domain.ts, before Cloudflare's
    * hostname is deleted): `statusDomain.release` as `ACCOUNT_ACTOR`, with its event, only while the domain is still
-   * `cloudflareId` and unverified since `before` or earlier.
+   * `cloudflareId` (null: a dedicated hostname) and unverified since `before` or earlier.
    */
   releaseStatusDomain(
     workspaceId: string,
     hostname: string,
-    cloudflareId: string,
+    cloudflareId: string | null,
     before: number,
   ): { ok: true } | { ok: false; code: string } {
     if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };

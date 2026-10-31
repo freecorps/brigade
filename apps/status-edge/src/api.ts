@@ -7,6 +7,12 @@ import { STATUS_SLUG } from "@freecorps/brigade-schema";
 /** The KV key a custom hostname's lookup lives under, in the API's `STATUS` namespace. */
 export const hostKey = (hostname: string) => `host:${hostname}`;
 
+/**
+ * On every answer this Worker makes itself: how the API tells, reaching `/robots.txt` at a dedicated hostname
+ * (apps/api src/status-domain-edge.ts), that this Worker answers there, whatever page it would serve.
+ */
+export const EDGE_HEADER = "X-Brigade-Status-Edge";
+
 /** Which page a custom hostname serves: the slug, and the workspace whose page it must still be. */
 export type StatusHost = { workspaceId: string; slug: string };
 

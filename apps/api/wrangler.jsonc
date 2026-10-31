@@ -161,8 +161,12 @@
   // The token is scoped to "SSL and Certificates: Edit" on that zone alone; the zone id and the fallback origin's
   // hostname (what owners point their CNAME at) are set like secrets so no account's ids are in this file. They also
   // need DASHBOARD_URL. Without them the dashboard hides the section and its routes answer 503 `not_configured`.
-  // Custom hostnames never reach this Worker's `fetch`: apps/status-edge holds the SaaS zone's route and calls the
-  // StatusPages entrypoint (src/status-pages.ts), so it deploys after this one.
+  // STATUS_HOSTNAMES (src/status-domain.ts) is optional too, alone or beside them: comma-separated dedicated hostnames
+  // the operator attached to apps/status-edge as Workers Custom Domains themselves (README "Dedicated hostnames"), which
+  // owners pick on the dashboard with no Cloudflare API call. They may sit under the instance's own domain, never at the
+  // dashboard's hostname, under it or a parent of it. Also needs DASHBOARD_URL; set as a secret so no hostname is here.
+  // Custom hostnames never reach this Worker's `fetch`: apps/status-edge holds the SaaS zone's route (and the dedicated
+  // hostnames) and calls the StatusPages entrypoint (src/status-pages.ts), so it deploys after this one.
   // BOOTSTRAP_TOKEN (src/bootstrap.ts) is optional: at least 32 random characters, set only on a new instance until its
   // first owner exists (scripts/create-first-user.mjs, apps/api/README.md "First owner"); without it
   // `POST /setup/first-user` does not exist.

@@ -6,9 +6,13 @@
 // `GET|PUT|DELETE /workspaces/:id/status-page/domain` and `POST …/domain/check`. Owners and admins (`status:manage`,
 // read in D1 first, so an outsider never wakes a shard or reaches Cloudflare). The hostname is claimed in D1
 // (`status_custom_host`, unique across the instance) before Cloudflare is asked, as a slug is; the shard then keeps
-// what the dashboard shows, through server-only mutations with their events. Off unless the instance has
-// `CF_SAAS_TOKEN`, `CF_ZONE_ID`, `CF_SAAS_FALLBACK_ORIGIN` and `DASHBOARD_URL`: then every route answers
-// `503 not_configured` and the dashboard hides the section.
+// what the dashboard shows, through server-only mutations with their events.
+//
+// Two ways to serve one, each optional, both needing `DASHBOARD_URL`. Cloudflare for SaaS custom hostnames
+// (`CF_SAAS_TOKEN`, `CF_ZONE_ID`, `CF_SAAS_FALLBACK_ORIGIN`): any hostname an owner points a CNAME at. Dedicated
+// hostnames (`STATUS_HOSTNAMES`): the ones the operator attached to the edge Worker themselves, which Cloudflare is
+// never asked about (src/status-domain-edge.ts) and which may sit under the instance's own domain, since the operator
+// chose them. With neither, every route but `GET` answers `503 not_configured` and the dashboard hides the section.
 
 import {
   allows,
@@ -28,6 +32,7 @@ import {
   type SaasEnv,
   type SaasHostname,
 } from "./status-domain-cf.ts";
+import { edgeAnswers, probedState, type DedicatedEnv } from "./status-domain-edge.ts";
 import { hostKey, type StatusHost } from "@freecorps/brigade-status-edge/api";
 import type { TokenRefused } from "./workspace.ts";
 
@@ -45,11 +50,12 @@ export { hostKey };
  */
 export const CLAIM_STALE_MS = 2 * 60 * 1000;
 
-export type DomainEnv = Env & SaasEnv;
+export type DomainEnv = Env & SaasEnv & DedicatedEnv;
 
 /** What a route refuses with, and its HTTP status. */
 const REFUSALS = {
   not_configured: 503,
+  not_listed: 400,
   invalid_hostname: 400,
   own_domain: 400,
   forbidden: 403,
@@ -72,28 +78,21 @@ const refuse = (code: Refusal) => json({ error: code }, REFUSALS[code]);
  * so is everything under it and every parent of the dashboard's hostname: a page must never answer for the
  * dashboard's origin, nor take a name the instance's zone already routes. Likewise the fallback origin (`target`),
  * its domain and everything under it: the SaaS zone is the instance's. A two-label name (`example.com`) is refused
- * (`apex`): a CNAME cannot sit at a zone's apex without CNAME flattening, so a page takes a subdomain.
+ * (`apex`): a CNAME cannot sit at a zone's apex without CNAME flattening, so a page takes a subdomain. None of that
+ * holds for a dedicated hostname (`listed`, already kept clear of the dashboard by `dedicatedHostnames`): the operator
+ * attached it to the edge, where no CNAME is needed.
  */
 export function normalizeHostname(
   raw: unknown,
   instance: string,
   target?: string,
+  listed: readonly string[] = [],
 ):
   | { ok: true; hostname: string }
   | { ok: false; code: "invalid_hostname" | "own_domain" | "apex" } {
-  if (typeof raw !== "string") return { ok: false, code: "invalid_hostname" };
-  const typed = raw.trim().toLowerCase().replace(/\.$/, "");
-  if (typed === "" || typed.length > 253 || /[\s/:@?#\\[\]%]/.test(typed)) {
-    return { ok: false, code: "invalid_hostname" };
-  }
-  let hostname: string;
-  try {
-    hostname = new URL(`https://${typed}/`).hostname;
-  } catch {
-    return { ok: false, code: "invalid_hostname" };
-  }
-  // The URL parser turns `1.2.3` or `0x7f.1` into an IPv4 address; any address ends in digits and is refused.
-  if (!isStatusHostname(hostname)) return { ok: false, code: "invalid_hostname" };
+  const hostname = readHostname(raw);
+  if (!hostname) return { ok: false, code: "invalid_hostname" };
+  if (listed.includes(hostname)) return { ok: true, hostname };
   for (const ours of target ? [instance, target] : [instance]) {
     const own = ownDomain(ours);
     const parents = ours.split(".").map((_, index, labels) => labels.slice(index).join("."));
@@ -103,6 +102,121 @@ export function normalizeHostname(
   }
   if (hostname.split(".").length === 2) return { ok: false, code: "apex" };
   return { ok: true, hostname };
+}
+
+/** `raw` as a hostname Brigade keeps (lowercase, punycode, no trailing dot), or undefined when it is not one. */
+function readHostname(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const typed = raw.trim().toLowerCase().replace(/\.$/, "");
+  if (typed === "" || typed.length > 253 || /[\s/:@?#\\[\]%]/.test(typed)) return undefined;
+  let hostname: string;
+  try {
+    hostname = new URL(`https://${typed}/`).hostname;
+  } catch {
+    return undefined;
+  }
+  // The URL parser turns `1.2.3` or `0x7f.1` into an IPv4 address; any address ends in digits and is refused.
+  return isStatusHostname(hostname) ? hostname : undefined;
+}
+
+/** Entries of `STATUS_HOSTNAMES` already logged as left out, so each is logged once per isolate. */
+const leftOut = new Set<string>();
+
+/**
+ * The instance's dedicated hostnames (`STATUS_HOSTNAMES`, comma- or space-separated), as `readHostname` keeps them,
+ * each once. None without `DASHBOARD_URL`. Left out, and logged: anything that is not a hostname, the dashboard's
+ * hostname, anything under it and every parent of it (a page must never answer for the dashboard's origin), and the
+ * fallback origin's domain and everything under it (the SaaS zone, whose route already takes every hostname on it).
+ * Anything else under the instance's own domain stays: the operator chose it.
+ */
+export function dedicatedHostnames(env: SaasEnv & DedicatedEnv): string[] {
+  const instance = instanceHost(env);
+  if (!instance || !env.STATUS_HOSTNAMES) return [];
+  const target = env.CF_SAAS_FALLBACK_ORIGIN?.trim().toLowerCase();
+  const saasZone = target ? ownDomain(target) : undefined;
+  const kept = new Set<string>();
+  for (const entry of env.STATUS_HOSTNAMES.split(/[\s,]+/)) {
+    if (!entry) continue;
+    const hostname = readHostname(entry);
+    const clear =
+      hostname !== undefined &&
+      hostname !== instance &&
+      !hostname.endsWith(`.${instance}`) &&
+      !instance.endsWith(`.${hostname}`) &&
+      (!saasZone || (hostname !== saasZone && !hostname.endsWith(`.${saasZone}`)));
+    if (clear) kept.add(hostname);
+    else if (!leftOut.has(entry)) {
+      leftOut.add(entry);
+      log("a STATUS_HOSTNAMES entry is left out", { entry });
+    }
+  }
+  return [...kept];
+}
+
+/** Whether the instance serves custom domains at all: through Cloudflare for SaaS, dedicated hostnames, or both. */
+export const customDomainsOn = (env: SaasEnv & DedicatedEnv) =>
+  saasConfig(env) !== undefined || dedicatedHostnames(env).length > 0;
+
+/**
+ * The dedicated hostnames `workspaceId` may still choose: those no other workspace holds in D1, and those another
+ * holds but could have taken over (`takeable`, asked of the holder's shard), so the dashboard offers what an add would
+ * accept. D1 failing lists them all (logged): an add still claims the hostname first, so a taken one is refused there.
+ * A holder's shard that cannot be asked keeps its hostname off the list (logged).
+ */
+async function freeHostnames(
+  env: DomainEnv,
+  listed: string[],
+  workspaceId: string,
+  canDelete: boolean,
+  now: number,
+): Promise<string[]> {
+  if (listed.length === 0) return [];
+  let held: { hostname: string; workspace_id: string }[];
+  try {
+    ({ results: held } = await env.DB.prepare(
+      `select hostname, workspace_id from status_custom_host
+       where hostname in (select value from json_each(?)) and workspace_id != ?`,
+    )
+      .bind(JSON.stringify(listed), workspaceId)
+      .all<{ hostname: string; workspace_id: string }>());
+  } catch (error) {
+    log("reading the dedicated hostnames' holders failed", { error: String(error) });
+    return listed;
+  }
+  // Each held hostname, or null when it could be taken over.
+  const kept = await Promise.all(
+    held.map(async ({ hostname, workspace_id: holder }) => {
+      try {
+        const { domain } = await env.WORKSPACE.getByName(holder).statusDomainState(holder);
+        return takeable(domain, hostname, now, canDelete) ? null : hostname;
+      } catch (error) {
+        log("WorkspaceDO.statusDomainState failed", { workspaceId: holder, error: String(error) });
+        return hostname;
+      }
+    }),
+  );
+  const taken = new Set(kept.filter((hostname) => hostname !== null));
+  return listed.filter((hostname) => !taken.has(hostname));
+}
+
+/**
+ * Whether another workspace's domain at `hostname` may be taken over at `now` (RFC 0012 "Custom domains"): pending or
+ * failed for `STATUS_DOMAIN_SQUAT_MS`, and, a Cloudflare hostname, only while this instance can delete it there
+ * (`canDelete`: Cloudflare for SaaS is set up). Never an active domain, a newer one, or a claim with no domain behind it.
+ */
+function takeable(
+  domain: StatusDomainRow | null,
+  hostname: string,
+  now: number,
+  canDelete: boolean,
+): domain is StatusDomainRow {
+  return (
+    domain !== null &&
+    domain.hostname === hostname &&
+    domain.state !== "active" &&
+    domain.stateAt <= now - STATUS_DOMAIN_SQUAT_MS &&
+    (domain.cloudflareId === null || canDelete)
+  );
 }
 
 /**
@@ -145,21 +259,30 @@ export async function statusDomainRoute(
     waitUntil,
   );
   if (!member.ok) return member.response;
-  const config = saasConfig(env);
+  const saas = saasConfig(env);
+  const listed = dedicatedHostnames(env);
   if (action === "get") {
-    return json(config ? { configured: true, target: config.target } : { configured: false });
+    if (!saas && listed.length === 0) return json({ configured: false });
+    return json({
+      configured: true,
+      target: saas?.target ?? null,
+      hostnames: await freeHostnames(env, listed, workspaceId, saas !== undefined, Date.now()),
+    });
   }
-  if (!config) return refuse("not_configured");
+  if (!saas && listed.length === 0) return refuse("not_configured");
   if (!allows(member.actor, "status:manage")) return refuse("forbidden");
   let hostname: string | undefined;
   if (action === "add") {
     const body = await readJson(request);
-    const read = normalizeHostname(Object(body).hostname, instanceHost(env)!, config.target);
-    if (!read.ok) return refuse(read.code);
+    const read = normalizeHostname(Object(body).hostname, instanceHost(env)!, saas?.target, listed);
+    // Without Cloudflare for SaaS, anything but a listed hostname is `not_listed`, whatever else is wrong with it.
+    if (!read.ok && (saas || read.code === "invalid_hostname")) return refuse(read.code);
+    if (!read.ok || (!saas && !listed.includes(read.hostname))) return refuse("not_listed");
     hostname = read.hostname;
   }
   if (!(await domainAllowed(env, workspaceId))) return refuse("rate_limited");
-  const client = new SaasClient(config, send);
+  const client = saas ? new SaasClient(saas, send) : undefined;
+  const reach = send ?? ((request: Request) => fetch(request));
   const stub = env.WORKSPACE.getByName(workspaceId);
   const change = async (
     name: "add" | "check" | "remove",
@@ -195,7 +318,13 @@ export async function statusDomainRoute(
     if (claim === "busy") return refuse("in_progress");
     if (claim === "failed") return refuse("unavailable");
     const stamp = claim.stamp;
-    const made = await createOrAdopt(client, name, workspaceId);
+    // A dedicated hostname is the edge's already, or once the operator attaches it: Cloudflare is never asked.
+    const made: Made = listed.includes(name)
+      ? {
+          ok: true,
+          value: { id: null, records: [], ...probedState(null, await edgeAnswers(name, reach))! },
+        }
+      : await createOrAdopt(client!, name, workspaceId);
     if (!made.ok) {
       // Released only when Cloudflare surely has no hostname of ours under the name; else kept and logged, and the
       // workspace's next add after `CLAIM_STALE_MS` finds and adopts it.
@@ -210,7 +339,8 @@ export async function statusDomainRoute(
     if (!added.ok) {
       // Nothing kept, so nothing left behind: Cloudflare's hostname goes, then the claim. A delete Cloudflare refuses
       // keeps the claim, so no other workspace takes a name with a hostname of ours still under it.
-      const removed = await client.remove(made.value.id);
+      const removed =
+        made.value.id === null ? { ok: true as const } : await client!.remove(made.value.id);
       if (removed.ok) await releaseHost(env.DB, name, workspaceId, stamp);
       else {
         log("deleting a custom hostname after a refused add failed; the claim is kept", {
@@ -227,23 +357,33 @@ export async function statusDomainRoute(
   }
 
   if (!current) return refuse("not_found");
+  // A Cloudflare hostname on an instance that no longer has Cloudflare for SaaS: nothing to ask, nothing to delete.
+  if (current.cloudflareId !== null && !client) return refuse("not_configured");
   if (action === "check") {
-    const answer = await client.get(current.cloudflareId);
-    const seen: Pick<SaasHostname, "state" | "records" | "error"> | undefined = answer.ok
-      ? answer.value
-      : answer.code === "not_found"
-        ? {
-            state: "failed",
-            records: current.records,
-            error: "deleted",
-          }
-        : undefined;
-    if (!seen) {
-      log("checking a custom hostname failed", {
-        workspaceId,
-        error: answer.ok ? "" : answer.message,
-      });
-      return refuse("cloudflare_failed");
+    let seen: Pick<SaasHostname, "state" | "records" | "error"> | null | undefined;
+    if (current.cloudflareId === null) {
+      const probed = probedState(current.state, await edgeAnswers(current.hostname, reach));
+      // An active one is never set back by one answer (the shard's alarm counts the misses): kept, and answered as is.
+      seen = probed && { ...probed, records: [] };
+      if (!seen) return json({ ok: true, hostname: current.hostname, ...shown(current) });
+    } else {
+      const answer = await client!.get(current.cloudflareId);
+      seen = answer.ok
+        ? answer.value
+        : answer.code === "not_found"
+          ? {
+              state: "failed",
+              records: current.records,
+              error: "deleted",
+            }
+          : undefined;
+      if (!seen) {
+        log("checking a custom hostname failed", {
+          workspaceId,
+          error: answer.ok ? "" : answer.message,
+        });
+        return refuse("cloudflare_failed");
+      }
     }
     // With the Cloudflare hostname asked about: one removed and added again meanwhile is not overwritten.
     const checked = await change("check", {
@@ -257,13 +397,16 @@ export async function statusDomainRoute(
     return json({ ok: true, hostname: current.hostname, ...shown(seen) });
   }
 
-  // Removing: Cloudflare first, so a domain the dashboard no longer shows never keeps serving. The claim released is
-  // only one stamped before this began: a claim made since is another add's.
+  // Removing: Cloudflare first (a dedicated hostname has nothing there), so a domain the dashboard no longer shows
+  // never keeps serving. The claim released is only one stamped before this began: a claim made since is another
+  // add's.
   const startedAt = Date.now();
-  const removed = await client.remove(current.cloudflareId);
-  if (!removed.ok) {
-    log("deleting a custom hostname failed", { workspaceId, error: removed.message });
-    return refuse("cloudflare_failed");
+  if (current.cloudflareId !== null) {
+    const removed = await client!.remove(current.cloudflareId);
+    if (!removed.ok) {
+      log("deleting a custom hostname failed", { workspaceId, error: removed.message });
+      return refuse("cloudflare_failed");
+    }
   }
   const gone = await change("remove", { hostname: current.hostname });
   if (!gone.ok && gone.code !== "not_found") {
@@ -273,8 +416,9 @@ export async function statusDomainRoute(
   return json({ ok: true });
 }
 
+/** What an add found: Cloudflare's hostname, or a dedicated one (`id` null). */
 type Made =
-  | { ok: true; value: SaasHostname }
+  | { ok: true; value: Pick<SaasHostname, "state" | "records" | "error"> & { id: string | null } }
   | { ok: false; code: "hostname_taken" | "cloudflare_failed"; release: boolean };
 
 /**
@@ -385,14 +529,15 @@ type Holder = { workspaceId: string; createdAt: number };
 
 /**
  * Another workspace holds `hostname`: taken over (RFC 0012 "Custom domains") only when its domain there has been
- * pending or failed for `STATUS_DOMAIN_SQUAT_MS`, so nobody keeps a name they never verified. Cloudflare's hostname
- * goes first (refused: `cloudflare_failed`, nothing changed), then the holder's shard runs `statusDomain.release` with
- * its event, then the claim moves to this workspace, stamped `now`. Anything else is `taken`: an active domain, one
- * newer than that, or a claim with no domain behind it (the holder's own add finds and adopts it).
+ * pending or failed for `STATUS_DOMAIN_SQUAT_MS`, so nobody keeps a name they never verified. The holder's shard runs
+ * `statusDomain.release` with its event first, then Cloudflare's hostname is deleted (a dedicated one has none), then
+ * the claim moves to this workspace, stamped `now`. Anything else is `taken`: an active domain, one newer than that,
+ * a claim with no domain behind it (the holder's own add finds and adopts it), or a Cloudflare hostname on an instance
+ * no longer set up for Cloudflare for SaaS (`client` undefined), which nothing could delete.
  */
 async function takeOver(
   env: DomainEnv,
-  client: SaasClient,
+  client: SaasClient | undefined,
   hostname: string,
   workspaceId: string,
   holder: Holder,
@@ -410,14 +555,7 @@ async function takeOver(
     return "failed";
   }
   const before = now - STATUS_DOMAIN_SQUAT_MS;
-  if (
-    !domain ||
-    domain.hostname !== hostname ||
-    domain.state === "active" ||
-    domain.stateAt > before
-  ) {
-    return "taken";
-  }
+  if (!takeable(domain, hostname, now, client !== undefined)) return "taken";
   // Released first: the shard refuses a domain verified meanwhile (or re-added), so a live hostname is never deleted.
   let released: { ok: true } | { ok: false; code: string };
   try {
@@ -436,7 +574,10 @@ async function takeOver(
   }
   // Removed by its own workspace meanwhile is as good.
   if (!released.ok && released.code !== "not_found") return "taken";
-  const removed = await client.remove(domain.cloudflareId);
+  const removed =
+    domain.cloudflareId === null
+      ? { ok: true as const }
+      : await client!.remove(domain.cloudflareId);
   if (!removed.ok) {
     // The claim still moves: the new workspace's create then meets Cloudflare's "already exists" and adopts the
     // hostname, which is in our zone and now its claim.
@@ -495,7 +636,8 @@ const HOST_EVENTS = new Set([
 
 export const asksForStatusHost = (event: BrigadeEvent) => HOST_EVENTS.has(event.type);
 
-type HostEnv = { WORKSPACE: Env["WORKSPACE"]; DB?: D1Database; STATUS?: KVNamespace } & SaasEnv;
+type HostEnv = { WORKSPACE: Env["WORKSPACE"]; DB?: D1Database; STATUS?: KVNamespace } & SaasEnv &
+  DedicatedEnv;
 
 /**
  * The queue consumer's side of the lookup. A domain's own events are `syncStatusHost`'s, retried on a failure. A page's
@@ -508,7 +650,7 @@ export async function notifyStatusHost(event: BrigadeEvent, env: HostEnv): Promi
     await syncStatusHost(event, env);
     return undefined;
   }
-  if (!saasConfig(env)) return undefined;
+  if (!customDomainsOn(env)) return undefined;
   try {
     await syncStatusHost(event, env);
   } catch (error) {

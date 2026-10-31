@@ -19,6 +19,7 @@ import { notifySlack, type SlackNotifyEnv } from "./notify-slack.ts";
 import { notifyStatus, STATUS_EMAIL_BUDGET_MS, type StatusNotifyEnv } from "./notify-status.ts";
 import { asksForStatusHost, notifyStatusHost } from "./status-domain.ts";
 import type { SaasEnv } from "./status-domain-cf.ts";
+import type { DedicatedEnv } from "./status-domain-edge.ts";
 import {
   notifyWebhookDisabled,
   notifyWebhooks,
@@ -101,6 +102,7 @@ export const D1_HEALTH_TIMEOUT_MS = 3000;
 /** Optional: an instance without a relay still runs, and every page it would send is recorded as failed. */
 export type NotifyEnv = EmailEnv &
   SaasEnv &
+  DedicatedEnv &
   EmailNotifyEnv &
   OperatorEnv &
   SlackNotifyEnv &

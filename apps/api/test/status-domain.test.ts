@@ -17,7 +17,7 @@ import {
   STATUS_DOMAIN_SQUAT_MS,
   type Actor,
 } from "@freecorps/brigade-schema";
-import type { StatusPagesApi } from "@freecorps/brigade-status-edge/api";
+import { EDGE_HEADER, type StatusPagesApi } from "@freecorps/brigade-status-edge/api";
 import { describe, expect, test, vi } from "vite-plus/test";
 import worker, { workerAuth } from "../src/index.ts";
 import { consumeEvents } from "../src/notify.ts";
@@ -25,6 +25,7 @@ import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
 import {
   CLAIM_STALE_MS,
+  dedicatedHostnames,
   hostKey,
   normalizeHostname,
   statusDomainRoute,
@@ -337,6 +338,7 @@ describe("the dashboard's routes", () => {
     expect(await (await route(t, t.caio, "GET", fake)).json()).toEqual({
       configured: true,
       target: "status-origin.saas.test",
+      hostnames: [],
     });
     // A responder may read it, not change it; nothing reaches Cloudflare.
     expect((await route(t, t.caio, "PUT", fake, { hostname: name })).status).toBe(403);
@@ -1234,3 +1236,333 @@ describe("the queue consumer and a page's changes", () => {
     }
   });
 });
+
+/**
+ * The status page edge at a dedicated hostname, as `/robots.txt` there answers: the edge (`attached`), another site
+ * (`other`), Cloudflare's own error page (`error`), or no answer (`down`). Cloudflare's API is still the fake's.
+ */
+function edgeAt(
+  fake: ReturnType<typeof cloudflare>,
+  answer: "attached" | "other" | "error" | "down",
+) {
+  const reached: string[] = [];
+  const edge = {
+    answer,
+    reached,
+    fake: {
+      ...fake,
+      send: async (request: Request) => {
+        if (new URL(request.url).hostname === "api.cloudflare.com") return fake.send(request);
+        reached.push(`${request.method} ${request.url} ${request.redirect}`);
+        if (edge.answer === "down") throw new TypeError("Network connection lost.");
+        if (edge.answer === "error") return new Response("error code: 1016", { status: 530 });
+        return edge.answer === "attached"
+          ? new Response("<h1>No status page here</h1>", {
+              status: 404,
+              headers: { [EDGE_HEADER]: "1" },
+            })
+          : new Response("<h1>Someone else's site</h1>", { status: 404 });
+      },
+    },
+  };
+  return edge;
+}
+
+/** The dashboard as production has it: a subdomain, so its siblings are under the instance's own domain. */
+const DASHBOARD = "https://brigade.example.test";
+
+/** An instance with dedicated hostnames only (no Cloudflare for SaaS). */
+const dedicated = (...names: string[]) =>
+  ({ ...env, DASHBOARD_URL: DASHBOARD, STATUS_HOSTNAMES: names.join(", ") }) as Env;
+
+describe("dedicated hostnames", () => {
+  test("the operator's list: hostnames as Brigade keeps them, never the dashboard's, its parents or the SaaS zone", () => {
+    const listed = (value: string, extra: object = {}) =>
+      dedicatedHostnames({
+        DASHBOARD_URL: "https://brigade.example.com.br",
+        STATUS_HOSTNAMES: value,
+        ...extra,
+      });
+    const logs = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // Under the instance's own domain is the point: the operator chose it.
+      expect(listed(" Status.Example.com.br. ,status.acme.test status.example.com.br")).toEqual([
+        "status.example.com.br",
+        "status.acme.test",
+      ]);
+      for (const ours of [
+        "brigade.example.com.br",
+        "x.brigade.example.com.br",
+        "example.com.br",
+        "com.br",
+        "203.0.113.7",
+        "https://status.acme.test",
+      ]) {
+        expect(listed(ours), ours).toEqual([]);
+      }
+      const saas = { CF_SAAS_FALLBACK_ORIGIN: "status-origin.saas.test" };
+      expect(listed("saas.test,x.saas.test,status.acme.test", saas)).toEqual(["status.acme.test"]);
+      expect(listed("")).toEqual([]);
+      expect(dedicatedHostnames({ STATUS_HOSTNAMES: "status.acme.test" })).toEqual([]);
+    } finally {
+      logs.mockRestore();
+    }
+    // A listed hostname skips the own-domain and apex rules; the rest still hold for anything else.
+    const read = (value: string) =>
+      normalizeHostname(value, "brigade.example.com.br", undefined, [
+        "status.example.com.br",
+        "acme.test",
+      ]);
+    expect(read("STATUS.example.com.br")).toEqual({ ok: true, hostname: "status.example.com.br" });
+    expect(read("acme.test")).toEqual({ ok: true, hostname: "acme.test" });
+    expect(read("other.example.com.br")).toEqual({ ok: false, code: "own_domain" });
+  });
+
+  test("chosen by an owner: claimed, active once the edge answers there, served, and Cloudflare never asked", async () => {
+    const t = await team();
+    await t.push();
+    const other = await team();
+    // A sibling of the dashboard, under the instance's own domain, and one another workspace holds already.
+    const name = `status-${++hosts}.example.test`;
+    const theirs = hostname();
+    await claim(theirs, other.id);
+    const config = dedicated(name, theirs);
+    const edge = edgeAt(cloudflare(), "attached");
+    const get = await route(t, t.caio, "GET", edge.fake, undefined, false, config);
+    expect(await get.json()).toEqual({ configured: true, target: null, hostnames: [name] });
+
+    const added = await route(t, t.ana, "PUT", edge.fake, { hostname: name }, false, config);
+    expect(added.status).toBe(200);
+    expect(await added.json()).toEqual({
+      ok: true,
+      hostname: name,
+      state: "active",
+      records: [],
+      error: null,
+    });
+    expect(edge.reached).toEqual([`GET https://${name}/robots.txt manual`]);
+    expect(edge.fake.calls).toEqual([]);
+    expect(await holder(name)).toBe(t.id);
+    expect(await domainRow(t)).toMatchObject({
+      hostname: name,
+      cloudflareId: null,
+      state: "active",
+    });
+    expect(await outbox(t, "status_domain.added")).toMatchObject([
+      { data: { hostname: name, state: "active" }, actor: { id: t.ana.id } },
+    ]);
+    await sync(t, "status_domain.added");
+    expect(await lookup(name)).toEqual({ workspaceId: t.id, slug: t.slug });
+    expect((await visit(name, { workspaceId: t.id, slug: t.slug }, "/")).status).toBe(200);
+    // Gone from the list another workspace sees, which still has the one it holds itself.
+    const listed = await route(other, other.ana, "GET", edge.fake, undefined, false, config);
+    expect(await listed.json()).toMatchObject({ hostnames: [theirs] });
+
+    // Removed: nothing at Cloudflare to delete, gone from the shard, D1 and the lookup.
+    expect((await route(t, t.ana, "DELETE", edge.fake, undefined, false, config)).status).toBe(200);
+    expect(edge.fake.calls).toEqual([]);
+    expect(await domainRow(t)).toBeNull();
+    expect(await holder(name)).toBeUndefined();
+    await sync(t, "status_domain.removed");
+    expect(await lookup(name)).toBeNull();
+  });
+
+  test("without Cloudflare for SaaS, only a listed hostname; the rest is not_listed, whatever else is wrong", async () => {
+    const t = await team();
+    const edge = edgeAt(cloudflare(), "attached");
+    const config = dedicated(hostname());
+    for (const typed of [hostname(), "status.example.test", "acme.test"]) {
+      const put = await route(t, t.ana, "PUT", edge.fake, { hostname: typed }, false, config);
+      expect([put.status, await put.json()], typed).toEqual([400, { error: "not_listed" }]);
+    }
+    const bad = await route(t, t.ana, "PUT", edge.fake, { hostname: "https://x" }, false, config);
+    expect(await bad.json()).toEqual({ error: "invalid_hostname" });
+    expect(edge.reached).toEqual([]);
+    expect(await domainRow(t)).toBeNull();
+  });
+
+  test("listed but not attached yet: pending, then active once the edge answers; an active one is never set back by hand", async () => {
+    const t = await team();
+    const name = hostname();
+    const config = dedicated(name);
+    const edge = edgeAt(cloudflare(), "other");
+    const added = await route(t, t.ana, "PUT", edge.fake, { hostname: name }, false, config);
+    expect(await added.json()).toMatchObject({
+      state: "pending",
+      error: "not_attached",
+      records: [],
+    });
+    // Cloudflare's own error page, or no answer, is no better.
+    for (const answer of ["error", "down"] as const) {
+      edge.answer = answer;
+      const checked = await route(t, t.ana, "POST", edge.fake, undefined, true, config);
+      expect(await checked.json(), answer).toMatchObject({
+        state: "pending",
+        error: "not_attached",
+      });
+    }
+    edge.answer = "attached";
+    const attached = await route(t, t.ana, "POST", edge.fake, undefined, true, config);
+    expect(await attached.json()).toMatchObject({ state: "active", error: null });
+    expect((await outbox(t, "status_domain.checked")).at(-1)).toMatchObject({
+      data: { hostname: name, state: "active", previous: "pending" },
+    });
+    const events = (await outbox(t, "status_domain.checked")).length;
+    // Active: one answer that is not the edge's, whatever it is, never sets it back by hand (the alarm counts the
+    // misses, test/status-domain-check.test.ts); it is answered as it is, with no event.
+    for (const answer of ["other", "error", "down"] as const) {
+      edge.answer = answer;
+      const doubt = await route(t, t.ana, "POST", edge.fake, undefined, true, config);
+      expect([doubt.status, await doubt.json()], answer).toEqual([
+        200,
+        { ok: true, hostname: name, state: "active", records: [], error: null },
+      ]);
+    }
+    expect(await outbox(t, "status_domain.checked")).toHaveLength(events);
+    expect(await domainRow(t)).toMatchObject({ state: "active" });
+    await sync(t, "status_domain.checked");
+    expect(await lookup(name)).not.toBeNull();
+  });
+
+  test("with Cloudflare for SaaS too: a listed hostname is dedicated, any other a custom hostname", async () => {
+    const a = await team();
+    const b = await team();
+    const name = hostname();
+    const config = { ...configured, STATUS_HOSTNAMES: name } as Env;
+    const edge = edgeAt(cloudflare(), "attached");
+    expect(
+      await (await route(a, a.ana, "GET", edge.fake, undefined, false, config)).json(),
+    ).toEqual({
+      configured: true,
+      target: "status-origin.saas.test",
+      hostnames: [name],
+    });
+    expect(
+      (await route(a, a.ana, "PUT", edge.fake, { hostname: name }, false, config)).status,
+    ).toBe(200);
+    expect(edge.fake.calls).toEqual([]);
+    expect(await domainRow(a)).toMatchObject({ cloudflareId: null, state: "active" });
+    const custom = hostname();
+    expect(
+      (await route(b, b.ana, "PUT", edge.fake, { hostname: custom }, false, config)).status,
+    ).toBe(200);
+    expect(edge.fake.calls.map((call) => call.method)).toEqual(["POST"]);
+    expect(await domainRow(b)).toMatchObject({ cloudflareId: "cfh-1", state: "pending" });
+    // A Cloudflare hostname once SaaS is off: nothing can ask about it or delete it.
+    const off = dedicated(name);
+    const check = await route(b, b.ana, "POST", edge.fake, undefined, true, off);
+    expect([check.status, await check.json()]).toEqual([503, { error: "not_configured" }]);
+    expect((await route(b, b.ana, "DELETE", edge.fake, undefined, false, off)).status).toBe(503);
+    expect(await domainRow(b)).toMatchObject({ cloudflareId: "cfh-1" });
+  });
+
+  test("the shard's alarm checks it at the edge, with no Cloudflare settings at all", async () => {
+    const t = await team();
+    const name = hostname();
+    const edge = edgeAt(cloudflare(), "other");
+    await route(t, t.ana, "PUT", edge.fake, { hostname: name }, false, dedicated(name));
+    await runInDurableObject(t.stub, (instance: WorkspaceDO) => {
+      const deps = Reflect.get(Reflect.get(instance, "domains") as DomainChecker, "deps") as {
+        config: () => SaasConfig | undefined;
+        send?: typeof edge.fake.send;
+      };
+      expect(deps.config()).toBeUndefined();
+      deps.send = edge.fake.send;
+    });
+    const added = (await domainRow(t))!;
+    edge.answer = "attached";
+    const daily = await runChecker(t, added.checkedAt + DOMAIN_RECHECK_MIN_MS);
+    const active = (await domainRow(t))!;
+    expect(active).toMatchObject({ state: "active", error: null });
+    expect(daily).toBe(active.checkedAt + DOMAIN_ACTIVE_RECHECK_MS);
+    expect(await outbox(t, "status_domain.checked")).toMatchObject([
+      { data: { state: "active", previous: "pending" }, actor: { id: "sys_account" } },
+    ]);
+    // A daily check that cannot tell backs off, leaving it active.
+    edge.answer = "down";
+    const logs = vi.spyOn(console, "error").mockImplementation(() => {});
+    let retry: number | null;
+    try {
+      retry = await runChecker(t, daily!);
+    } finally {
+      logs.mockRestore();
+    }
+    expect(retry).toBe(daily! + DOMAIN_RECHECK_MIN_MS);
+    expect(await domainRow(t)).toMatchObject({ state: "active" });
+    expect(edge.fake.calls).toEqual([]);
+  });
+
+  test("left unattached for more than 7 days, another workspace takes it over, with nothing at Cloudflare", async () => {
+    const a = await team();
+    const b = await team();
+    const name = hostname();
+    const config = dedicated(name);
+    const edge = edgeAt(cloudflare(), "other");
+    await route(a, a.ana, "PUT", edge.fake, { hostname: name }, false, config);
+    const early = await route(b, b.ana, "PUT", edge.fake, { hostname: name }, false, config);
+    expect(await early.json()).toEqual({ error: "hostname_taken" });
+    const offered = async () =>
+      (
+        (await (await route(b, b.ana, "GET", edge.fake, undefined, false, config)).json()) as {
+          hostnames: string[];
+        }
+      ).hostnames;
+    expect(await offered()).toEqual([]);
+    await age(a, STATUS_DOMAIN_SQUAT_MS + 24 * 60 * 60 * 1000);
+    // Offered on the card again, as an add would now take it over.
+    expect(await offered()).toEqual([name]);
+    edge.answer = "attached";
+    const taken = await route(b, b.ana, "PUT", edge.fake, { hostname: name }, false, config);
+    expect(await taken.json()).toMatchObject({ hostname: name, state: "active" });
+    expect(edge.fake.calls).toEqual([]);
+    expect(await domainRow(a)).toBeNull();
+    expect(await outbox(a, "status_domain.removed")).toMatchObject([
+      { data: { hostname: name, takenOver: true } },
+    ]);
+    expect(await holder(name)).toBe(b.id);
+  });
+
+  test("an instance with dedicated hostnames only keeps the lookup in step with a page's changes", async () => {
+    const t = await team();
+    await t.push();
+    const name = hostname();
+    const config = dedicated(name);
+    await route(
+      t,
+      t.ana,
+      "PUT",
+      edgeAt(cloudflare(), "attached").fake,
+      { hostname: name },
+      false,
+      config,
+    );
+    await syncWith(t, "status_domain.added", { DASHBOARD_URL: DASHBOARD, STATUS_HOSTNAMES: name });
+    expect(await lookup(name)).toEqual({ workspaceId: t.id, slug: t.slug });
+    const draft = await api(`/workspaces/${t.id}/status-page`, {
+      method: "PUT",
+      headers: { Cookie: t.ana.cookie },
+      body: JSON.stringify({ slug: t.slug, title: "Acme", locale: "en", enabled: false }),
+    });
+    expect(draft.status).toBe(200);
+    await syncWith(t, "status_page.configured", {
+      DASHBOARD_URL: DASHBOARD,
+      STATUS_HOSTNAMES: name,
+    });
+    expect(await lookup(name)).toBeNull();
+  });
+});
+
+/** `sync`, with the instance's settings given. */
+async function syncWith(t: Team, type: string, settings: object) {
+  const events = await outbox(t, type);
+  const batch = createMessageBatch(
+    "brigade-events",
+    events.map((body, index) => ({ id: `msg-${index}`, timestamp: new Date(), attempts: 1, body })),
+  );
+  await consumeEvents(batch, {
+    WORKSPACE: env.WORKSPACE,
+    DB: env.DB,
+    STATUS: env.STATUS,
+    ...settings,
+  });
+}

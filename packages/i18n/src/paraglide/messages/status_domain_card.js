@@ -12,8 +12,14 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | --- | --- |
 * | "title" | "Custom domain" |
 * | "description" | "Serve the status page at your own address, such as status.example.com. Cloudflare issues its certificate once the DNS records below are in place." |
+* | "description_dedicated" | "Serve the status page at your own address, on a domain this Brigade instance is set up to serve." |
 * | "not_set_up" | "Set up the status page first to give it a domain." |
 * | "none" | "The status page has no domain of its own." |
+* | "none_free" | "Every domain this Brigade instance is set up to serve is in use by another status page." |
+* | "listed_title" | "Ready on this instance" |
+* | "listed_hint" | "Set up by whoever runs this Brigade instance, so there are no DNS records to create." |
+* | "use" | "Use" |
+* | "other_title" | "Or a domain of your own" |
 * | "viewer" | "Owners and admins can add or remove the domain." |
 * | "hostname_label" | "Domain" |
 * | "hostname_hint" | "A subdomain you control, such as status.example.com. Point a CNAME at {name}." |
@@ -24,6 +30,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "state_failed" | "Failed" |
 * | "explain_pending" | "Create these DNS records where your domain is hosted, then check again. It can take a few minutes after the records are in place." |
 * | "explain_active" | "The status page is served at this domain." |
+* | "explain_pending_dedicated" | "Brigade can't reach the status page at this domain yet. Check again once it's attached." |
 * | "explain_failed" | "Cloudflare couldn't verify the domain. Check the records, then check again, or remove the domain and add it again." |
 * | "records_title" | "DNS records to create" |
 * | "record_name" | "Name" |
@@ -41,6 +48,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "error_hostname_taken" | "That domain is already in use by another status page." |
 * | "error_domain_exists" | "The status page already has a domain. Remove it first." |
 * | "error_not_configured" | "This Brigade instance has no custom domains set up." |
+* | "error_not_listed" | "This Brigade instance only serves the domains whoever runs it set up." |
 * | "error_forbidden" | "Only owners and admins can change the domain." |
 * | "error_rate_limited" | "Too many changes in a minute. Try again shortly." |
 * | "error_not_found" | "The domain is no longer on the status page." |
@@ -56,6 +64,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "reason_blocked" | "Cloudflare blocked this domain. Remove it, or use another one." |
 * | "reason_deleted" | "Cloudflare no longer has this domain. Remove it and add it again." |
 * | "reason_other" | "Cloudflare reported a problem with the domain. Check the records, then check again." |
+* | "reason_not_attached" | "The domain doesn't reach this instance's status page edge. Whoever runs Brigade needs to attach it to the brigade-status-edge Worker as a Custom Domain." |
 * | "error_failed" | "Couldn't save. Try again." |
 * | * | "Custom domain" |
 *
@@ -68,8 +77,14 @@ export const status_domain_card = /** @type {((inputs: Status_Domain_CardInputs,
 	if (locale === "pt-BR") {
 		if (i?.part === "title") return /** @type {LocalizedString} */ (`Domínio próprio`);
 		if (i?.part === "description") return /** @type {LocalizedString} */ (`Sirva a página de status no seu próprio endereço, como status.example.com. A Cloudflare emite o certificado assim que os registros DNS abaixo estiverem configurados.`);
+		if (i?.part === "description_dedicated") return /** @type {LocalizedString} */ (`Sirva a página de status no seu próprio endereço, em um domínio que esta instância do Brigade está configurada para servir.`);
 		if (i?.part === "not_set_up") return /** @type {LocalizedString} */ (`Configure a página de status antes de dar um domínio a ela.`);
 		if (i?.part === "none") return /** @type {LocalizedString} */ (`A página de status não tem domínio próprio.`);
+		if (i?.part === "none_free") return /** @type {LocalizedString} */ (`Todos os domínios que esta instância do Brigade está configurada para servir já estão em uso por outra página de status.`);
+		if (i?.part === "listed_title") return /** @type {LocalizedString} */ (`Prontos nesta instância`);
+		if (i?.part === "listed_hint") return /** @type {LocalizedString} */ (`Configurados por quem opera esta instância do Brigade, então não há registros DNS a criar.`);
+		if (i?.part === "use") return /** @type {LocalizedString} */ (`Usar`);
+		if (i?.part === "other_title") return /** @type {LocalizedString} */ (`Ou um domínio seu`);
 		if (i?.part === "viewer") return /** @type {LocalizedString} */ (`Donos e administradores podem adicionar ou remover o domínio.`);
 		if (i?.part === "hostname_label") return /** @type {LocalizedString} */ (`Domínio`);
 		if (i?.part === "hostname_hint") return /** @type {LocalizedString} */ (`Um subdomínio que você controla, como status.example.com. Aponte um CNAME para ${i?.name}.`);
@@ -80,6 +95,7 @@ export const status_domain_card = /** @type {((inputs: Status_Domain_CardInputs,
 		if (i?.part === "state_failed") return /** @type {LocalizedString} */ (`Falhou`);
 		if (i?.part === "explain_pending") return /** @type {LocalizedString} */ (`Crie estes registros DNS onde seu domínio está hospedado e verifique de novo. Pode levar alguns minutos depois que os registros estiverem no ar.`);
 		if (i?.part === "explain_active") return /** @type {LocalizedString} */ (`A página de status é servida neste domínio.`);
+		if (i?.part === "explain_pending_dedicated") return /** @type {LocalizedString} */ (`O Brigade ainda não consegue acessar a página de status neste domínio. Verifique de novo quando ele estiver ligado.`);
 		if (i?.part === "explain_failed") return /** @type {LocalizedString} */ (`A Cloudflare não conseguiu verificar o domínio. Confira os registros e verifique de novo, ou remova o domínio e adicione outra vez.`);
 		if (i?.part === "records_title") return /** @type {LocalizedString} */ (`Registros DNS a criar`);
 		if (i?.part === "record_name") return /** @type {LocalizedString} */ (`Nome`);
@@ -97,6 +113,7 @@ export const status_domain_card = /** @type {((inputs: Status_Domain_CardInputs,
 		if (i?.part === "error_hostname_taken") return /** @type {LocalizedString} */ (`Esse domínio já está em uso por outra página de status.`);
 		if (i?.part === "error_domain_exists") return /** @type {LocalizedString} */ (`A página de status já tem um domínio. Remova-o primeiro.`);
 		if (i?.part === "error_not_configured") return /** @type {LocalizedString} */ (`Esta instância do Brigade não tem domínios próprios configurados.`);
+		if (i?.part === "error_not_listed") return /** @type {LocalizedString} */ (`Esta instância do Brigade só serve os domínios que quem a opera configurou.`);
 		if (i?.part === "error_forbidden") return /** @type {LocalizedString} */ (`Só donos e administradores podem mudar o domínio.`);
 		if (i?.part === "error_rate_limited") return /** @type {LocalizedString} */ (`Muitas mudanças em um minuto. Tente de novo em instantes.`);
 		if (i?.part === "error_not_found") return /** @type {LocalizedString} */ (`O domínio não está mais na página de status.`);
@@ -112,14 +129,21 @@ export const status_domain_card = /** @type {((inputs: Status_Domain_CardInputs,
 		if (i?.part === "reason_blocked") return /** @type {LocalizedString} */ (`A Cloudflare bloqueou este domínio. Remova-o ou use outro.`);
 		if (i?.part === "reason_deleted") return /** @type {LocalizedString} */ (`A Cloudflare não tem mais este domínio. Remova-o e adicione de novo.`);
 		if (i?.part === "reason_other") return /** @type {LocalizedString} */ (`A Cloudflare informou um problema com o domínio. Confira os registros e verifique de novo.`);
+		if (i?.part === "reason_not_attached") return /** @type {LocalizedString} */ (`O domínio não chega ao edge da página de status desta instância. Quem opera o Brigade precisa ligá-lo ao Worker brigade-status-edge como Custom Domain.`);
 		if (i?.part === "error_failed") return /** @type {LocalizedString} */ (`Não foi possível salvar. Tente de novo.`);
 		return /** @type {LocalizedString} */ (`Domínio próprio`)
 	}
 	{
 		if (i?.part === "title") return /** @type {LocalizedString} */ (`Custom domain`);
 		if (i?.part === "description") return /** @type {LocalizedString} */ (`Serve the status page at your own address, such as status.example.com. Cloudflare issues its certificate once the DNS records below are in place.`);
+		if (i?.part === "description_dedicated") return /** @type {LocalizedString} */ (`Serve the status page at your own address, on a domain this Brigade instance is set up to serve.`);
 		if (i?.part === "not_set_up") return /** @type {LocalizedString} */ (`Set up the status page first to give it a domain.`);
 		if (i?.part === "none") return /** @type {LocalizedString} */ (`The status page has no domain of its own.`);
+		if (i?.part === "none_free") return /** @type {LocalizedString} */ (`Every domain this Brigade instance is set up to serve is in use by another status page.`);
+		if (i?.part === "listed_title") return /** @type {LocalizedString} */ (`Ready on this instance`);
+		if (i?.part === "listed_hint") return /** @type {LocalizedString} */ (`Set up by whoever runs this Brigade instance, so there are no DNS records to create.`);
+		if (i?.part === "use") return /** @type {LocalizedString} */ (`Use`);
+		if (i?.part === "other_title") return /** @type {LocalizedString} */ (`Or a domain of your own`);
 		if (i?.part === "viewer") return /** @type {LocalizedString} */ (`Owners and admins can add or remove the domain.`);
 		if (i?.part === "hostname_label") return /** @type {LocalizedString} */ (`Domain`);
 		if (i?.part === "hostname_hint") return /** @type {LocalizedString} */ (`A subdomain you control, such as status.example.com. Point a CNAME at ${i?.name}.`);
@@ -130,6 +154,7 @@ export const status_domain_card = /** @type {((inputs: Status_Domain_CardInputs,
 		if (i?.part === "state_failed") return /** @type {LocalizedString} */ (`Failed`);
 		if (i?.part === "explain_pending") return /** @type {LocalizedString} */ (`Create these DNS records where your domain is hosted, then check again. It can take a few minutes after the records are in place.`);
 		if (i?.part === "explain_active") return /** @type {LocalizedString} */ (`The status page is served at this domain.`);
+		if (i?.part === "explain_pending_dedicated") return /** @type {LocalizedString} */ (`Brigade can't reach the status page at this domain yet. Check again once it's attached.`);
 		if (i?.part === "explain_failed") return /** @type {LocalizedString} */ (`Cloudflare couldn't verify the domain. Check the records, then check again, or remove the domain and add it again.`);
 		if (i?.part === "records_title") return /** @type {LocalizedString} */ (`DNS records to create`);
 		if (i?.part === "record_name") return /** @type {LocalizedString} */ (`Name`);
@@ -147,6 +172,7 @@ export const status_domain_card = /** @type {((inputs: Status_Domain_CardInputs,
 		if (i?.part === "error_hostname_taken") return /** @type {LocalizedString} */ (`That domain is already in use by another status page.`);
 		if (i?.part === "error_domain_exists") return /** @type {LocalizedString} */ (`The status page already has a domain. Remove it first.`);
 		if (i?.part === "error_not_configured") return /** @type {LocalizedString} */ (`This Brigade instance has no custom domains set up.`);
+		if (i?.part === "error_not_listed") return /** @type {LocalizedString} */ (`This Brigade instance only serves the domains whoever runs it set up.`);
 		if (i?.part === "error_forbidden") return /** @type {LocalizedString} */ (`Only owners and admins can change the domain.`);
 		if (i?.part === "error_rate_limited") return /** @type {LocalizedString} */ (`Too many changes in a minute. Try again shortly.`);
 		if (i?.part === "error_not_found") return /** @type {LocalizedString} */ (`The domain is no longer on the status page.`);
@@ -162,6 +188,7 @@ export const status_domain_card = /** @type {((inputs: Status_Domain_CardInputs,
 		if (i?.part === "reason_blocked") return /** @type {LocalizedString} */ (`Cloudflare blocked this domain. Remove it, or use another one.`);
 		if (i?.part === "reason_deleted") return /** @type {LocalizedString} */ (`Cloudflare no longer has this domain. Remove it and add it again.`);
 		if (i?.part === "reason_other") return /** @type {LocalizedString} */ (`Cloudflare reported a problem with the domain. Check the records, then check again.`);
+		if (i?.part === "reason_not_attached") return /** @type {LocalizedString} */ (`The domain doesn't reach this instance's status page edge. Whoever runs Brigade needs to attach it to the brigade-status-edge Worker as a Custom Domain.`);
 		if (i?.part === "error_failed") return /** @type {LocalizedString} */ (`Couldn't save. Try again.`);
 		return /** @type {LocalizedString} */ (`Custom domain`)
 	}

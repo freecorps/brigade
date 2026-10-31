@@ -1,15 +1,21 @@
 // A status page's own domain on the dashboard (RFC 0012 "Custom domains"): the API's routes, which ask Cloudflare for
-// the hostname. Pure apart from `fetch`; tested in test/status-domain.test.tsx.
+// the hostname, or reach the edge at a dedicated one. Pure apart from `fetch`; tested in test/status-domain.test.tsx.
 
 const path = (workspaceId: string) =>
   `/api/workspaces/${encodeURIComponent(workspaceId)}/status-page/domain`;
 
-/** Whether the instance can serve custom domains, and the hostname owners point their CNAME at. */
-export type DomainConfig = { configured: false } | { configured: true; target: string };
+/**
+ * Whether the instance can serve custom domains: the hostname owners point their CNAME at (null without Cloudflare for
+ * SaaS, when only `hostnames` can be chosen), and the dedicated hostnames the operator set up that are still free.
+ */
+export type DomainConfig =
+  | { configured: false }
+  | { configured: true; target: string | null; hostnames: string[] };
 
 /** Why a change was refused, as the API says it (anything else is `failed`). */
 export type DomainError =
   | "not_configured"
+  | "not_listed"
   | "invalid_hostname"
   | "own_domain"
   | "apex"
@@ -25,6 +31,7 @@ export type DomainError =
 
 const KNOWN: DomainError[] = [
   "not_configured",
+  "not_listed",
   "invalid_hostname",
   "own_domain",
   "apex",
@@ -46,9 +53,17 @@ export async function loadDomainConfig(
   try {
     const response = await fetcher(path(workspaceId), { headers: { Accept: "application/json" } });
     if (!response.ok) return null;
-    const body = (await response.json()) as { configured?: unknown; target?: unknown };
-    if (body.configured === true && typeof body.target === "string") {
-      return { configured: true, target: body.target };
+    const body = (await response.json()) as {
+      configured?: unknown;
+      target?: unknown;
+      hostnames?: unknown;
+    };
+    if (body.configured === true && (typeof body.target === "string" || body.target === null)) {
+      // Missing from an older API: none.
+      const hostnames = Array.isArray(body.hostnames)
+        ? body.hostnames.filter((name): name is string => typeof name === "string")
+        : [];
+      return { configured: true, target: body.target, hostnames };
     }
     return body.configured === false ? { configured: false } : null;
   } catch {
@@ -81,7 +96,7 @@ async function change(
 export const addDomain = (workspaceId: string, hostname: string, fetcher: typeof fetch = fetch) =>
   change(path(workspaceId), "PUT", { hostname }, fetcher);
 
-/** `POST …/domain/check`: asks Cloudflare again. */
+/** `POST …/domain/check`: asks Cloudflare, or the edge at a dedicated hostname, again. */
 export const checkDomain = (workspaceId: string, fetcher: typeof fetch = fetch) =>
   change(`${path(workspaceId)}/check`, "POST", undefined, fetcher);
 

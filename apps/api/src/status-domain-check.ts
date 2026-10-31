@@ -1,11 +1,14 @@
 // Re-checking a status page's own domain from the shard's alarm (RFC 0012 "Custom domains"), so a domain moves on
 // without anyone pressing "Check again": a pending one is asked about again with backoff until it is active or failed,
 // an active one once a day, so a change at Cloudflare (moved, blocked, deleted) reaches the dashboard and, through the
-// `status_domain.checked` event, the public lookup. Each check is `statusDomain.check` as `ACCOUNT_ACTOR` with its
-// event through the outbox, within the workspace's `STATUS_DOMAIN_LIMIT` like the dashboard's own changes.
+// `status_domain.checked` event, the public lookup. A dedicated hostname is checked the same way, by reaching the edge
+// there instead of asking Cloudflare (src/status-domain-edge.ts). Each check is `statusDomain.check` as
+// `ACCOUNT_ACTOR` with its event through the outbox, within the workspace's `STATUS_DOMAIN_LIMIT` like the dashboard's
+// own changes.
 
 import { STATUS_DOMAIN_ID, type StatusDomainRow } from "@freecorps/brigade-schema";
 import { SaasClient, type Fetch, type SaasConfig, type SaasHostname } from "./status-domain-cf.ts";
+import { EDGE_MISSES_MAX, edgeAnswers, probedState } from "./status-domain-edge.ts";
 import type { Shard } from "./shard.ts";
 
 /** A pending domain is asked about again after as long as it has been pending, at least this long… */
@@ -35,10 +38,10 @@ export function domainCheckDue(row: StatusDomainRow, now: number): number | null
 type Deps = {
   shard: Shard;
   sql: SqlStorage;
-  /** The instance's Cloudflare for SaaS settings; undefined, nothing is checked. */
+  /** The instance's Cloudflare for SaaS settings; undefined, no Cloudflare hostname is checked (a dedicated one is). */
   config: () => SaasConfig | undefined;
   limiter: () => RateLimit | undefined;
-  /** Cloudflare's API (a fake in the tests). */
+  /** Cloudflare's API, and the edge at a dedicated hostname (a fake in the tests). */
   send?: Fetch;
   /** Runs `statusDomain.check` as `ACCOUNT_ACTOR`, with its event; throws on a refusal. */
   check: (args: Record<string, unknown>) => void;
@@ -53,17 +56,17 @@ export class DomainChecker {
 
   /** When the alarm should come back for the domain: its next check, after any backoff; null when none is due. */
   nextAt(now: number): number | null {
-    if (!this.deps.config()) return null;
     const row = this.deps.shard.store.get("status_domain", STATUS_DOMAIN_ID);
-    if (!row) return null;
+    if (!row || (row.cloudflareId !== null && !this.deps.config())) return null;
     const due = domainCheckDue(row, now);
     if (due === null) return null;
     return Math.max(due, this.meta("domain_retry_at") ?? 0);
   }
 
   /**
-   * Asks Cloudflare about the domain if it is due (`nextAt`), and records what it said. A failure (the limit, Cloudflare,
-   * the shard) backs off from `DOMAIN_RECHECK_MIN_MS`, doubling to `DOMAIN_RECHECK_MAX_MS`. Never throws.
+   * Asks Cloudflare about the domain if it is due (`nextAt`), or reaches the edge at a dedicated hostname, and records
+   * what it found. A failure (the limit, Cloudflare, the shard, an edge that could not be told about) backs off from
+   * `DOMAIN_RECHECK_MIN_MS`, doubling to `DOMAIN_RECHECK_MAX_MS`. Never throws.
    */
   async run(workspaceId: string, now: number): Promise<void> {
     if (this.running) return;
@@ -76,30 +79,22 @@ export class DomainChecker {
     }
     const config = this.deps.config();
     const row = this.deps.shard.store.get("status_domain", STATUS_DOMAIN_ID);
-    if (at === null || at > now || !config || !row) return;
+    if (at === null || at > now || !row || (row.cloudflareId !== null && !config)) return;
     this.running = true;
     try {
       if (!(await this.allowed(workspaceId))) {
         this.failed(now, "rate limited");
         return;
       }
-      const answer = await new SaasClient(config, this.deps.send).get(row.cloudflareId);
-      const seen: Pick<SaasHostname, "state" | "records" | "error"> | undefined = answer.ok
-        ? answer.value
-        : answer.code === "not_found"
-          ? { state: "failed", records: row.records, error: "deleted" }
-          : undefined;
-      if (!seen) {
-        this.failed(now, answer.ok ? "" : answer.message);
+      const seen = await this.ask(row, config);
+      if (typeof seen === "string") {
+        this.failed(now, seen);
         return;
       }
-      // Removed, or removed and added again, while Cloudflare answered: what it said is about another hostname.
-      if (
-        this.deps.shard.store.get("status_domain", STATUS_DOMAIN_ID)?.cloudflareId !==
-        row.cloudflareId
-      ) {
-        return;
-      }
+      // Removed, or removed and added again, while Cloudflare or the edge answered: what it said is about another
+      // hostname. A dedicated one has no Cloudflare id to tell them apart, so the hostname is compared too.
+      const latest = this.deps.shard.store.get("status_domain", STATUS_DOMAIN_ID);
+      if (latest?.cloudflareId !== row.cloudflareId || latest.hostname !== row.hostname) return;
       this.deps.check({
         hostname: row.hostname,
         cloudflareId: row.cloudflareId,
@@ -115,10 +110,38 @@ export class DomainChecker {
     }
   }
 
-  /** Forgets the backoff: a domain added or removed starts afresh, never behind the last one's failures. */
+  /** What Cloudflare, or the edge at a dedicated hostname, says of the domain now; why not, when it could not tell. */
+  private async ask(
+    row: StatusDomainRow,
+    config: SaasConfig | undefined,
+  ): Promise<Pick<SaasHostname, "state" | "records" | "error"> | string> {
+    const send = this.deps.send ?? ((request: Request) => fetch(request));
+    if (row.cloudflareId === null) {
+      const probed = probedState(row.state, await edgeAnswers(row.hostname, send));
+      if (probed) return { ...probed, records: [] };
+      // Active, and the edge did not answer: back to pending only after `EDGE_MISSES_MAX` misses in a row, each one
+      // backed off like a failure meanwhile.
+      const misses = (this.meta("domain_misses") ?? 0) + 1;
+      if (misses >= EDGE_MISSES_MAX)
+        return { state: "pending", records: [], error: "not_attached" };
+      this.setMeta("domain_misses", misses);
+      return `the edge did not answer at the hostname (${misses} in a row)`;
+    }
+    const answer = await new SaasClient(config!, send).get(row.cloudflareId);
+    if (answer.ok) return answer.value;
+    if (answer.code === "not_found")
+      return { state: "failed", records: row.records, error: "deleted" };
+    return answer.message;
+  }
+
+  /**
+   * Forgets the backoff, and a dedicated domain's misses: a domain added or removed, or checked, starts afresh, never
+   * behind the last one's failures.
+   */
   reset(): void {
     this.clearMeta("domain_attempts");
     this.clearMeta("domain_retry_at");
+    this.clearMeta("domain_misses");
   }
 
   private async allowed(workspaceId: string): Promise<boolean> {

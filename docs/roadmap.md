@@ -531,8 +531,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Done (Q23): dedicated hostnames (RFC 0012 "Custom domains"): the operator attaches a hostname to the edge
     Worker as a Custom Domain and lists it in `STATUS_HOSTNAMES`, under the instance's own domain if they like; owners
     and admins pick it on the card, and Brigade checks the edge answers there instead of asking Cloudflare.
-  - Left: setting up the edge Worker and either way on a deployed environment (owner's call, apps/api README "Custom
-    domains").
+  - Done: the edge Worker is deployed to production, serving a dedicated hostname, and `.github/workflows/deploy.yml`
+    ships it after the API when it changes.
+  - Left: Cloudflare for SaaS on a deployed environment (owner's call, apps/api README "Custom domains").
 - [ ] Outbound webhooks; OpenAPI reference; `packages/sdk` published
   - Done: outbound webhooks (RFC 0005 "Outbound webhooks"): owners and admins register up to 20 endpoints per
     workspace on the dashboard's Webhooks card (URL, description, event filter from the public catalog, on and off),

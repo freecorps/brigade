@@ -645,7 +645,8 @@ every hostname on the zone. A domain added this way while it was on can then be 
 For each hostname, with its zone active on the instance's Cloudflare account:
 
 1. **Deploy the edge Worker**: the API first, then `apps/status-edge` (its `STATUS` binding takes the API's namespace
-   id).
+   id). CI's deploy workflow does this on a push to `main` that changes it; the first deploy, or one without CI, is
+   by hand (apps/status-edge README "Deploying").
 2. **Attach the hostname to it as a Custom Domain**: the dashboard's Workers & Pages → `brigade-status-edge` →
    Settings → Domains & Routes → Add → Custom Domain. Cloudflare creates the DNS record and the certificate; the
    hostname must not have a DNS record of its own already. Leave `wrangler.jsonc` without `routes`: with none,

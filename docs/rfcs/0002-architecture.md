@@ -459,8 +459,8 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
   push to `main` whose CI passes ships what it changed, each by its own workflow, run after CI (`workflow_run`):
   - `.github/workflows/deploy.yml`: the Workers whose package, or a workspace package they depend on, changed since
     the last successful deploy (`scripts/affected.mjs`; a change to `bun.lock` or a root config counts as all), in
-    binding order: relay, then the API (its D1 migrations first), then the dashboard. Status-edge and Slack join
-    once their production Workers exist. By hand, it also deploys `dev`, or every Worker. Since migrations apply
+    binding order: relay, then the API (its D1 migrations first), then the dashboard and the status page edge (both
+    bind the API). Slack joins once its production Worker exists. By hand, it also deploys `dev`, or every Worker. Since migrations apply
     while the previous API still serves, a migration keeps that API working (add a column now, drop it in a later
     deploy).
   - `.github/workflows/mobile.yml`: when the app or a package it bundles changed, per platform, an EAS Update to the

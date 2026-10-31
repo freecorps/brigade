@@ -341,7 +341,8 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     are enabled, those redirects need PKCE or verified App Links / Universal Links instead of a custom scheme. The plugin also trusts `exp://` (Expo
     Go), but only when `NODE_ENV` is `development`. The app signs in against the dashboard's origin
     (`EXPO_PUBLIC_BRIGADE_URL`, or the dev server on the Metro host in development). Still to come: OAuth/OIDC with
-    PKCE via the system browser and QR pairing.
+    PKCE via the system browser, and the instance picked in the app with sign-in by QR code (designed in RFC 0015:
+    a single-use code approved on the dashboard by typing the number the phone shows).
   - **Email verification (built):** Better Auth's, sent through the email notifier's `EmailSender` (RFC 0005
     "Email"; templates `email_verify` in `packages/i18n`, en and pt-BR, plain text and escaped HTML) at sign-up and
     when the dashboard asks again. The link is the dashboard's `/verify-email?token=…` (from `DASHBOARD_URL`, never the

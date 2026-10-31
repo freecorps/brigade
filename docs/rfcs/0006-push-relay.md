@@ -18,7 +18,9 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
 
 - **Relay sees no content.** Only a handle, a ciphertext and an urgency level.
 - **Handles are bound to an instance.** Instance X cannot push to devices paired with instance Y.
-- **Instances self-register** with an Ed25519 key pair (no account). The relay enforces per-instance rate limits and can revoke.
+- **Instances register** with an Ed25519 key pair (no account, but the terms accepted and a contact address confirmed).
+  The relay enforces per-instance rate limits and can revoke. Designed in RFC 0015 (handles, signatures, several
+  instances on one phone, your own relay); not built yet.
 - **Fallback text:** if decryption fails (rotated key, corrupted payload), show "New alert — open Brigade". Never silent.
   The payload carries it as localization keys (`title-loc-key: push_fallback_title`, `loc-key: push_fallback_body`),
   so the relay needs neither content nor the recipient's language; the app bundle carries the strings from
@@ -795,3 +797,5 @@ over HTTP/1.1.
 
 The Freecorps-operated relay has its own terms of service (fair-use limits, abuse policy). Running a competing
 paid service on top of the official relay requires an agreement; anyone can self-host a relay with their own app build.
+Free for any registered instance within the limits of RFC 0015 (600 sends a minute, 60 calls, 30 a minute per
+handle). A preliminary template is in [docs/legal/relay-terms.md](../legal/relay-terms.md). The setup script offers the hosted relay or the company's own (RFC 0015 "Which relay").

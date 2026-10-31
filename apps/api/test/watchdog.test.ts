@@ -698,6 +698,80 @@ describe("the heartbeat, end to end", () => {
     expect(sent.map((one) => one.to.email)).toEqual(["ops@example.com"]);
   });
 
+  const changes = async (events: () => Promise<BrigadeEvent[]>) =>
+    (await events()).filter((event) => event.type === STATUS_EVENT);
+
+  /** A watchdog that emails `OPERATOR_EMAILS` itself through `mail`. */
+  async function emailingWatchdog(mail: EmailSender) {
+    const dog = watchdog();
+    await runInDurableObject(dog.stub, (instance: WatchdogDO) => {
+      Reflect.set(instance, "env", { ...env, OPERATOR_EMAILS: "ops@example.com" });
+      Reflect.set(instance, "mail", () => mail);
+    });
+    const operators = { ...dog.notifyEnv(), OPERATOR_EMAILS: "ops@example.com" };
+    return { ...dog, operators };
+  }
+
+  test("a stalled queue: the watchdog emails the operators itself as the status degrades, and once only", async () => {
+    const sent: OutgoingEmail[] = [];
+    const mail: EmailSender = {
+      id: "test",
+      async send(email) {
+        sent.push(email);
+        return { ok: true };
+      },
+    };
+    const { stub, heartbeats, events, operators } = await emailingWatchdog(mail);
+    await stub.beat(NOW);
+    await stub.proved((await heartbeats())[0]!.time, "ok", NOW + 1000);
+    // Unknown to ok is a change too.
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    // The Queue stops: beats keep coming, none comes back, and nothing is drained.
+    for (let minute = 1; minute <= 4; minute++) await stub.beat(NOW + minute * MINUTE);
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    expect(sent[1]!.subject).toBe("Brigade's paging self-check is degraded");
+    expect(sent[1]!.to.email).toBe("ops@example.com");
+    // The Queue comes back: the changes it held are claimed already, so the consumer sends nothing more.
+    await deliver(await changes(events), operators, relay().send, mail);
+    expect(sent).toHaveLength(2);
+    // The backlog proves the newest beat: back to ok, emailed from the watchdog too.
+    await stub.proved((await heartbeats())[4]!.time, "ok", NOW + 4 * MINUTE + 5000);
+    await vi.waitFor(() => expect(sent).toHaveLength(3));
+    expect(sent[2]!.subject).toBe("Brigade's paging self-check is back to normal");
+    await deliver(await changes(events), operators, relay().send, mail);
+    expect(sent).toHaveLength(3);
+  });
+
+  test("a send of the watchdog's that went to nobody is left to the consumer", async () => {
+    let down = true;
+    let tries = 0;
+    const sent: OutgoingEmail[] = [];
+    const mail: EmailSender = {
+      id: "test",
+      async send(email) {
+        tries++;
+        if (down) return { ok: false, retry: true, code: "E_INTERNAL_SERVER_ERROR" };
+        sent.push(email);
+        return { ok: true };
+      },
+    };
+    const { stub, events, operators } = await emailingWatchdog(mail);
+    for (let minute = 0; minute <= 4; minute++) await stub.beat(NOW + minute * MINUTE);
+    const [change] = await changes(events);
+    expect(change).toBeDefined();
+    // The failed send gave its claim back, so the event coming through the Queue emails the operators.
+    await vi.waitFor(async () => {
+      expect(tries).toBe(1);
+      const claimed = await runInDurableObject(stub, (_instance: WatchdogDO, state) =>
+        state.storage.sql.exec("select 1 from operator_emails").toArray(),
+      );
+      expect(claimed).toEqual([]);
+    });
+    down = false;
+    await deliver([change!], operators, relay().send, mail);
+    expect(sent.map((one) => one.subject)).toEqual(["Brigade's paging self-check is degraded"]);
+  });
+
   test("other system events are acked and never reach a shard", async () => {
     const { notifyEnv } = watchdog();
     const event: BrigadeEvent = {

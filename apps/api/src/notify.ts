@@ -184,7 +184,7 @@ export async function consumeEvents(
     batch.messages.map(async (message) => {
       // The dead-man switch's own events (src/watchdog.ts): never a shard's, never a page.
       if (isSystemEvent(message.body)) {
-        if (message.body.type === STATUS_EVENT) await notifyOperators(message.body, env, mail);
+        if (message.body.type === STATUS_EVENT) await operatorsFromQueue(message.body, env, mail);
         else await proveHeartbeat(message.body, env, send);
         return message.ack();
       }
@@ -370,6 +370,22 @@ export async function consumeDeadLetters(
         message.retry({ delaySeconds: DEAD_LETTER_RETRY_SECONDS });
       }
     }),
+  );
+}
+
+/**
+ * A `brigade.status_changed` came through the Queue: the operators' email, unless the watchdog sent it already when
+ * the status changed (its claim is refused then), so this is the fallback for a send of the watchdog's that failed.
+ */
+function operatorsFromQueue(
+  event: BrigadeEvent,
+  env: Pick<NotifyEnv, "WATCHDOG" | "OPERATOR_EMAILS">,
+  mail: EmailSender | undefined,
+): Promise<unknown> {
+  const watchdog = env.WATCHDOG;
+  if (!watchdog) return Promise.resolve();
+  return notifyOperators(event, env, mail, (id) =>
+    watchdog.getByName(WATCHDOG_NAME).claimOperatorEmail(id),
   );
 }
 

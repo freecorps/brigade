@@ -1,4 +1,4 @@
-import { generateInstanceKey, signKeyProof, signRequest } from "@freecorps/brigade-push";
+import { generateInstanceKey, signKeyProof, signRequest } from "@freecorps/brigade-push/instance";
 import { describe, expect, test } from "vite-plus/test";
 import { handle, type RelayEnv } from "../src/index.ts";
 import {
@@ -48,6 +48,8 @@ function fakeRegistry() {
   };
   const registry = {
     failing: false,
+    /** Methods that throw as an unreachable object would, while the others answer. */
+    failingMethods: new Set<string>(),
     /** How many times each method was called, on any object. */
     calls: new Map<string, number>(),
     storage(name: string): Map<string, unknown> {
@@ -67,7 +69,9 @@ function fakeRegistry() {
       const rpc = <K extends keyof RegistryStub>(name: K) =>
         (async (...args: unknown[]) => {
           await Promise.resolve();
-          if (registry.failing) throw new Error("Durable Object unreachable");
+          if (registry.failing || registry.failingMethods.has(name)) {
+            throw new Error("Durable Object unreachable");
+          }
           registry.calls.set(name, (registry.calls.get(name) ?? 0) + 1);
           // Awaited for the async methods, whose check-and-update runs before their first await.
           const result: unknown = await Reflect.apply(target[name], target, structuredClone(args));
@@ -754,6 +758,16 @@ describe("limits on codes", () => {
     const response = await askCode(await generateInstanceKey());
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: "email_failed" });
+    expect(registry.storage(await contactObject("oncall@example.com")).get("sent")).toEqual([]);
+  });
+
+  test("an instance object that does not answer gives the address's slot back", async () => {
+    const { registry, email, askCode } = setup();
+    registry.failingMethods.add("requestCode");
+    const response = await askCode(await generateInstanceKey());
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "registry_unavailable" });
+    expect(email.sent).toEqual([]);
     expect(registry.storage(await contactObject("oncall@example.com")).get("sent")).toEqual([]);
   });
 

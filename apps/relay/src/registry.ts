@@ -9,7 +9,7 @@
 // check, and a registry outage must not stop every self-hosted page.
 
 import { DurableObject } from "cloudflare:workers";
-import type { VerifiedRequest } from "@freecorps/brigade-push";
+import type { VerifiedRequest } from "@freecorps/brigade-push/instance";
 
 /**
  * `keys` are canonical public keys (`canonicalKey`), the original first while it is not retired; `retired` the keys

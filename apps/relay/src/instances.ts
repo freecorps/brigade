@@ -9,7 +9,7 @@ import {
   verifyKeyProof,
   verifyRequest,
   type VerifiedRequest,
-} from "@freecorps/brigade-push";
+} from "@freecorps/brigade-push/instance";
 import { readBody } from "./body.ts";
 import {
   CODE_TTL_MS,
@@ -163,12 +163,19 @@ async function requestCode(
     }
   };
   const code = sixDigits();
-  const stored = await instance.requestCode(
-    signer(caller),
-    address,
-    await hashCode(caller.instance, code),
-    caller.now,
-  );
+  let stored: Awaited<ReturnType<typeof instance.requestCode>>;
+  try {
+    stored = await instance.requestCode(
+      signer(caller),
+      address,
+      await hashCode(caller.instance, code),
+      caller.now,
+    );
+  } catch (error) {
+    // The instance's object did not answer: no code was stored, so none goes out and the slot goes back.
+    await release();
+    throw error;
+  }
   // Another request of the same instance took its last code since `canRequestCode`.
   if (!stored.ok) {
     await release();

@@ -48,6 +48,8 @@ import {
   MAX_PAGE_DEVICES,
   PAGE_HOLD_MS,
   PAGE_IN_FLIGHT_MS,
+  PAGE_LOCAL_TRIES,
+  PAGE_QUEUE_GRACE_MS,
   PAGE_REPLAY_DELAY_MS,
   pageTargets,
   ringsAsCall,
@@ -2563,5 +2565,131 @@ describe("end to end: outbox → queue → consumer", () => {
       },
       { timeout: 10_000, interval: 100 },
     );
+  });
+});
+
+describe("a page the Queue does not bring", () => {
+  /** Declares an incident through the shard's own `Shard`, as a real mutation commits, so its pages are expected. */
+  async function declareInShard(ws: Awaited<ReturnType<typeof workspace>>, severity = "sev2") {
+    const incident = newId("inc", Date.now(), random);
+    await runInDurableObject(ws.stub, (instance: WorkspaceDO) => {
+      const shard = Reflect.get(instance, "shard") as Shard;
+      const { result } = shard.mutate({
+        clientId: "test",
+        mutationId: `m${++mutations}`,
+        actor: MONITOR_ACTOR,
+        name: "incident.declare",
+        args: { id: incident, title: "Checkout is down", severity },
+        now: Date.now(),
+        internal: true,
+      });
+      expect(result).toMatchObject({ ok: true });
+    });
+    return {
+      incident,
+      event: (await ws.events(incident)).find((e) => e.type === "incident.declared")!,
+    };
+  }
+  /** The pages the shard is waiting for the Queue to bring, with their tries. */
+  const pending = (ws: Awaited<ReturnType<typeof workspace>>) =>
+    runInDurableObject(ws.stub, (_instance: WorkspaceDO, state) =>
+      state.storage.sql
+        .exec<{ event_id: string; due: number; tries: number }>(
+          "select event_id, due, tries from page_pending",
+        )
+        .toArray(),
+    );
+  /** Runs the shard's alarm as if `PAGE_QUEUE_GRACE_MS` had passed, sending through `send`. */
+  const graceOver = (ws: Awaited<ReturnType<typeof workspace>>, send: Fetch) =>
+    runInDurableObject(ws.stub, async (instance: WorkspaceDO, state) => {
+      Reflect.set(instance, "pageSender", { env: () => relayEnv, send });
+      state.storage.sql.exec("update page_pending set due = 0");
+      await instance.alarm();
+    });
+
+  test("the shard sends it itself after the grace, and the Queue's late copy reaches nobody again", async () => {
+    const ws = await workspace();
+    await ws.device(ana);
+    const biaPhone = await ws.device(bia);
+    // A default policy whose first level is Bia: the run the page starts decides who is paged.
+    await ws.run(ana, "escalation.createPolicy", {
+      id: newId("esc", Date.now(), random),
+      name: "Checkout",
+      levels: [
+        {
+          id: newId("lvl", Date.now(), random),
+          targets: [{ kind: "member", id: bia.id }],
+          timeoutMinutes: 5,
+        },
+      ],
+      repeat: 0,
+      isDefault: true,
+    });
+    const { incident, event } = await declareInShard(ws);
+    const [row] = await pending(ws);
+    expect(row).toMatchObject({ event_id: event.id, tries: 0 });
+    expect(row!.due).toBeGreaterThanOrEqual(Date.now() + PAGE_QUEUE_GRACE_MS - 5000);
+    // The Queue never comes: the alarm sends it.
+    const local = relay();
+    await graceOver(ws, local.send);
+    expect(local.requests.map((r) => r.body.deviceToken)).toEqual([biaPhone.pushToken]);
+    expect(await pending(ws)).toEqual([]);
+    // Its plan started the escalation run, as the consumer's would: the next level's clock runs.
+    const run = await ws.withShard((shard) => shard.store.get("incidents", incident)?.escalation);
+    expect(run).toMatchObject({ eventId: event.id, status: "running" });
+    expect(logged()).toContainEqual(
+      expect.objectContaining({
+        message: "page not brought by the queue in time; sending it from the shard",
+        event: event.id,
+      }),
+    );
+    // The Queue comes back with it: nobody is paged twice.
+    const late = relay();
+    expect(await deliver(event, late.send)).toEqual({ acked: ["msg-0"], retried: [] });
+    expect(late.requests).toEqual([]);
+    expect((await ws.timeline(incident)).map((row) => row.kind)).toEqual(["declared", "escalated"]);
+  });
+
+  test("a page the Queue brings in time is not sent by the shard", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const { event } = await declareInShard(ws);
+    const queue = relay();
+    await deliver(event, queue.send);
+    expect(queue.requests).toHaveLength(1);
+    expect(await pending(ws)).toEqual([]);
+    const local = relay();
+    await graceOver(ws, local.send);
+    expect(local.requests).toEqual([]);
+  });
+
+  test("a relay the shard cannot reach is tried again a minute later, up to PAGE_LOCAL_TRIES", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const { event } = await declareInShard(ws);
+    const down = relay(() => new Response(null, { status: 503 }));
+    for (let tries = 1; tries <= PAGE_LOCAL_TRIES; tries++) {
+      await graceOver(ws, down.send);
+      expect(down.requests).toHaveLength(tries);
+      expect(await pending(ws)).toEqual(
+        tries < PAGE_LOCAL_TRIES ? [expect.objectContaining({ event_id: event.id, tries })] : [],
+      );
+    }
+    expect(logged()).toContainEqual(
+      expect.objectContaining({
+        message: "page sent from the shard still failing; left to the queue",
+        event: event.id,
+      }),
+    );
+  });
+
+  test("events that do not page are not waited for", async () => {
+    const ws = await workspace();
+    const { incident } = await declareInShard(ws, "sev4");
+    // A SEV4 notifies (it asks for a push) but anything else the declaration wrote is not a page.
+    const rows = await pending(ws);
+    const events = await ws.events(incident);
+    const paging = events.filter((event) => asksForPage(event)).map((event) => event.id);
+    expect(rows.map((row) => row.event_id).sort()).toEqual(paging.sort());
   });
 });

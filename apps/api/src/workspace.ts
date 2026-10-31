@@ -83,6 +83,7 @@ import {
   type ReminderPlan,
   type RotationPlan,
 } from "./mailer.ts";
+import { notifyPush, type NotifyEnv } from "./notify.ts";
 import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
 import {
   asksForPage,
@@ -332,6 +333,9 @@ export class WorkspaceDO extends DurableObject<Env> {
       randomBytes,
       limits: { monitors: instanceMonitorCap(env as Env & MonitorEnv) },
       log: (message, fields) => this.log(message, fields),
+      // Each page written is expected back from the Queue in time, or this shard sends it (`pageLocally`). Undefined
+      // only while the constructor runs, before anything commits.
+      outboxed: (events, at) => this.pager?.expect(events, at),
       onOutbox: () => {
         this.armDrain();
         this.armStatus();
@@ -504,6 +508,13 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (replayAt !== null) this.wake(replayAt, "page again");
     } catch (error) {
       this.log("arming the page again failed", { error: String(error) });
+    }
+    // Likewise a page the Queue has not brought in time (`pageLocally`).
+    try {
+      const pendingAt = this.pager.pendingAt();
+      if (pendingAt !== null) this.wake(pendingAt, "page the queue has not brought");
+    } catch (error) {
+      this.log("arming the pages the queue has not brought failed", { error: String(error) });
     }
     // Likewise a push held back behind a page (src/paging.ts `releaseDue`).
     try {
@@ -1957,6 +1968,73 @@ export class WorkspaceDO extends DurableObject<Env> {
     this.webhooks.recordEmail(event, done, Date.now());
   }
 
+  /**
+   * Sends the pages the Queue has not brought to this shard within `PAGE_QUEUE_GRACE_MS` (src/paging.ts `overdue`)
+   * itself, through the relay as the consumer would (`notifyPush`, with this shard as the planner): a Queue that
+   * stalls, or a drain that cannot send, must not hold a page or the escalation run its plan starts. The Queue's copy,
+   * if it comes, plans only the devices not reached yet. A device the relay could not reach is tried again a minute
+   * later, up to `PAGE_LOCAL_TRIES` times while the Queue still has not come. Never throws.
+   */
+  /** Where `pageLocally` sends: the relay this Worker's consumer uses. A field so tests can stand one in. */
+  private pageSender: { env: () => NotifyEnv; send: (request: Request) => Promise<Response> } = {
+    env: () => this.env as NotifyEnv,
+    send: (request) => fetch(request),
+  };
+
+  private async pageLocally(now: number): Promise<void> {
+    let due: { event: BrigadeEvent; tries: number }[];
+    try {
+      due = this.pager.overdue(now);
+    } catch (error) {
+      this.log("reading the pages the queue has not brought failed", { error });
+      return;
+    }
+    const shard = {
+      planPage: (event: BrigadeEvent) => this.planPage(event),
+      recordPage: (
+        event: BrigadeEvent,
+        outcomes: DeviceOutcome[],
+        final: boolean,
+        skipped: SkippedMember[],
+      ) => this.recordPage(event, outcomes, final, skipped),
+    };
+    await Promise.all(
+      due.map(async ({ event, tries }) => {
+        this.log("page not brought by the queue in time; sending it from the shard", {
+          event: event.id,
+          type: event.type,
+          incident: event.subject,
+          tries: tries + 1,
+        });
+        let again: boolean;
+        try {
+          again = await notifyPush(
+            event,
+            tries + 1,
+            this.pageSender.env(),
+            this.pageSender.send,
+            shard,
+          );
+        } catch (error) {
+          this.log("sending a page from the shard failed", { event: event.id, error });
+          again = true;
+        }
+        try {
+          if (again && !this.pager.retryLocally(event, tries + 1, Date.now())) {
+            this.log("page sent from the shard still failing; left to the queue", {
+              event: event.id,
+            });
+          }
+        } catch (error) {
+          this.log("queueing a page to send from the shard again failed", {
+            event: event.id,
+            error,
+          });
+        }
+      }),
+    );
+  }
+
   /** A page the Queue gave up on (RPC from the dead-letter consumer): see `Pager.deadLettered`. */
   recordDeadLetter(event: BrigadeEvent): DeadLetterResult {
     if (this.shard.workspace() !== event.workspaceId) return "other_workspace";
@@ -1999,6 +2077,8 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("releasing held pushes failed", { error });
     }
+    // Pages the Queue has not brought in time: sent from here, after this alarm's own pages went to the Queue.
+    await this.pageLocally(Date.now());
     let monitors: number | null = now + MONITOR_TICK_MS;
     try {
       monitors = await this.monitoring.tick(now);
@@ -2161,6 +2241,13 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("reading the pages to page again failed", { error });
     }
+    let pendingAt: number | null = now + MONITOR_TICK_MS;
+    try {
+      const at = this.pager.pendingAt();
+      pendingAt = at === null ? null : Math.max(at, Date.now() + (at <= now ? MONITOR_TICK_MS : 0));
+    } catch (error) {
+      this.log("reading the pages the queue has not brought failed", { error });
+    }
     let releaseAt: number | null = now + MONITOR_TICK_MS;
     try {
       const at = this.pager.releaseAt(Date.now());
@@ -2206,7 +2293,13 @@ export class WorkspaceDO extends DurableObject<Env> {
         ),
         earliest(
           earliest(webhookAt, archiveAt),
-          earliest(expiryAt, earliest(tokenAt, earliest(replayAt, earliest(releaseAt, periodic)))),
+          earliest(
+            expiryAt,
+            earliest(
+              tokenAt,
+              earliest(replayAt, earliest(releaseAt, earliest(pendingAt, periodic))),
+            ),
+          ),
         ),
       ),
     );

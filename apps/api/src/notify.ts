@@ -33,6 +33,7 @@ import {
   type CallOutcome,
   type DeviceOutcome,
   type PagePlan,
+  type SkippedMember,
   type PageTarget,
   type SendFailure,
   sendsCritical,
@@ -533,19 +534,33 @@ export function retryDelay(attempts: number): number {
   );
 }
 
+/** The shard's side of a page: its plan, and what each device did. */
+export type PageShard = {
+  planPage(event: BrigadeEvent): Promise<PagePlan>;
+  recordPage(
+    event: BrigadeEvent,
+    outcomes: DeviceOutcome[],
+    final: boolean,
+    skipped: SkippedMember[],
+  ): Promise<void> | void;
+};
+
 /**
  * The push notifier for one event. Returns true when the page should be tried again later (some device failed in
- * a way that may pass and attempts remain); the outcomes so far are recorded either way.
+ * a way that may pass and attempts remain); the outcomes so far are recorded either way. `shard` is the event's
+ * workspace shard by RPC; the shard passes itself when it sends a page the Queue has not brought
+ * (`WorkspaceDO.pageLocally`).
  */
 export async function notifyPush(
   event: BrigadeEvent,
   attempts: number,
   env: NotifyEnv,
   send: Fetch,
+  shard?: PageShard,
 ): Promise<boolean> {
   // Most events page nobody (the delivery rows' own `notification.*` among them): no shard call for those.
   if (!asksForPage(event)) return false;
-  const workspace = env.WORKSPACE.getByName(event.workspaceId);
+  const workspace: PageShard = shard ?? env.WORKSPACE.getByName(event.workspaceId);
   const plan = await within<PagePlan>(workspace.planPage(event), SHARD_CALL_TIMEOUT_MS, "planPage");
   if (!plan.send) return false;
   const receipts = receiptUrl(env.DASHBOARD_URL);
@@ -558,11 +573,13 @@ export async function notifyPush(
   );
   const final = !sent.some((one) => one.retry) || attempts >= MAX_PAGE_ATTEMPTS;
   await within(
-    workspace.recordPage(
-      event,
-      sent.map((one) => one.outcome),
-      final,
-      plan.skipped,
+    Promise.resolve(
+      workspace.recordPage(
+        event,
+        sent.map((one) => one.outcome),
+        final,
+        plan.skipped,
+      ),
     ),
     SHARD_CALL_TIMEOUT_MS,
     "recordPage",

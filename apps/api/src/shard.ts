@@ -21,7 +21,7 @@ import {
   type RandomBytes,
   type Role,
 } from "@freecorps/brigade-schema";
-import { OUTBOX_SCHEMA, writeOutbox } from "./outbox.ts";
+import { OUTBOX_SCHEMA, writeOutbox, type BrigadeEvent } from "./outbox.ts";
 import { SqlStore, StorageFailure, type RowChange } from "./store.ts";
 import {
   MUTATION_RETENTION_MS,
@@ -146,6 +146,11 @@ export class Shard {
        * outbox drain. Must not throw.
        */
       onOutbox?: () => void;
+      /**
+       * Called with the events a mutation wrote to the outbox, inside its transaction, so the owner can keep its own
+       * rows about them in the same commit. Must not throw.
+       */
+      outboxed?: (events: readonly BrigadeEvent[], now: number) => void;
       /**
        * Called after every mutation commits (outside its transaction, after `onOutbox`), with the rows it changed, so
        * the owner can react to the tables it cares about only. Must not throw.
@@ -379,7 +384,7 @@ export class Shard {
     // The public status page's snapshot is out of date (RFC 0012): set in the change's own transaction, so the
     // shard's alarm pushes a new one even if the object dies right after this commit.
     if (touchesStatusPage(changes, this.store)) this.setMeta("status_dirty", version);
-    writeOutbox(this.sql, events, {
+    const written = writeOutbox(this.sql, events, {
       workspaceId,
       shard: this.options.shard,
       actor,
@@ -387,6 +392,7 @@ export class Shard {
       version,
       randomBytes: this.options.randomBytes,
     });
+    if (written.length > 0) this.options.outboxed?.(written, now);
     const result: MutationResultMessage = { type: "mutationResult", mutationId, ok: true, version };
     this.saveResult(actor.id, clientId, mutationId, now, result);
     return { changes, result };

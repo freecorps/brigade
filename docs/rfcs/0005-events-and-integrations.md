@@ -207,6 +207,16 @@ Decided with the drain (`apps/api/src/outbox.ts`):
   error past 1000 rows.
 - **At-least-once.** If the object dies after a send resolved and before its rows are deleted, the rows go again
   with the same `event.id`: the idempotency key. The message body is the envelope as written, as JSON.
+- **A page the Queue does not bring.** Every event that pages (`asksForPage`) is also written to the shard's
+  `page_pending`, in the commit that writes it to the outbox. The consumer reaching the shard with it (`planPage`, or
+  the dead-letter consumer) takes it off. One still there after `PAGE_QUEUE_GRACE_MS` (60 s) is sent by the shard's
+  alarm itself, through the relay as the consumer would (`notifyPush` with the shard as planner): its plan starts the
+  escalation run, so the next levels fire on time, and those levels' own events are watched the same way. A device
+  the relay could not reach is tried again a minute later, up to `PAGE_LOCAL_TRIES` (3) times, then left to the
+  Queue. The Queue's copy, if it comes, plans only the devices not reached yet; a phone may get the same page twice
+  when the Queue was only slow (the same collapse id, and the same call id, so it shows and rings once). This is what
+  keeps paging up when Cloudflare Queues stops delivering, or the drain cannot send: seen in production, a 7-minute
+  stall with no error. Tests: `apps/api/test/notify.test.ts` ("a page the Queue does not bring").
 - **Consumer settings.** Batches of up to 10, waiting at most 1 s (pages are urgent), `max_retries` 10, then the
   dead-letter queue `brigade-events-dlq` (`-dev`, `-staging`). Consumers decide when to give up on their own
   (`MAX_PAGE_ATTEMPTS`, below the Queue's retries) so a failure is recorded, not dropped; the dead-letter queue only

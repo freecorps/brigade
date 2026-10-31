@@ -35,7 +35,15 @@ export type InstanceEnv = {
   RELAY_TERMS_VERSION?: string;
   /** `closed`: a company's own relay, which refuses registration here (module comment). Anything else is open. */
   RELAY_REGISTRATION?: string;
+  /**
+   * Workers Rate Limiting, per caller IP, on asking for a code and on guessing it (wrangler.jsonc `ratelimits`).
+   * Without it nothing is limited per IP.
+   */
+  CODE_LIMIT?: { limit(options: { key: string }): Promise<{ success: boolean }> };
 };
+
+/** The routes that send or check a code, limited per IP by `CODE_LIMIT`. */
+const LIMITED = new Set(["/v1/instances/contact", "/v1/instances"]);
 
 /**
  * Pragmatic, not RFC 5322: one @, a dot in the domain, and nothing that could break out of a header or a list
@@ -48,6 +56,7 @@ const EMAIL_ADDRESS =
 const STATUS: Record<RegistryError, number> = {
   instance_unregistered: 403,
   instance_revoked: 403,
+  already_registered: 409,
   registration_closed: 403,
   bad_signature: 401,
   terms_outdated: 409,
@@ -57,6 +66,7 @@ const STATUS: Record<RegistryError, number> = {
   unknown_key: 400,
   cannot_retire_signer: 409,
   too_many_keys: 409,
+  key_recently_retired: 409,
 };
 
 type Caller = VerifiedRequest & { registry: RegistryNamespace; now: number };
@@ -81,6 +91,14 @@ export async function instanceRoutes(
   if (!route) return json({ error: "not_found" }, 404);
   if (request.method !== route.method) {
     return json({ error: "method_not_allowed" }, 405, { Allow: route.method });
+  }
+  // Before anything else: instance ids are free, so only the caller's address bounds how many codes one sender asks
+  // for or guesses.
+  if (env.CODE_LIMIT && LIMITED.has(url.pathname)) {
+    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+    if (!(await env.CODE_LIMIT.limit({ key: ip })).success) {
+      return json({ error: "rate_limited" }, 429, { "Retry-After": "60" });
+    }
   }
   const bytes = await readBody(request);
   if (bytes === null) return json({ error: "invalid_body" }, 400);
@@ -127,14 +145,20 @@ async function requestCode(
     return json({ error: "invalid_contact" }, 400);
   }
   const address = contact.toLowerCase();
-  // The address's own limit first, whichever instance asks: ids are free, so a limit per instance alone would let
-  // anyone flood an address. A refusal by the instance below still uses one of the address's three.
-  const forAddress = await caller.registry
+  const instance = instanceStub(caller.registry, caller.instance);
+  // The instance's own refusals first (revoked, registered, its hourly three), so a refused instance never costs the
+  // address a slot.
+  const allowed = await instance.canRequestCode(signer(caller), caller.now);
+  if (!allowed.ok) return refuse(allowed);
+  // Then the address's limit, whichever instance asks (3 an hour, 10 a day): ids are free, so a limit per instance
+  // alone would not bound what one address string receives. It bounds that string only: plus-addressing and other
+  // aliases of one mailbox count as different addresses; the per-IP limit above covers the rest.
+  const slot = await caller.registry
     .getByName(`contact:${await sha256Hex(address)}`)
-    .countSend(caller.now);
-  if (!forAddress.ok) return refuse(forAddress);
+    .takeAddressSlot(caller.now);
+  if (!slot.ok) return refuse(slot);
   const code = sixDigits();
-  const stored = await instanceStub(caller.registry, caller.instance).requestCode(
+  const stored = await instance.requestCode(
     signer(caller),
     address,
     await hashCode(caller.instance, code),
@@ -155,8 +179,15 @@ async function requestCode(
       ].join("\n"),
     });
   } catch (error) {
-    // Never the address or the code.
-    console.error(JSON.stringify({ message: "contact code email failed", error: String(error) }));
+    // Only the error's name and code: its message may quote the address.
+    const code = Reflect.get(Object(error), "code");
+    console.error(
+      JSON.stringify({
+        message: "contact code email failed",
+        error: error instanceof Error ? error.name : typeof error,
+        ...(typeof code === "string" && /^E_[A-Z_]+$/.test(code) ? { code } : {}),
+      }),
+    );
     return json({ error: "email_failed" }, 502);
   }
   return json({ sent: true, expiresInSeconds: CODE_TTL_MS / 1000 });
@@ -207,6 +238,7 @@ async function changeKeys(caller: Caller, body: Record<string, unknown>): Promis
     signer(caller),
     add,
     retire,
+    caller.now,
   );
   if (!outcome.ok) return refuse(outcome);
   remember(caller.instance, outcome.record, caller.now);

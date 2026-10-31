@@ -25,6 +25,10 @@
   // creates the class; nothing to set up by hand. Not inherited by `env.dev`, so repeated there.
   "durable_objects": { "bindings": [{ "name": "REGISTRY", "class_name": "RegistryDO" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RegistryDO"] }],
+  // Per caller IP, on asking for a contact code and on guessing it (src/instances.ts). Config only, nothing to create.
+  "ratelimits": [
+    { "name": "CODE_LIMIT", "namespace_id": "4201", "simple": { "limit": 5, "period": 60 } },
+  ],
   // Set with `wrangler secret put` from files outside the repository; never in this file. `FCM_SERVICE_ACCOUNT` (the
   // Google service account's JSON key, for Android) is optional: without it the relay serves iPhones only (README).
   "secrets": { "required": ["APNS_KEY", "APNS_KEY_ID", "APNS_TEAM_ID", "RELAY_SEND_TOKEN"] },
@@ -41,6 +45,9 @@
       "secrets": { "required": ["APNS_KEY", "APNS_KEY_ID", "APNS_TEAM_ID", "RELAY_SEND_TOKEN"] },
       "durable_objects": { "bindings": [{ "name": "REGISTRY", "class_name": "RegistryDO" }] },
       "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RegistryDO"] }],
+      "ratelimits": [
+        { "name": "CODE_LIMIT", "namespace_id": "4202", "simple": { "limit": 5, "period": 60 } },
+      ],
     },
   },
 }

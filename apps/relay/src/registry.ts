@@ -12,12 +12,14 @@ import { DurableObject } from "cloudflare:workers";
 import type { VerifiedRequest } from "@freecorps/brigade-push";
 
 /**
- * `keys` are canonical public keys (`canonicalKey`), the original first while it is not retired; `terms` is the terms
- * version accepted; `contact` the address confirmed by email (lowercase).
+ * `keys` are canonical public keys (`canonicalKey`), the original first while it is not retired; `retired` the keys
+ * retired in the last 10 minutes, so a replayed add cannot bring one back; `terms` is the terms version accepted;
+ * `contact` the address confirmed by email (lowercase).
  */
 export type InstanceRecord = {
   status: "registered" | "revoked";
   keys: string[];
+  retired?: { key: string; at: number }[];
   terms: string;
   contact: string | null;
   registeredAt: string;
@@ -36,6 +38,7 @@ type PendingCode = {
 export type RegistryError =
   | "instance_unregistered"
   | "instance_revoked"
+  | "already_registered"
   | "bad_signature"
   | "registration_closed"
   | "terms_outdated"
@@ -44,7 +47,8 @@ export type RegistryError =
   | "too_many_codes"
   | "unknown_key"
   | "cannot_retire_signer"
-  | "too_many_keys";
+  | "too_many_keys"
+  | "key_recently_retired";
 
 export type Refusal = { ok: false; error: RegistryError; triesLeft?: number; retryAfter?: number };
 export type Outcome = { ok: true; record: InstanceRecord; created?: boolean } | Refusal;
@@ -55,11 +59,17 @@ type Signer = { key: string; original: boolean };
 
 export const CODE_TTL_MS = 15 * 60_000;
 const CODE_TRIES = 5;
-/** Codes an hour, per instance and per contact address. */
-const CODES_PER_HOUR = 3;
 const HOUR_MS = 3600_000;
+const DAY_MS = 24 * HOUR_MS;
+/** Codes an instance may ask for in an hour. */
+const INSTANCE_CODES_PER_HOUR = 3;
+/** Codes one address may receive, from every instance together. */
+const ADDRESS_CODES_PER_HOUR = 3;
+const ADDRESS_CODES_PER_DAY = 10;
 /** Room for a rotation: the current key, the next one, and one spare. */
 const MAX_KEYS = 3;
+/** How long a retired key cannot be added again. */
+const RETIRED_MS = 10 * 60_000;
 
 export class RegistryDO extends DurableObject {
   record(): InstanceRecord | null {
@@ -67,28 +77,22 @@ export class RegistryDO extends DurableObject {
   }
 
   /**
-   * Counts one code sent from this object (an instance, or a contact address), unless 3 already went in the past
-   * hour.
+   * Whether the instance may ask for a code now, without counting anything: read before the address's slot is taken,
+   * so an instance refused here never costs an address one.
    */
-  countSend(now: number): Done {
-    const sent = (this.ctx.storage.kv.get<number[]>("sent") ?? []).filter(
-      (at) => now - at < HOUR_MS,
-    );
-    if (sent.length >= CODES_PER_HOUR) {
-      const retryAfter = Math.ceil((Math.min(...sent) + HOUR_MS - now) / 1000);
-      return { ok: false, error: "too_many_codes", retryAfter };
-    }
-    this.ctx.storage.kv.put("sent", [...sent, now]);
-    return { ok: true };
-  }
-
-  /** Stores a new pending code for the instance, within its own 3 an hour. */
-  requestCode(signer: Signer, contact: string, hash: string, now: number): Done {
+  canRequestCode(signer: Signer, now: number): Done {
     const record = this.record();
     if (record?.status === "revoked") return { ok: false, error: "instance_revoked" };
     if (!owns(signer, record)) return { ok: false, error: "bad_signature" };
-    const sent = this.countSend(now);
-    if (!sent.ok) return sent;
+    if (record) return { ok: false, error: "already_registered" };
+    return within(this.recentSends(now, HOUR_MS), INSTANCE_CODES_PER_HOUR, HOUR_MS, now);
+  }
+
+  /** Stores a new pending code for the instance, checked again here since `canRequestCode` counted nothing. */
+  requestCode(signer: Signer, contact: string, hash: string, now: number): Done {
+    const allowed = this.canRequestCode(signer, now);
+    if (!allowed.ok) return allowed;
+    this.ctx.storage.kv.put("sent", [...this.recentSends(now, HOUR_MS), now]);
     const pending: PendingCode = {
       contact,
       hash,
@@ -97,6 +101,25 @@ export class RegistryDO extends DurableObject {
       spent: false,
     };
     this.ctx.storage.kv.put("code", pending);
+    // An instance that never registers leaves nothing behind (`alarm`).
+    void this.ctx.storage.setAlarm(now + HOUR_MS);
+    return { ok: true };
+  }
+
+  /** Takes one of a contact address's codes: 3 an hour and 10 a day, whichever instances ask. */
+  takeAddressSlot(now: number): Done {
+    const sent = this.recentSends(now, DAY_MS);
+    const hour = within(
+      sent.filter((at) => now - at < HOUR_MS),
+      ADDRESS_CODES_PER_HOUR,
+      HOUR_MS,
+      now,
+    );
+    if (!hour.ok) return hour;
+    const day = within(sent, ADDRESS_CODES_PER_DAY, DAY_MS, now);
+    if (!day.ok) return day;
+    this.ctx.storage.kv.put("sent", [...sent, now]);
+    void this.ctx.storage.setAlarm(now + DAY_MS);
     return { ok: true };
   }
 
@@ -152,26 +175,56 @@ export class RegistryDO extends DurableObject {
   }
 
   /** Retires a key other than the signer's, then adds one (at most 3). Keys are canonical. */
-  changeKeys(signer: Signer, add: string | null, retire: string | null): Outcome {
+  changeKeys(signer: Signer, add: string | null, retire: string | null, now: number): Outcome {
     const record = this.record();
     if (!record) return { ok: false, error: "instance_unregistered" };
     if (record.status === "revoked") return { ok: false, error: "instance_revoked" };
     if (!record.keys.includes(signer.key)) return { ok: false, error: "bad_signature" };
     let keys = record.keys;
+    let retired = (record.retired ?? []).filter((r) => now - r.at < RETIRED_MS);
     if (retire !== null) {
       if (!keys.includes(retire)) return { ok: false, error: "unknown_key" };
       // The signer's key is never retired by itself, so the last key cannot be either.
       if (retire === signer.key) return { ok: false, error: "cannot_retire_signer" };
       keys = keys.filter((k) => k !== retire);
+      retired = [...retired, { key: retire, at: now }];
     }
     if (add !== null && !keys.includes(add)) {
+      if (retired.some((r) => r.key === add)) return { ok: false, error: "key_recently_retired" };
       if (keys.length >= MAX_KEYS) return { ok: false, error: "too_many_keys" };
       keys = [...keys, add];
     }
-    const updated = { ...record, keys };
+    const updated: InstanceRecord = { ...record, keys, retired };
     this.ctx.storage.kv.put("record", updated);
     return { ok: true, record: updated };
   }
+
+  /**
+   * An hour after an instance's last code, or a day after an address's last one: an object with no record (an
+   * instance that never registered, every address) is deleted whole; a registered instance keeps only its record.
+   */
+  async alarm(): Promise<void> {
+    if (this.record() === null) {
+      await this.ctx.storage.deleteAll();
+      return;
+    }
+    this.ctx.storage.kv.delete("code");
+    this.ctx.storage.kv.delete("sent");
+  }
+
+  private recentSends(now: number, window: number): number[] {
+    return (this.ctx.storage.kv.get<number[]>("sent") ?? []).filter((at) => now - at < window);
+  }
+}
+
+/** Refuses with `too_many_codes` and when the oldest send leaves the window, once `limit` were sent in it. */
+function within(sent: number[], limit: number, window: number, now: number): Done {
+  if (sent.length < limit) return { ok: true };
+  return {
+    ok: false,
+    error: "too_many_codes",
+    retryAfter: Math.ceil((Math.min(...sent) + window - now) / 1000),
+  };
 }
 
 /** The caller holds the instance: a key in its record, or, before there is one, the key its id comes from. */
@@ -181,9 +234,9 @@ function owns(signer: Signer, record: InstanceRecord | null): boolean {
 
 /** The registry's methods as a Worker calls them (a `DurableObjectStub<RegistryDO>`, or a test's fake). */
 export type RegistryStub = {
-  [K in "record" | "countSend" | "requestCode" | "register" | "changeKeys"]: (
-    ...args: Parameters<RegistryDO[K]>
-  ) => Promise<ReturnType<RegistryDO[K]>>;
+  [
+    K in "record" | "canRequestCode" | "requestCode" | "takeAddressSlot" | "register" | "changeKeys"
+  ]: (...args: Parameters<RegistryDO[K]>) => Promise<ReturnType<RegistryDO[K]>>;
 };
 export type RegistryNamespace = { getByName(name: string): RegistryStub };
 
@@ -209,11 +262,13 @@ async function readInstance(
   registry: RegistryNamespace,
   instance: string,
   now: number,
+  fresh = false,
 ): Promise<InstanceRecord | null> {
   const hit = cache.get(instance);
-  if (hit && now - hit.at < CACHE_MS) return hit.record;
+  if (!fresh && hit && now - hit.at < CACHE_MS) return hit.record;
   const record = await instanceStub(registry, instance).record();
   if (record) remember(instance, record, now);
+  else cache.delete(instance);
   return record;
 }
 
@@ -229,7 +284,10 @@ export type Admission =
         | "registry_unavailable";
     };
 
-/** Is this signed caller a registered instance, with a key in its record? Fails closed: `503 registry_unavailable`. */
+/**
+ * Is this signed caller a registered instance, with a key in its record? A key missing from a cached record is looked
+ * up again (it may have been added in another isolate) before it is refused. Fails closed: `503 registry_unavailable`.
+ */
 export async function checkRegistered(
   registry: RegistryNamespace,
   caller: VerifiedRequest,
@@ -238,6 +296,9 @@ export async function checkRegistered(
   let record: InstanceRecord | null;
   try {
     record = await readInstance(registry, caller.instance, now);
+    if (record && record.status === "registered" && !record.keys.includes(caller.key)) {
+      record = await readInstance(registry, caller.instance, now, true);
+    }
   } catch (error) {
     console.error(
       JSON.stringify({

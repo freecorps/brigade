@@ -20,6 +20,32 @@ type Answer = { error?: string; triesLeft?: number };
 function fakeRegistry() {
   const storage = new Map<string, Map<string, unknown>>();
   const objects = new Map<string, RegistryDO>();
+  const alarms = new Map<string, number>();
+  const object = (name: string): RegistryDO => {
+    let found = objects.get(name);
+    if (!found) {
+      const data = registry.storage(name);
+      const kv = {
+        get: (key: string) => structuredClone(data.get(key)),
+        put: (key: string, value: unknown) => void data.set(key, structuredClone(value)),
+        delete: (key: string) => data.delete(key),
+      };
+      // Only `storage.kv`, the alarm and `deleteAll` are used by the class.
+      const state = {
+        storage: {
+          kv,
+          setAlarm: async (at: number) => void alarms.set(name, at),
+          deleteAll: async () => {
+            data.clear();
+            alarms.delete(name);
+          },
+        },
+      };
+      found = new RegistryDO(state as unknown as DurableObjectState, {} as Cloudflare.Env);
+      objects.set(name, found);
+    }
+    return found;
+  };
   const registry = {
     failing: false,
     storage(name: string): Map<string, unknown> {
@@ -27,23 +53,15 @@ function fakeRegistry() {
       if (!data) storage.set(name, (data = new Map()));
       return data;
     },
+    /** When the object's alarm is set for, if it is. */
+    alarmAt: (name: string) => alarms.get(name),
+    /** Runs the object's alarm, as workerd would at its time. */
+    async fireAlarm(name: string) {
+      alarms.delete(name);
+      await object(name).alarm();
+    },
     getByName(name: string): RegistryStub {
-      let object = objects.get(name);
-      if (!object) {
-        const data = registry.storage(name);
-        const kv = {
-          get: (key: string) => structuredClone(data.get(key)),
-          put: (key: string, value: unknown) => void data.set(key, structuredClone(value)),
-          delete: (key: string) => data.delete(key),
-        };
-        // Only `storage.kv` is used by the class.
-        object = new RegistryDO(
-          { storage: { kv } } as unknown as DurableObjectState,
-          {} as Cloudflare.Env,
-        );
-        objects.set(name, object);
-      }
-      const target = object;
+      const target = object(name);
       const rpc = <K extends keyof RegistryStub>(name: K) =>
         (async (...args: unknown[]) => {
           await Promise.resolve();
@@ -52,8 +70,9 @@ function fakeRegistry() {
         }) as RegistryStub[K];
       return {
         record: rpc("record"),
-        countSend: rpc("countSend"),
+        canRequestCode: rpc("canRequestCode"),
         requestCode: rpc("requestCode"),
+        takeAddressSlot: rpc("takeAddressSlot"),
         register: rpc("register"),
         changeKeys: rpc("changeKeys"),
       };
@@ -123,8 +142,8 @@ function setup(overrides: Partial<RelayEnv> = {}) {
     });
     return handle(request, env, async () => new Response(null, { status: 500 }));
   };
-  const askCode = (key: Key, contact = "oncall@example.com") =>
-    call(key, "POST", "/v1/instances/contact", { contact });
+  const askCode = (key: Key, contact = "oncall@example.com", options: CallOptions = {}) =>
+    call(key, "POST", "/v1/instances/contact", { contact }, options);
   const register = async (key: Key, contact = "oncall@example.com") => {
     expect((await askCode(key, contact)).status).toBe(200);
     return call(key, "POST", "/v1/instances", {
@@ -623,5 +642,180 @@ describe("POST /v1/instances/keys", () => {
     });
     expect(retired.status).toBe(200);
     expect(record(key)?.keys).toEqual([key.publicKey]);
+  });
+
+  test("two adds at once against two keys: exactly one fits", async () => {
+    const { register, addKey, record } = setup();
+    const key = await generateInstanceKey();
+    const [second, third, fourth] = await Promise.all([
+      generateInstanceKey(),
+      generateInstanceKey(),
+      generateInstanceKey(),
+    ]);
+    await register(key);
+    await addKey(key, second);
+    const responses = await Promise.all([addKey(key, third), addKey(key, fourth)]);
+    expect(responses.map((r) => r.status).sort((a, b) => a - b)).toEqual([200, 409]);
+    const refused = responses.find((r) => r.status === 409)!;
+    expect(await refused.json()).toEqual({ error: "too_many_keys" });
+    expect(record(key)?.keys).toHaveLength(3);
+  });
+
+  test("a key retired in the last 10 minutes cannot be added back", async () => {
+    const { registry, call, register, addKey, record } = setup();
+    const key = await generateInstanceKey();
+    const second = await generateInstanceKey();
+    await register(key);
+    await addKey(key, second);
+    await call(key, "POST", "/v1/instances/keys", { retire: second.publicKey });
+    const replayed = await addKey(key, second);
+    expect(replayed.status).toBe(409);
+    expect(await replayed.json()).toEqual({ error: "key_recently_retired" });
+    // Eleven minutes later it may come back.
+    const stored = record(key)!;
+    registry.storage(`instance:${key.instance}`).set("record", {
+      ...stored,
+      retired: stored.retired?.map((r) => ({ ...r, at: r.at - 11 * 60_000 })),
+    });
+    expect((await addKey(key, second)).status).toBe(200);
+  });
+});
+
+/** The contact object's name for an address, as src/instances.ts derives it. */
+async function contactObject(address: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(address));
+  return `contact:${Buffer.from(digest).toString("hex")}`;
+}
+
+describe("limits on codes", () => {
+  test("a registered instance cannot ask for a code, and costs the address nothing", async () => {
+    const { registry, email, askCode, register } = setup();
+    const key = await generateInstanceKey();
+    await register(key);
+    const again = await askCode(key, "other@example.com");
+    expect(again.status).toBe(409);
+    expect(await again.json()).toEqual({ error: "already_registered" });
+    expect(email.sent).toHaveLength(1);
+    expect(registry.storage(await contactObject("other@example.com")).get("sent")).toBeUndefined();
+  });
+
+  test("an instance over its own limit costs the address nothing", async () => {
+    const { registry, askCode } = setup();
+    const key = await generateInstanceKey();
+    for (const address of ["a@example.com", "b@example.com", "c@example.com"]) {
+      await askCode(key, address);
+    }
+    expect((await askCode(key, "victim@example.com")).status).toBe(429);
+    expect(registry.storage(await contactObject("victim@example.com")).get("sent")).toBeUndefined();
+  });
+
+  test("several instances asking for one address at once: exactly 3 codes go out", async () => {
+    const { email, askCode } = setup();
+    const keys = await Promise.all(Array.from({ length: 6 }, () => generateInstanceKey()));
+    const responses = await Promise.all(keys.map((key) => askCode(key, "oncall@example.com")));
+    expect(responses.filter((r) => r.status === 200)).toHaveLength(3);
+    expect(responses.filter((r) => r.status === 429)).toHaveLength(3);
+    expect(email.sent).toHaveLength(3);
+  });
+
+  test("at most 10 codes a day per address", async () => {
+    const { registry, askCode } = setup();
+    const now = Date.now();
+    const storage = registry.storage(await contactObject("oncall@example.com"));
+    // Nine over the day, none in the last hour: one more fits, then the day is full.
+    storage.set(
+      "sent",
+      Array.from({ length: 9 }, (_, i) => now - (2 + i) * 3600_000),
+    );
+    expect((await askCode(await generateInstanceKey())).status).toBe(200);
+    const refused = await askCode(await generateInstanceKey());
+    expect(refused.status).toBe(429);
+    expect(await refused.json()).toEqual({ error: "too_many_codes" });
+    // Until the oldest, 10 hours ago, leaves the 24-hour window.
+    expect(Number(refused.headers.get("Retry-After"))).toBeGreaterThan(13 * 3600);
+  });
+
+  test("CODE_LIMIT bounds codes and guesses per caller IP, before anything else", async () => {
+    const counts = new Map<string, number>();
+    const limiter = {
+      async limit({ key }: { key: string }) {
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+        return { success: (counts.get(key) ?? 0) <= 2 };
+      },
+    };
+    const { email, call, askCode, register } = setup({ CODE_LIMIT: limiter });
+    const ip = { headers: { "CF-Connecting-IP": "192.0.2.1" } };
+    const key = await generateInstanceKey();
+    expect((await askCode(key, "a@example.com", ip)).status).toBe(200);
+    const guess = { terms: "draft-2026-11", contact: "a@example.com", code: "000000" };
+    expect((await call(key, "POST", "/v1/instances", guess, ip)).status).toBe(400);
+    const limited = await call(key, "POST", "/v1/instances", guess, ip);
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: "rate_limited" });
+    expect(limited.headers.get("Retry-After")).toBe("60");
+    expect((await askCode(key, "b@example.com", ip)).status).toBe(429);
+    expect(email.sent).toHaveLength(1);
+    // Another caller IP is not limited, and /me never is.
+    const other = await generateInstanceKey();
+    expect((await register(other, "c@example.com")).status).toBe(201);
+    expect((await call(other, "GET", "/v1/instances/me", undefined, ip)).status).toBe(200);
+  });
+});
+
+describe("the per-isolate cache", () => {
+  test("a key missing from a cached record is looked up again before it is refused", async () => {
+    const { registry, call, register, record } = setup();
+    const key = await generateInstanceKey();
+    const added = await generateInstanceKey();
+    await register(key);
+    expect((await call(key, "GET", "/v1/instances/me")).status).toBe(200);
+    // Another isolate adds a key: this one's cache does not have it.
+    registry
+      .storage(`instance:${key.instance}`)
+      .set("record", { ...record(key)!, keys: [key.publicKey, added.publicKey] });
+    const rotated = await call(key, "GET", "/v1/instances/me", undefined, { signer: added });
+    expect(rotated.status).toBe(200);
+  });
+
+  test("and when that lookup fails, the answer is 503, not a refusal", async () => {
+    const { registry, call, register } = setup();
+    const key = await generateInstanceKey();
+    await register(key);
+    expect((await call(key, "GET", "/v1/instances/me")).status).toBe(200);
+    registry.failing = true;
+    // The cached record answers for its own key...
+    expect((await call(key, "GET", "/v1/instances/me")).status).toBe(200);
+    // ...but a key it does not list needs the object.
+    const unknown = await call(key, "GET", "/v1/instances/me", undefined, {
+      signer: await generateInstanceKey(),
+    });
+    expect(unknown.status).toBe(503);
+    expect(await unknown.json()).toEqual({ error: "registry_unavailable" });
+  });
+});
+
+describe("cleanup alarms", () => {
+  test("an instance that never registers and every address leave nothing behind", async () => {
+    const { registry, askCode } = setup();
+    const key = await generateInstanceKey();
+    const before = Date.now();
+    await askCode(key);
+    const instance = `instance:${key.instance}`;
+    const contact = await contactObject("oncall@example.com");
+    expect(registry.alarmAt(instance)).toBeGreaterThanOrEqual(before + 3600_000);
+    expect(registry.alarmAt(contact)).toBeGreaterThanOrEqual(before + 24 * 3600_000);
+    await registry.fireAlarm(instance);
+    await registry.fireAlarm(contact);
+    expect(registry.storage(instance).size).toBe(0);
+    expect(registry.storage(contact).size).toBe(0);
+  });
+
+  test("a registered instance keeps its record and loses its spent code", async () => {
+    const { registry, register } = setup();
+    const key = await generateInstanceKey();
+    await register(key);
+    const instance = `instance:${key.instance}`;
+    await registry.fireAlarm(instance);
+    expect([...registry.storage(instance).keys()]).toEqual(["record"]);
   });
 });

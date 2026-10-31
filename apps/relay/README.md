@@ -75,18 +75,29 @@ RFC 0015 section 1: each instance has an Ed25519 key pair and an id derived from
 with query, instance id, timestamp, body hash). A bad signature is `401 bad_signature`, a missing header `401
 missing_signature`, a timestamp more than 5 minutes off `401 stale_timestamp`. Bodies are JSON, at most 8 KB.
 
-| Route                        | Body                         | Answers                                                                                                                                                                                                                                                                                                                                               |
-| ---------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /v1/instances/contact` | `{ contact }`                | Emails a 6-digit code to `contact` (valid 15 minutes, 5 tries; at most 3 codes an hour per instance and 3 per address, whichever instances ask): `200 { sent, expiresInSeconds }`; `400 invalid_contact`, `429 too_many_codes` (with `Retry-After`), `502 email_failed`, `503 not_configured` without `EMAIL`/`EMAIL_FROM`                            |
-| `POST /v1/instances`         | `{ terms, contact, code }`   | Registers the original key: `201 { instance, status, terms, termsCurrent }`, `200` when already registered (and `terms`, if current, is recorded as accepted); `409 terms_outdated { terms }` unless `terms` is `RELAY_TERMS_VERSION`; `400 code_invalid { triesLeft }` or `code_expired`; `403 instance_revoked`                                     |
-| `POST /v1/instances/keys`    | `{ add?, proof?, retire? }`  | Signed with a key in the record. Adds a raw public key (base64url, 32 bytes, at most 3 keys, `409 too_many_keys`) with `proof`, the new key's signature over `"brigade add-key\n" + instance id` (`signKeyProof`; `400 invalid_proof`); retires one other than the signer's (`409 cannot_retire_signer`, `400 unknown_key`): `200 { instance, keys }` |
-| `GET /v1/instances/me`       | none (signed as empty bytes) | `200 { instance, status, terms, termsCurrent }`; `403 instance_unregistered` or `instance_revoked`                                                                                                                                                                                                                                                    |
+| Route                        | Body                         | Answers                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /v1/instances/contact` | `{ contact }`                | Emails a 6-digit code to `contact` (valid 15 minutes, 5 tries; limits below): `200 { sent, expiresInSeconds }`; `400 invalid_contact`, `409 already_registered`, `429 too_many_codes` (with `Retry-After`), `502 email_failed`, `503 not_configured` without `EMAIL`/`EMAIL_FROM`                                                                                                                                                         |
+| `POST /v1/instances`         | `{ terms, contact, code }`   | Registers the original key: `201 { instance, status, terms, termsCurrent }`, `200` when already registered (and `terms`, if current, is recorded as accepted); `409 terms_outdated { terms }` unless `terms` is `RELAY_TERMS_VERSION`; `400 code_invalid { triesLeft }` or `code_expired`; `403 instance_revoked`                                                                                                                         |
+| `POST /v1/instances/keys`    | `{ add?, proof?, retire? }`  | Signed with a key in the record. Adds a raw public key (base64url, 32 bytes, at most 3 keys, `409 too_many_keys`) with `proof`, the new key's signature over `"brigade add-key\n" + instance id` (`signKeyProof`; `400 invalid_proof`); retires one other than the signer's (`409 cannot_retire_signer`, `400 unknown_key`); a key retired in the last 10 minutes cannot come back (`409 key_recently_retired`): `200 { instance, keys }` |
+| `GET /v1/instances/me`       | none (signed as empty bytes) | `200 { instance, status, terms, termsCurrent }`; `403 instance_unregistered` or `instance_revoked`                                                                                                                                                                                                                                                                                                                                        |
 
 The registry is a Durable Object, `RegistryDO` (`src/registry.ts`): one object per instance holds its record (status,
 keys, terms, contact) and its pending code (hashed with the instance id), and one per contact address (named by the
 SHA-256 of the address) counts the codes sent to it. Each check-and-change (a code compared and its try counted, a
 key added or retired, a registration) is one synchronous call to the object, so parallel requests cannot interleave.
-Keys are compared in one encoding (unpadded base64url of the 32 bytes), however a caller wrote them.
+Keys are compared in one encoding (unpadded base64url of the 32 bytes), however a caller wrote them. An alarm an hour
+after an instance's last code (a day after an address's) deletes an object with no record, and a registered
+instance's spent code.
+
+**Limits on codes.** Instance ids are free, so: per caller IP (`CF-Connecting-IP`), 5 a minute on asking for a code
+and on guessing one (`429 rate_limited`, the `CODE_LIMIT` rate limiting binding; skipped without it); per instance, 3
+codes an hour; per address (lowercased), 3 an hour and 10 a day from every instance together. An instance refused
+for itself (revoked, already registered, over its own limit) costs the address nothing. The address limit bounds one
+address string, not a mailbox: plus-addressing and aliases count apart, which the per-IP limit covers.
+
+A key missing from a cached record is looked up again before it is refused (another isolate may have added it); if
+that lookup fails, the answer is `503 registry_unavailable`.
 
 Every `/v1/` path answers `503 not_configured` without the `REGISTRY` binding, and `503 registry_unavailable` when
 the object cannot be reached: registration and anything that grants a capability fail closed. Only the send path's
@@ -94,8 +105,8 @@ revocation check (`isRevoked`, for `/v1/send` later) fails open, so a registry o
 exist are cached per isolate for 60 s (a revocation takes up to a minute to apply); a missing one is never cached.
 `/send` and `/health` do not use any of this.
 
-Nothing to create by hand: the binding and its migration are in `wrangler.jsonc` (top level and `env.dev`), and the
-deploy creates the class. For the hosted relay's contact code, the `send_email` binding
+Nothing to create by hand: the binding, its migration and `CODE_LIMIT` are in `wrangler.jsonc` (top level and
+`env.dev`), and the deploy creates the class. For the hosted relay's contact code, the `send_email` binding
 (`"send_email": [{ "name": "EMAIL" }]`) and `EMAIL_FROM`, a bare address on a domain onboarded to Cloudflare Email
 Sending (as `apps/api`), are still to be added; until then `/v1/instances/contact` answers `503 not_configured`.
 `RELAY_TERMS_VERSION` is a var (`draft-2026-11`, RFC 0015 decision D5).

@@ -48,6 +48,8 @@ function fakeRegistry() {
   };
   const registry = {
     failing: false,
+    /** How many times each method was called, on any object. */
+    calls: new Map<string, number>(),
     storage(name: string): Map<string, unknown> {
       let data = storage.get(name);
       if (!data) storage.set(name, (data = new Map()));
@@ -66,13 +68,17 @@ function fakeRegistry() {
         (async (...args: unknown[]) => {
           await Promise.resolve();
           if (registry.failing) throw new Error("Durable Object unreachable");
-          return structuredClone(Reflect.apply(target[name], target, structuredClone(args)));
+          registry.calls.set(name, (registry.calls.get(name) ?? 0) + 1);
+          // Awaited for the async methods, whose check-and-update runs before their first await.
+          const result: unknown = await Reflect.apply(target[name], target, structuredClone(args));
+          return structuredClone(result);
         }) as RegistryStub[K];
       return {
         record: rpc("record"),
         canRequestCode: rpc("canRequestCode"),
         requestCode: rpc("requestCode"),
         takeAddressSlot: rpc("takeAddressSlot"),
+        releaseAddressSlot: rpc("releaseAddressSlot"),
         register: rpc("register"),
         changeKeys: rpc("changeKeys"),
       };
@@ -718,6 +724,39 @@ describe("limits on codes", () => {
     expect(email.sent).toHaveLength(3);
   });
 
+  test("an instance refused in a race gives the address's slot back", async () => {
+    const { registry, email, askCode } = setup();
+    const key = await generateInstanceKey();
+    // Two codes already this hour: both requests below pass the first check, only one can store a code.
+    await askCode(key, "a@example.com");
+    await askCode(key, "b@example.com");
+    const responses = await Promise.all([
+      askCode(key, "victim@example.com"),
+      askCode(key, "victim@example.com"),
+    ]);
+    expect(responses.map((r) => r.status).sort((a, b) => a - b)).toEqual([200, 429]);
+    expect(email.sent).toHaveLength(3);
+    // Both took a slot (the race happened); one code reached the address, and one slot is counted.
+    expect(registry.calls.get("releaseAddressSlot")).toBe(1);
+    expect(registry.storage(await contactObject("victim@example.com")).get("sent")).toHaveLength(1);
+  });
+
+  test("an email that fails gives the address's slot back", async () => {
+    const { registry, askCode } = setup({
+      EMAIL: {
+        async send() {
+          throw Object.assign(new Error("refused for oncall@example.com"), {
+            code: "E_DELIVERY_FAILED",
+          });
+        },
+      },
+    });
+    const response = await askCode(await generateInstanceKey());
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "email_failed" });
+    expect(registry.storage(await contactObject("oncall@example.com")).get("sent")).toEqual([]);
+  });
+
   test("at most 10 codes a day per address", async () => {
     const { registry, askCode } = setup();
     const now = Date.now();
@@ -740,10 +779,11 @@ describe("limits on codes", () => {
     const limiter = {
       async limit({ key }: { key: string }) {
         counts.set(key, (counts.get(key) ?? 0) + 1);
-        return { success: (counts.get(key) ?? 0) <= 2 };
+        // Two a key; calls without an IP (the helpers', from "unknown") are not limited here.
+        return { success: key === "unknown" || (counts.get(key) ?? 0) <= 2 };
       },
     };
-    const { email, call, askCode, register } = setup({ CODE_LIMIT: limiter });
+    const { email, call, askCode, register, addKey } = setup({ CODE_LIMIT: limiter });
     const ip = { headers: { "CF-Connecting-IP": "192.0.2.1" } };
     const key = await generateInstanceKey();
     expect((await askCode(key, "a@example.com", ip)).status).toBe(200);
@@ -755,10 +795,13 @@ describe("limits on codes", () => {
     expect(limited.headers.get("Retry-After")).toBe("60");
     expect((await askCode(key, "b@example.com", ip)).status).toBe(429);
     expect(email.sent).toHaveLength(1);
-    // Another caller IP is not limited, and /me never is.
+    // /me and key changes are limited too: a key a record does not list forces a fresh read each time.
+    expect((await call(key, "GET", "/v1/instances/me", undefined, ip)).status).toBe(429);
+    expect((await addKey(key, await generateInstanceKey(), ip)).status).toBe(429);
+    // Another caller is not limited.
     const other = await generateInstanceKey();
     expect((await register(other, "c@example.com")).status).toBe(201);
-    expect((await call(other, "GET", "/v1/instances/me", undefined, ip)).status).toBe(200);
+    expect((await call(other, "GET", "/v1/instances/me")).status).toBe(200);
   });
 });
 

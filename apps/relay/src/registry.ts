@@ -89,7 +89,8 @@ export class RegistryDO extends DurableObject {
   }
 
   /** Stores a new pending code for the instance, checked again here since `canRequestCode` counted nothing. */
-  requestCode(signer: Signer, contact: string, hash: string, now: number): Done {
+  async requestCode(signer: Signer, contact: string, hash: string, now: number): Promise<Done> {
+    // Check and update with no await in between, so no other call runs inside them; only the alarm is awaited.
     const allowed = this.canRequestCode(signer, now);
     if (!allowed.ok) return allowed;
     this.ctx.storage.kv.put("sent", [...this.recentSends(now, HOUR_MS), now]);
@@ -102,12 +103,16 @@ export class RegistryDO extends DurableObject {
     };
     this.ctx.storage.kv.put("code", pending);
     // An instance that never registers leaves nothing behind (`alarm`).
-    void this.ctx.storage.setAlarm(now + HOUR_MS);
+    await this.ctx.storage.setAlarm(now + HOUR_MS);
     return { ok: true };
   }
 
-  /** Takes one of a contact address's codes: 3 an hour and 10 a day, whichever instances ask. */
-  takeAddressSlot(now: number): Done {
+  /**
+   * Takes one of a contact address's codes: 3 an hour and 10 a day, whichever instances ask. `at` names the slot for
+   * `releaseAddressSlot`.
+   */
+  async takeAddressSlot(now: number): Promise<{ ok: true; at: number } | Refusal> {
+    // Check and update with no await in between, as in `requestCode`.
     const sent = this.recentSends(now, DAY_MS);
     const hour = within(
       sent.filter((at) => now - at < HOUR_MS),
@@ -119,8 +124,15 @@ export class RegistryDO extends DurableObject {
     const day = within(sent, ADDRESS_CODES_PER_DAY, DAY_MS, now);
     if (!day.ok) return day;
     this.ctx.storage.kv.put("sent", [...sent, now]);
-    void this.ctx.storage.setAlarm(now + DAY_MS);
-    return { ok: true };
+    await this.ctx.storage.setAlarm(now + DAY_MS);
+    return { ok: true, at: now };
+  }
+
+  /** Gives a slot back when no code went to the address after all (the instance refused, or the email failed). */
+  releaseAddressSlot(at: number): void {
+    const sent = this.ctx.storage.kv.get<number[]>("sent") ?? [];
+    const index = sent.indexOf(at);
+    if (index !== -1) this.ctx.storage.kv.put("sent", sent.toSpliced(index, 1));
   }
 
   /**
@@ -235,8 +247,15 @@ function owns(signer: Signer, record: InstanceRecord | null): boolean {
 /** The registry's methods as a Worker calls them (a `DurableObjectStub<RegistryDO>`, or a test's fake). */
 export type RegistryStub = {
   [
-    K in "record" | "canRequestCode" | "requestCode" | "takeAddressSlot" | "register" | "changeKeys"
-  ]: (...args: Parameters<RegistryDO[K]>) => Promise<ReturnType<RegistryDO[K]>>;
+    K in
+      | "record"
+      | "canRequestCode"
+      | "requestCode"
+      | "takeAddressSlot"
+      | "releaseAddressSlot"
+      | "register"
+      | "changeKeys"
+  ]: (...args: Parameters<RegistryDO[K]>) => Promise<Awaited<ReturnType<RegistryDO[K]>>>;
 };
 export type RegistryNamespace = { getByName(name: string): RegistryStub };
 

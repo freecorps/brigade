@@ -90,11 +90,16 @@ Keys are compared in one encoding (unpadded base64url of the 32 bytes), however 
 after an instance's last code (a day after an address's) deletes an object with no record, and a registered
 instance's spent code.
 
-**Limits on codes.** Instance ids are free, so: per caller IP (`CF-Connecting-IP`), 5 a minute on asking for a code
-and on guessing one (`429 rate_limited`, the `CODE_LIMIT` rate limiting binding; skipped without it); per instance, 3
-codes an hour; per address (lowercased), 3 an hour and 10 a day from every instance together. An instance refused
-for itself (revoked, already registered, over its own limit) costs the address nothing. The address limit bounds one
-address string, not a mailbox: plus-addressing and aliases count apart, which the per-IP limit covers.
+**Limits on codes.** Instance ids and keys are free, so: per caller IP (`CF-Connecting-IP`), 5 calls a minute on
+every `/v1/instances*` route (`429 rate_limited`, the `CODE_LIMIT` rate limiting binding); per instance, 3 codes an
+hour; per address (lowercased), 3 an hour and 10 a day from every instance together. An instance refused for itself
+(revoked, already registered, over its own limit) costs the address nothing, and a slot is given back when no code
+went (the instance lost a race for its last code, or the email failed). The address limit bounds one address string,
+not a mailbox: plus-addressing and aliases count apart, which the per-IP limit covers.
+
+**Known limit:** since instance ids are free, anyone can use up an address's 10 codes for the day. Its owner may then
+have to register with another address, or a plus-address of the same mailbox, until the day passes; the per-IP limit
+slows such an attacker but does not stop one with many addresses.
 
 A key missing from a cached record is looked up again before it is refused (another isolate may have added it); if
 that lookup fails, the answer is `503 registry_unavailable`.
@@ -106,7 +111,8 @@ exist are cached per isolate for 60 s (a revocation takes up to a minute to appl
 `/send` and `/health` do not use any of this.
 
 Nothing to create by hand: the binding, its migration and `CODE_LIMIT` are in `wrangler.jsonc` (top level and
-`env.dev`), and the deploy creates the class. For the hosted relay's contact code, the `send_email` binding
+`env.dev`), and the deploy creates the class. `CODE_LIMIT` may be dropped from the config (an own relay, say): the code
+treats it as optional and then limits nothing per IP. For the hosted relay's contact code, the `send_email` binding
 (`"send_email": [{ "name": "EMAIL" }]`) and `EMAIL_FROM`, a bare address on a domain onboarded to Cloudflare Email
 Sending (as `apps/api`), are still to be added; until then `/v1/instances/contact` answers `503 not_configured`.
 `RELAY_TERMS_VERSION` is a var (`draft-2026-11`, RFC 0015 decision D5).

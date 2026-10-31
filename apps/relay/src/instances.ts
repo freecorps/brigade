@@ -36,14 +36,11 @@ export type InstanceEnv = {
   /** `closed`: a company's own relay, which refuses registration here (module comment). Anything else is open. */
   RELAY_REGISTRATION?: string;
   /**
-   * Workers Rate Limiting, per caller IP, on asking for a code and on guessing it (wrangler.jsonc `ratelimits`).
-   * Without it nothing is limited per IP.
+   * Workers Rate Limiting, per caller IP, on every `/v1/instances*` route (wrangler.jsonc `ratelimits`). Optional:
+   * without it nothing is limited per IP.
    */
   CODE_LIMIT?: { limit(options: { key: string }): Promise<{ success: boolean }> };
 };
-
-/** The routes that send or check a code, limited per IP by `CODE_LIMIT`. */
-const LIMITED = new Set(["/v1/instances/contact", "/v1/instances"]);
 
 /**
  * Pragmatic, not RFC 5322: one @, a dot in the domain, and nothing that could break out of a header or a list
@@ -92,9 +89,9 @@ export async function instanceRoutes(
   if (request.method !== route.method) {
     return json({ error: "method_not_allowed" }, 405, { Allow: route.method });
   }
-  // Before anything else: instance ids are free, so only the caller's address bounds how many codes one sender asks
-  // for or guesses.
-  if (env.CODE_LIMIT && LIMITED.has(url.pathname)) {
+  // Before anything else: instance ids and keys are free, so only the caller's IP bounds how many codes one sender asks
+  // for or guesses, and how many object reads it forces (a key a record does not list is read again each time).
+  if (env.CODE_LIMIT) {
     const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
     if (!(await env.CODE_LIMIT.limit({ key: ip })).success) {
       return json({ error: "rate_limited" }, 429, { "Retry-After": "60" });
@@ -153,10 +150,18 @@ async function requestCode(
   // Then the address's limit, whichever instance asks (3 an hour, 10 a day): ids are free, so a limit per instance
   // alone would not bound what one address string receives. It bounds that string only: plus-addressing and other
   // aliases of one mailbox count as different addresses; the per-IP limit above covers the rest.
-  const slot = await caller.registry
-    .getByName(`contact:${await sha256Hex(address)}`)
-    .takeAddressSlot(caller.now);
+  const contactObject = caller.registry.getByName(`contact:${await sha256Hex(address)}`);
+  const slot = await contactObject.takeAddressSlot(caller.now);
   if (!slot.ok) return refuse(slot);
+  // A slot counts a code the address received: given back when none went (best effort; if this fails too, the address
+  // has one code fewer this hour).
+  const release = async () => {
+    try {
+      await contactObject.releaseAddressSlot(slot.at);
+    } catch (error) {
+      console.error(JSON.stringify({ message: "address slot not released", error: String(error) }));
+    }
+  };
   const code = sixDigits();
   const stored = await instance.requestCode(
     signer(caller),
@@ -164,7 +169,11 @@ async function requestCode(
     await hashCode(caller.instance, code),
     caller.now,
   );
-  if (!stored.ok) return refuse(stored);
+  // Another request of the same instance took its last code since `canRequestCode`.
+  if (!stored.ok) {
+    await release();
+    return refuse(stored);
+  }
   try {
     await env.EMAIL.send({
       from: env.EMAIL_FROM,
@@ -188,6 +197,8 @@ async function requestCode(
         ...(typeof code === "string" && /^E_[A-Z_]+$/.test(code) ? { code } : {}),
       }),
     );
+    // Nothing reached the address, so its slot goes back; the instance's stays used, which bounds its retries.
+    await release();
     return json({ error: "email_failed" }, 502);
   }
   return json({ sent: true, expiresInSeconds: CODE_TTL_MS / 1000 });

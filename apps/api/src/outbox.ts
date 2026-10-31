@@ -3,7 +3,7 @@
 // `brigade-events` Queue (`OutboxDrain`), deleting rows only after the send succeeds: at-least-once, in `seq` order.
 
 import { newId, type Actor, type DomainEvent, type RandomBytes } from "@freecorps/brigade-schema";
-import { within } from "./deadline.ts";
+import { DeadlineError, within } from "./deadline.ts";
 
 /** RFC 0005's envelope. */
 export type BrigadeEvent<T = unknown> = {
@@ -147,7 +147,6 @@ export class OutboxDrain {
         const rows = this.next();
         if (rows.length === 0) break;
         const last = rows.at(-1)!.seq;
-        const started = Date.now();
         try {
           if (rows.some((row) => row.body !== null)) {
             await within(
@@ -161,9 +160,9 @@ export class OutboxDrain {
             );
           }
         } catch (error) {
-          // From when it failed, not when the drain started: a send that timed out took its whole bound, which
-          // would otherwise eat the first backoff and send again at once.
-          this.failed(now + (Date.now() - started), error);
+          // A send that timed out failed its whole bound after `now`: backing off from `now` would eat the first
+          // backoff and send again at once.
+          this.failed(error instanceof DeadlineError ? now + this.sendTimeoutMs : now, error);
           return sent;
         }
         // Only after the send resolved. A crash before this line sends the batch again (at-least-once).

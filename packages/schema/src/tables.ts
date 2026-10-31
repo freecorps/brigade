@@ -890,13 +890,17 @@ export type StatusPageRow = {
   updatedBy: string;
 };
 
-/** Where a status page's own domain stands at Cloudflare: waiting for its DNS records, serving, or given up on. */
+/**
+ * Where a status page's own domain stands: waiting for its DNS records (or, a dedicated hostname, for the edge Worker
+ * to answer there), serving, or given up on (Cloudflare's custom hostnames only).
+ */
 export type StatusDomainState = "pending" | "active" | "failed";
 /**
- * Why Cloudflare has not verified the domain, as a code the dashboard words in each language (never Cloudflare's own
- * English): the DNS records are not in place (`dns`), a CAA record forbids the certificate (`caa`), validation ran out
- * of time (`timed_out`), the certificate expired (`expired`), the hostname no longer points here (`moved`), Cloudflare
- * blocked it (`blocked`), Cloudflare no longer has it (`deleted`), or another reason (`other`).
+ * Why the domain is not serving, as a code the dashboard words in each language (never Cloudflare's own English): the
+ * DNS records are not in place (`dns`), a CAA record forbids the certificate (`caa`), validation ran out of time
+ * (`timed_out`), the certificate expired (`expired`), the hostname no longer points here (`moved`), Cloudflare blocked
+ * it (`blocked`), Cloudflare no longer has it (`deleted`), another reason (`other`), or a dedicated hostname the status
+ * page edge does not answer at yet (`not_attached`).
  */
 export type StatusDomainError =
   | "dns"
@@ -906,7 +910,8 @@ export type StatusDomainError =
   | "moved"
   | "blocked"
   | "deleted"
-  | "other";
+  | "other"
+  | "not_attached";
 /** A DNS record the owner must create for the domain, as Cloudflare asked for it. */
 export type StatusDomainRecord = { type: "CNAME" | "TXT"; name: string; value: string };
 
@@ -915,13 +920,16 @@ export type StatusDomainRow = {
   id: string;
   /** Lowercase, punycode for an internationalized name; unique across the instance (D1 `status_custom_host`). */
   hostname: string;
-  /** Cloudflare's id of the custom hostname, to check and delete it. */
-  cloudflareId: string;
+  /**
+   * Cloudflare's id of the custom hostname, to check and delete it; null for a dedicated hostname (one the instance's
+   * operator attached to the status page edge, `STATUS_HOSTNAMES`), which has none and no records to create.
+   */
+  cloudflareId: string | null;
   state: StatusDomainState;
   records: StatusDomainRecord[];
-  /** Cloudflare's reason, when it is not active and gave one. */
+  /** Why it is not active, when that is known. */
   error: StatusDomainError | null;
-  /** When Cloudflare was last asked. */
+  /** When it was last checked: Cloudflare asked, or the edge reached at the hostname. */
   checkedAt: number;
   /** Since when it is in its state: when it was added, or the check that moved it (a takeover reads it). */
   stateAt: number;

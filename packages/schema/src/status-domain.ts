@@ -1,7 +1,8 @@
 // A status page's own domain (RFC 0012 "Custom domains"): a hostname the owner points at the instance with a CNAME,
-// served through Cloudflare for SaaS custom hostnames. The API claims the hostname in D1 and asks Cloudflare for it
-// (it holds the token); the shard keeps what the dashboard shows, written only by these server-only mutations, each
-// with its event, which also keeps the public hostname → page lookup in step.
+// served through Cloudflare for SaaS custom hostnames, or a dedicated hostname the instance's operator attached to the
+// status page edge themselves (`cloudflareId` null). The API claims the hostname in D1 and asks Cloudflare for it (it
+// holds the token) or reaches the edge there; the shard keeps what the dashboard shows, written only by these
+// server-only mutations, each with its event, which also keeps the public hostname → page lookup in step.
 
 import { ACCOUNT_ACTOR } from "./devices.ts";
 import { defineMutation, fail, ok, type DomainEvent } from "./mutation.ts";
@@ -27,6 +28,7 @@ export const STATUS_DOMAIN_ERRORS = [
   "blocked",
   "deleted",
   "other",
+  "not_attached",
 ] as const satisfies readonly StatusDomainError[];
 /**
  * A domain pending or failed this long holds its hostname no more: another workspace may take it over (RFC 0012
@@ -69,7 +71,8 @@ const recordArgs = v.object({
   name: v.string({ min: 1, max: HOSTNAME_MAX }),
   value: v.string({ min: 1, max: 512 }),
 });
-const cloudflareId = v.string({ min: 1, max: 64 });
+/** Null: a dedicated hostname, with no custom hostname at Cloudflare. */
+const cloudflareId = v.nullable(v.string({ min: 1, max: 64 }));
 const checkedArgs = {
   state: v.picklist(STATUS_DOMAIN_STATES),
   records: v.array(recordArgs, { max: STATUS_DOMAIN_RECORDS_MAX }),
@@ -77,8 +80,9 @@ const checkedArgs = {
 };
 
 /**
- * Server only (`status:manage`), once the API claimed `hostname` in D1 and Cloudflare created it (`cloudflareId`):
- * the page's domain, with its state and the records the owner must create. One per page: another is a `conflict`.
+ * Server only (`status:manage`), once the API claimed `hostname` in D1 and Cloudflare created it (`cloudflareId`), or
+ * reached the edge at a dedicated hostname (`cloudflareId` null): the page's domain, with its state and the records the
+ * owner must create (none for a dedicated one). One per page: another is a `conflict`.
  */
 export const addStatusDomain = defineMutation({
   name: "statusDomain.add",
@@ -93,6 +97,9 @@ export const addStatusDomain = defineMutation({
       return fail("not_found", "The status page is not set up");
     }
     if (!isStatusHostname(args.hostname)) return fail("invalid_args", "Not a hostname");
+    if (args.cloudflareId === null && args.records.length > 0) {
+      return fail("invalid_args", "A dedicated hostname has no records to create");
+    }
     if (store.get("status_domain", STATUS_DOMAIN_ID)) {
       return fail("conflict", "The page already has a domain");
     }
@@ -116,15 +123,18 @@ export const addStatusDomain = defineMutation({
 });
 
 /**
- * Server only: what Cloudflare says now about the domain (`hostname` and `cloudflareId` must still be the page's, so
- * an answer about a hostname removed and added again meanwhile changes nothing): its state, records and the time
- * asked. The event says the state it moved from (`previous`, the same when it did not move).
+ * Server only: what Cloudflare says now about the domain, or what reaching the edge at a dedicated hostname found
+ * (`hostname` and `cloudflareId` must still be the page's, so an answer about a hostname removed and added again
+ * meanwhile changes nothing; a dedicated one has no Cloudflare id to tell them apart, so its check also says when the
+ * domain it asked about was added, `addedAt`): its state, records and the time asked. The event says the state it
+ * moved from (`previous`, the same when it did not move).
  */
 export const checkStatusDomain = defineMutation({
   name: "statusDomain.check",
   args: v.object({
     hostname: v.string({ min: 4, max: HOSTNAME_MAX }),
     cloudflareId,
+    addedAt: v.omittable(v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER })),
     ...checkedArgs,
   }),
   permission: "status:manage",
@@ -133,9 +143,13 @@ export const checkStatusDomain = defineMutation({
     if (
       !current ||
       current.hostname !== args.hostname ||
-      current.cloudflareId !== args.cloudflareId
+      current.cloudflareId !== args.cloudflareId ||
+      (args.addedAt !== undefined && current.createdAt !== args.addedAt)
     ) {
       return fail("not_found", "No such domain on the page");
+    }
+    if (args.cloudflareId === null && args.records.length > 0) {
+      return fail("invalid_args", "A dedicated hostname has no records to create");
     }
     store.update("status_domain", STATUS_DOMAIN_ID, {
       state: args.state,
@@ -153,14 +167,25 @@ export const checkStatusDomain = defineMutation({
   },
 });
 
-/** Server only, once Cloudflare deleted it: the page has no domain of its own again. */
+/**
+ * Server only, once Cloudflare deleted it (a dedicated hostname has nothing there): the page has no domain again.
+ * `addedAt`, when given, must be when the domain was added, so a removal read before the domain was removed and added
+ * again leaves the new one alone.
+ */
 export const removeStatusDomain = defineMutation({
   name: "statusDomain.remove",
-  args: v.object({ hostname: v.string({ min: 4, max: HOSTNAME_MAX }) }),
+  args: v.object({
+    hostname: v.string({ min: 4, max: HOSTNAME_MAX }),
+    addedAt: v.omittable(v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER })),
+  }),
   permission: "status:manage",
   apply(store, args) {
     const current = store.get("status_domain", STATUS_DOMAIN_ID);
-    if (!current || current.hostname !== args.hostname) {
+    if (
+      !current ||
+      current.hostname !== args.hostname ||
+      (args.addedAt !== undefined && current.createdAt !== args.addedAt)
+    ) {
       return fail("not_found", "No such domain on the page");
     }
     store.delete("status_domain", STATUS_DOMAIN_ID);
@@ -174,9 +199,10 @@ export const removeStatusDomain = defineMutation({
 });
 
 /**
- * Server only, as `ACCOUNT_ACTOR`: another workspace takes the hostname over (RFC 0012 "Custom domains"), once the
- * API deleted it at Cloudflare. Only a domain still `cloudflareId`, not active, and in its state since `before` or
- * earlier (`STATUS_DOMAIN_SQUAT_MS` ago); else `conflict`, and the domain stays.
+ * Server only, as `ACCOUNT_ACTOR`: another workspace takes the hostname over (RFC 0012 "Custom domains"), before the
+ * API deletes it at Cloudflare (a dedicated hostname has nothing there). Only a domain still `cloudflareId`, not
+ * active, and in its state since `before` or earlier (`STATUS_DOMAIN_SQUAT_MS` ago); else `conflict`, and the domain
+ * stays.
  */
 export const releaseStatusDomain = defineMutation({
   name: "statusDomain.release",

@@ -1,8 +1,9 @@
 # @freecorps/brigade-status-edge
 
 The status page edge (RFC 0012 "Custom domains"): the Worker that serves a workspace's status page at its own domain
-(`status.example.com`) through Cloudflare for SaaS custom hostnames. It holds the SaaS zone's `*/*` route, so every
-custom hostname reaches it and nothing else does; the API Worker never serves a custom hostname itself.
+(`status.example.com`), through Cloudflare for SaaS custom hostnames, dedicated hostnames attached to it as Workers
+Custom Domains, or both. It holds the SaaS zone's `*/*` route and the dedicated hostnames, so every custom hostname
+reaches it and nothing else does; the API Worker never serves a custom hostname itself.
 
 For each request it reads `host:<hostname>` from the API's `STATUS` KV namespace (read only, written by the API's
 queue consumer):
@@ -13,6 +14,9 @@ queue consumer):
 | none, or unreadable           | A static 404 page, counted against the caller (`STATUS_MISS_LIMIT`, 30 a minute, then 429) |
 | KV fails                      | The 503 page, never cached                                                                 |
 | `/favicon.ico`, `/robots.txt` | A 404 that never counts and reads nothing                                                  |
+
+Every answer it makes itself carries `X-Brigade-Status-Edge: 1`: the API reaches `/robots.txt` at a dedicated
+hostname and reads that header to tell the hostname is attached here (apps/api `src/status-domain-edge.ts`).
 
 The entrypoint (apps/api `src/status-pages.ts`) answers only that page: `/` is the page, `/status/<slug>` and its
 feeds and subscription routes are themselves, anything else is the 404 page. It renders and caches as `/status/<slug>`
@@ -34,16 +38,23 @@ vp run build:dev     # or `vp run build` for production
 wrangler deploy      # the built config names the Worker and environment
 ```
 
-A self-hosted instance gives the top-level `STATUS` binding the id of the API's own namespace before the first deploy,
-or `wrangler deploy` provisions an empty one of its own and every hostname is a 404.
+The top-level `STATUS` binding is production's namespace, the API's own. A self-hosted instance puts the id of its
+API's namespace there before the first deploy: a binding with no `id` makes `wrangler deploy` provision an empty one
+of its own, and every hostname is a 404.
 
-Then add the route by hand: a Workers route `*/*` on the Cloudflare for SaaS zone to this Worker (the zone's Workers
-Routes in the dashboard). It is not in `wrangler.jsonc`, so no zone or hostname is in the repository, and `wrangler
-deploy` leaves it alone. The zone must be one of its own, never the dashboard's or the operator's main zone, since
-the route takes every hostname on it. The rest of the setup (the zone, the fallback origin, the token and the API's
-settings) is in apps/api README "Custom domains". Turning custom domains off means removing this route too.
+Then attach the hostnames by hand, in the dashboard, so no zone or hostname is in the repository:
+
+- **Cloudflare for SaaS**: a Workers route `*/*` on the SaaS zone to this Worker (the zone's Workers Routes). The zone
+  must be one of its own, never the dashboard's or the operator's main zone, since the route takes every hostname on
+  it. Turning Cloudflare for SaaS off means removing this route too.
+- **Dedicated hostnames**: each as a Custom Domain of this Worker (Settings → Domains & Routes), then listed in the
+  API's `STATUS_HOSTNAMES`.
+
+`wrangler.jsonc` has no `routes`, so `wrangler deploy` publishes none and leaves both alone; a `custom_domain` route
+added there would replace the dashboard's Custom Domains with the file's. The rest of the setup is in apps/api README
+"Custom domains".
 
 ## Tests
 
 `vp test` runs in Node with a fake KV, limiter and API (`test/edge.test.ts`): a hit, a miss and its limit, the
-uncounted paths, KV failing and the API failing.
+uncounted paths and their `X-Brigade-Status-Edge` header, KV failing and the API failing.

@@ -1,11 +1,15 @@
 // The shard's re-check of a status page's own domain (RFC 0012 "Custom domains"), alone: `DomainChecker` with a fake
 // shard, storage, limiter and Cloudflare, for what the shard-level tests cannot reach: the alarm's rate limit, the
-// backoff's cap, and an answer about a hostname that was removed or added again while Cloudflare answered.
+// backoff's cap, and an answer about a hostname that was removed or added again while Cloudflare answered. Then what
+// reaching the edge at a dedicated hostname makes of each answer.
 import { STATUS_DOMAIN_ID, type StatusDomainRow } from "@freecorps/brigade-schema";
+import { EDGE_HEADER } from "@freecorps/brigade-status-edge/api";
 import { describe, expect, test } from "vite-plus/test";
 import type { Shard } from "../src/shard.ts";
 import type { SaasConfig } from "../src/status-domain-cf.ts";
+import { EDGE_MISSES_MAX, edgeAnswers, probedState } from "../src/status-domain-edge.ts";
 import {
+  DOMAIN_ACTIVE_RECHECK_MS,
   DOMAIN_RECHECK_MAX_MS,
   DOMAIN_PENDING_MAX_MS,
   DOMAIN_RECHECK_MIN_MS,
@@ -159,5 +163,148 @@ describe("domainCheckDue", () => {
     // Pending since it was added, a week and more ago: no longer asked about on its own.
     const stale = { ...ROW, createdAt: old, stateAt: old, checkedAt: T };
     expect(domainCheckDue(stale, old + DOMAIN_PENDING_MAX_MS + 1)).toBeNull();
+  });
+});
+
+describe("the edge at a dedicated hostname", () => {
+  const answer = (status: number, edge: boolean) => async () =>
+    new Response("", { status, headers: edge ? { [EDGE_HEADER]: "1" } : {} });
+
+  test("only the edge's own header says it answers there; anything else, or nothing, does not", async () => {
+    expect(await edgeAnswers("status.acme.test", answer(404, true))).toBe(true);
+    // The edge's own 503 page is still the edge.
+    expect(await edgeAnswers("status.acme.test", answer(503, true))).toBe(true);
+    // Another site, a redirect (not followed), a WAF rule, Cloudflare's own error page.
+    for (const status of [200, 301, 403, 530]) {
+      expect(await edgeAnswers("status.acme.test", answer(status, false)), String(status)).toBe(
+        false,
+      );
+    }
+    expect(
+      await edgeAnswers("status.acme.test", async () => {
+        throw new TypeError("Network connection lost.");
+      }),
+    ).toBe(false);
+  });
+
+  test("an active domain is never set back by one answer; anything else waits for the edge, and never fails", () => {
+    expect(probedState("active", false)).toBeNull();
+    expect(probedState("active", true)).toEqual({ state: "active", error: null });
+    for (const current of [null, "pending"] as const) {
+      expect(probedState(current, false)).toEqual({ state: "pending", error: "not_attached" });
+      expect(probedState(current, true)).toEqual({ state: "active", error: null });
+    }
+  });
+
+  test("an active domain goes back to pending only after the edge missed EDGE_MISSES_MAX checks in a row", async () => {
+    const reached: string[] = [];
+    let attached = false;
+    const row: StatusDomainRow = { ...ROW, cloudflareId: null, state: "active" };
+    const checks: Record<string, unknown>[] = [];
+    const { meta, sql } = fakeSql();
+    const checker = new DomainChecker({
+      shard: {
+        store: { get: (table: string) => (table === "status_domain" ? row : undefined) },
+      } as unknown as Shard,
+      sql,
+      config: () => undefined,
+      limiter: () => undefined,
+      send: async (request) => {
+        reached.push(request.url);
+        return answer(attached ? 404 : 403, attached)();
+      },
+      check: (args) => checks.push(args),
+      log: () => {},
+    });
+    // A miss, then the edge answers again: the count starts over.
+    let at = T + DOMAIN_ACTIVE_RECHECK_MS;
+    await checker.run("ws_1", at);
+    expect(meta.get("domain_misses")).toBe(1);
+    attached = true;
+    at = checker.nextAt(at)!;
+    await checker.run("ws_1", at);
+    expect(checks).toMatchObject([{ state: "active" }]);
+    expect(meta.get("domain_misses")).toBeUndefined();
+    // Then never again: backed off like a failure, nothing recorded until the last miss.
+    attached = false;
+    checks.length = 0;
+    for (let miss = 1; miss < EDGE_MISSES_MAX; miss++) {
+      await checker.run("ws_1", at);
+      expect(checks, `miss ${miss}`).toEqual([]);
+      expect(meta.get("domain_misses")).toBe(miss);
+      at = checker.nextAt(at)!;
+    }
+    await checker.run("ws_1", at);
+    expect(checks).toEqual([
+      {
+        hostname: "status.acme.test",
+        cloudflareId: null,
+        addedAt: T,
+        state: "pending",
+        records: [],
+        error: "not_attached",
+      },
+    ]);
+    expect(meta.get("domain_misses")).toBeUndefined();
+    expect(reached).toHaveLength(EDGE_MISSES_MAX + 2);
+  });
+
+  test("the same dedicated hostname removed and added again while the edge answered: the answer is dropped", async () => {
+    let row: StatusDomainRow = { ...ROW, cloudflareId: null };
+    const checks: Record<string, unknown>[] = [];
+    const checker = new DomainChecker({
+      shard: {
+        store: { get: (table: string) => (table === "status_domain" ? row : undefined) },
+      } as unknown as Shard,
+      sql: fakeSql().sql,
+      config: () => undefined,
+      limiter: () => undefined,
+      send: async () => {
+        // Removed and added again, active already, while this check waited for the edge.
+        row = { ...ROW, cloudflareId: null, state: "active", createdAt: T + 1000 };
+        return answer(403, false)();
+      },
+      check: (args) => checks.push(args),
+      log: () => {},
+    });
+    await checker.run("ws_1", T + DOMAIN_RECHECK_MIN_MS);
+    expect(checks).toEqual([]);
+  });
+
+  test("checked with no Cloudflare settings; an answer about another dedicated hostname is dropped", async () => {
+    const reached: string[] = [];
+    let row: StatusDomainRow | undefined = { ...ROW, cloudflareId: null };
+    const checks: Record<string, unknown>[] = [];
+    const checker = new DomainChecker({
+      shard: {
+        store: { get: (table: string) => (table === "status_domain" ? row : undefined) },
+      } as unknown as Shard,
+      sql: fakeSql().sql,
+      config: () => undefined,
+      limiter: () => undefined,
+      send: async (request) => {
+        reached.push(request.url);
+        // Removed and another dedicated hostname added while the edge answered.
+        if (reached.length === 2) row = { ...ROW, cloudflareId: null, hostname: "other.acme.test" };
+        return answer(404, true)();
+      },
+      check: (args) => checks.push(args),
+      log: () => {},
+    });
+    expect(checker.nextAt(T)).toBe(T + DOMAIN_RECHECK_MIN_MS);
+    await checker.run("ws_1", T + DOMAIN_RECHECK_MIN_MS);
+    expect(reached).toEqual(["https://status.acme.test/robots.txt"]);
+    expect(checks).toEqual([
+      {
+        hostname: "status.acme.test",
+        cloudflareId: null,
+        addedAt: T,
+        state: "active",
+        records: [],
+        error: null,
+      },
+    ]);
+    await checker.run("ws_1", T + DOMAIN_RECHECK_MAX_MS);
+    expect(checks).toHaveLength(1);
   });
 });

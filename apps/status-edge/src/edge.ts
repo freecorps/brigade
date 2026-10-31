@@ -1,12 +1,13 @@
-// The status page edge's answers (RFC 0012 "Custom domains"), for the Worker behind the Cloudflare for SaaS zone's `*/*` route, so
-// every custom hostname reaches it and nothing else does. It reads the hostname's lookup (`host:<hostname>` in the
-// API's `STATUS` namespace, read only) and hands the request to the API's `StatusPages` entrypoint, which renders and
-// caches the page as `/status/<slug>` does. A hostname with no lookup is a static 404, counted against the caller
-// like any miss; the API Worker's own routes are never reachable here.
+// The status page edge's answers (RFC 0012 "Custom domains"), for the Worker behind the Cloudflare for SaaS zone's
+// `*/*` route and the dedicated hostnames attached to it as Custom Domains, so every custom hostname reaches it and
+// nothing else does. It reads the hostname's lookup (`host:<hostname>` in the API's `STATUS` namespace, read only)
+// and hands the request to the API's `StatusPages` entrypoint, which renders and caches the page as `/status/<slug>`
+// does. A hostname with no lookup is a static 404, counted against the caller like any miss; the API Worker's own
+// routes are never reachable here.
 
 import type { Locale } from "@freecorps/brigade-i18n";
 import { status_text } from "@freecorps/brigade-i18n/messages";
-import { hostKey, readStatusHost } from "./api.ts";
+import { EDGE_HEADER, hostKey, readStatusHost } from "./api.ts";
 import type { EdgeEnv } from "./index.ts";
 
 /** How long KV's own cache may keep a hostname's lookup, as for a snapshot. */
@@ -57,7 +58,10 @@ async function miss(request: Request, env: EdgeEnv): Promise<Response> {
   return limited;
 }
 
-/** One of the status page's message pages, in English like the API's: no page, unavailable, too many requests. */
+/**
+ * One of the status page's message pages, in English like the API's: no page, unavailable, too many requests. Each
+ * says it is this Worker's (`EDGE_HEADER`), so the API can tell the edge answers at a hostname.
+ */
 function message(
   kind: "not_found" | "unavailable" | "rate_limited",
   status: number,
@@ -85,6 +89,7 @@ function message(
       "X-Content-Type-Options": "nosniff",
       "Referrer-Policy": "no-referrer",
       "Cache-Control": maxAge === undefined ? "no-store" : `public, max-age=${maxAge}`,
+      [EDGE_HEADER]: "1",
     },
   });
 }

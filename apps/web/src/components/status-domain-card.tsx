@@ -32,32 +32,41 @@ const STATE_BADGE = {
 } as const satisfies Record<StatusDomainState, string>;
 
 /**
- * The status page's own domain (RFC 0012 "Custom domains"): shown only where the instance has Cloudflare for SaaS set
- * up. Owners and admins add one, see the DNS records to create and whether Cloudflare verified it, and remove it;
- * everyone else reads it.
+ * The status page's own domain (RFC 0012 "Custom domains"): shown only where the instance has Cloudflare for SaaS or
+ * dedicated hostnames set up. Owners and admins pick one of the dedicated hostnames or add their own, see the DNS
+ * records to create and whether it serves yet, and remove it; everyone else reads it.
  */
 export function StatusDomainCard() {
   const { role, workspaceId } = useMember();
   const page = useQuery("statusPage.config", {});
   const domain = useQuery("statusDomain.get", {});
   const [config, setConfig] = useState<DomainConfig | null>(null);
+  // The free dedicated hostnames change with the page's domain and with other workspaces' picks: read again when the
+  // domain comes or goes, and after a pick another workspace beat us to (`stale`). A read that fails keeps the last.
+  const current = domain.rows[0]?.hostname ?? null;
+  const [stale, setStale] = useState(0);
   useEffect(() => {
     let live = true;
-    void loadDomainConfig(workspaceId).then((value) => live && setConfig(value));
+    void loadDomainConfig(workspaceId).then((value) => live && setConfig((last) => value ?? last));
     return () => {
       live = false;
     };
-  }, [workspaceId]);
+  }, [workspaceId, current, stale]);
   if (!config?.configured) return null;
   return (
     <StatusDomainPanel
       target={config.target}
+      hostnames={config.hostnames}
       ready={page.rows.length > 0}
       // Both: a domain answered before the page would read as "set up the page first" for a moment.
       loading={domain.status === "loading" || page.status === "loading"}
       domain={domain.rows[0] ?? null}
       manage={can(role, "status:manage")}
-      onAdd={(hostname) => addDomain(workspaceId, hostname)}
+      onAdd={async (hostname) => {
+        const outcome = await addDomain(workspaceId, hostname);
+        if (!outcome.ok && outcome.error === "hostname_taken") setStale((count) => count + 1);
+        return outcome;
+      }}
       onCheck={() => checkDomain(workspaceId)}
       onRemove={() => removeDomain(workspaceId)}
     />
@@ -67,8 +76,10 @@ export function StatusDomainCard() {
 type Outcome = Promise<{ ok: true } | { ok: false; error: DomainError }>;
 
 type PanelProps = {
-  /** What owners point their CNAME at (the instance's fallback origin). */
-  target: string;
+  /** What owners point their CNAME at (the instance's fallback origin); null: only `hostnames` can be chosen. */
+  target: string | null;
+  /** The dedicated hostnames the operator set up that are still free: chosen with one press, no records to create. */
+  hostnames: string[];
   ready: boolean;
   loading: boolean;
   domain: StatusDomainRow | null;
@@ -80,10 +91,22 @@ type PanelProps = {
 
 /** The card without the hooks (tested and screenshotted with made-up data). */
 export function StatusDomainPanel(props: PanelProps) {
-  const { ready, loading, domain, manage } = props;
+  const { ready, loading, domain, manage, target } = props;
   return (
     <Card aria-labelledby="status-domain-title">
-      <CardHeader id="status-domain-title" title={say("title")} description={say("description")} />
+      <CardHeader
+        id="status-domain-title"
+        title={say("title")}
+        // Cloudflare's certificate and DNS records are no part of a dedicated hostname; before one is chosen, with both
+        // ways open, neither description alone is right.
+        description={say(
+          target === null || domain?.cloudflareId === null
+            ? "description_dedicated"
+            : !domain && props.hostnames.length > 0
+              ? "description_both"
+              : "description",
+        )}
+      />
       <CardContent className="flex flex-col gap-4">
         {loading ? null : !ready ? (
           <Empty>{say("not_set_up")}</Empty>
@@ -100,48 +123,98 @@ export function StatusDomainPanel(props: PanelProps) {
   );
 }
 
-function AddDomain({ target, onAdd }: PanelProps) {
+function AddDomain({ target, hostnames, onAdd }: PanelProps) {
   const [hostname, setHostname] = useState("");
-  const [state, setState] = useState<"idle" | "busy">("idle");
+  /** What is being added: a dedicated hostname's name, or `typed` for the form. */
+  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<DomainError | "required" | null>(null);
+  const [errorAt, setErrorAt] = useState<"listed" | "typed">("typed");
+  const add = (name: string, at: "listed" | "typed") => {
+    setBusy(at === "typed" ? "typed" : name);
+    setError(null);
+    void onAdd(name).then((outcome) => {
+      setBusy(null);
+      if (!outcome.ok) {
+        setErrorAt(at);
+        setError(outcome.error);
+      }
+    });
+  };
   const submit = (event: FormEvent) => {
     event.preventDefault();
     // The API lowercases too; doing it here keeps what the card shows the same as what is stored.
     const typed = hostname.trim().toLowerCase();
     if (!typed) {
+      setErrorAt("typed");
       setError("required");
       return;
     }
-    setState("busy");
-    setError(null);
-    void onAdd(typed).then((outcome) => {
-      setState("idle");
-      if (!outcome.ok) setError(outcome.error);
-    });
+    add(typed, "typed");
   };
+  const titleId = useId();
+  if (target === null && hostnames.length === 0) return <Empty>{say("none_free")}</Empty>;
   return (
-    <form onSubmit={submit} noValidate className="flex min-w-0 flex-col gap-3">
-      <Field
-        label={say("hostname_label")}
-        hint={say("hostname_hint", { name: target })}
-        value={hostname}
-        maxLength={253}
-        inputMode="url"
-        autoCapitalize="none"
-        autoCorrect="off"
-        spellCheck={false}
-        enterKeyHint="done"
-        placeholder="status.example.com"
-        error={error ? say(`error_${error}`) : undefined}
-        onChange={(event) => setHostname(event.target.value)}
-        className="[&_input]:font-mono"
-      />
-      <div>
-        <Button type="submit" disabled={state === "busy"}>
-          {say(state === "busy" ? "adding" : "add")}
-        </Button>
-      </div>
-    </form>
+    <div className="flex min-w-0 flex-col gap-6">
+      {hostnames.length > 0 ? (
+        <section aria-labelledby={titleId} className="flex min-w-0 flex-col gap-2">
+          <h3 id={titleId} className="text-sm font-semibold">
+            {say("listed_title")}
+          </h3>
+          <p className="max-w-prose text-sm text-muted-foreground">{say("listed_hint")}</p>
+          <ul className="flex flex-col divide-y rounded-md border">
+            {hostnames.map((name) => (
+              <li
+                key={name}
+                className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-3 py-2.5"
+              >
+                <span
+                  id={`${titleId}-${name}`}
+                  className="min-w-0 font-mono text-sm [overflow-wrap:anywhere]"
+                >
+                  {name}
+                </span>
+                <Button
+                  variant="outline"
+                  disabled={busy !== null}
+                  aria-describedby={`${titleId}-${name}`}
+                  onClick={() => add(name, "listed")}
+                >
+                  {say(busy === name ? "adding" : "use")}
+                </Button>
+              </li>
+            ))}
+          </ul>
+          {error && errorAt === "listed" ? <FormError>{say(`error_${error}`)}</FormError> : null}
+        </section>
+      ) : null}
+      {target !== null ? (
+        <form onSubmit={submit} noValidate className="flex min-w-0 flex-col gap-3">
+          {hostnames.length > 0 ? (
+            <h3 className="text-sm font-semibold">{say("other_title")}</h3>
+          ) : null}
+          <Field
+            label={say("hostname_label")}
+            hint={say("hostname_hint", { name: target })}
+            value={hostname}
+            maxLength={253}
+            inputMode="url"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            enterKeyHint="done"
+            placeholder="status.example.com"
+            error={error && errorAt === "typed" ? say(`error_${error}`) : undefined}
+            onChange={(event) => setHostname(event.target.value)}
+            className="[&_input]:font-mono"
+          />
+          <div>
+            <Button type="submit" disabled={busy !== null}>
+              {say(busy === "typed" ? "adding" : "add")}
+            </Button>
+          </div>
+        </form>
+      ) : null}
+    </div>
   );
 }
 
@@ -170,7 +243,13 @@ function Domain({ domain, manage, onCheck, onRemove }: PanelProps & { domain: St
         </span>
         <Badge variant={STATE_BADGE[domain.state]}>{say(`state_${domain.state}`)}</Badge>
       </div>
-      <p className="max-w-prose text-sm text-muted-foreground">{say(`explain_${domain.state}`)}</p>
+      <p className="max-w-prose text-sm text-muted-foreground">
+        {say(
+          domain.cloudflareId === null && domain.state === "pending"
+            ? "explain_pending_dedicated"
+            : `explain_${domain.state}`,
+        )}
+      </p>
       {domain.error && domain.state !== "active" ? (
         <p className="max-w-prose text-sm">{say(`reason_${domain.error}`)}</p>
       ) : null}

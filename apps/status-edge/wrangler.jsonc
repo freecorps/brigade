@@ -1,5 +1,5 @@
-// The status page edge (RFC 0012 "Custom domains"): the Worker on the Cloudflare for SaaS zone, which serves a status
-// page at a workspace's own domain. The top-level config is production (`brigade-status-edge`); `dev` is the
+// The status page edge (RFC 0012 "Custom domains"): the Worker on the Cloudflare for SaaS zone and on the dedicated
+// hostnames attached to it, which serves a status page at a workspace's own domain. The top-level config is production (`brigade-status-edge`); `dev` is the
 // environment below (`brigade-status-edge-dev`). It needs the API Worker of its environment deployed first (api, then
 // this one), since its one service binding is the API's `StatusPages` entrypoint.
 {
@@ -16,16 +16,19 @@
     "traces": { "enabled": true, "head_sampling_rate": 0.1 },
   },
   "upload_source_maps": true,
-  // No `routes` here: the SaaS zone's `*/*` route is the operator's, added on that zone (apps/status-edge README), so
-  // no zone or hostname is in this file. `wrangler deploy` leaves a route it did not create alone.
+  // No `routes` here: the SaaS zone's `*/*` route and the dedicated hostnames' Custom Domains are the operator's, added
+  // in the dashboard (apps/status-edge README), so no zone or hostname is in this file. With no `routes` at all,
+  // `wrangler deploy` publishes none and leaves both alone; a `custom_domain` route added here would replace the
+  // dashboard's Custom Domains with this file's.
   //
   // The API's StatusPages entrypoint (apps/api src/status-pages.ts): it renders and caches the page, its feeds and its
   // subscription routes. One way only: the API never binds to this Worker.
   "services": [{ "binding": "API", "service": "brigade-api", "entrypoint": "StatusPages" }],
   // The API's `STATUS` namespace, read only: `host:<hostname>` keys (apps/api src/status-domain.ts). This Worker never
-  // writes it. Without an `id` this binding is for local runs and the tests only; a self-hosted instance gives it the
-  // id of the API's own `STATUS` namespace, or `wrangler deploy` provisions an empty one of its own.
-  "kv_namespaces": [{ "binding": "STATUS" }],
+  // writes it. Production's `brigade-status`, the API's own (apps/api wrangler.jsonc); local runs and the tests use
+  // Miniflare's simulation whatever the `id`. A self-hosted instance puts the id of its API's `STATUS` namespace here
+  // before the first deploy: a binding with no `id` makes `wrangler deploy` provision an empty one of its own.
+  "kv_namespaces": [{ "binding": "STATUS", "id": "7c80c30cfbce41bcbbb1ffa6c56265ae" }],
   // STATUS_MISS_LIMIT: a hostname with no page, 30 a minute per caller address, then 429. The API's namespace (4181),
   // so a caller's misses here and on `/status/*` count together.
   "ratelimits": [

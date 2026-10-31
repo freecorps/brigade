@@ -1,7 +1,7 @@
 // The status page edge (RFC 0012 "Custom domains"): a hostname's lookup in KV, then the API's `StatusPages`; a miss is
 // a static 404 counted against the caller, a KV failure a 503 page. Fakes for KV, the limiter and the API.
 import { describe, expect, test } from "vite-plus/test";
-import type { StatusHost, StatusPagesApi } from "../src/api.ts";
+import { EDGE_HEADER, type StatusHost, type StatusPagesApi } from "../src/api.ts";
 import { HOST_CACHE_TTL_S, serveEdge } from "../src/edge.ts";
 import type { EdgeEnv } from "../src/index.ts";
 
@@ -116,7 +116,10 @@ describe("a hostname with no page", () => {
   test("/favicon.ico and /robots.txt are a 404 that never counts, nor reads KV", async () => {
     const { visit, counted, reads } = edge({}, { limit: 0 });
     for (const path of ["/favicon.ico", "/robots.txt"]) {
-      expect((await visit(path)).status, path).toBe(404);
+      const answer = await visit(path);
+      expect(answer.status, path).toBe(404);
+      // How the API tells the edge answers at a dedicated hostname.
+      expect(answer.headers.get(EDGE_HEADER), path).toBe("1");
     }
     expect(counted).toEqual([]);
     expect(reads).toEqual([]);
@@ -129,6 +132,7 @@ test("KV failing is the 503 page, never cached, and counts nobody", async () => 
   expect(answer.status).toBe(503);
   expect(answer.headers.get("Cache-Control")).toBe("no-store");
   expect(await answer.text()).toContain("Status page unavailable");
+  expect(answer.headers.get(EDGE_HEADER)).toBe("1");
   expect(counted).toEqual([]);
   expect(served).toEqual([]);
 });

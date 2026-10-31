@@ -165,14 +165,17 @@ the same kind of decision as what monitors watch, so it is an admin's call.
 ## Custom domains
 
 A page may also be served at a domain of the workspace's own (`status.example.com`), through Cloudflare for SaaS
-custom hostnames: the owner points a CNAME at the instance's fallback origin and Cloudflare issues the certificate.
+custom hostnames: the owner points a CNAME at the instance's fallback origin and Cloudflare issues the certificate. Or,
+on an instance that serves its own company rather than others' domains, through a dedicated hostname the operator
+attached to the edge Worker themselves ("Dedicated hostnames" below).
 
-- **Off unless the instance is set up for it.** The API needs `CF_SAAS_TOKEN` (an API token scoped to "SSL and
-  Certificates: Edit" on the SaaS zone alone), `CF_ZONE_ID` (that zone), `CF_SAAS_FALLBACK_ORIGIN` (the fallback
-  origin's hostname, what owners point their CNAME at) and `DASHBOARD_URL`. Without all four the dashboard hides the
-  section and the routes answer `503 not_configured`; nothing else changes.
+- **Off unless the instance is set up for it.** Cloudflare for SaaS needs `CF_SAAS_TOKEN` (an API token scoped to
+  "SSL and Certificates: Edit" on the SaaS zone alone), `CF_ZONE_ID` (that zone) and `CF_SAAS_FALLBACK_ORIGIN` (the
+  fallback origin's hostname, what owners point their CNAME at); dedicated hostnames need `STATUS_HOSTNAMES`; both need
+  `DASHBOARD_URL`. With neither the dashboard hides the section and the routes answer `503 not_configured`; nothing
+  else changes. Either may be set without the other.
 - **A Worker of its own serves it.** `brigade-status-edge` (`apps/status-edge`) holds the SaaS zone's `*/*` route and
-  nothing else does; the API Worker's `fetch` never looks at the host, reads no hostname lookup and has no public
+  the dedicated hostnames' Custom Domains, and nothing else does; the API Worker's `fetch` never looks at the host, reads no hostname lookup and has no public
   route for it, so alerts, heartbeats, sync and sign-in answer exactly as without custom domains whatever is set
   (tested with every setting set and `DASHBOARD_URL` on another host). The edge reads `host:<hostname>` from the
   API's `STATUS` namespace (read only; KV's cache 30 s): a miss is a static 404 counted against the caller like any
@@ -189,8 +192,8 @@ custom hostnames: the owner points a CNAME at the instance's fallback origin and
   (`status_custom_host`) on every request and answers the 404 page unless it is the lookup's workspace, so a key a late
   event wrote back after the domain was removed or taken over never serves (tested). D1 failing serves anyway, logged:
   the page is still only that workspace's own snapshot.
-- **One per page** (`status_domain`, one synced row: hostname, Cloudflare's id, `pending`, `active` or `failed`, the
-  DNS records to create, Cloudflare's reason as a code, when it was last checked). Owners and admins
+- **One per page** (`status_domain`, one synced row: hostname, Cloudflare's id (null for a dedicated hostname),
+  `pending`, `active` or `failed`, the DNS records to create, the reason as a code, when it was last checked). Owners and admins
   (`status:manage`) add, check and remove it from the dashboard's Custom domain card; everyone reads it.
 - **D1 first, then Cloudflare, then the shard**, as for a slug: `PUT /workspaces/:id/status-page/domain`
   `{ hostname }` checks the session and the role in D1 (an outsider never reaches Cloudflare or a shard), the
@@ -225,14 +228,18 @@ custom hostnames: the owner points a CNAME at the instance's fallback origin and
   without CNAME flattening, so a page takes a subdomain (an apex under a two-label suffix, `example.com.br`, cannot be
   told apart without a public suffix list and needs flattening at the owner's DNS provider). Never the instance's
   own domain, anything under it, or a parent of the dashboard's hostname, nor the fallback origin, its domain or
-  anything under it: an own domain is the hostname without its first label (or itself when it has two).
+  anything under it: an own domain is the hostname without its first label (or itself when it has two). A dedicated
+  hostname is exempt from the own-domain and apex rules (below).
 - **Verification**: the card shows the records Cloudflare asked for (the CNAME, and its ownership TXT record) with the
   state, and "Check again" (`POST …/domain/check`) asks Cloudflare (`GET …/custom_hostnames/:id`) and runs
   `statusDomain.check` (event `status_domain.checked`, with the state it moved from), with the Cloudflare id it asked
-  about: an answer about a hostname removed and added again meanwhile changes nothing (tested). Active means the hostname and its
+  about and when the domain was added (`addedAt`, all a dedicated hostname has to tell two of its domains apart): an
+  answer about a hostname removed and added again meanwhile changes nothing (tested). A removal carries `addedAt`
+  too, so one read before the domain was removed and added again leaves the new one alone. Active means the hostname and its
   certificate are; failed means Cloudflare gave up (blocked, moved, deleted, a validation that timed out); anything
   else is pending. Cloudflare's reason is kept as a code (`dns`, `caa`, `timed_out`, `expired`, `moved`, `blocked`,
-  `deleted`, `other`) the card words in English and Portuguese, never Cloudflare's own English.
+  `deleted`, `other`, and `not_attached` for a dedicated hostname) the card words in English and Portuguese, never
+  Cloudflare's own English.
 - **Checked again on its own.** The shard's alarm asks Cloudflare again (`statusDomain.check` as `ACCOUNT_ACTOR`, its
   event through the outbox, within `STATUS_DOMAIN_LIMIT`): a pending domain after as long as it has been pending (1
   minute to 1 hour), for 7 days; an active one daily, so a change at Cloudflare reaches the dashboard and the lookup;
@@ -251,11 +258,35 @@ custom hostnames: the owner points a CNAME at the instance's fallback origin and
   latest state: the key exists only while the domain is active, the hostname is this workspace's in D1 and the page
   is public under a slug it holds. A hostname another workspace holds by then is left to that workspace's events
   (tested).
-- **Setup** (apps/api README "Custom domains", not run by Brigade): a zone of its own for Cloudflare for SaaS (never
-  the dashboard's or the operator's main zone, since its `*/*` route takes every hostname on it), a fallback origin on
-  it, the edge Worker with the `*/*` route on that zone, the token with "SSL and Certificates: Edit" on the zone, then
-  the three settings as secrets. Turning the feature off removes the route too. The setup wizard will take the same
-  steps.
+- **Dedicated hostnames (decided).** A company running Brigade for itself wants `status.example.com` beside its
+  dashboard at `brigade.example.com`, on a zone it already has, without a SaaS zone of its own. The operator attaches
+  each hostname to `brigade-status-edge` as a Workers Custom Domain (Cloudflare makes the DNS record and the
+  certificate) and lists it in `STATUS_HOSTNAMES` (comma-separated, a secret so no hostname is in the repository). The
+  list is the operator's choice, so a listed hostname may sit under the instance's own domain or be an apex (no CNAME
+  is involved); the dashboard's hostname, anything under it and its parents, and the SaaS zone and anything under it, are still left out
+  (logged). Brigade never asks Cloudflare about one (`cloudflareId` null, no records): the card lists the hostnames no
+  other workspace holds (or holds but could have taken over, below), an owner or admin picks one, and the claim in
+  D1 is the same as for any domain, so the first workspace to pick it holds it. On an instance whose workspaces are
+  not all the operator's own, any of them can pick a listed hostname first; pinning a hostname to a workspace is left
+  for when such an instance wants dedicated hostnames. Its check reaches `https://<hostname>/robots.txt` (redirects not followed, `CF_CALL_MS`):
+  the edge answers that itself with `X-Brigade-Status-Edge: 1`, which makes the domain `active`; anything else (another
+  site, a redirect, an error page, no answer) leaves a new or pending one `pending` (`not_attached`). An active one is
+  never set back by one answer, since a WAF rule's 403, a rate limit or a moment of Cloudflare's own errors would take
+  a working page down: only the shard's alarm sets it back, once the edge missed `EDGE_MISSES_MAX` (8) checks in a
+  row, backed off from a minute to an hour (about two hours), so a Custom Domain detached for good shows within hours.
+  This catches a hostname listed but never attached, or detached since, not an adversary: the list is the
+  operator's. A dedicated hostname is never
+  `failed`. It is checked again like a Cloudflare hostname (pending: from a minute, backing off to an hour, for 7 days;
+  active: daily, and after a miss the misses' backoff above until the edge answers or the eighth miss sets it back),
+  taken over after 7 days pending like any other, and removing it
+  deletes nothing at Cloudflare (detaching the Custom Domain is the operator's). With Cloudflare for SaaS set up too,
+  a listed hostname goes this way and any other through Cloudflare. Without it, any other is `400 not_listed`.
+- **Setup** (apps/api README "Custom domains", not run by Brigade). Cloudflare for SaaS: a zone of its own (never the
+  dashboard's or the operator's main zone, since its `*/*` route takes every hostname on it), a fallback origin on it,
+  the edge Worker with the `*/*` route on that zone, the token with "SSL and Certificates: Edit" on the zone, then the
+  three settings as secrets; turning it off removes the route too. Dedicated hostnames: the edge Worker, each hostname
+  as its Custom Domain, then `STATUS_HOSTNAMES`; `wrangler.jsonc` has no `routes`, so `wrangler deploy` leaves the
+  dashboard's Custom Domains alone. The setup wizard will take the same steps.
 
 ## The snapshot
 

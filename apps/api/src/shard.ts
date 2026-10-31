@@ -392,7 +392,14 @@ export class Shard {
       version,
       randomBytes: this.options.randomBytes,
     });
-    if (written.length > 0) this.options.outboxed?.(written, now);
+    // Inside the mutation's transaction: whatever the owner's hook does, it never fails the commit.
+    if (written.length > 0) {
+      try {
+        this.options.outboxed?.(written, now);
+      } catch (error) {
+        this.options.log("outboxed hook failed", { error: String(error) });
+      }
+    }
     const result: MutationResultMessage = { type: "mutationResult", mutationId, ok: true, version };
     this.saveResult(actor.id, clientId, mutationId, now, result);
     return { changes, result };

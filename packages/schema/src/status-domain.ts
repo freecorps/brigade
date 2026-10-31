@@ -97,6 +97,9 @@ export const addStatusDomain = defineMutation({
       return fail("not_found", "The status page is not set up");
     }
     if (!isStatusHostname(args.hostname)) return fail("invalid_args", "Not a hostname");
+    if (args.cloudflareId === null && args.records.length > 0) {
+      return fail("invalid_args", "A dedicated hostname has no records to create");
+    }
     if (store.get("status_domain", STATUS_DOMAIN_ID)) {
       return fail("conflict", "The page already has a domain");
     }
@@ -122,14 +125,16 @@ export const addStatusDomain = defineMutation({
 /**
  * Server only: what Cloudflare says now about the domain, or what reaching the edge at a dedicated hostname found
  * (`hostname` and `cloudflareId` must still be the page's, so an answer about a hostname removed and added again
- * meanwhile changes nothing): its state, records and the time asked. The event says the state it moved from
- * (`previous`, the same when it did not move).
+ * meanwhile changes nothing; a dedicated one has no Cloudflare id to tell them apart, so its check also says when the
+ * domain it asked about was added, `addedAt`): its state, records and the time asked. The event says the state it
+ * moved from (`previous`, the same when it did not move).
  */
 export const checkStatusDomain = defineMutation({
   name: "statusDomain.check",
   args: v.object({
     hostname: v.string({ min: 4, max: HOSTNAME_MAX }),
     cloudflareId,
+    addedAt: v.omittable(v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER })),
     ...checkedArgs,
   }),
   permission: "status:manage",
@@ -138,9 +143,13 @@ export const checkStatusDomain = defineMutation({
     if (
       !current ||
       current.hostname !== args.hostname ||
-      current.cloudflareId !== args.cloudflareId
+      current.cloudflareId !== args.cloudflareId ||
+      (args.addedAt !== undefined && current.createdAt !== args.addedAt)
     ) {
       return fail("not_found", "No such domain on the page");
+    }
+    if (args.cloudflareId === null && args.records.length > 0) {
+      return fail("invalid_args", "A dedicated hostname has no records to create");
     }
     store.update("status_domain", STATUS_DOMAIN_ID, {
       state: args.state,
@@ -158,14 +167,25 @@ export const checkStatusDomain = defineMutation({
   },
 });
 
-/** Server only, once Cloudflare deleted it (a dedicated hostname has nothing there): the page has no domain again. */
+/**
+ * Server only, once Cloudflare deleted it (a dedicated hostname has nothing there): the page has no domain again.
+ * `addedAt`, when given, must be when the domain was added, so a removal read before the domain was removed and added
+ * again leaves the new one alone.
+ */
 export const removeStatusDomain = defineMutation({
   name: "statusDomain.remove",
-  args: v.object({ hostname: v.string({ min: 4, max: HOSTNAME_MAX }) }),
+  args: v.object({
+    hostname: v.string({ min: 4, max: HOSTNAME_MAX }),
+    addedAt: v.omittable(v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER })),
+  }),
   permission: "status:manage",
   apply(store, args) {
     const current = store.get("status_domain", STATUS_DOMAIN_ID);
-    if (!current || current.hostname !== args.hostname) {
+    if (
+      !current ||
+      current.hostname !== args.hostname ||
+      (args.addedAt !== undefined && current.createdAt !== args.addedAt)
+    ) {
       return fail("not_found", "No such domain on the page");
     }
     store.delete("status_domain", STATUS_DOMAIN_ID);

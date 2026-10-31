@@ -12,6 +12,7 @@ export type Status_Domain_CardInputs = {
 * | "title" | "Custom domain" |
 * | "description" | "Serve the status page at your own address, such as status.example.com. Cloudflare issues its certificate once the DNS records below are in place." |
 * | "description_dedicated" | "Serve the status page at your own address, on a domain this Brigade instance is set up to serve." |
+* | "description_both" | "Serve the status page at your own address: one this Brigade instance is set up to serve, or a domain of your own." |
 * | "not_set_up" | "Set up the status page first to give it a domain." |
 * | "none" | "The status page has no domain of its own." |
 * | "none_free" | "Every domain this Brigade instance is set up to serve is in use by another status page." |

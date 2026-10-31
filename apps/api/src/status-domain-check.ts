@@ -92,12 +92,20 @@ export class DomainChecker {
         return;
       }
       // Removed, or removed and added again, while Cloudflare or the edge answered: what it said is about another
-      // hostname. A dedicated one has no Cloudflare id to tell them apart, so the hostname is compared too.
+      // domain. A dedicated one has no Cloudflare id to tell them apart, so its hostname and when it was added are
+      // compared too, here and by the mutation (`addedAt`).
       const latest = this.deps.shard.store.get("status_domain", STATUS_DOMAIN_ID);
-      if (latest?.cloudflareId !== row.cloudflareId || latest.hostname !== row.hostname) return;
+      if (
+        latest?.cloudflareId !== row.cloudflareId ||
+        latest.hostname !== row.hostname ||
+        latest.createdAt !== row.createdAt
+      ) {
+        return;
+      }
       this.deps.check({
         hostname: row.hostname,
         cloudflareId: row.cloudflareId,
+        addedAt: row.createdAt,
         state: seen.state,
         records: seen.records,
         error: seen.error,

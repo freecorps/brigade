@@ -787,7 +787,9 @@ export class WorkspaceDO extends DurableObject<Env> {
     });
     if (!result.ok) return { ok: false, code: result.error.code };
     this.broadcast(result.version, changes, undefined);
-    if (name !== "check") this.domains.reset();
+    // A domain added or removed starts afresh, and so does one checked by hand: what it found is the latest word, so
+    // the alarm's earlier failures and a dedicated domain's misses before it no longer count.
+    this.domains.reset();
     this.armDomain();
     return { ok: true };
   }

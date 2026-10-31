@@ -41,13 +41,17 @@ export function StatusDomainCard() {
   const page = useQuery("statusPage.config", {});
   const domain = useQuery("statusDomain.get", {});
   const [config, setConfig] = useState<DomainConfig | null>(null);
+  // The free dedicated hostnames change with the page's domain and with other workspaces' picks: read again when the
+  // domain comes or goes, and after a pick another workspace beat us to (`stale`). A read that fails keeps the last.
+  const current = domain.rows[0]?.hostname ?? null;
+  const [stale, setStale] = useState(0);
   useEffect(() => {
     let live = true;
-    void loadDomainConfig(workspaceId).then((value) => live && setConfig(value));
+    void loadDomainConfig(workspaceId).then((value) => live && setConfig((last) => value ?? last));
     return () => {
       live = false;
     };
-  }, [workspaceId]);
+  }, [workspaceId, current, stale]);
   if (!config?.configured) return null;
   return (
     <StatusDomainPanel
@@ -58,7 +62,11 @@ export function StatusDomainCard() {
       loading={domain.status === "loading" || page.status === "loading"}
       domain={domain.rows[0] ?? null}
       manage={can(role, "status:manage")}
-      onAdd={(hostname) => addDomain(workspaceId, hostname)}
+      onAdd={async (hostname) => {
+        const outcome = await addDomain(workspaceId, hostname);
+        if (!outcome.ok && outcome.error === "hostname_taken") setStale((count) => count + 1);
+        return outcome;
+      }}
       onCheck={() => checkDomain(workspaceId)}
       onRemove={() => removeDomain(workspaceId)}
     />
@@ -89,11 +97,14 @@ export function StatusDomainPanel(props: PanelProps) {
       <CardHeader
         id="status-domain-title"
         title={say("title")}
-        // Cloudflare's certificate and DNS records are no part of a dedicated hostname.
+        // Cloudflare's certificate and DNS records are no part of a dedicated hostname; before one is chosen, with both
+        // ways open, neither description alone is right.
         description={say(
           target === null || domain?.cloudflareId === null
             ? "description_dedicated"
-            : "description",
+            : !domain && props.hostnames.length > 0
+              ? "description_both"
+              : "description",
         )}
       />
       <CardContent className="flex flex-col gap-4">

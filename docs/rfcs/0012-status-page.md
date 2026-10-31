@@ -233,7 +233,9 @@ attached to the edge Worker themselves ("Dedicated hostnames" below).
 - **Verification**: the card shows the records Cloudflare asked for (the CNAME, and its ownership TXT record) with the
   state, and "Check again" (`POST …/domain/check`) asks Cloudflare (`GET …/custom_hostnames/:id`) and runs
   `statusDomain.check` (event `status_domain.checked`, with the state it moved from), with the Cloudflare id it asked
-  about: an answer about a hostname removed and added again meanwhile changes nothing (tested). Active means the hostname and its
+  about and when the domain was added (`addedAt`, all a dedicated hostname has to tell two of its domains apart): an
+  answer about a hostname removed and added again meanwhile changes nothing (tested). A removal carries `addedAt`
+  too, so one read before the domain was removed and added again leaves the new one alone. Active means the hostname and its
   certificate are; failed means Cloudflare gave up (blocked, moved, deleted, a validation that timed out); anything
   else is pending. Cloudflare's reason is kept as a code (`dns`, `caa`, `timed_out`, `expired`, `moved`, `blocked`,
   `deleted`, `other`, and `not_attached` for a dedicated hostname) the card words in English and Portuguese, never
@@ -261,7 +263,7 @@ attached to the edge Worker themselves ("Dedicated hostnames" below).
   each hostname to `brigade-status-edge` as a Workers Custom Domain (Cloudflare makes the DNS record and the
   certificate) and lists it in `STATUS_HOSTNAMES` (comma-separated, a secret so no hostname is in the repository). The
   list is the operator's choice, so a listed hostname may sit under the instance's own domain or be an apex (no CNAME
-  is involved); the dashboard's hostname, anything under it and its parents, and the SaaS zone, are still left out
+  is involved); the dashboard's hostname, anything under it and its parents, and the SaaS zone and anything under it, are still left out
   (logged). Brigade never asks Cloudflare about one (`cloudflareId` null, no records): the card lists the hostnames no
   other workspace holds (or holds but could have taken over, below), an owner or admin picks one, and the claim in
   D1 is the same as for any domain, so the first workspace to pick it holds it. On an instance whose workspaces are
@@ -274,7 +276,9 @@ attached to the edge Worker themselves ("Dedicated hostnames" below).
   row, backed off from a minute to an hour (about two hours), so a Custom Domain detached for good shows within hours.
   This catches a hostname listed but never attached, or detached since, not an adversary: the list is the
   operator's. A dedicated hostname is never
-  `failed`; it is checked again on the same schedule, taken over after 7 days pending like any other, and removing it
+  `failed`. It is checked again like a Cloudflare hostname (pending: from a minute, backing off to an hour, for 7 days;
+  active: daily, and after a miss the misses' backoff above until the edge answers or the eighth miss sets it back),
+  taken over after 7 days pending like any other, and removing it
   deletes nothing at Cloudflare (detaching the Custom Domain is the operator's). With Cloudflare for SaaS set up too,
   a listed hostname goes this way and any other through Cloudflare. Without it, any other is `400 not_listed`.
 - **Setup** (apps/api README "Custom domains", not run by Brigade). Cloudflare for SaaS: a zone of its own (never the

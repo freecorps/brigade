@@ -36,8 +36,8 @@ export async function edgeAnswers(hostname: string, send: Fetch): Promise<boolea
   } catch {
     return false;
   }
-  // Only the header counts; the body is never read.
-  await response.body?.cancel().catch(() => {});
+  // Only the header counts; the body is never read, nor its cancelling waited for.
+  void response.body?.cancel().catch(() => {});
   return response.headers.get(EDGE_HEADER) === "1";
 }
 

@@ -3796,6 +3796,7 @@
         "part=title": "Domínio próprio",
         "part=description": "Sirva a página de status no seu próprio endereço, como status.example.com. A Cloudflare emite o certificado assim que os registros DNS abaixo estiverem configurados.",
         "part=description_dedicated": "Sirva a página de status no seu próprio endereço, em um domínio que esta instância do Brigade está configurada para servir.",
+        "part=description_both": "Sirva a página de status no seu próprio endereço: um que esta instância do Brigade está configurada para servir, ou um domínio seu.",
         "part=not_set_up": "Configure a página de status antes de dar um domínio a ela.",
         "part=none": "A página de status não tem domínio próprio.",
         "part=none_free": "Todos os domínios que esta instância do Brigade está configurada para servir já estão em uso por outra página de status.",

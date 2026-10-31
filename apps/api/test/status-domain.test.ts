@@ -1424,6 +1424,62 @@ describe("dedicated hostnames", () => {
     expect(await lookup(name)).not.toBeNull();
   });
 
+  test("a manual check answered after the same hostname was removed and added again leaves the new one alone", async () => {
+    const t = await team();
+    const name = hostname();
+    const config = dedicated(name);
+    const edge = edgeAt(cloudflare(), "other");
+    await route(t, t.ana, "PUT", edge.fake, { hostname: name }, false, config);
+    const racing = {
+      ...edge.fake,
+      send: async (request: Request) => {
+        const answer = await edge.fake.send(request);
+        // While the edge answered about the pending domain, it was removed and added again, active this time.
+        await runInDurableObject(t.stub, async (instance: WorkspaceDO) => {
+          await instance.changeStatusDomain(t.id, owner(t), "remove", { hostname: name });
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          const again = await instance.changeStatusDomain(t.id, owner(t), "add", {
+            hostname: name,
+            cloudflareId: null,
+            state: "active",
+            records: [],
+            error: null,
+          });
+          expect(again).toEqual({ ok: true });
+        });
+        return answer;
+      },
+    };
+    const checked = await route(t, t.ana, "POST", racing, undefined, true, config);
+    expect(checked.status).toBe(404);
+    expect(await domainRow(t)).toMatchObject({ hostname: name, state: "active" });
+    expect(await outbox(t, "status_domain.checked")).toEqual([]);
+  });
+
+  test("a check by hand that reaches the edge forgets the alarm's earlier misses", async () => {
+    const t = await team();
+    const name = hostname();
+    const config = dedicated(name);
+    const edge = edgeAt(cloudflare(), "other");
+    await route(t, t.ana, "PUT", edge.fake, { hostname: name }, false, config);
+    const misses = () =>
+      runInDurableObject(
+        t.stub,
+        (_instance: WorkspaceDO, state) =>
+          state.storage.sql
+            .exec<{ value: number }>("select value from shard_meta where key = 'domain_misses'")
+            .toArray()
+            .at(0)?.value,
+      );
+    await runInDurableObject(t.stub, (_instance: WorkspaceDO, state) => {
+      state.storage.sql.exec("insert into shard_meta (key, value) values ('domain_misses', 7)");
+    });
+    expect(await misses()).toBe(7);
+    edge.answer = "attached";
+    expect((await route(t, t.ana, "POST", edge.fake, undefined, true, config)).status).toBe(200);
+    expect(await misses()).toBeUndefined();
+  });
+
   test("with Cloudflare for SaaS too: a listed hostname is dedicated, any other a custom hostname", async () => {
     const a = await team();
     const b = await team();

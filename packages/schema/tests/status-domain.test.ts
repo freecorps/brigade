@@ -190,7 +190,11 @@ describe("status page domains", () => {
     expect(run(store, "statusDomain.check", { ...checked, cloudflareId: "cfh-1" })).toMatchObject({
       error: { code: "not_found" },
     });
-    expect(run(store, "statusDomain.check", checked)).toMatchObject({
+    // Nor is one about the same hostname added at another time (removed and added again meanwhile).
+    expect(run(store, "statusDomain.check", { ...checked, addedAt: T - 1 })).toMatchObject({
+      error: { code: "not_found" },
+    });
+    expect(run(store, "statusDomain.check", { ...checked, addedAt: T })).toMatchObject({
       ok: true,
       events: [{ data: { state: "active", previous: "pending" } }],
     });
@@ -198,6 +202,21 @@ describe("status page domains", () => {
       state: "active",
       error: null,
     });
+    // A dedicated hostname has no DNS records to create, added or checked.
+    const record = { type: "CNAME", name: "status.acme.test", value: "edge.test" };
+    expect(run(ready(), "statusDomain.add", { ...dedicated, records: [record] })).toMatchObject({
+      error: { code: "invalid_args" },
+    });
+    expect(
+      run(store, "statusDomain.check", { ...checked, addedAt: T, records: [record] }),
+    ).toMatchObject({ error: { code: "invalid_args" } });
+    // Removed only as the domain it was read as.
+    expect(
+      run(store, "statusDomain.remove", { hostname: "status.acme.test", addedAt: T - 1 }),
+    ).toMatchObject({ error: { code: "not_found" } });
+    expect(
+      run(store, "statusDomain.remove", { hostname: "status.acme.test", addedAt: T }),
+    ).toMatchObject({ ok: true });
     // An empty id is neither: refused.
     expect(run(ready(), "statusDomain.add", { ...dedicated, cloudflareId: "" })).toMatchObject({
       error: { code: "invalid_args" },

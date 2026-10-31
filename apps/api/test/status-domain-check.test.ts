@@ -239,6 +239,7 @@ describe("the edge at a dedicated hostname", () => {
       {
         hostname: "status.acme.test",
         cloudflareId: null,
+        addedAt: T,
         state: "pending",
         records: [],
         error: "not_attached",
@@ -246,6 +247,28 @@ describe("the edge at a dedicated hostname", () => {
     ]);
     expect(meta.get("domain_misses")).toBeUndefined();
     expect(reached).toHaveLength(EDGE_MISSES_MAX + 2);
+  });
+
+  test("the same dedicated hostname removed and added again while the edge answered: the answer is dropped", async () => {
+    let row: StatusDomainRow = { ...ROW, cloudflareId: null };
+    const checks: Record<string, unknown>[] = [];
+    const checker = new DomainChecker({
+      shard: {
+        store: { get: (table: string) => (table === "status_domain" ? row : undefined) },
+      } as unknown as Shard,
+      sql: fakeSql().sql,
+      config: () => undefined,
+      limiter: () => undefined,
+      send: async () => {
+        // Removed and added again, active already, while this check waited for the edge.
+        row = { ...ROW, cloudflareId: null, state: "active", createdAt: T + 1000 };
+        return answer(403, false)();
+      },
+      check: (args) => checks.push(args),
+      log: () => {},
+    });
+    await checker.run("ws_1", T + DOMAIN_RECHECK_MIN_MS);
+    expect(checks).toEqual([]);
   });
 
   test("checked with no Cloudflare settings; an answer about another dedicated hostname is dropped", async () => {
@@ -275,6 +298,7 @@ describe("the edge at a dedicated hostname", () => {
       {
         hostname: "status.acme.test",
         cloudflareId: null,
+        addedAt: T,
         state: "active",
         records: [],
         error: null,

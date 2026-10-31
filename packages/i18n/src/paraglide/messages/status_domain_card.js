@@ -13,6 +13,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "title" | "Custom domain" |
 * | "description" | "Serve the status page at your own address, such as status.example.com. Cloudflare issues its certificate once the DNS records below are in place." |
 * | "description_dedicated" | "Serve the status page at your own address, on a domain this Brigade instance is set up to serve." |
+* | "description_both" | "Serve the status page at your own address: one this Brigade instance is set up to serve, or a domain of your own." |
 * | "not_set_up" | "Set up the status page first to give it a domain." |
 * | "none" | "The status page has no domain of its own." |
 * | "none_free" | "Every domain this Brigade instance is set up to serve is in use by another status page." |
@@ -78,6 +79,7 @@ export const status_domain_card = /** @type {((inputs: Status_Domain_CardInputs,
 		if (i?.part === "title") return /** @type {LocalizedString} */ (`Domínio próprio`);
 		if (i?.part === "description") return /** @type {LocalizedString} */ (`Sirva a página de status no seu próprio endereço, como status.example.com. A Cloudflare emite o certificado assim que os registros DNS abaixo estiverem configurados.`);
 		if (i?.part === "description_dedicated") return /** @type {LocalizedString} */ (`Sirva a página de status no seu próprio endereço, em um domínio que esta instância do Brigade está configurada para servir.`);
+		if (i?.part === "description_both") return /** @type {LocalizedString} */ (`Sirva a página de status no seu próprio endereço: um que esta instância do Brigade está configurada para servir, ou um domínio seu.`);
 		if (i?.part === "not_set_up") return /** @type {LocalizedString} */ (`Configure a página de status antes de dar um domínio a ela.`);
 		if (i?.part === "none") return /** @type {LocalizedString} */ (`A página de status não tem domínio próprio.`);
 		if (i?.part === "none_free") return /** @type {LocalizedString} */ (`Todos os domínios que esta instância do Brigade está configurada para servir já estão em uso por outra página de status.`);
@@ -137,6 +139,7 @@ export const status_domain_card = /** @type {((inputs: Status_Domain_CardInputs,
 		if (i?.part === "title") return /** @type {LocalizedString} */ (`Custom domain`);
 		if (i?.part === "description") return /** @type {LocalizedString} */ (`Serve the status page at your own address, such as status.example.com. Cloudflare issues its certificate once the DNS records below are in place.`);
 		if (i?.part === "description_dedicated") return /** @type {LocalizedString} */ (`Serve the status page at your own address, on a domain this Brigade instance is set up to serve.`);
+		if (i?.part === "description_both") return /** @type {LocalizedString} */ (`Serve the status page at your own address: one this Brigade instance is set up to serve, or a domain of your own.`);
 		if (i?.part === "not_set_up") return /** @type {LocalizedString} */ (`Set up the status page first to give it a domain.`);
 		if (i?.part === "none") return /** @type {LocalizedString} */ (`The status page has no domain of its own.`);
 		if (i?.part === "none_free") return /** @type {LocalizedString} */ (`Every domain this Brigade instance is set up to serve is in use by another status page.`);

@@ -119,9 +119,6 @@ function readHostname(raw: unknown): string | undefined {
   return isStatusHostname(hostname) ? hostname : undefined;
 }
 
-/** Entries of `STATUS_HOSTNAMES` already logged as left out, so each is logged once per isolate. */
-const leftOut = new Set<string>();
-
 /**
  * The instance's dedicated hostnames (`STATUS_HOSTNAMES`, comma- or space-separated), as `readHostname` keeps them,
  * each once. None without `DASHBOARD_URL`. Left out, and logged: anything that is not a hostname, the dashboard's
@@ -145,10 +142,7 @@ export function dedicatedHostnames(env: SaasEnv & DedicatedEnv): string[] {
       !instance.endsWith(`.${hostname}`) &&
       (!saasZone || (hostname !== saasZone && !hostname.endsWith(`.${saasZone}`)));
     if (clear) kept.add(hostname);
-    else if (!leftOut.has(entry)) {
-      leftOut.add(entry);
-      log("a STATUS_HOSTNAMES entry is left out", { entry });
-    }
+    else log("a STATUS_HOSTNAMES entry is left out", { entry });
   }
   return [...kept];
 }
@@ -385,10 +379,12 @@ export async function statusDomainRoute(
         return refuse("cloudflare_failed");
       }
     }
-    // With the Cloudflare hostname asked about: one removed and added again meanwhile is not overwritten.
+    // With the domain asked about (its Cloudflare hostname, and when it was added): one removed and added again
+    // meanwhile is not overwritten.
     const checked = await change("check", {
       hostname: current.hostname,
       cloudflareId: current.cloudflareId,
+      addedAt: current.createdAt,
       ...shown(seen),
     });
     if (!checked.ok) {
@@ -408,7 +404,8 @@ export async function statusDomainRoute(
       return refuse("cloudflare_failed");
     }
   }
-  const gone = await change("remove", { hostname: current.hostname });
+  // With when the domain was added: a domain removed and added again meanwhile is another's to remove (`not_found`).
+  const gone = await change("remove", { hostname: current.hostname, addedAt: current.createdAt });
   if (!gone.ok && gone.code !== "not_found") {
     return gone.code === "unauthenticated" ? unauthenticated() : refuse(refusal(gone.code));
   }

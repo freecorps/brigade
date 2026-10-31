@@ -172,6 +172,10 @@ describe("custom domain card", () => {
 
   test("with Cloudflare for SaaS too, both: the dedicated ones first, then a field for another", async () => {
     const { container, calls } = panel({ hostnames: ["status.acme.test"] });
+    expect(container.textContent).toContain(
+      "one this Brigade instance is set up to serve, or a domain of your own",
+    );
+    expect(container.textContent).not.toContain("DNS records below");
     expect(container.textContent).toContain("Ready on this instance");
     expect(container.textContent).toContain("Or a domain of your own");
     expect(container.textContent).toContain("Point a CNAME at status-origin.saas.test.");

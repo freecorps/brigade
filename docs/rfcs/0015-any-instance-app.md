@@ -51,7 +51,10 @@ Instance ──(5) POST /v1/send { handle, envelope, … }, signed with the inst
   store.
 - **Checking a signature needs no storage on the paging path.** If SHA-256 of the presented key gives the instance
   id, the key is the original one and is checked against the signature alone. Only a rotated key needs a lookup
-  (below). So the relay can verify a send while its storage is down.
+  (below): the instance's key list, cached per isolate for 60 s. On a send, a rotated key the registry cannot confirm
+  (no cached list and no answer) is `503 registry_unavailable`, which the instance retries like any relay error: a
+  registry outage delays the pages of an instance that rotated its key, and never lets an unconfirmed key through. An
+  instance on its original key is not affected.
 - **Registration** (`POST /v1/instances`, signed): records the instance in the relay's registry (a Durable Object per instance, `RegistryDO`, so a check and its update are one atomic
   step: the code's tries, key changes and revocation never race) with the
   terms version accepted and a contact address (where Freecorps writes before limiting or revoking). **Decided

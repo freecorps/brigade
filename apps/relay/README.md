@@ -4,7 +4,8 @@ The push relay (RFC 0006): a Cloudflare Worker that forwards encrypted pushes to
 never sees content, only a device token, an envelope sealed with
 [`@freecorps/brigade-push`](../../packages/push/README.md) and an urgency. For now it is spike S1's relay
 ([write-up](../../docs/spikes/s1-apns-encryption.md)) plus FCM, and instance registration (RFC 0015, see "Instance
-registration"); no handles, `/v1/send` or rate limits yet.
+registration"); no handles or `/v1/send` yet, and so no limit on sends: the per-IP limit covers the instance routes
+only.
 
 | Route                | Response                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -117,8 +118,9 @@ treats it as optional and then limits nothing per IP. For the hosted relay's con
 Sending (as `apps/api`), are still to be added; until then `/v1/instances/contact` answers `503 not_configured`.
 `RELAY_TERMS_VERSION` is a var (`draft-2026-11`, RFC 0015 decision D5).
 
-**Closed registration** (`RELAY_REGISTRATION=closed`, a company's own relay): `POST /v1/instances` and
-`/v1/instances/contact` answer `403 registration_closed`. The setup script will register the relay's one instance
+**Closed registration** (`RELAY_REGISTRATION=closed`, a company's own relay): `/v1/instances/contact` answers
+`403 registration_closed`, and so does `POST /v1/instances` for an instance not registered yet (a registered one gets
+its record, `200`). The setup script will register the relay's one instance
 through a closed-mode registration authorized by a relay admin secret, in a later slice; until then a closed relay
 refuses every registration.
 

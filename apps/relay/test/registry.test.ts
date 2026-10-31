@@ -1,5 +1,5 @@
 import { generateInstanceKey, signKeyProof, signRequest } from "@freecorps/brigade-push/instance";
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, test, vi } from "vite-plus/test";
 import { handle, type RelayEnv } from "../src/index.ts";
 import {
   RegistryDO,
@@ -34,7 +34,10 @@ function fakeRegistry() {
       const state = {
         storage: {
           kv,
-          setAlarm: async (at: number) => void alarms.set(name, at),
+          setAlarm: async (at: number) => {
+            if (registry.failingAlarms) throw new Error("alarm not set");
+            alarms.set(name, at);
+          },
           deleteAll: async () => {
             data.clear();
             alarms.delete(name);
@@ -48,6 +51,8 @@ function fakeRegistry() {
   };
   const registry = {
     failing: false,
+    /** `setAlarm` throws, as storage that cannot be written would. */
+    failingAlarms: false,
     /** Methods that throw as an unreachable object would, while the others answer. */
     failingMethods: new Set<string>(),
     /** How many times each method was called, on any object. */
@@ -848,6 +853,43 @@ describe("the per-isolate cache", () => {
     });
     expect(unknown.status).toBe(503);
     expect(await unknown.json()).toEqual({ error: "registry_unavailable" });
+  });
+});
+
+describe("cache lifetime and failed alarms", () => {
+  test("a cache hit on /me does not keep a record past its 60 s", async () => {
+    const { registry, call, register, record } = setup();
+    const key = await generateInstanceKey();
+    await register(key);
+    const start = Date.now();
+    vi.useFakeTimers({ now: start, toFake: ["Date"] });
+    try {
+      expect((await call(key, "GET", "/v1/instances/me", undefined, { now: start })).status).toBe(
+        200,
+      );
+      // Revoked behind this isolate's cache, then asked again inside the 60 s and once past them.
+      registry
+        .storage(`instance:${key.instance}`)
+        .set("record", { ...record(key)!, status: "revoked", revokedAt: start });
+      vi.setSystemTime(start + 40_000);
+      const inside = await call(key, "GET", "/v1/instances/me", undefined, { now: start + 40_000 });
+      expect(inside.status).toBe(200);
+      vi.setSystemTime(start + 70_000);
+      const late = await call(key, "GET", "/v1/instances/me", undefined, { now: start + 70_000 });
+      expect(late.status).toBe(403);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("an address slot whose alarm could not be set goes back", async () => {
+    const { registry } = setup();
+    const name = await contactObject("oncall@example.com");
+    const object = registry.getByName(name);
+    const storage = registry.storage(name);
+    registry.failingAlarms = true;
+    await expect(object.takeAddressSlot(Date.now())).rejects.toThrow();
+    expect(storage.get("sent")).toEqual([]);
   });
 });
 

@@ -86,9 +86,10 @@ describe("signRequest and verifyRequest", () => {
       body,
       now: NOW,
     });
-    const digest = Buffer.from(
-      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)),
-    ).toString("hex");
+    const digest = Array.from(
+      new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body))),
+      (byte) => byte.toString(16).padStart(2, "0"),
+    ).join("");
     const base = `GET\n/v1/health?deep=1\n${key.instance}\n${NOW / 1000}\n${digest}`;
     const publicKey = await crypto.subtle.importKey(
       "raw",

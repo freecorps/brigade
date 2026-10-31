@@ -124,7 +124,13 @@ export class RegistryDO extends DurableObject {
     const day = within(sent, ADDRESS_CODES_PER_DAY, DAY_MS, now);
     if (!day.ok) return day;
     this.ctx.storage.kv.put("sent", [...sent, now]);
-    await this.ctx.storage.setAlarm(now + DAY_MS);
+    try {
+      await this.ctx.storage.setAlarm(now + DAY_MS);
+    } catch (error) {
+      // The caller gets no slot to give back, so this one goes back here.
+      this.releaseAddressSlot(now);
+      throw error;
+    }
     return { ok: true, at: now };
   }
 

@@ -235,6 +235,7 @@ async function register(
       ? json({ error: "terms_outdated", terms: current }, 409)
       : refuse(outcome);
   }
+  remember(caller.instance, outcome.record, caller.now);
   return answer(caller, outcome, env, outcome.created ? 201 : 200);
 }
 
@@ -280,7 +281,7 @@ function answer(
   env: InstanceEnv,
   status: number,
 ): Response {
-  remember(caller.instance, record, caller.now);
+  // Not `remember`: on `/me` the record may be a cache hit, and remembering it again would keep it past its 60 s.
   return json(
     {
       instance: caller.instance,

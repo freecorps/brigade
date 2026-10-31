@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { cloudflare } from "@cloudflare/vite-plugin";
 import { defineConfig } from "vite-plus";
 import { workspaceSource } from "../../vite.workspace.ts";
@@ -12,7 +13,9 @@ export default defineConfig(({ mode }) => ({
     mode === "test"
       ? {
           alias: {
-            "cloudflare:workers": new URL("test/cloudflare-workers.ts", import.meta.url).pathname,
+            "cloudflare:workers": fileURLToPath(
+              new URL("test/cloudflare-workers.ts", import.meta.url).href,
+            ),
           },
         }
       : {},

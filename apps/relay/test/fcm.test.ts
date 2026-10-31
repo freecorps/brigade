@@ -401,6 +401,25 @@ describe("POST /send to an Android device", () => {
     expect(Date.now() - started).toBeLessThan(9500);
   }, 20_000);
 
+  test("a 401 with too little time left to retry is fcm_unreachable, so the instance tries again", async () => {
+    const other = { ...env, FCM_SERVICE_ACCOUNT: serviceAccount({ private_key_id: "key-14" }) };
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    let sends = 0;
+    // A slow token exchange, then a 401 near the end of the send's bound: under a second of the budget left.
+    const response = await handle(post(await sendBody()), other, async (request) => {
+      if (request.url === TOKEN_URI) {
+        await wait(3800);
+        return Response.json({ access_token: "x", expires_in: 3599 });
+      }
+      sends++;
+      await wait(4700);
+      return fcmError(401, "UNAUTHENTICATED");
+    });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ error: "fcm_unreachable" });
+    expect(sends).toBe(1);
+  }, 20_000);
+
   test("sends refused together fetch one new access token between them, not one each", async () => {
     // Its own account, so no token cached by another test answers for it.
     const own = { ...env, FCM_SERVICE_ACCOUNT: serviceAccount({ private_key_id: "key-401" }) };

@@ -79,6 +79,8 @@ const PROVIDER_TIMEOUT_MS = 5000;
  * left of it, so the call stays under the API's 10 s.
  */
 const FCM_CALL_BUDGET_MS = 9000;
+/** The least of that budget worth a retry after a 401; with less, the instance retries instead. */
+const FCM_RETRY_MIN_MS = 1000;
 
 // One per isolate: the provider token is the same for every request (APNs throttles frequent refreshes).
 const tokens = new ApnsTokenCache();
@@ -301,9 +303,16 @@ async function sendFcm(
     }
     if (response.status !== 401) break;
     await googleTokens.clear(accessToken);
-    // No time left for another exchange and send: the 401 is the answer.
-    if (attempt === 1 || left() === 0) break;
+    if (attempt === 1) break;
     await response.body?.cancel();
+    // Too little time left for another exchange and send. Not the 401 itself, which the instance takes as a refusal
+    // for good: the token was dropped above, so the instance's retry gets a fresh one.
+    if (left() < FCM_RETRY_MIN_MS) {
+      return json(
+        { error: "fcm_unreachable", detail: "access token refused, no time left to retry" },
+        502,
+      );
+    }
   }
   const answer = response!;
   const text = await answer.text();

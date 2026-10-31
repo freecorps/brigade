@@ -83,9 +83,11 @@ import {
   type ReminderPlan,
   type RotationPlan,
 } from "./mailer.ts";
+import { notifyPush, type NotifyEnv, type PageShard } from "./notify.ts";
 import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
 import {
   asksForPage,
+  PAGE_LOCAL_TRIES,
   Pager,
   type DeadLetterResult,
   type DeviceOutcome,
@@ -332,6 +334,9 @@ export class WorkspaceDO extends DurableObject<Env> {
       randomBytes,
       limits: { monitors: instanceMonitorCap(env as Env & MonitorEnv) },
       log: (message, fields) => this.log(message, fields),
+      // Each page written is expected back from the Queue in time, or this shard sends it (`pageLocally`). Undefined
+      // only while the constructor runs, before anything commits.
+      outboxed: (events, at) => this.pager?.expect(events, at),
       onOutbox: () => {
         this.armDrain();
         this.armStatus();
@@ -504,6 +509,13 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (replayAt !== null) this.wake(replayAt, "page again");
     } catch (error) {
       this.log("arming the page again failed", { error: String(error) });
+    }
+    // Likewise a page the Queue has not brought in time (`pageLocally`).
+    try {
+      const pendingAt = this.pager.pendingAt();
+      if (pendingAt !== null) this.wake(pendingAt, "page the queue has not brought");
+    } catch (error) {
+      this.log("arming the pages the queue has not brought failed", { error: String(error) });
     }
     // Likewise a push held back behind a page (src/paging.ts `releaseDue`).
     try {
@@ -1697,6 +1709,15 @@ export class WorkspaceDO extends DurableObject<Env> {
    * A shard that serves no workspace yet plans nothing.
    */
   async planPage(event: BrigadeEvent): Promise<PagePlan> {
+    const plan = await this.plan(event);
+    // The Queue brought it and its plan went through: the shard need not send it on the Queue's behalf. Not before:
+    // a plan that throws leaves the page watched (`pageLocally`).
+    if (asksForPage(event)) this.pager.arrived(event.id);
+    return plan;
+  }
+
+  /** `planPage` for the consumer and for `pageLocally`, which keeps the page watched until it went. */
+  private async plan(event: BrigadeEvent): Promise<PagePlan> {
     if (this.shard.workspace() !== event.workspaceId) return { send: false, reason: "not_found" };
     // A member list that has not been checked against D1 lately is checked first, so a member removed or demoted
     // outside Brigade is not paged; never in the page's way (it waits a moment at most, and fails open).
@@ -1957,10 +1978,80 @@ export class WorkspaceDO extends DurableObject<Env> {
     this.webhooks.recordEmail(event, done, Date.now());
   }
 
+  /**
+   * Sends the pages the Queue has not brought to this shard within `PAGE_QUEUE_GRACE_MS` (src/paging.ts `overdue`)
+   * itself, through the relay as the consumer would (`notifyPush`, with this shard as the planner): a Queue that
+   * stalls, or a drain that cannot send, must not hold a page or the escalation run its plan starts. The Queue's copy,
+   * if it comes, plans only the devices not reached yet. A device the relay could not reach is tried again a minute
+   * later, up to `PAGE_LOCAL_TRIES` times while the Queue still has not come. Never throws.
+   */
+  /** Where `pageLocally` sends: the relay this Worker's consumer uses. A field so tests can stand one in. */
+  private pageSender: { env: () => NotifyEnv; send: (request: Request) => Promise<Response> } = {
+    env: () => this.env as NotifyEnv,
+    send: (request) => fetch(request),
+  };
+
+  private async pageLocally(now: number): Promise<void> {
+    const shard = {
+      planPage: (event: BrigadeEvent) => this.plan(event),
+      recordPage: (
+        event: BrigadeEvent,
+        outcomes: DeviceOutcome[],
+        final: boolean,
+        skipped: SkippedMember[],
+      ) => this.recordPage(event, outcomes, final, skipped),
+    };
+    // Every page that is due, 20 at a time: each batch is leased (due again a minute later), so none comes back here.
+    for (;;) {
+      let due: { event: BrigadeEvent; tries: number }[];
+      try {
+        due = this.pager.overdue(now);
+      } catch (error) {
+        this.log("reading the pages the queue has not brought failed", { error });
+        return;
+      }
+      if (due.length === 0) return;
+      await Promise.all(due.map(({ event, tries }) => this.pageOneLocally(event, tries, shard)));
+    }
+  }
+
+  /** One page of `pageLocally`, on its `tries`th try. Never throws. */
+  private async pageOneLocally(
+    event: BrigadeEvent,
+    tries: number,
+    shard: PageShard,
+  ): Promise<void> {
+    this.log("page not brought by the queue in time; sending it from the shard", {
+      event: event.id,
+      type: event.type,
+      incident: event.subject,
+      tries,
+    });
+    let again: boolean;
+    try {
+      again = await notifyPush(event, tries, this.pageSender.env(), this.pageSender.send, shard);
+    } catch (error) {
+      this.log("sending a page from the shard failed", { event: event.id, error });
+      again = true;
+    }
+    try {
+      // Still leased otherwise: it comes back a minute later.
+      if (!again) this.pager.arrived(event.id);
+      else if (tries >= PAGE_LOCAL_TRIES) {
+        this.pager.arrived(event.id);
+        this.log("page sent from the shard still failing; left to the queue", { event: event.id });
+      }
+    } catch (error) {
+      this.log("ending a page sent from the shard failed", { event: event.id, error });
+    }
+  }
+
   /** A page the Queue gave up on (RPC from the dead-letter consumer): see `Pager.deadLettered`. */
   recordDeadLetter(event: BrigadeEvent): DeadLetterResult {
     if (this.shard.workspace() !== event.workspaceId) return "other_workspace";
-    return this.pager.deadLettered(event, Date.now());
+    const result = this.pager.deadLettered(event, Date.now());
+    this.pager.arrived(event.id);
+    return result;
   }
 
   /**
@@ -1975,6 +2066,9 @@ export class WorkspaceDO extends DurableObject<Env> {
   override async alarm(): Promise<void> {
     const now = Date.now();
     await this.ctx.storage.setAlarm(now + MONITOR_TICK_MS);
+    // Pages the Queue has not brought in time go from here, alongside this alarm's own: never behind a drain to a
+    // Queue that hangs (`DRAIN_SEND_TIMEOUT_MS`). Never throws.
+    const local = this.pageLocally(now);
     // Pages first: a level is a mutation in this object's storage and its events go out before the monitor tick
     // (which waits on probes), the repair (which waits on D1) or anything else.
     let escalations: number | null = now + MONITOR_TICK_MS;
@@ -1999,6 +2093,8 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("releasing held pushes failed", { error });
     }
+    // Pages the Queue has not brought in time, started with the alarm (`local` above): awaited with the other pages.
+    await local;
     let monitors: number | null = now + MONITOR_TICK_MS;
     try {
       monitors = await this.monitoring.tick(now);
@@ -2161,6 +2257,13 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("reading the pages to page again failed", { error });
     }
+    let pendingAt: number | null = now + MONITOR_TICK_MS;
+    try {
+      const at = this.pager.pendingAt();
+      pendingAt = at === null ? null : Math.max(at, Date.now() + (at <= now ? MONITOR_TICK_MS : 0));
+    } catch (error) {
+      this.log("reading the pages the queue has not brought failed", { error });
+    }
     let releaseAt: number | null = now + MONITOR_TICK_MS;
     try {
       const at = this.pager.releaseAt(Date.now());
@@ -2206,7 +2309,13 @@ export class WorkspaceDO extends DurableObject<Env> {
         ),
         earliest(
           earliest(webhookAt, archiveAt),
-          earliest(expiryAt, earliest(tokenAt, earliest(replayAt, earliest(releaseAt, periodic)))),
+          earliest(
+            expiryAt,
+            earliest(
+              tokenAt,
+              earliest(replayAt, earliest(releaseAt, earliest(pendingAt, periodic))),
+            ),
+          ),
         ),
       ),
     );

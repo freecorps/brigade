@@ -458,8 +458,9 @@ export function workerAuth(
     signUp: access.signUp,
     requireVerifiedEmail: access.requireVerifiedEmail,
     waitUntil: (promise) => ctx.waitUntil(promise),
-    // The web Worker forwards with the browser's URL, so this is the protocol the browser used.
+    // The web Worker forwards with the browser's URL, so this is the protocol and origin the browser used.
     secureCookies: new URL(request.url).protocol === "https:",
+    origin: new URL(request.url).origin,
     onWorkspaceCreated: onWorkspaceCreated ?? provisionWith(env),
     onPasswordReset: signOutWith(env),
     onSessionEnding: (session) => recordSessionEnd(env.DB, session),

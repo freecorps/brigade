@@ -110,6 +110,12 @@ export type AuthBindings = {
    */
   secureCookies?: boolean;
   /**
+   * The origin the request came through (the web Worker forwards with the browser's URL), as Better Auth's
+   * `baseURL`. It is what Better Auth derives from each request when none is set, so nothing changes but the warning
+   * it logs on every instance without one ("Base URL is not set").
+   */
+  origin?: string;
+  /**
    * Called once Better Auth has created a workspace (provisions its shard). If it throws, the workspace is
    * deleted again (see createAuth) and the request fails, so no workspace exists without its shard.
    */
@@ -666,6 +672,7 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
   const taken: { user?: TakenUser; request?: Request } = {};
   return {
     appName: "Brigade",
+    ...(bindings.origin ? { baseURL: bindings.origin } : {}),
     basePath: AUTH_BASE_PATH,
     secret: bindings.secret,
     database: bindings.database,

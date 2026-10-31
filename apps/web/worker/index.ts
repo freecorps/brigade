@@ -8,11 +8,21 @@
 // with no session, so it is served from the dashboard's origin without the SPA.
 // `/api/openapi.json` is the API reference (docs/api/openapi.json, generated from apps/api/src/openapi.ts), answered
 // here from the bundle without auth. A WebSocket upgrade anywhere else is a 404, never handed to the assets (`noSocket`).
+// An API call's body is read in full before it is forwarded when it declares a length within `BUFFERED_BODY_MAX`
+// (`apiRequest`), so the API answering before reading it (a 404 to a scanner's POST) leaves no upload half-sent.
 
 import openApi from "../../../docs/api/openapi.json" with { type: "json" };
 
 const API_PREFIX = "/api";
 const OPENAPI_PATH = "/api/openapi.json";
+/**
+ * An API call whose body declares a `Content-Length` up to this is read in full before it is forwarded: above every
+ * limit the API reads (`MAX_ALERT_BODY`, 256 KiB, is the largest), so no call the API takes is cut. Anything else
+ * (no length, a larger one) is streamed as it comes, so a huge alert still reaches the API, which records it as too
+ * large and pages anyway. Not exported: workerd takes every export of a Worker's main module for a handler, and a
+ * number there stops the runtime from starting.
+ */
+const BUFFERED_BODY_MAX = 1024 * 1024;
 
 /** The part of a service or assets binding this Worker uses; `Fetcher` satisfies it. */
 export interface Upstream {
@@ -51,8 +61,40 @@ export async function handle(request: Request, env: Upstreams): Promise<Response
     return request.headers.has("Upgrade") ? noSocket() : env.ASSETS.fetch(request);
   }
   url.pathname = path;
-  // Same method, headers and (streamed) body; only the URL changes.
-  return forward(new Request(url, request), env, path);
+  const forwarded = await apiRequest(url, request);
+  return forwarded ? forward(forwarded, env, path) : unreadableBody();
+}
+
+/**
+ * `request` for the API at `url`: same method, headers and body; only the URL changes. A body that declares a length
+ * within `BUFFERED_BODY_MAX` is read first and sent as the same bytes (a signature over them still holds), so the
+ * API can answer before reading it without the runtime failing to send the rest ("Can't read from request stream
+ * after response has been sent"). Any other body is streamed, as before. Undefined when the client's upload broke
+ * off while it was read.
+ */
+async function apiRequest(url: URL, request: Request): Promise<Request | undefined> {
+  const length = request.headers.get("Content-Length");
+  const declared = length === null ? Number.NaN : Number(length);
+  if (!request.body || !Number.isSafeInteger(declared) || declared > BUFFERED_BODY_MAX) {
+    return new Request(url, request);
+  }
+  let body: ArrayBuffer;
+  try {
+    body = await request.arrayBuffer();
+  } catch {
+    return undefined;
+  }
+  return new Request(url, {
+    method: request.method,
+    headers: request.headers,
+    body,
+    redirect: request.redirect,
+  });
+}
+
+/** The client's upload broke off before its body was read: nothing to forward. */
+function unreadableBody(): Response {
+  return Response.json({ error: "bad_request" }, { status: 400 });
 }
 
 /**

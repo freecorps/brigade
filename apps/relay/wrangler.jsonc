@@ -14,14 +14,17 @@
   },
   "upload_source_maps": true,
   // Production APNs; the app's build sets `aps-environment` to match. RELAY_TERMS_VERSION is the hosted relay's terms
-  // version a registration must accept (RFC 0015, decision D5). The registry (KV `REGISTRY`) and the
-  // contact code's email (`EMAIL`, `EMAIL_FROM`) are optional and not bound yet: without them `/v1/` answers 503
-  // and `/send` is unchanged (README "Instance registration").
+  // version a registration must accept (RFC 0015, decision D5). The contact code's email (`EMAIL`, `EMAIL_FROM`) is
+  // optional and not bound yet: without it `/v1/instances/contact` answers 503 (README "Instance registration").
   "vars": {
     "APNS_ENVIRONMENT": "production",
     "APNS_TOPIC": "app.freecorps.brigade",
     "RELAY_TERMS_VERSION": "draft-2026-11",
   },
+  // The instance registry (RFC 0015, src/registry.ts): one object per instance and per contact address. The deploy
+  // creates the class; nothing to set up by hand. Not inherited by `env.dev`, so repeated there.
+  "durable_objects": { "bindings": [{ "name": "REGISTRY", "class_name": "RegistryDO" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RegistryDO"] }],
   // Set with `wrangler secret put` from files outside the repository; never in this file. `FCM_SERVICE_ACCOUNT` (the
   // Google service account's JSON key, for Android) is optional: without it the relay serves iPhones only (README).
   "secrets": { "required": ["APNS_KEY", "APNS_KEY_ID", "APNS_TEAM_ID", "RELAY_SEND_TOKEN"] },
@@ -36,6 +39,8 @@
         "RELAY_TERMS_VERSION": "draft-2026-11",
       },
       "secrets": { "required": ["APNS_KEY", "APNS_KEY_ID", "APNS_TEAM_ID", "RELAY_SEND_TOKEN"] },
+      "durable_objects": { "bindings": [{ "name": "REGISTRY", "class_name": "RegistryDO" }] },
+      "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RegistryDO"] }],
     },
   },
 }

@@ -1,20 +1,30 @@
-// `/v1/instances*` (RFC 0015 sections 1 and 8): an instance registers its key with the relay, after accepting the
-// terms and confirming a contact address by an emailed code (Freecorps' relay), or is written in by the setup script
-// (an own relay, `RELAY_REGISTRATION=closed`). Every call is signed with the instance key (`verifyRequest`).
+// `/v1/instances*` (RFC 0015 sections 1 and 8): an instance registers its key with the relay after accepting the
+// terms and confirming a contact address by an emailed code (Freecorps' relay). On a company's own relay
+// (`RELAY_REGISTRATION=closed`) the setup script will register its one instance with a relay admin secret, in a later
+// slice; until then closed mode refuses every registration. Every call is signed with the instance key
+// (`verifyRequest`); every check-and-change runs inside the instance's Durable Object (src/registry.ts).
 
-import { fromBase64url, verifyRequest, type VerifiedRequest } from "@freecorps/brigade-push";
+import {
+  canonicalKey,
+  verifyKeyProof,
+  verifyRequest,
+  type VerifiedRequest,
+} from "@freecorps/brigade-push";
 import { readBody } from "./body.ts";
 import {
+  CODE_TTL_MS,
   checkRegistered,
-  readInstance,
-  writeInstance,
+  instanceStub,
+  remember,
   type InstanceRecord,
-  type RegistryStore,
+  type RegistryError,
+  type RegistryNamespace,
+  type Refusal,
 } from "./registry.ts";
 
 export type InstanceEnv = {
-  /** Workers KV (README "Instance registration"). Without it every `/v1/` route answers `503 not_configured`. */
-  REGISTRY?: RegistryStore;
+  /** The registry's Durable Object namespace (`RegistryDO`). Without it every `/v1/` route answers `503 not_configured`. */
+  REGISTRY?: RegistryNamespace;
   /** The `send_email` binding, for the contact code. Without it (or `EMAIL_FROM`) the code cannot be sent. */
   EMAIL?: {
     send(message: { from: string; to: string; subject: string; text: string }): Promise<unknown>;
@@ -23,33 +33,36 @@ export type InstanceEnv = {
   EMAIL_FROM?: string;
   /** The terms version a registration must accept (wrangler.jsonc vars). */
   RELAY_TERMS_VERSION?: string;
-  /** `closed`: an own relay, whose only instance the setup script writes in directly. Anything else is open. */
+  /** `closed`: a company's own relay, which refuses registration here (module comment). Anything else is open. */
   RELAY_REGISTRATION?: string;
 };
 
-const CODE_TTL_SECONDS = 15 * 60;
-const CODE_TRIES = 5;
-const CODES_PER_HOUR = 3;
-/** Room for a rotation: the current key, the next one, and one spare. */
-const MAX_KEYS = 3;
-/** Pragmatic, not RFC 5322: one @, no spaces, a dot in the domain. The emailed code is the real check. */
-const EMAIL_ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/**
+ * Pragmatic, not RFC 5322: one @, a dot in the domain, and nothing that could break out of a header or a list
+ * (whitespace, control characters, `<>",;`). The emailed code is the real check.
+ */
+const EMAIL_ADDRESS =
+  // eslint-disable-next-line no-control-regex -- the control characters are what it refuses.
+  /^[^\s@<>",;\x00-\x1f\x7f]+@[^\s@<>",;\x00-\x1f\x7f]+\.[^\s@<>",;\x00-\x1f\x7f]+$/;
 
-/** Stored at `code:<id>` for an hour: the pending code (hashed) and when codes were sent, for the hourly limit. */
-type PendingCode = {
-  contact: string;
-  hash: string;
-  expiresAt: number;
-  tries: number;
-  sent: number[];
+const STATUS: Record<RegistryError, number> = {
+  instance_unregistered: 403,
+  instance_revoked: 403,
+  registration_closed: 403,
+  bad_signature: 401,
+  terms_outdated: 409,
+  code_invalid: 400,
+  code_expired: 400,
+  too_many_codes: 429,
+  unknown_key: 400,
+  cannot_retire_signer: 409,
+  too_many_keys: 409,
 };
 
-type Caller = VerifiedRequest & { store: RegistryStore; now: number };
+type Caller = VerifiedRequest & { registry: RegistryNamespace; now: number };
+type Route = (caller: Caller, body: Record<string, unknown>, env: InstanceEnv) => Promise<Response>;
 
-const ROUTES: Record<
-  string,
-  { method: string; run: (c: Caller, body: unknown, env: InstanceEnv) => Promise<Response> }
-> = {
+const ROUTES: Record<string, { method: string; run: Route }> = {
   "/v1/instances/contact": { method: "POST", run: requestCode },
   "/v1/instances": { method: "POST", run: register },
   "/v1/instances/keys": { method: "POST", run: changeKeys },
@@ -61,21 +74,20 @@ export async function instanceRoutes(
   env: InstanceEnv,
   now: number,
 ): Promise<Response> {
+  const registry = env.REGISTRY;
+  if (!registry) return json({ error: "not_configured" }, 503);
   const url = new URL(request.url);
-  const path = url.pathname;
-  const route = ROUTES[path];
+  const route = ROUTES[url.pathname];
   if (!route) return json({ error: "not_found" }, 404);
   if (request.method !== route.method) {
     return json({ error: "method_not_allowed" }, 405, { Allow: route.method });
   }
-  const store = env.REGISTRY;
-  if (!store) return json({ error: "not_configured" }, 503);
   const bytes = await readBody(request);
   if (bytes === null) return json({ error: "invalid_body" }, 400);
   // The query is signed too (`/v1/health?deep=1` later).
   const verified = await verifyRequest({
     method: request.method,
-    path: path + url.search,
+    path: url.pathname + url.search,
     headers: request.headers,
     body: bytes,
     now,
@@ -88,51 +100,47 @@ export async function instanceRoutes(
     } catch {
       return json({ error: "invalid_body" }, 400);
     }
-    if (!isRecord(body)) return json({ error: "invalid_body" }, 400);
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return json({ error: "invalid_body" }, 400);
+    }
   }
   try {
-    return await route.run({ ...verified, store, now }, body, env);
+    return await route.run({ ...verified, registry, now }, body as Record<string, unknown>, env);
   } catch (error) {
-    // Only KV throws here. Every route here registers or grants something, so a registry that cannot be read or
-    // written fails closed.
-    console.error(JSON.stringify({ message: "registry unavailable", path, error: String(error) }));
+    // Only a registry call throws here. Every route registers or grants something, so it fails closed.
+    console.error(
+      JSON.stringify({ message: "registry unavailable", path: url.pathname, error: String(error) }),
+    );
     return json({ error: "registry_unavailable" }, 503);
   }
 }
 
-/** The caller holds the instance: a key in its record, or, before there is one, the key its id comes from. */
-function owns(caller: Caller, record: InstanceRecord | null): boolean {
-  return record ? record.keys.includes(caller.key) : caller.original;
-}
-
-async function requestCode(caller: Caller, body: unknown, env: InstanceEnv): Promise<Response> {
+async function requestCode(
+  caller: Caller,
+  body: Record<string, unknown>,
+  env: InstanceEnv,
+): Promise<Response> {
   if (env.RELAY_REGISTRATION === "closed") return json({ error: "registration_closed" }, 403);
   if (!env.EMAIL || !env.EMAIL_FROM) return json({ error: "not_configured" }, 503);
-  const { contact } = body as { contact?: unknown };
+  const { contact } = body;
   if (typeof contact !== "string" || contact.length > 254 || !EMAIL_ADDRESS.test(contact)) {
     return json({ error: "invalid_contact" }, 400);
   }
-  const record = await readInstance(caller.store, caller.instance, caller.now);
-  if (record?.status === "revoked") return json({ error: "instance_revoked" }, 403);
-  if (!owns(caller, record)) return json({ error: "bad_signature" }, 401);
-
-  const key = `code:${caller.instance}`;
-  const previous = await readPending(caller.store, key);
-  const sent = (previous?.sent ?? []).filter((at) => caller.now - at < 3600_000);
-  if (sent.length >= CODES_PER_HOUR) {
-    const retryAfter = Math.ceil((Math.min(...sent) + 3600_000 - caller.now) / 1000);
-    return json({ error: "too_many_codes" }, 429, { "Retry-After": String(retryAfter) });
-  }
+  const address = contact.toLowerCase();
+  // The address's own limit first, whichever instance asks: ids are free, so a limit per instance alone would let
+  // anyone flood an address. A refusal by the instance below still uses one of the address's three.
+  const forAddress = await caller.registry
+    .getByName(`contact:${await sha256Hex(address)}`)
+    .countSend(caller.now);
+  if (!forAddress.ok) return refuse(forAddress);
   const code = sixDigits();
-  const pending: PendingCode = {
-    contact: contact.toLowerCase(),
-    hash: await hashCode(caller.instance, code),
-    expiresAt: caller.now + CODE_TTL_SECONDS * 1000,
-    tries: 0,
-    sent: [...sent, caller.now],
-  };
-  // Stored before sending, so a send that fails still counts towards the hourly limit.
-  await caller.store.put(key, JSON.stringify(pending), { expirationTtl: 3600 });
+  const stored = await instanceStub(caller.registry, caller.instance).requestCode(
+    signer(caller),
+    address,
+    await hashCode(caller.instance, code),
+    caller.now,
+  );
+  if (!stored.ok) return refuse(stored);
   try {
     await env.EMAIL.send({
       from: env.EMAIL_FROM,
@@ -151,118 +159,96 @@ async function requestCode(caller: Caller, body: unknown, env: InstanceEnv): Pro
     console.error(JSON.stringify({ message: "contact code email failed", error: String(error) }));
     return json({ error: "email_failed" }, 502);
   }
-  return json({ sent: true, expiresInSeconds: CODE_TTL_SECONDS });
+  return json({ sent: true, expiresInSeconds: CODE_TTL_MS / 1000 });
 }
 
-async function register(caller: Caller, body: unknown, env: InstanceEnv): Promise<Response> {
-  const record = await readInstance(caller.store, caller.instance, caller.now, true);
+async function register(
+  caller: Caller,
+  body: Record<string, unknown>,
+  env: InstanceEnv,
+): Promise<Response> {
   const current = env.RELAY_TERMS_VERSION;
-  const { terms, contact, code } = body as { terms?: unknown; contact?: unknown; code?: unknown };
-  if (record?.status === "revoked") return json({ error: "instance_revoked" }, 403);
-  if (record) {
-    if (!owns(caller, record)) return json({ error: "bad_signature" }, 401);
-    // Registering again is how an instance accepts newer terms; the contact only changes with a new code (later).
-    if (
-      current &&
-      terms === current &&
-      record.terms !== current &&
-      env.RELAY_REGISTRATION !== "closed"
-    ) {
-      await writeInstance(caller.store, caller.instance, { ...record, terms: current }, caller.now);
-      return json(answer(caller.instance, { ...record, terms: current }, env));
-    }
-    return json(answer(caller.instance, record, env));
-  }
-  if (env.RELAY_REGISTRATION === "closed") return json({ error: "registration_closed" }, 403);
-  if (!caller.original) return json({ error: "instance_unregistered" }, 403);
   if (!current) return json({ error: "not_configured" }, 503);
-  if (terms !== current) return json({ error: "terms_outdated", terms: current }, 409);
-  if (typeof contact !== "string" || typeof code !== "string")
-    return json({ error: "invalid_body" }, 400);
-
-  const key = `code:${caller.instance}`;
-  const pending = await readPending(caller.store, key);
-  if (!pending || pending.expiresAt <= caller.now || pending.tries >= CODE_TRIES) {
-    return json({ error: "code_expired" }, 400);
+  const { terms, contact, code } = body;
+  const outcome = await instanceStub(caller.registry, caller.instance).register(
+    signer(caller),
+    {
+      terms,
+      current,
+      closed: env.RELAY_REGISTRATION === "closed",
+      contact: typeof contact === "string" ? contact.toLowerCase() : "",
+      hash: typeof code === "string" ? await hashCode(caller.instance, code) : null,
+    },
+    caller.now,
+  );
+  if (!outcome.ok) {
+    return outcome.error === "terms_outdated"
+      ? json({ error: "terms_outdated", terms: current }, 409)
+      : refuse(outcome);
   }
-  if (
-    pending.contact !== contact.toLowerCase() ||
-    pending.hash !== (await hashCode(caller.instance, code))
-  ) {
-    const tries = pending.tries + 1;
-    // Kept (spent) to the end of the hour, so the hourly limit on new codes still holds.
-    await caller.store.put(key, JSON.stringify({ ...pending, tries }), { expirationTtl: 3600 });
-    return json({ error: "code_invalid", triesLeft: CODE_TRIES - tries }, 400);
-  }
-  const created: InstanceRecord = {
-    status: "registered",
-    keys: [caller.key],
-    terms: current,
-    contact: pending.contact,
-    registeredAt: new Date(caller.now).toISOString(),
-  };
-  await writeInstance(caller.store, caller.instance, created, caller.now);
-  await caller.store.put(key, JSON.stringify({ ...pending, tries: CODE_TRIES }), {
-    expirationTtl: 3600,
-  });
-  return json(answer(caller.instance, created, env), 201);
+  return answer(caller, outcome, env, outcome.created ? 201 : 200);
 }
 
-async function changeKeys(caller: Caller, body: unknown, _env: InstanceEnv): Promise<Response> {
-  const { add, retire } = body as { add?: unknown; retire?: unknown };
+async function changeKeys(caller: Caller, body: Record<string, unknown>): Promise<Response> {
+  const add = body.add === undefined ? null : canonicalKey(body.add);
+  const retire = body.retire === undefined ? null : canonicalKey(body.retire);
   if (
-    (add === undefined && retire === undefined) ||
-    (add !== undefined && !isPublicKey(add)) ||
-    (retire !== undefined && typeof retire !== "string")
+    (body.add === undefined && body.retire === undefined) ||
+    (body.add !== undefined && add === null) ||
+    (body.retire !== undefined && retire === null)
   ) {
     return json({ error: "invalid_body" }, 400);
   }
-  // Read past the cache: a rotation must not work from a record another isolate already changed.
-  const record = await readInstance(caller.store, caller.instance, caller.now, true);
-  if (!record) return json({ error: "instance_unregistered" }, 403);
-  if (record.status === "revoked") return json({ error: "instance_revoked" }, 403);
-  if (!record.keys.includes(caller.key)) return json({ error: "bad_signature" }, 401);
-  let keys = record.keys;
-  if (retire !== undefined) {
-    if (!keys.includes(retire)) return json({ error: "unknown_key" }, 400);
-    // The signer's key is never retired by itself, so the last key cannot be either.
-    if (retire === caller.key) return json({ error: "cannot_retire_signer" }, 409);
-    keys = keys.filter((k) => k !== retire);
+  // Only whoever holds the new key's private half may add it.
+  if (add !== null && !(await verifyKeyProof(add, caller.instance, body.proof))) {
+    return json({ error: "invalid_proof" }, 400);
   }
-  if (typeof add === "string" && !keys.includes(add)) {
-    if (keys.length >= MAX_KEYS) return json({ error: "too_many_keys" }, 409);
-    keys = [...keys, add];
-  }
-  await writeInstance(caller.store, caller.instance, { ...record, keys }, caller.now);
-  return json({ instance: caller.instance, keys });
+  const outcome = await instanceStub(caller.registry, caller.instance).changeKeys(
+    signer(caller),
+    add,
+    retire,
+  );
+  if (!outcome.ok) return refuse(outcome);
+  remember(caller.instance, outcome.record, caller.now);
+  return json({ instance: caller.instance, keys: outcome.record.keys });
+}
+
+/** Only what the object needs: an RPC call serializes its arguments, and the caller holds the namespace. */
+function signer(caller: Caller): { key: string; original: boolean } {
+  return { key: caller.key, original: caller.original };
 }
 
 async function me(caller: Caller, _body: unknown, env: InstanceEnv): Promise<Response> {
-  const admission = await checkRegistered(caller.store, caller, caller.now);
+  const admission = await checkRegistered(caller.registry, caller, caller.now);
   if (!admission.ok) return json({ error: admission.error }, admission.status);
-  return json(answer(caller.instance, admission.record, env));
+  return answer(caller, { record: admission.record }, env, 200);
 }
 
-function answer(instance: string, record: InstanceRecord, env: InstanceEnv) {
-  return {
-    instance,
-    status: record.status,
-    terms: record.terms,
-    termsCurrent: env.RELAY_REGISTRATION === "closed" || record.terms === env.RELAY_TERMS_VERSION,
-  };
+function answer(
+  caller: Caller,
+  { record }: { record: InstanceRecord },
+  env: InstanceEnv,
+  status: number,
+): Response {
+  remember(caller.instance, record, caller.now);
+  return json(
+    {
+      instance: caller.instance,
+      status: record.status,
+      terms: record.terms,
+      termsCurrent: record.terms === env.RELAY_TERMS_VERSION,
+    },
+    status,
+  );
 }
 
-async function readPending(store: RegistryStore, key: string): Promise<PendingCode | null> {
-  const text = await store.get(key);
-  return text === null ? null : (JSON.parse(text) as PendingCode);
-}
-
-function isPublicKey(value: unknown): value is string {
-  try {
-    return typeof value === "string" && fromBase64url(value).length === 32;
-  } catch {
-    return false;
-  }
+function refuse(refusal: Refusal): Response {
+  const { error, triesLeft, retryAfter } = refusal;
+  return json(
+    { error, ...(triesLeft === undefined ? {} : { triesLeft }) },
+    STATUS[error],
+    retryAfter === undefined ? {} : { "Retry-After": String(retryAfter) },
+  );
 }
 
 /** Uniform over 000000–999999: values past the last whole million are drawn again. */
@@ -273,17 +259,14 @@ function sixDigits(): string {
   return String(value[0]! % 1_000_000).padStart(6, "0");
 }
 
-/** Salted with the instance id, so a code read from KV says nothing and fits no other instance. */
-async function hashCode(instance: string, code: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(`${instance}:${code}`),
-  );
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+/** Salted with the instance id, so a stored hash says nothing and fits no other instance. */
+function hashCode(instance: string, code: string): Promise<string> {
+  return sha256Hex(`${instance}:${code}`);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {

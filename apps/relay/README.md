@@ -71,50 +71,39 @@ HTTP/1.1, so unlike APNs it also works from `vp dev`.
 RFC 0015 section 1: each instance has an Ed25519 key pair and an id derived from its first public key
 (`ins_` + 22 base64url characters of its SHA-256). Every `/v1/` call is signed with it: `Brigade-Instance`,
 `Brigade-Key`, `Brigade-Timestamp`, `Brigade-Signature`, made and checked by `signRequest`/`verifyRequest` in
-[`@freecorps/brigade-push`](../../packages/push/src/instance.ts), which documents the signed string. A bad signature
-is `401 bad_signature`, a missing header `401 missing_signature`, a timestamp more than 5 minutes off `401
-stale_timestamp`. Bodies are JSON, at most 8 KB.
+[`@freecorps/brigade-push`](../../packages/push/src/instance.ts), which documents the signed string (method, path
+with query, instance id, timestamp, body hash). A bad signature is `401 bad_signature`, a missing header `401
+missing_signature`, a timestamp more than 5 minutes off `401 stale_timestamp`. Bodies are JSON, at most 8 KB.
 
-| Route                        | Body                         | Answers                                                                                                                                                                                                                                                                                                           |
-| ---------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /v1/instances/contact` | `{ contact }`                | Emails a 6-digit code to `contact` (valid 15 minutes, 5 tries, at most 3 codes an hour per instance): `200 { sent, expiresInSeconds }`; `400 invalid_contact`, `429 too_many_codes` (with `Retry-After`), `502 email_failed`, `503 not_configured` without `EMAIL`/`EMAIL_FROM`                                   |
-| `POST /v1/instances`         | `{ terms, contact, code }`   | Registers the original key: `201 { instance, status, terms, termsCurrent }`, `200` when already registered (and `terms`, if current, is recorded as accepted); `409 terms_outdated { terms }` unless `terms` is `RELAY_TERMS_VERSION`; `400 code_invalid { triesLeft }` or `code_expired`; `403 instance_revoked` |
-| `POST /v1/instances/keys`    | `{ add?, retire? }`          | Signed with a key in the record. Adds a raw public key (base64url, at most 3 keys, `409 too_many_keys`), retires one other than the signer's (`409 cannot_retire_signer`, `400 unknown_key`): `200 { instance, keys }`                                                                                            |
-| `GET /v1/instances/me`       | none (signed as empty bytes) | `200 { instance, status, terms, termsCurrent }`; `403 instance_unregistered` or `instance_revoked`                                                                                                                                                                                                                |
+| Route                        | Body                         | Answers                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /v1/instances/contact` | `{ contact }`                | Emails a 6-digit code to `contact` (valid 15 minutes, 5 tries; at most 3 codes an hour per instance and 3 per address, whichever instances ask): `200 { sent, expiresInSeconds }`; `400 invalid_contact`, `429 too_many_codes` (with `Retry-After`), `502 email_failed`, `503 not_configured` without `EMAIL`/`EMAIL_FROM`                            |
+| `POST /v1/instances`         | `{ terms, contact, code }`   | Registers the original key: `201 { instance, status, terms, termsCurrent }`, `200` when already registered (and `terms`, if current, is recorded as accepted); `409 terms_outdated { terms }` unless `terms` is `RELAY_TERMS_VERSION`; `400 code_invalid { triesLeft }` or `code_expired`; `403 instance_revoked`                                     |
+| `POST /v1/instances/keys`    | `{ add?, proof?, retire? }`  | Signed with a key in the record. Adds a raw public key (base64url, 32 bytes, at most 3 keys, `409 too_many_keys`) with `proof`, the new key's signature over `"brigade add-key\n" + instance id` (`signKeyProof`; `400 invalid_proof`); retires one other than the signer's (`409 cannot_retire_signer`, `400 unknown_key`): `200 { instance, keys }` |
+| `GET /v1/instances/me`       | none (signed as empty bytes) | `200 { instance, status, terms, termsCurrent }`; `403 instance_unregistered` or `instance_revoked`                                                                                                                                                                                                                                                    |
 
-Every route answers `503 not_configured` without the `REGISTRY` binding, and `503 registry_unavailable` when KV
-fails: registration and anything that grants a capability fail closed. Only the send path's revocation check
-(`isRevoked` in `src/registry.ts`, for `/v1/send` later) fails open, so a KV outage never stops a page. Records are
-cached per isolate for 60 s, so a revocation takes up to a minute to apply. `/send` and `/health` do not use any of
-this.
+The registry is a Durable Object, `RegistryDO` (`src/registry.ts`): one object per instance holds its record (status,
+keys, terms, contact) and its pending code (hashed with the instance id), and one per contact address (named by the
+SHA-256 of the address) counts the codes sent to it. Each check-and-change (a code compared and its try counted, a
+key added or retired, a registration) is one synchronous call to the object, so parallel requests cannot interleave.
+Keys are compared in one encoding (unpadded base64url of the 32 bytes), however a caller wrote them.
+
+Every `/v1/` path answers `503 not_configured` without the `REGISTRY` binding, and `503 registry_unavailable` when
+the object cannot be reached: registration and anything that grants a capability fail closed. Only the send path's
+revocation check (`isRevoked`, for `/v1/send` later) fails open, so a registry outage never stops a page. Records that
+exist are cached per isolate for 60 s (a revocation takes up to a minute to apply); a missing one is never cached.
+`/send` and `/health` do not use any of this.
+
+Nothing to create by hand: the binding and its migration are in `wrangler.jsonc` (top level and `env.dev`), and the
+deploy creates the class. For the hosted relay's contact code, the `send_email` binding
+(`"send_email": [{ "name": "EMAIL" }]`) and `EMAIL_FROM`, a bare address on a domain onboarded to Cloudflare Email
+Sending (as `apps/api`), are still to be added; until then `/v1/instances/contact` answers `503 not_configured`.
+`RELAY_TERMS_VERSION` is a var (`draft-2026-11`, RFC 0015 decision D5).
 
 **Closed registration** (`RELAY_REGISTRATION=closed`, a company's own relay): `POST /v1/instances` and
-`/v1/instances/contact` answer `403 registration_closed`. The setup script writes the instance's record directly:
-
-```bash
-# Key `instance:<instance id>`; the value is the record. `keys` holds the raw public key, base64url.
-bunx wrangler kv key put --binding REGISTRY --remote "instance:ins_AAAAAAAAAAAAAAAAAAAAAA" \
-  '{"status":"registered","keys":["<public key>"],"terms":"closed","contact":null,"registeredAt":"2026-11-01T00:00:00.000Z"}'
-```
-
-Revoking is the same record with `"status":"revoked"` and `"revokedAt"`. Pending codes live at `code:<instance id>`
-(hashed with the instance id, expiring after an hour).
-
-### Bindings to create
-
-None are in `wrangler.jsonc` yet, since creating them needs the Cloudflare account's owner and production deploys on
-merge. Until they are added `/v1/` answers `503 not_configured`.
-
-1. A KV namespace for each environment (`bunx wrangler kv namespace create brigade-relay-registry`, and `-dev`),
-   bound as `REGISTRY`: `"kv_namespaces": [{ "binding": "REGISTRY", "id": "<namespace id>" }]` at the top level and
-   under `env.dev`.
-2. For the hosted relay's contact code: the `send_email` binding `"send_email": [{ "name": "EMAIL" }]` and the
-   `EMAIL_FROM` var or secret, a bare address on a domain onboarded to Cloudflare Email Sending (as `apps/api`).
-   An own relay with closed registration needs neither.
-3. `RELAY_TERMS_VERSION` is already a var (`draft-2026-11`, RFC 0015 decision D5); `RELAY_REGISTRATION` is
-   `open` unless set to `closed`.
-
-Then `vp run cf-typegen`, since the generated `Env` changes.
+`/v1/instances/contact` answer `403 registration_closed`. The setup script will register the relay's one instance
+through a closed-mode registration authorized by a relay admin secret, in a later slice; until then a closed relay
+refuses every registration.
 
 ## Configuration
 

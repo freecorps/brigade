@@ -1,9 +1,12 @@
 import { describe, expect, test } from "vite-plus/test";
 import { fromBase64url } from "../src/base64url.ts";
 import {
+  canonicalKey,
   generateInstanceKey,
   instanceId,
+  signKeyProof,
   signRequest,
+  verifyKeyProof,
   verifyRequest,
   type SignRequestInput,
 } from "../src/instance.ts";
@@ -71,7 +74,7 @@ describe("signRequest and verifyRequest", () => {
     expect(result).toMatchObject({ ok: true, original: true });
   });
 
-  test("signs exactly METHOD, path with query, timestamp and the body's hex SHA-256", async () => {
+  test("signs exactly METHOD, path with query, instance, timestamp and the body's hex SHA-256", async () => {
     const key = await generateInstanceKey();
     const body = '{"a":1}';
     const headers = await signRequest({
@@ -86,7 +89,7 @@ describe("signRequest and verifyRequest", () => {
     const digest = Buffer.from(
       await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)),
     ).toString("hex");
-    const base = `GET\n/v1/health?deep=1\n${NOW / 1000}\n${digest}`;
+    const base = `GET\n/v1/health?deep=1\n${key.instance}\n${NOW / 1000}\n${digest}`;
     const publicKey = await crypto.subtle.importKey(
       "raw",
       fromBase64url(key.publicKey),
@@ -154,6 +157,50 @@ describe("signRequest and verifyRequest", () => {
       ok: false,
       error: "stale_timestamp",
     });
+  });
+
+  test("a negative, fractional or 13-digit timestamp is a bad signature", async () => {
+    const { input, headers } = await signed();
+    for (const timestamp of ["-1762000000", "1762000000.5", "1762000000000"]) {
+      headers.set("Brigade-Timestamp", timestamp);
+      expect(await verifyRequest({ ...input, headers })).toEqual({
+        ok: false,
+        error: "bad_signature",
+      });
+    }
+  });
+
+  test("the instance id is signed: the same signature under another id fails", async () => {
+    const { input, headers } = await signed();
+    // Same key and signature, presented as a rotated key of another instance.
+    headers.set("Brigade-Instance", (await generateInstanceKey()).instance);
+    expect(await verifyRequest({ ...input, headers })).toEqual({
+      ok: false,
+      error: "bad_signature",
+    });
+  });
+
+  test("the key comes back canonical, however it was padded", async () => {
+    const { key, input, headers } = await signed();
+    headers.set("Brigade-Key", key.publicKey + "=");
+    expect(await verifyRequest({ ...input, headers })).toMatchObject({
+      ok: true,
+      key: key.publicKey,
+      original: true,
+    });
+    expect(canonicalKey(key.publicKey + "=")).toBe(key.publicKey);
+    expect(canonicalKey("AAAA")).toBeNull();
+    expect(canonicalKey(42)).toBeNull();
+  });
+
+  test("a key proof is the new key's signature over the instance id", async () => {
+    const instance = await generateInstanceKey();
+    const added = await generateInstanceKey();
+    const proof = await signKeyProof(added.privateKey, instance.instance);
+    expect(await verifyKeyProof(added.publicKey, instance.instance, proof)).toBe(true);
+    expect(await verifyKeyProof(added.publicKey, added.instance, proof)).toBe(false);
+    expect(await verifyKeyProof(instance.publicKey, instance.instance, proof)).toBe(false);
+    expect(await verifyKeyProof(added.publicKey, instance.instance, "junk")).toBe(false);
   });
 
   test("a missing header is missing_signature", async () => {

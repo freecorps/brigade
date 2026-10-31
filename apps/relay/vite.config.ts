@@ -7,5 +7,14 @@ import { workspaceSource } from "../../vite.workspace.ts";
 // the deployed Worker was checked against APNs by hand (docs/spikes/s1-apns-encryption.md).
 export default defineConfig(({ mode }) => ({
   plugins: mode === "test" ? [workspaceSource()] : [cloudflare(), workspaceSource()],
+  // `cloudflare:workers` exists only in workerd: the tests get a stand-in for `DurableObject` (src/registry.ts).
+  resolve:
+    mode === "test"
+      ? {
+          alias: {
+            "cloudflare:workers": new URL("test/cloudflare-workers.ts", import.meta.url).pathname,
+          },
+        }
+      : {},
   test: { include: ["test/**/*.test.ts"] },
 }));

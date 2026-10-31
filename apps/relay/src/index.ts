@@ -22,6 +22,8 @@ import { readJson } from "./body.ts";
 import { sendWithin, within } from "./deadline.ts";
 import { instanceRoutes, type InstanceEnv } from "./instances.ts";
 
+export { RegistryDO } from "./registry.ts";
+
 /**
  * Spike S1 relay (RFC 0006): `POST /send` takes a device token and an already encrypted envelope and forwards
  * it to APNs, or to FCM for an Android device (`platform: "android"`). Its only caller is whoever holds

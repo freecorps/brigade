@@ -5,11 +5,15 @@
 // Headers: `Brigade-Instance` (the id), `Brigade-Key` (the signing key, raw 32 bytes, base64url), `Brigade-Timestamp`
 // (decimal Unix seconds) and `Brigade-Signature` (Ed25519, base64url) over the UTF-8 string, exactly:
 //
-//   METHOD + "\n" + pathWithQuery + "\n" + timestamp + "\n" + hex(SHA-256(rawBodyBytes))
+//   METHOD + "\n" + pathWithQuery + "\n" + instanceId + "\n" + timestamp + "\n" + hex(SHA-256(rawBodyBytes))
 //
 // METHOD uppercase; the path with its query string when there is one (`/v1/health?deep=1`), no scheme or host; the
-// hash lowercase hex over the exact body bytes sent (SHA-256 of no bytes for a request without a body). A timestamp
-// more than 5 minutes off the relay's clock is refused; a replay inside that window only repeats a call.
+// instance id as in `Brigade-Instance`, so a signature made for one instance never counts for another; the hash
+// lowercase hex over the exact body bytes sent (SHA-256 of no bytes for a request without a body). A timestamp more
+// than 5 minutes off the relay's clock is refused; a replay inside that window only repeats a call.
+//
+// A key added to an instance (`POST /v1/instances/keys`) also proves its holder has it: `signKeyProof`, the new key's
+// signature over `"brigade add-key\n" + instanceId`.
 
 import { fromBase64url, toBase64url } from "./base64url.ts";
 
@@ -49,7 +53,10 @@ export type SignRequestInput = {
   publicKey: Uint8Array | string;
   instance: string;
   method: string;
-  /** The URL's path and query (`/v1/health?deep=1`), without scheme or host. */
+  /**
+   * Exactly `new URL(u).pathname + new URL(u).search` for the URL requested (`/v1/health?deep=1`): the relay verifies
+   * the URL as it parsed it, so an unnormalised path (`/v1/../v1/x`, a lone `?`) would not match.
+   */
   path: string;
   /** The exact bytes sent; an empty body (a GET) is the empty string. */
   body: Uint8Array | string;
@@ -61,15 +68,13 @@ export type SignRequestInput = {
 export async function signRequest(input: SignRequestInput): Promise<Record<string, string>> {
   const privateKey =
     typeof input.privateKey === "string"
-      ? await crypto.subtle.importKey("pkcs8", fromBase64url(input.privateKey), ED25519, false, [
-          "sign",
-        ])
+      ? await importPrivateKey(input.privateKey)
       : input.privateKey;
   const timestamp = String(Math.floor(input.now / 1000));
   const signature = await crypto.subtle.sign(
     ED25519,
     privateKey,
-    await signedBytes(input.method, input.path, timestamp, input.body),
+    await signedBytes(input.method, input.path, input.instance, timestamp, input.body),
   );
   return {
     "Brigade-Instance": input.instance,
@@ -82,7 +87,7 @@ export async function signRequest(input: SignRequestInput): Promise<Record<strin
 
 export type VerifyRequestInput = {
   method: string;
-  /** The request's path and query, as received (`url.pathname + url.search`). */
+  /** The request's path and query, as parsed (`url.pathname + url.search`). */
   path: string;
   headers: { get(name: string): string | null };
   body: Uint8Array | string;
@@ -90,8 +95,9 @@ export type VerifyRequestInput = {
 };
 
 /**
- * `original`: SHA-256 of the key gives the instance id, so the key is the instance's first and needs no lookup. Any
- * other key only proves who signed: the relay must find it in the instance's registry record.
+ * `key` is canonical (`canonicalKey`). `original`: SHA-256 of the key gives the instance id, so the key is the
+ * instance's first and needs no lookup. Any other key only proves who signed: the relay must find it in the
+ * instance's registry record.
  */
 export type VerifiedRequest = { ok: true; instance: string; key: string; original: boolean };
 export type VerifyFailure = {
@@ -125,26 +131,82 @@ export async function verifyRequest(
       ED25519,
       publicKey,
       sig,
-      await signedBytes(input.method, input.path, timestamp, input.body),
+      await signedBytes(input.method, input.path, instance, timestamp, input.body),
     );
   } catch {
     // Not base64url, or not a point on the curve.
     return { ok: false, error: "bad_signature" };
   }
   if (!valid) return { ok: false, error: "bad_signature" };
-  return { ok: true, instance, key, original: (await instanceId(raw)) === instance };
+  return {
+    ok: true,
+    instance,
+    // Re-encoded from the bytes, so one key always compares equal however it was written on the wire.
+    key: toBase64url(raw),
+    original: (await instanceId(raw)) === instance,
+  };
+}
+
+/** A public key as the relay stores it: base64url, unpadded, of exactly 32 bytes; null for anything else. */
+export function canonicalKey(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const raw = fromBase64url(value);
+    return raw.length === 32 ? toBase64url(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The new key's proof for `POST /v1/instances/keys`: its signature over `"brigade add-key\n" + instance`. */
+export async function signKeyProof(
+  privateKey: CryptoKey | string,
+  instance: string,
+): Promise<string> {
+  const key = typeof privateKey === "string" ? await importPrivateKey(privateKey) : privateKey;
+  return toBase64url(
+    new Uint8Array(await crypto.subtle.sign(ED25519, key, keyProofBytes(instance))),
+  );
+}
+
+/** Whether `proof` is `publicKey`'s signature over `"brigade add-key\n" + instance`. */
+export async function verifyKeyProof(
+  publicKey: string,
+  instance: string,
+  proof: unknown,
+): Promise<boolean> {
+  if (typeof proof !== "string") return false;
+  try {
+    const key = await crypto.subtle.importKey("raw", fromBase64url(publicKey), ED25519, false, [
+      "verify",
+    ]);
+    return await crypto.subtle.verify(ED25519, key, fromBase64url(proof), keyProofBytes(instance));
+  } catch {
+    return false;
+  }
+}
+
+function keyProofBytes(instance: string): Uint8Array<ArrayBuffer> {
+  return new TextEncoder().encode(`brigade add-key\n${instance}`);
+}
+
+function importPrivateKey(pkcs8: string): Promise<CryptoKey> {
+  return crypto.subtle.importKey("pkcs8", fromBase64url(pkcs8), ED25519, false, ["sign"]);
 }
 
 /** The signed string (module comment), UTF-8. */
 async function signedBytes(
   method: string,
   path: string,
+  instance: string,
   timestamp: string,
   body: Uint8Array | string,
 ): Promise<Uint8Array<ArrayBuffer>> {
   const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
   const digest = [...(await sha256(bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");
-  return new TextEncoder().encode(`${method.toUpperCase()}\n${path}\n${timestamp}\n${digest}`);
+  return new TextEncoder().encode(
+    `${method.toUpperCase()}\n${path}\n${instance}\n${timestamp}\n${digest}`,
+  );
 }
 
 async function sha256(bytes: Uint8Array): Promise<Uint8Array> {

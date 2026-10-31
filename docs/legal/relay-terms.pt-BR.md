@@ -35,7 +35,7 @@ O relay é gratuito para qualquer instância registrada dentro destes limites, b
 pagina:
 
 - 600 notificações por minuto por instância, das quais no máximo 60 chamadas;
-- 30 notificações por minuto para um mesmo celular.
+- 30 notificações por minuto da sua instância para um mesmo celular.
 
 Podemos aumentá-los sob pedido. O que passar deles é recusado (`429`), não cobrado.
 

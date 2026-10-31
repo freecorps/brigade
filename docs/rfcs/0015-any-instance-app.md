@@ -28,7 +28,7 @@ That stays possible, but "self-host Brigade" must not mean "publish a mobile app
 ## Design
 
 ```
-                    (1) GET /api/config → { brigade, relay: { origin, instance } }
+             (1) GET /api/config (the API's GET /config) → { brigade, relay }
 App ───────────────────────────────────────────────────────────────────────────▶ Instance
 App ──(2) POST /v1/handles { instance, platform, environment, pushToken, voipToken } ──▶ Relay
 App ◀─(3) { handle, tag } ──────────────────────────────────────────────────────── Relay
@@ -43,8 +43,10 @@ Instance ──(5) POST /v1/send { handle, envelope, … }, signed with the inst
 - **The instance id** is derived from the first public key: `ins_` + base64url(SHA-256(publicKey))[0..22]. Stable for
   the instance's life, even after a key rotation (below).
 - **Every call is signed.** Headers `Brigade-Instance`, `Brigade-Key` (the public key), `Brigade-Timestamp` (Unix
-  seconds) and `Brigade-Signature` over `method \n path \n timestamp \n SHA-256(body)`. The relay refuses a timestamp
-  more than 5 minutes off. Replays inside that window only repeat a push and stay under the rate limits; no nonce
+  seconds) and `Brigade-Signature` (Ed25519, base64url) over
+  `METHOD \n path-with-query \n timestamp \n hex(SHA-256(body))`: the method in upper case, the path with its query
+  string (`/v1/health?deep=1`), the timestamp in decimal Unix seconds, and the lower-case hex SHA-256 of the exact
+  body bytes (of no bytes for a request without a body). The relay refuses a timestamp more than 5 minutes off. Replays inside that window only repeat a push and stay under the rate limits; no nonce
   store.
 - **Checking a signature needs no storage on the paging path.** If SHA-256 of the presented key gives the instance
   id, the key is the original one and is checked against the signature alone. Only a rotated key needs a lookup
@@ -52,12 +54,14 @@ Instance ──(5) POST /v1/send { handle, envelope, … }, signed with the inst
 - **Registration** (`POST /v1/instances`, signed): records the instance in the relay's registry (Workers KV) with the
   terms version accepted and a contact address (where Freecorps writes before limiting or revoking). **Decided
   (D3):** an instance must register, and so accept the terms, before it can mint handles or send: an unknown id
-  answers `403 instance_unregistered`. Because the registry check is fail open on a KV error (below), a registered
-  instance keeps paging through a KV outage; an unregistered one gets nothing it could page with in the first place
-  (no handle is minted for it).
-- **Revocation** is a registry entry (`revoked`), read through a per-isolate cache of 60 s. A registry read that
-  fails is _fail open_ for the paging path: a KV outage must not stop every self-hosted page.
-- **Key rotation.** `POST /v1/instances/:id/keys`, signed with the current key, adds a new key (and later retires the
+  answers `403 instance_unregistered`. Registering, minting a handle and rotating keys read the registry and **fail
+  closed** on a KV error (`503 registry_unavailable`): an unknown id never gets a handle. A send needs no
+  registration read, because the handle it carries could only have been minted for a registered instance; it checks
+  only revocation, below.
+- **Revocation** is a registry entry (`revoked`), read through a per-isolate cache of 60 s. On a send, a registry
+  read that fails is _fail open_ (not revoked, logged): a KV outage must not stop every self-hosted page. Everything
+  else fails closed.
+- **Key rotation.** `POST /v1/instances/keys`, signed with a key the instance already has, adds a new key (and later retires the
   old one). A rotated key is looked up in the registry (cached). Losing the key without rotating means a new instance
   id: every phone pairs again the next time it opens the app (see "Dead ends").
 
@@ -69,7 +73,8 @@ Instance ──(5) POST /v1/send { handle, envelope, … }, signed with the inst
 - **Bound to the instance.** A send whose signed instance is not the one sealed in the handle is
   `403 handle_not_yours`. A handle taken from one instance is useless to another.
 - **The tag.** Since every sealing uses a fresh nonce, two handles of the same token differ. The relay also answers
-  `tag` = HMAC(relay key, instance ‖ pushToken), the same for the same token at the same instance and nothing at
+  `tag` = HMAC-SHA-256(`RELAY_TAG_KEY`, instance ‖ 0x00 ‖ pushToken), base64url: a key of its own that never
+  rotates with `RELAY_HANDLE_KEYS` (a rotation must not change every tag), the same for the same token at the same instance and nothing at
   another. The instance uses it where it compares tokens today: "the same token under a new id replaces the old
   device", and `device.expire` "only if its token is still the one the push went to".
 - **Who asks for it.** The app, straight to the relay. Never through the instance, which must not see the token. The
@@ -93,7 +98,8 @@ Instance ──(5) POST /v1/send { handle, envelope, … }, signed with the inst
   instance.
 - **Limits.** The real risk is shared fate: an instance flooding APNs can get the whole app throttled by Apple, for
   everyone. So: per instance (Workers Rate Limiting, keyed by instance id) a generous limit (proposal: 600 sends a
-  minute, calls 60 a minute), and per handle 30 a minute. A page is never exempt, since every caller can say `page`;
+  minute, calls 60 a minute), and per phone 30 a minute from each instance, keyed by the tag (instance and token),
+  not by the handle, which differs on every sealing. A page is never exempt, since every caller can say `page`;
   the limits are well above any real incident. **Decided (D4)**, raised on request.
 - **The old `/send`** stays for our instance with `RELAY_SEND_TOKEN`, until no supported app version sends raw
   tokens (below), then goes.
@@ -103,9 +109,10 @@ Instance ──(5) POST /v1/send { handle, envelope, … }, signed with the inst
 RFC 0006 already says the envelope must, before production, seal the time, the instance and the urgency. This is the
 moment, and it is what makes several instances on one phone safe:
 
-- Plaintext gains `iat`, `origin` (the instance's origin) and `urgency`. The extension and the Android service take the
-  interruption level from the sealed urgency (not from the clear `aps` field), treat a page older than its TTL as the
-  fallback, and post the receipt and the Acknowledge only to the sealed origin, and only if the phone is paired with it.
+- Plaintext gains `iat`, `exp` (`iat` plus the TTL the instance sends to the relay, so a custom `ttlSeconds` is
+  sealed too), `origin` (the instance's origin) and `urgency`. The extension and the Android service take the
+  interruption level from the sealed urgency (not from the clear `aps` field), treat a page opened after its sealed
+  `exp` as the fallback, and post the receipt and the Acknowledge only to the sealed origin, and only if the phone is paired with it.
 - **One device key per instance** (keyed by the instance's origin, App Group Keychain and Android Keystore aliases).
   Then instance A, which holds only its own device key, cannot seal a page that opens as instance B's. The clear part
   of the payload names which key (`brigade.k`, a short key id) so the extension tries one key. Since the device id
@@ -117,7 +124,8 @@ moment, and it is what makes several instances on one phone safe:
   Brigade (default) and "Another instance": an address field, or a QR code from the dashboard's "Use the app" page
   (address only, or address and sign-in: section 6).
 - **Checking the address.** HTTPS only (development builds also allow `http://` on a private address). The app reads
-  `GET /api/config` and needs `brigade` (the API version and the oldest app it supports) and `relay`
+  `GET /api/config` on the dashboard's origin (the API's `GET /config`, which the dashboard serves under `/api`, as the
+  app's `brigadeServer` already does) and needs `brigade` (the API version and the oldest app it supports) and `relay`
   (`{ origin, instance }`). Answers:
   - not a Brigade → "This address is not a Brigade instance";
   - `relay.origin` not this build's relay → "This instance uses its own app build" (its pages could never reach this
@@ -259,15 +267,21 @@ does it.
 1. The relay ships `/v1/*` next to `/send`.
 2. Our instance gets an instance key and registers; it accepts both kinds of registration.
 3. An app release asks for handles and registers with them; each phone moves on its next launch.
-4. Once the oldest supported app version (`/config` `brigade.minApp`) sends handles, our instance drops raw tokens
-   (a migration nulls `push_token`/`voip_token`) and the relay drops `/send` and `RELAY_SEND_TOKEN`.
+4. Once the oldest supported app version (`/config` `brigade.minApp`) sends handles, our instance drops the raw
+   tokens of devices that have a `handle` (a migration nulls `push_token`/`voip_token` on those only). A phone not
+   opened since keeps its raw token and stays paged through `/send`; the relay drops `/send` and `RELAY_SEND_TOKEN`
+   only once no device has a raw token left (those left expire on their own: a reinstall, `BadDeviceToken`).
 
 ## Dead ends (what this does not solve, and what we do instead)
 
 - **A lost instance key** (overwritten secret, an instance rebuilt from scratch) is a new instance id: every handle is
   useless and every phone must open the app once to be paged again. Phones that do not open it are not paged. The
-  dashboard shows each member's phones as "not set up again" and pages fail as `no_devices`, so it is visible, but it
-  is an outage of paging. Mitigation: the setup script says to keep the key in a password manager; rotation (above)
+  relay answers each send to an old handle `403 handle_not_yours`; the instance treats that answer like APNs'
+  `BadDeviceToken` and expires the device (`device.expire`, on the handle the push went to), so the old rows do not
+  linger even though the new tags never match them. From then on its member is `no_devices` there: the incident's
+  "Couldn't page …" line and the "a page reached nobody" email (RFC 0006 "Who is paged") say so, the phone drops off
+  "Your phones", and the app registers it again (new handle, new tag) the next time it opens. Visible, but an outage
+  of paging. Mitigation: the setup script says to keep the key in a password manager; rotation (above)
   covers the planned case. A recovery by email to the registered contact would let Freecorps move an id to a new
   key, at the cost of a manual process: **not proposed** for now.
 - **The relay is a shared single point of failure** for every instance using it. Same as today for our instance;

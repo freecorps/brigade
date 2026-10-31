@@ -34,7 +34,7 @@ phone (RFC 0006). The relay sees the handle, the ciphertext, the urgency and the
 The relay is free for any registered instance within these limits, which are well above what a real team pages:
 
 - 600 notifications a minute per instance, of which at most 60 calls;
-- 30 notifications a minute to any one phone.
+- 30 notifications a minute to any one phone from your instance.
 
 We can raise them on request. Sending past them is refused (`429`), not billed.
 

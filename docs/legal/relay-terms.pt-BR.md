@@ -8,7 +8,7 @@
 
 # Termos de uso do relay de push do Brigade
 
-Estes termos tratam do relay de push que a [razão social da Freecorps] ("Freecorps", "nós") opera para instâncias do
+Estes termos tratam do relay de push que a Freecorps Tecnologia da Informação LTDA ("Freecorps", "nós") opera para instâncias do
 Brigade ("o relay"). Valem para quem opera uma instância e a registra no relay ("você"). O software Brigade tem suas
 próprias licenças open source (AGPL-3.0 e MIT); estes termos tratam só do serviço.
 

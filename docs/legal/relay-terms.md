@@ -8,7 +8,7 @@
 
 # Terms of service of the Brigade push relay
 
-These terms cover the push relay that [Freecorps legal name] ("Freecorps", "we") runs for Brigade instances ("the
+These terms cover the push relay that Freecorps Tecnologia da Informação LTDA ("Freecorps", "we") runs for Brigade instances ("the
 relay"). They apply to whoever runs an instance and registers it with the relay ("you"). The Brigade software
 itself is under its own open-source licenses (AGPL-3.0 and MIT); these terms are about the service only.
 

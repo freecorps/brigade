@@ -40,6 +40,11 @@ export const PING_TIMEOUT_MS = 5000;
  * flaps does not flood their inboxes; the rest are only logged.
  */
 export const OPERATOR_EMAIL_HOURLY_CAP = 6;
+/** How many times the watchdog tries one status change's email, a minute apart (a beat), before it gives up. */
+export const OPERATOR_EMAIL_TRIES = 5;
+/** Just under the cron's minute, so a failure on a proof (a few seconds after its beat) is tried on the next beat. */
+const OPERATOR_EMAIL_RETRY_MS = 50 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 /**
  * A deeper check (APNs, FCM, D1) failing transiently on this many proved beats in a row degrades the status and stops
  * the pings; fewer change nothing, so one slow answer does not page the operators.
@@ -104,6 +109,9 @@ export type WatchdogEnv = EmailEnv &
 const STATE_SCHEMA = `
   create table if not exists watchdog_state (key text primary key, value text not null) without rowid;
   create table if not exists operator_emails (event_id text primary key, at integer not null) without rowid;
+  create table if not exists operator_email_queue (
+    event_id text primary key, event text not null, tries integer not null, next_at integer not null
+  ) without rowid;
 `;
 
 type Keys =
@@ -132,6 +140,8 @@ export class WatchdogDO extends DurableObject<Env> {
   private pingTimeoutMs = PING_TIMEOUT_MS;
   /** The operators' email sender; a field so tests can stand one in. */
   private mail: () => EmailSender | undefined = () => emailSender(this.env as WatchdogEnv);
+  /** Whether `emailOperators` is running, so a beat and a proof close together do not send the same email twice. */
+  private emailing = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -153,7 +163,7 @@ export class WatchdogDO extends DurableObject<Env> {
    * drains it, so the alarm and the drain are part of what a proof proves. Returns the heartbeat's id.
    */
   async beat(now = Date.now()): Promise<string> {
-    const [event, change] = this.ctx.storage.transactionSync(() => {
+    const event = this.ctx.storage.transactionSync(() => {
       const beats = Number(this.get("beats") ?? 0) + 1;
       const [heartbeat] = this.write(
         [{ type: HEARTBEAT_EVENT, data: { beat: beats } }],
@@ -163,9 +173,10 @@ export class WatchdogDO extends DurableObject<Env> {
       this.set("beats", String(beats));
       if (this.get("first_beat_at") === null) this.set("first_beat_at", String(now));
       this.set("last_beat_at", String(now));
-      return [heartbeat!, this.settle(now)] as const;
+      this.settle(now);
+      return heartbeat!;
     });
-    this.emailOperators(change);
+    this.ctx.waitUntil(this.emailOperators(now));
     await this.armDrain(now);
     return event.id;
   }
@@ -188,7 +199,7 @@ export class WatchdogDO extends DurableObject<Env> {
     const beatAt = Date.parse(beatTime);
     const known = Number(this.get("proved_beat_at") ?? Number.NEGATIVE_INFINITY);
     if (!Number.isFinite(beatAt) || beatAt <= known) return this.health(now);
-    const [failing, change] = this.ctx.storage.transactionSync(() => {
+    const failing = this.ctx.storage.transactionSync(() => {
       this.set("proved_beat_at", String(beatAt));
       this.set("last_proved_at", String(now));
       this.set("relay", relay);
@@ -196,9 +207,10 @@ export class WatchdogDO extends DurableObject<Env> {
       const failed = (["apns", "fcm", "d1"] as const).some((key) => this.get(key) === "error");
       // "The last time a page could have gone out": not while APNs, FCM or D1 is failing.
       if (relay === "ok" && !failed) this.set("last_ok_at", String(now));
-      return [failed, this.settle(now)] as const;
+      this.settle(now);
+      return failed;
     });
-    this.emailOperators(change);
+    this.ctx.waitUntil(this.emailOperators(now));
     await this.armDrain(now);
     const pages = relay === "ok" && !failing;
     if (pages && now - beatAt <= MAX_PROOF_LATENCY_MS) this.ctx.waitUntil(this.ping(now));
@@ -207,45 +219,66 @@ export class WatchdogDO extends DurableObject<Env> {
   }
 
   /**
-   * Whether the operators may be emailed about the status change `eventId`, by this object as the status changes
-   * (`emailOperators`) or by the consumer as the event comes through the Queue (RPC): once per event (whichever asks
-   * second, and a redelivery, is refused) and at most `OPERATOR_EMAIL_HOURLY_CAP` events an hour.
+   * Emails the operators each status change waiting in `operator_email_queue` (`settle` puts it there, in the same
+   * transaction as the change), from here, not through the outbox, the Queue and the consumer: a stalled Queue is one
+   * of the things it reports, and an email waiting in it would arrive with the recovery. Runs in `waitUntil` after
+   * every beat and proof, so one that failed, or never finished (the object evicted mid-send), is tried again a minute
+   * later, up to `OPERATOR_EMAIL_TRIES` times. At most `OPERATOR_EMAIL_HOURLY_CAP` changes an hour are emailed; the rest
+   * are only logged. Never throws.
    */
-  async claimOperatorEmail(eventId: string, now = Date.now()): Promise<boolean> {
+  private async emailOperators(now: number): Promise<void> {
+    if (this.emailing) return;
+    this.emailing = true;
     const sql = this.ctx.storage.sql;
-    return this.ctx.storage.transactionSync(() => {
-      sql.exec("delete from operator_emails where at < ?", now - 24 * 60 * 60 * 1000);
-      if (sql.exec("select 1 from operator_emails where event_id = ?", eventId).toArray().length) {
-        return false;
-      }
-      const { sent } = sql
-        .exec<{ sent: number }>(
-          "select count(*) as sent from operator_emails where at > ?",
-          now - 60 * 60 * 1000,
+    try {
+      const due = sql
+        .exec<{ event_id: string; event: string; tries: number }>(
+          "select event_id, event, tries from operator_email_queue where next_at <= ? order by next_at",
+          now,
         )
-        .one();
-      if (sent >= OPERATOR_EMAIL_HOURLY_CAP) return false;
-      sql.exec("insert into operator_emails (event_id, at) values (?, ?)", eventId, now);
-      return true;
-    });
-  }
-
-  /**
-   * Emails the operators about `change` (a `brigade.status_changed` just written) from here, in `waitUntil`, so the
-   * email does not wait on the outbox, the Queue and the consumer: a stalled Queue is one of the things it reports. A
-   * send that went to nobody gives the claim back, so the consumer tries again when the event comes through.
-   */
-  private emailOperators(change: BrigadeEvent | null): void {
-    if (change === null) return;
-    const send = async () => {
-      const outcome = await notifyOperators(change, this.env as WatchdogEnv, this.mail(), (id) =>
-        this.claimOperatorEmail(id),
-      );
-      if (outcome === "failed") {
-        this.ctx.storage.sql.exec("delete from operator_emails where event_id = ?", change.id);
+        .toArray();
+      for (const row of due) {
+        sql.exec("delete from operator_emails where at < ?", now - 24 * 60 * 60 * 1000);
+        const { sent } = sql
+          .exec<{ sent: number }>(
+            "select count(*) as sent from operator_emails where at > ?",
+            now - HOUR_MS,
+          )
+          .one();
+        if (sent >= OPERATOR_EMAIL_HOURLY_CAP) {
+          log("operator email not sent: capped", { event: row.event_id });
+          sql.exec("delete from operator_email_queue where event_id = ?", row.event_id);
+          continue;
+        }
+        const outcome = await notifyOperators(
+          JSON.parse(row.event) as BrigadeEvent,
+          this.env as WatchdogEnv,
+          this.mail(),
+        );
+        if (outcome === "sent") {
+          sql.exec(
+            "insert or ignore into operator_emails (event_id, at) values (?, ?)",
+            row.event_id,
+            now,
+          );
+        }
+        if (outcome !== "failed" || row.tries + 1 >= OPERATOR_EMAIL_TRIES) {
+          if (outcome === "failed")
+            log("operator email given up", { event: row.event_id, tries: row.tries + 1 });
+          sql.exec("delete from operator_email_queue where event_id = ?", row.event_id);
+        } else {
+          sql.exec(
+            "update operator_email_queue set tries = tries + 1, next_at = ? where event_id = ?",
+            now + OPERATOR_EMAIL_RETRY_MS,
+            row.event_id,
+          );
+        }
       }
-    };
-    this.ctx.waitUntil(send());
+    } catch (error) {
+      log("operator email failed", { error: String(error) });
+    } finally {
+      this.emailing = false;
+    }
   }
 
   /** `GET /health/paging`: the state now, with the cron's silence counted too. */
@@ -312,20 +345,20 @@ export class WatchdogDO extends DurableObject<Env> {
   }
 
   /**
-   * Recomputes the status and, when it or its reasons changed, writes `brigade.status_changed` to the outbox, logs
-   * it (Workers Logs alerts can watch for `paging pipeline degraded`) and returns it, for `emailOperators`. Runs only
-   * on a beat or a proof, so `no_beat` (no beat is what runs it) is never logged or evented: only `GET /health/paging`
-   * and the external check see it. Call inside a transaction.
+   * Recomputes the status and, when it or its reasons changed, writes `brigade.status_changed` to the outbox and to
+   * the operators' email queue (`emailOperators`), and logs it (Workers Logs alerts can watch for `paging pipeline
+   * degraded`). Runs only on a beat or a proof, so `no_beat` (no beat is what runs it) is never logged or evented:
+   * only `GET /health/paging` and the external check see it. Call inside a transaction.
    */
-  private settle(now: number): BrigadeEvent | null {
+  private settle(now: number): void {
     const { status, reasons } = this.health(now);
     const previous = this.get("status");
     const key = JSON.stringify([...reasons].sort());
-    if (previous === status && this.get("reasons") === key) return null;
+    if (previous === status && this.get("reasons") === key) return;
     this.set("status", status);
     this.set("reasons", key);
     // The first beat (nothing to unknown) is not a change anyone needs to hear about.
-    if (previous === null && status === "unknown") return null;
+    if (previous === null && status === "unknown") return;
     const [change] = this.write(
       [{ type: STATUS_EVENT, data: { status, previous, reasons } }],
       now,
@@ -336,7 +369,12 @@ export class WatchdogDO extends DurableObject<Env> {
       previous,
       reasons,
     });
-    return change!;
+    this.ctx.storage.sql.exec(
+      "insert into operator_email_queue (event_id, event, tries, next_at) values (?, ?, 0, ?)",
+      change!.id,
+      JSON.stringify(change),
+      now,
+    );
   }
 
   private write(events: { type: string; data: unknown }[], now: number, version: number) {

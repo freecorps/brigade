@@ -419,8 +419,8 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   logged: it has no incident timeline. No verified owner is logged too (admins are not a fallback). Tests:
   `apps/api/test/email.test.ts` ("the owners' email about a member taken out of schedules").
 - **Built.** An email to Brigade's operators (`OPERATOR_EMAILS`) on `brigade.status_changed` (Q19, RFC 0007
-  "Watching the watcher"), on the `EmailSender`: sent by the watchdog itself as the status changes, with the consumer
-  as the fallback when that send reached nobody.
+  "Watching the watcher"), on the `EmailSender`: sent by the watchdog itself as the status changes, not by the
+  Queue's consumer, and tried again on the next beats when it fails.
 
 ## Alert sources
 

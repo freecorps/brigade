@@ -358,8 +358,8 @@ lastBeatAt, lastProvedAt, lastOkAt }` to a member; never `external` (operators r
 `fcm_failing` or `d1_failing` from its deeper checks; `unknown` before the first proof. The dashboard shows a notice
 while it is not `ok`. Changes of status or reasons write `brigade.status_changed` and log `paging pipeline degraded`;
 the watchdog emails each to `OPERATOR_EMAILS` (comma-separated, at most 10 addresses, in English) as it happens, not
-through the Queue it may be reporting stalled; the consumer sends it only when that send reached nobody. At most 6
-changes an hour, once each, never in a page's way (`src/notify-operators.ts`).
+through the Queue it may be reporting stalled, and tries a failed one again on the next beats (5 times). At most 6
+changes an hour, never in a page's way (`src/notify-operators.ts`).
 
 `DEAD_MAN_URL` is an optional secret (`wrangler secret put DEAD_MAN_URL --env dev`; `https:` only, `http:` on
 loopback). Locally the cron never fires on its own, and `secrets.required` keeps optional secrets out of `.dev.vars`,

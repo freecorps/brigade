@@ -443,17 +443,17 @@ results (a new monitor is up on its first success).
   check". Each change of status or reasons on a beat or a proof is a `brigade.status_changed` event in the watchdog's
   outbox and a log line (`paging pipeline degraded`). It is emailed to the instance's operators (decided, Q19):
   `OPERATOR_EMAILS`, comma-separated, at most 10 addresses, through the email notifier's sender, in English (no
-  operator has a locale; the strings are in `packages/i18n` with `pt-BR` too). The watchdog sends it itself as the
-  status changes, not through the Queue: a stalled Queue is one of the things it reports, and an email waiting in it
-  would arrive with the recovery (seen in production: a 7-minute Queue stall whose "degraded" email came with the "back
-  to normal" one). The event still goes through the Queue, and the consumer sends it only when the watchdog's send
-  reached nobody (the watchdog gives its claim back then). At most `OPERATOR_EMAIL_HOURLY_CAP` (6) changes an hour are
-  emailed, each once (whoever sends claims it at the watchdog, so the other path and a redelivery send nothing); a
-  failed send is logged, and never holds up the pages in a batch. `no_beat` never is: a beat or a proof is what
+  operator has a locale; the strings are in `packages/i18n` with `pt-BR` too). The watchdog sends it itself, not the Queue's
+  consumer: a stalled Queue is one of the things it reports, and an email waiting in it would arrive with the recovery
+  (seen in production: a 7-minute Queue stall whose "degraded" email came with the "back to normal" one). `settle`
+  puts each change in the watchdog's own email queue in the same transaction that records it, and every beat and proof
+  sends what is due, in `waitUntil`; a send that reached nobody, or never finished, is tried again on the next beats,
+  at most 5 times, then logged as given up. At most `OPERATOR_EMAIL_HOURLY_CAP` (6) changes an hour are emailed, the
+  rest only logged; it never holds up a page. `no_beat` never is: a beat or a proof is what
   records a change, and no beat means neither runs, so only `GET /health/paging` and the external check see it.
   Tests: `apps/relay/test/deep-health.test.ts`, `apps/api/test/watchdog.test.ts` ("a relay with the deep check: …",
   "a transient deep-check failure …", "OPERATOR_EMAILS are emailed …", "a stalled queue: the watchdog emails the
-  operators itself …").
+  operators itself …", "an email that failed is tried again …").
 
   Not covered: each workspace shard's own alarm and outbox (the watchdog proves the shared code and the shared
   Queue, not every shard's drain), which waits on a registry of shards, and whether APNs delivers (the deep check

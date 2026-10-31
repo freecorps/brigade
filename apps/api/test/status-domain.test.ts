@@ -644,17 +644,20 @@ describe("the shard re-checks the domain on its own", () => {
   test("a pending domain is asked about again with backoff until active, then daily; failed is left alone", async () => {
     const t = await team();
     const fake = cloudflare();
-    await route(t, t.ana, "PUT", fake, { hostname: hostname() });
+    // Set up for Cloudflare for SaaS before the add, as an instance is: the add arms the check itself.
     await checker(t, fake);
+    await route(t, t.ana, "PUT", fake, { hostname: hostname() });
     const added = (await domainRow(t))!;
     const first = await runInDurableObject(t.stub, (instance: WorkspaceDO) =>
       (Reflect.get(instance, "domains") as DomainChecker).nextAt(Date.now()),
     );
     expect(first).toBe(added.checkedAt + DOMAIN_RECHECK_MIN_MS);
-    // The alarm is armed for it.
-    const alarm = await runInDurableObject(t.stub, (_i: WorkspaceDO, state) =>
-      state.storage.getAlarm(),
-    );
+    // The alarm is armed for it, even once the outbox drain the add woke has run and the alarm moved on: run it now,
+    // whether or not it already fired, so the test never depends on which came first.
+    const alarm = await runInDurableObject(t.stub, async (instance: WorkspaceDO, state) => {
+      await instance.alarm();
+      return state.storage.getAlarm();
+    });
     expect(alarm).not.toBeNull();
     expect(alarm!).toBeLessThanOrEqual(first!);
 

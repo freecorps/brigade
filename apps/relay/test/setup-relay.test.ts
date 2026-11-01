@@ -566,6 +566,8 @@ describe("your own relay", () => {
     expect(api?.get("RELAY_URL")).toBe(`https://${OWN_HOST}`);
     expect(api?.get("RELAY_SEND_TOKEN")).toBe(relay?.get("RELAY_SEND_TOKEN"));
     expect(api?.get("RELAY_APP_URL")).toBe(OWN.appUrl);
+    // The mark the dashboard reads, link or none.
+    expect(api?.get("RELAY_KIND")).toBe("own");
     const key = await importInstanceKey(api?.get("RELAY_INSTANCE_KEY") ?? "");
     expect(h.ownRegistry.storage(`instance:${key.instance}`).get("record")).toMatchObject({
       status: "registered",
@@ -734,6 +736,26 @@ describe("what a switch removes from the API", () => {
     expect(api?.has("RELAY_SEND_TOKEN")).toBe(false);
     expect(api?.has("RELAY_APP_URL")).toBe(false);
     // Its pair marker too: left behind, it would vouch for a token the API no longer has.
+    expect([...(api?.keys() ?? [])].some((name) => name.startsWith("BRIGADE_SEND_PAIR_"))).toBe(
+      false,
+    );
+  });
+
+  test("from an own relay with no link (RELAY_KIND), its mark and send token go too", async () => {
+    const h = harness({
+      secrets: {
+        "brigade-api": [
+          "RELAY_INSTANCE_KEY",
+          "RELAY_URL",
+          "RELAY_KIND",
+          "RELAY_SEND_TOKEN",
+          "BRIGADE_SEND_PAIR_old",
+        ],
+      },
+    });
+    const api = await finish(h);
+    expect(api?.has("RELAY_KIND")).toBe(false);
+    expect(api?.has("RELAY_SEND_TOKEN")).toBe(false);
     expect([...(api?.keys() ?? [])].some((name) => name.startsWith("BRIGADE_SEND_PAIR_"))).toBe(
       false,
     );

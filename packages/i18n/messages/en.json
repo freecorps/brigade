@@ -3872,5 +3872,74 @@
         "part=*": "Workspace language"
       }
     }
+  ],
+  "phones_pages": [
+    {
+      "declarations": ["input part", "input host"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Phones and pages",
+        "part=description": "Which relay this instance sends pages to phones through, and whether its last check got through. Only owners and admins see this.",
+        "part=relay_label": "Relay",
+        "part=relay_freecorps": "Pages go through Freecorps' relay",
+        "part=relay_own": "Pages go through your company's own relay",
+        "part=relay_own_host": "Pages go through your company's own relay ({host})",
+        "part=relay_none": "No relay: phones aren't paged",
+        "part=relay_unknown": "Couldn't tell which relay pages go through.",
+        "part=freecorps_hint": "It pages the Brigade app from the App Store and Google Play.",
+        "part=own_hint": "It pages only your company's own build of the Brigade app: the Brigade app in the stores can't get its pages.",
+        "part=none_hint": "No push relay is set up, so phones get no pages. Pages still go out by email when this instance can send email. To page phones, set up a relay from the machine you deploy from:",
+        "part=state_label": "State",
+        "part=app_label": "App to install",
+        "part=app_none": "No link to your company's app is set, so members aren't told where to get it. Add one (RELAY_APP_URL) when you run setup again:",
+        "part=checking": "Checking…",
+        "part=state_working": "Working",
+        "part=hint_working": "The last check reached the relay and it answered.",
+        "part=state_not_checked": "Not checked yet",
+        "part=hint_not_checked": "The paging self-check runs every minute once the instance is deployed, and it hasn't run yet.",
+        "part=state_unregistered": "Not registered",
+        "part=hint_unregistered_freecorps": "This instance isn't registered on Freecorps' relay, or its registration wasn't finished (it needs the code emailed to your contact). Run:",
+        "part=hint_unregistered_own": "This instance isn't registered on your relay. Run setup again:",
+        "part=state_refused": "Refused",
+        "part=hint_bad_signature": "The relay doesn't accept this instance's key (RELAY_INSTANCE_KEY or RELAY_INSTANCE_ID), or this server's clock is more than 5 minutes off. Run setup again with the key file you saved:",
+        "part=hint_revoked_freecorps": "Freecorps revoked this instance on its relay. Write to Freecorps to find out why before you register again.",
+        "part=hint_revoked_own": "This instance was revoked on your relay. Register it again:",
+        "part=hint_unauthorized": "The relay refused the send token (RELAY_SEND_TOKEN), so phones registered before relay handles aren't paged. Run setup again to set a matching token:",
+        "part=state_unreachable": "Unreachable",
+        "part=hint_unreachable_freecorps": "Freecorps' relay isn't answering. Check RELAY_URL on the API; if it's right, the relay may be down, and pages go out by email meanwhile.",
+        "part=hint_unreachable_own": "Your relay isn't answering. Check that it's deployed and that the API reaches it (the RELAY binding, or RELAY_URL).",
+        "part=state_rate_limited": "Rate limited",
+        "part=hint_rate_limited": "The relay keeps refusing this instance's checks as over its limits. It usually clears on its own; if it lasts, ask whoever runs the relay to raise the limit.",
+        "part=state_handles_unavailable": "Handles unavailable",
+        "part=hint_handles_freecorps": "The relay can't open phone handles right now, so phones on the current app aren't paged through it. If it lasts, write to Freecorps.",
+        "part=hint_handles_own": "Your relay can't open phone handles. Deploy the current apps/relay and check its RELAY_HANDLE_KEYS; running setup again keeps the keys it has:",
+        "part=state_providers": "Push service failing",
+        "part=hint_providers_freecorps": "Apple's or Google's push service refused the relay's credentials, or isn't answering. That's on the relay's side: nothing to change on this instance.",
+        "part=hint_providers_own": "Apple's or Google's push service refused your relay's credentials, or isn't answering. If you changed the APNs key or the Firebase account, replace them:",
+        "part=state_pipeline": "Held up in Brigade",
+        "part=hint_pipeline": "Pages are held up before they reach the relay, so it can't be checked. The paging notice on the overview says why.",
+        "part=state_no_answer": "Couldn't check",
+        "part=hint_no_answer": "Brigade didn't answer the paging check. It tries again every minute.",
+        "part=*": "Phones and pages"
+      }
+    }
+  ],
+  "use_app": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Use the app",
+        "part=description": "Brigade on your phone, for this workspace.",
+        "part=checking": "Checking which app pages you here…",
+        "part=store": "Install the Brigade app from the App Store or Google Play, sign in with this account and allow notifications. That's where your pages arrive.",
+        "part=store_no_push": "The Brigade app from the App Store or Google Play signs in to this workspace, so you can follow incidents from your phone.",
+        "part=own": "Pages here go to your company's own build of the Brigade app. The Brigade app in the App Store and Google Play can't get them.",
+        "part=own_link": "Get your company's app",
+        "part=own_no_link": "Ask an owner or admin where to get it.",
+        "part=failed": "Couldn't check which app pages you here. Try again in a minute.",
+        "part=*": "Use the app"
+      }
+    }
   ]
 }

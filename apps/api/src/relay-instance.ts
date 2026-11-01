@@ -31,6 +31,14 @@ export type RelayInstanceEnv = {
    * /config` gives it as `relay.app`, so the store app can send people there. Optional, https only.
    */
   RELAY_APP_URL?: string;
+  /**
+   * `own` when the relay is the company's own (RFC 0015 section 8), set by `vp run setup:relay` and removed by it on a
+   * switch to Freecorps' relay. `RELAY_APP_URL` says the same, but the link is optional, so this marks an own relay
+   * without one. Anything else, or unset, is Freecorps' relay. Not secret.
+   */
+  RELAY_KIND?: string;
+  /** The send token for `POST /send` (src/notify.ts); read here only for whether there is one. */
+  RELAY_SEND_TOKEN?: string;
 };
 
 export type Fetch = (request: Request) => Promise<Response>;
@@ -153,6 +161,27 @@ export async function relayConfig(
   if (!key) return undefined;
   const app = publicOrigin(env.RELAY_APP_URL, true);
   return { origin, instance: key.instance, ...(app === undefined ? {} : { app }) };
+}
+
+/**
+ * Which relay pages go through, for the dashboard's "Phones and pages" (RFC 0015 section 8, `GET /health/paging`
+ * `relay`): `none` when phones cannot be paged at all (no relay to reach, or neither the send token nor an instance key
+ * that reads), else `freecorps` or `own`, with the relay's host when `RELAY_URL` gives one (a `RELAY` binding alone has
+ * none) and, for an own relay, its app build's link. Unlike `relayConfig` it counts the send token too: an instance
+ * paging raw-token phones through `/send` (ours today) pages phones, with or without handles.
+ */
+export type RelaySetup =
+  | { kind: "none" }
+  | { kind: "freecorps" | "own"; host: string | null; app: string | null };
+
+export async function relaySetup(env: RelayInstanceEnv): Promise<RelaySetup> {
+  if (!relayReachable(env)) return { kind: "none" };
+  if (!env.RELAY_SEND_TOKEN && !(await instanceKey(env))) return { kind: "none" };
+  const origin = publicOrigin(env.RELAY_URL);
+  const host = origin === undefined ? null : new URL(origin).host;
+  const app = publicOrigin(env.RELAY_APP_URL, true) ?? null;
+  const own = env.RELAY_KIND?.trim().toLowerCase() === "own" || Boolean(env.RELAY_APP_URL?.trim());
+  return own ? { kind: "own", host, app } : { kind: "freecorps", host, app: null };
 }
 
 /** An https URL's origin (or the whole URL with `whole`); http only on a loopback host. Undefined for anything else. */

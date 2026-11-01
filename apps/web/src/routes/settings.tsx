@@ -4,6 +4,7 @@ import { WorkspaceEmailCard } from "@/components/email-cards";
 import { ExportCard } from "@/components/export-card";
 import { IncidentSettingsCard } from "@/components/incident-settings-card";
 import { LegendCard } from "@/components/legend-card";
+import { PhonesPagesCard } from "@/components/phones-pages-card";
 import { StackCard } from "@/components/stack-card";
 import { WorkspaceLanguageCard } from "@/components/workspace-language-card";
 import { usePreferences } from "@/components/preferences";
@@ -11,7 +12,7 @@ import { RequireWorkspace } from "@/components/session";
 import { sectionLabel } from "@/lib/navigation";
 import { usePageTitle } from "@/lib/page-title";
 
-/** The workspace's own settings: incident types and fields, email, language, exports, and the stack check: `/settings`. */
+/** The workspace's own settings: incident types and fields, email, phones and pages, language, exports, and the stack check: `/settings`. */
 export const Route = createFileRoute("/settings")({
   component: SectionRoute,
   staticData: { section: "settings" },
@@ -33,6 +34,7 @@ function Section() {
     <Page>
       <IncidentSettingsCard />
       <WorkspaceEmailCard />
+      <PhonesPagesCard />
       <WorkspaceLanguageCard />
       <ExportCard />
       <StackCard />

@@ -5,10 +5,11 @@ import { DevicesCard } from "@/components/devices-card";
 import { EmailCard } from "@/components/email-cards";
 import { usePreferences } from "@/components/preferences";
 import { RequireWorkspace } from "@/components/session";
+import { UseAppCard } from "@/components/use-app-card";
 import { sectionLabel } from "@/lib/navigation";
 import { usePageTitle } from "@/lib/page-title";
 
-/** The signed-in member'\''s own settings in this workspace: email, phones and calls: `/account`. */
+/** The signed-in member'\''s own settings in this workspace: email, which app to use, phones and calls: `/account`. */
 export const Route = createFileRoute("/account")({
   component: SectionRoute,
   staticData: { section: "account" },
@@ -29,6 +30,7 @@ function Section() {
   return (
     <Page>
       <EmailCard />
+      <UseAppCard />
       <DevicesCard />
       <CallsCard />
     </Page>

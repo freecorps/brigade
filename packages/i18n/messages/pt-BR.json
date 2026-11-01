@@ -3879,5 +3879,74 @@
         "part=*": "Idioma do espaço de trabalho"
       }
     }
+  ],
+  "phones_pages": [
+    {
+      "declarations": ["input part", "input host"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Celulares e acionamentos",
+        "part=description": "Por qual relay esta instância envia acionamentos aos celulares, e se a última verificação passou. Só owners e admins veem isto.",
+        "part=relay_label": "Relay",
+        "part=relay_freecorps": "Os acionamentos passam pelo relay da Freecorps",
+        "part=relay_own": "Os acionamentos passam pelo relay próprio da sua empresa",
+        "part=relay_own_host": "Os acionamentos passam pelo relay próprio da sua empresa ({host})",
+        "part=relay_none": "Sem relay: celulares não são acionados",
+        "part=relay_unknown": "Não foi possível saber por qual relay os acionamentos passam.",
+        "part=freecorps_hint": "Ele aciona o app do Brigade da App Store e do Google Play.",
+        "part=own_hint": "Ele aciona só a versão própria da sua empresa do app do Brigade: o app do Brigade nas lojas não recebe os acionamentos dele.",
+        "part=none_hint": "Nenhum relay de push está configurado, então os celulares não recebem acionamentos. Eles continuam saindo por email quando esta instância consegue enviar email. Para acionar celulares, configure um relay na máquina de onde você faz o deploy:",
+        "part=state_label": "Estado",
+        "part=app_label": "App para instalar",
+        "part=app_none": "Nenhum link para o app da sua empresa está configurado, então os membros não ficam sabendo onde baixá-lo. Adicione um (RELAY_APP_URL) ao rodar a configuração de novo:",
+        "part=checking": "Verificando…",
+        "part=state_working": "Funcionando",
+        "part=hint_working": "A última verificação chegou ao relay e ele respondeu.",
+        "part=state_not_checked": "Ainda não verificado",
+        "part=hint_not_checked": "A autoverificação dos acionamentos roda a cada minuto depois que a instância está no ar, e ainda não rodou.",
+        "part=state_unregistered": "Não registrada",
+        "part=hint_unregistered_freecorps": "Esta instância não está registrada no relay da Freecorps, ou o registro não foi concluído (ele pede o código enviado por email ao seu contato). Rode:",
+        "part=hint_unregistered_own": "Esta instância não está registrada no seu relay. Rode a configuração de novo:",
+        "part=state_refused": "Recusado",
+        "part=hint_bad_signature": "O relay não aceita a chave desta instância (RELAY_INSTANCE_KEY ou RELAY_INSTANCE_ID), ou o relógio deste servidor está mais de 5 minutos fora. Rode a configuração de novo com o arquivo da chave que você guardou:",
+        "part=hint_revoked_freecorps": "A Freecorps revogou esta instância no relay dela. Escreva para a Freecorps para saber o motivo antes de registrar de novo.",
+        "part=hint_revoked_own": "Esta instância foi revogada no seu relay. Registre-a de novo:",
+        "part=hint_unauthorized": "O relay recusou o token de envio (RELAY_SEND_TOKEN), então celulares registrados antes dos identificadores do relay não são acionados. Rode a configuração de novo para definir um token igual nos dois:",
+        "part=state_unreachable": "Inacessível",
+        "part=hint_unreachable_freecorps": "O relay da Freecorps não está respondendo. Confira o RELAY_URL na API; se estiver certo, o relay pode estar fora do ar, e enquanto isso os acionamentos saem por email.",
+        "part=hint_unreachable_own": "Seu relay não está respondendo. Confira se ele está no ar e se a API chega até ele (o binding RELAY, ou o RELAY_URL).",
+        "part=state_rate_limited": "Limite atingido",
+        "part=hint_rate_limited": "O relay continua recusando as verificações desta instância por passarem dos limites dele. Isso costuma passar sozinho; se durar, peça a quem cuida do relay para aumentar o limite.",
+        "part=state_handles_unavailable": "Identificadores indisponíveis",
+        "part=hint_handles_freecorps": "O relay não consegue abrir os identificadores dos celulares agora, então os celulares no app atual não são acionados por ele. Se durar, escreva para a Freecorps.",
+        "part=hint_handles_own": "Seu relay não consegue abrir os identificadores dos celulares. Faça o deploy do apps/relay atual e confira o RELAY_HANDLE_KEYS dele; rodar a configuração de novo mantém as chaves que ele já tem:",
+        "part=state_providers": "Serviço de push falhando",
+        "part=hint_providers_freecorps": "O serviço de push da Apple ou do Google recusou as credenciais do relay, ou não está respondendo. Isso é do lado do relay: nada a mudar nesta instância.",
+        "part=hint_providers_own": "O serviço de push da Apple ou do Google recusou as credenciais do seu relay, ou não está respondendo. Se você trocou a chave do APNs ou a conta do Firebase, substitua-as:",
+        "part=state_pipeline": "Parado no Brigade",
+        "part=hint_pipeline": "Os acionamentos estão parados antes de chegar ao relay, então ele não pode ser verificado. O aviso de acionamentos na visão geral diz o motivo.",
+        "part=state_no_answer": "Não foi possível verificar",
+        "part=hint_no_answer": "O Brigade não respondeu à verificação dos acionamentos. Ele tenta de novo a cada minuto.",
+        "part=*": "Celulares e acionamentos"
+      }
+    }
+  ],
+  "use_app": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Use o app",
+        "part=description": "O Brigade no seu celular, para este workspace.",
+        "part=checking": "Verificando qual app aciona você aqui…",
+        "part=store": "Instale o app do Brigade da App Store ou do Google Play, entre com esta conta e permita as notificações. É lá que seus acionamentos chegam.",
+        "part=store_no_push": "O app do Brigade da App Store ou do Google Play entra neste workspace, para você acompanhar incidentes pelo celular.",
+        "part=own": "Os acionamentos daqui vão para a versão própria da sua empresa do app do Brigade. O app do Brigade na App Store e no Google Play não os recebe.",
+        "part=own_link": "Baixar o app da sua empresa",
+        "part=own_no_link": "Pergunte a um owner ou admin onde baixá-lo.",
+        "part=failed": "Não foi possível verificar qual app aciona você aqui. Tente de novo em um minuto.",
+        "part=*": "Use o app"
+      }
+    }
   ]
 }

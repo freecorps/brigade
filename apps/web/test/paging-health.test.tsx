@@ -34,11 +34,13 @@ describe("parsePagingHealth", () => {
       status: "degraded",
       reasons: ["relay_unreachable"],
       lastOkAt: new Date("2026-10-25T12:00:00.000Z"),
+      relay: null,
     });
     expect(parsePagingHealth({ status: "ok", reasons: [], lastOkAt: "not a date" })).toEqual({
       status: "ok",
       reasons: [],
       lastOkAt: null,
+      relay: null,
     });
   });
 
@@ -47,6 +49,7 @@ describe("parsePagingHealth", () => {
       status: "degraded",
       reasons: [],
       lastOkAt: null,
+      relay: null,
     });
   });
 
@@ -69,7 +72,7 @@ describe("fetchPagingHealth", () => {
     const fetcher = (async (input: string, options?: RequestInit) => {
       asked = input;
       init = options;
-      return Response.json({ status: "ok", reasons: [], lastOkAt: null });
+      return Response.json({ status: "ok", reasons: [], lastOkAt: null, relay: null });
     }) as typeof fetch;
     expect(await fetchPagingHealth(fetcher)).toMatchObject({ status: "ok" });
     expect(asked).toBe(PAGING_HEALTH_PATH);
@@ -88,8 +91,10 @@ describe("fetchPagingHealth", () => {
 
 test("pagingView: quiet while loading and when all is well", () => {
   expect(pagingView(undefined)).toEqual({ kind: "hidden" });
-  expect(pagingView({ status: "ok", reasons: [], lastOkAt: null })).toEqual({ kind: "hidden" });
-  expect(pagingView({ status: "unknown", reasons: [], lastOkAt: null })).toEqual({
+  expect(pagingView({ status: "ok", reasons: [], lastOkAt: null, relay: null })).toEqual({
+    kind: "hidden",
+  });
+  expect(pagingView({ status: "unknown", reasons: [], lastOkAt: null, relay: null })).toEqual({
     kind: "unknown",
   });
   expect(pagingView("unreachable")).toEqual({ kind: "unreachable" });
@@ -124,7 +129,7 @@ describe("PagingHealthNotice", () => {
   }
 
   test("renders nothing when pages get through", async () => {
-    const shown = await mount(answer({ status: "ok", reasons: [], lastOkAt: null }));
+    const shown = await mount(answer({ status: "ok", reasons: [], lastOkAt: null, relay: null }));
     expect(shown.textContent).toBe("");
   });
 
@@ -201,7 +206,9 @@ describe("PagingHealthNotice", () => {
   });
 
   test("never run: a neutral note, not an alert", async () => {
-    const shown = await mount(answer({ status: "unknown", reasons: [], lastOkAt: null }));
+    const shown = await mount(
+      answer({ status: "unknown", reasons: [], lastOkAt: null, relay: null }),
+    );
     expect(shown.querySelector('[role="alert"]')).toBeNull();
     expect(shown.textContent).toContain("hasn't run yet");
   });

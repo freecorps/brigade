@@ -1089,6 +1089,7 @@ describe("GET /health/paging", () => {
       "lastOkAt",
       "lastProvedAt",
       "reasons",
+      "relay",
       "status",
     ]);
     const responder = await signUp("responder");
@@ -1102,8 +1103,21 @@ describe("GET /health/paging", () => {
       "lastOkAt",
       "lastProvedAt",
       "reasons",
+      "relay",
       "status",
     ]);
+  });
+
+  test("a member sees which relay pages go through: none on an instance with no relay", async () => {
+    const owner = await signUp("relayless");
+    const created = await api("/workspaces", {
+      method: "POST",
+      body: JSON.stringify({ name: "Acme" }),
+      cookie: owner.cookie,
+    });
+    expect(created.status).toBe(201);
+    // The tests' env has no RELAY, RELAY_URL, send token or instance key.
+    expect((await paging(owner.cookie)).relay).toEqual({ kind: "none" });
   });
 
   test("other methods get 405", async () => {

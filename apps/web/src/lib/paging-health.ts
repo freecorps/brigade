@@ -24,11 +24,21 @@ export const DEGRADED_REASONS = [
 ] as const;
 export type DegradedReason = (typeof DEGRADED_REASONS)[number];
 
+/**
+ * Which relay pages go through (RFC 0015 section 8): none, Freecorps' relay (the store app) or the company's own (its
+ * own app build), with the relay's host when the instance has its address and an own build's link when set.
+ */
+export type RelaySetup =
+  | { kind: "none" }
+  | { kind: "freecorps" | "own"; host: string | null; app: string | null };
+
 export type PagingHealth = {
   status: "ok" | "degraded" | "unknown";
   reasons: DegradedReason[];
   /** The last time a heartbeat got all the way through, relay token included. */
   lastOkAt: Date | null;
+  /** Which relay pages go through; null when the API did not say (no session, an older API). */
+  relay: RelaySetup | null;
 };
 
 /**
@@ -48,7 +58,7 @@ export type PagingView =
  */
 export function parsePagingHealth(body: unknown): PagingHealth | undefined {
   if (typeof body !== "object" || body === null) return undefined;
-  const { status, reasons = [], lastOkAt } = body as Record<string, unknown>;
+  const { status, reasons = [], lastOkAt, relay } = body as Record<string, unknown>;
   if (status !== "ok" && status !== "degraded" && status !== "unknown") return undefined;
   if (!Array.isArray(reasons)) return undefined;
   const ok = typeof lastOkAt === "string" ? new Date(lastOkAt) : null;
@@ -59,7 +69,30 @@ export function parsePagingHealth(body: unknown): PagingHealth | undefined {
       (DEGRADED_REASONS as readonly unknown[]).includes(reason),
     ),
     lastOkAt: ok && !Number.isNaN(ok.getTime()) ? ok : null,
+    relay: parseRelay(relay),
   };
+}
+
+/** `relay` as the API gives it; anything not that shape is "not said" rather than shown wrong. */
+export function parseRelay(body: unknown): RelaySetup | null {
+  if (typeof body !== "object" || body === null) return null;
+  const { kind, host, app } = body as Record<string, unknown>;
+  if (kind === "none") return { kind };
+  if (kind !== "freecorps" && kind !== "own") return null;
+  return {
+    kind,
+    host: typeof host === "string" && host.trim() !== "" ? host : null,
+    // A link is shown and followed: https only, so a `javascript:` URL can never reach an href.
+    app: kind === "own" && typeof app === "string" && isHttps(app) ? app : null,
+  };
+}
+
+function isHttps(raw: string): boolean {
+  try {
+    return new URL(raw).protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 export function pagingView(health: PagingHealth | "unreachable" | undefined): PagingView {

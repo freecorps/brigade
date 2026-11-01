@@ -197,6 +197,15 @@ describe("the store", () => {
     expect(await store.add(ACME)).toEqual({ id: "id1", origin: ACME });
   });
 
+  test("the build's default instance, removed and added again, comes back as itself", async () => {
+    const kept = storage();
+    const store = instancesStore(kept.deps);
+    await store.add(ACME);
+    await store.remove(DEFAULT_INSTANCE);
+    expect(store.current().instances.map((one) => one.id)).toEqual(["id1"]);
+    expect(await store.add(`${BUILD}/sign-in`)).toEqual({ id: DEFAULT_INSTANCE, origin: BUILD });
+  });
+
   test("a list it cannot read is never overwritten", async () => {
     const kept = storage(
       writeInstances({ instances: [{ id: "acme1", origin: ACME }], active: "acme1" }),

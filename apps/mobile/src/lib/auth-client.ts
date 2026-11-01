@@ -2,7 +2,7 @@
 // the Keychain or Android Keystore (expo-secure-store) by `@better-auth/expo`, which sends it back as a `Cookie` header
 // and the app's scheme as `expo-origin` (apps/api/src/auth.ts, `APP_ORIGIN`). One per instance (RFC 0015 section 5),
 // each under its own storage prefix (src/lib/instances.ts `instanceStorage`); src/lib/instance-clients.ts makes them.
-import { expoClient } from "@better-auth/expo/client";
+import { expoClient, getSetCookie, storageAdapter } from "@better-auth/expo/client";
 import { inferAdditionalFields, organizationClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 import type * as SecureStore from "expo-secure-store";
@@ -60,4 +60,27 @@ export async function forgetSession(client: Pick<AuthClient, "signOut">): Promis
   } catch {
     // The request that never went out.
   }
+}
+
+/**
+ * Keeps a session the server made for this phone (a QR sign-in's `Set-Cookie`, RFC 0015 section 6) where
+ * `@better-auth/expo` keeps the one a password sign-in gets: `<storagePrefix>_cookie`, merged as its own `getSetCookie`
+ * merges an answer's cookies, through its own storage wrapper (chunked values, one write at a time per key). Only the
+ * instance whose prefix is given gets it. The client then reads it as its session (`$sessionSignal`).
+ */
+export async function storeSessionCookie(
+  storage: SessionStorage,
+  storagePrefix: string,
+  setCookie: string,
+): Promise<void> {
+  const managed = storageAdapter(storage);
+  const key = `${storagePrefix}_cookie`;
+  const previous = await managed.getItemAsync(key);
+  const next = getSetCookie(setCookie, previous ?? undefined);
+  if (next === "{}") throw new Error("No session in the answer");
+  await managed.setItemAsync(key, next);
+  // The managed write logs and swallows a failure: read it back, so a session not kept is said.
+  if ((await managed.getItemAsync(key)) !== next) throw new Error("The session was not kept");
+  // The last session read there (offline start) was someone's before: the new one is read from the server.
+  await managed.setItemAsync(`${storagePrefix}_session_data`, "{}");
 }

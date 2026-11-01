@@ -42,8 +42,8 @@ without it, a release build has no server and sign-in says so.
   keeps the session in secure storage (`expo-secure-store`: the Keychain on iOS, the Keystore on Android), so the app
   opens signed in offline; the workspace and role are remembered too (`brigade_workspace`) and read again once
   online. It sends the session back as a `Cookie` header it sets itself, and the app's scheme as
-  `expo-origin` (`brigade://`), which the API trusts (`apps/api/src/auth.ts`). OAuth through the system browser and QR
-  pairing come later (RFC 0002).
+  `expo-origin` (`brigade://`), which the API trusts (`apps/api/src/auth.ts`). A QR sign-in's session is stored the
+  same way, under that instance's prefix (`storeSessionCookie`). OAuth through the system browser comes later (RFC 0002).
 - **The sync socket** (`src/lib/sync-client.ts`) sends the same `Cookie` header on the upgrade; the API checks it like
   the dashboard's and hands the shard the member (RFC 0004 "Socket topology"). One client per member and workspace
   (`src/components/session.tsx`), closed on sign-out, so no socket or row outlives its session.
@@ -61,7 +61,15 @@ without it, a release build has no server and sign-in says so.
   with its own session (secure storage prefix `brigade:<id>`), workspaces, queue, handle and device key; the build's
   instance keeps the keys from before, so an existing install stays signed in. The app shows one; every other stays
   registered in the background on its own backoff. Pages, the Acknowledge and calls go to the instance the page sealed.
-  The screens to add and switch instances come later; until then the app shows the build's instance.
+- **Adding, switching and removing instances** (RFC 0015 sections 5, 6 and 8): "Another instance" on the sign-in
+  screen and "Add an instance" in the Account tab (`src/screens/add-instance.tsx`) take an address (HTTPS; a
+  development build also takes `http://` on a private address, such as the dev server) or the dashboard's QR code
+  (`src/screens/scan.tsx`, expo-camera's barcode scanner). The address is checked against its `/api/config` first
+  (`src/lib/instance-address.ts`). `brigade://connect?server=<origin>[&code=<code>]`, from the system camera or the
+  scanner, opens `src/screens/connect.tsx`; with a code it signs in by device approval (`src/lib/qr-sign-in.ts`):
+  the phone shows a 2-digit number the member types on the dashboard. The Account tab lists every instance with its
+  workspaces and paging state; each has a details sheet (`src/screens/instance-details.tsx`) with its relay and
+  Remove. Try it against the dev server: `xcrun simctl openurl booted 'brigade://connect?server=http://localhost:5173'`.
 
 ## Run it
 

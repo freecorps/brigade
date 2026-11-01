@@ -15,7 +15,9 @@ import { useChoiceSheet } from "@/components/choice-sheet";
 import type { Glyph } from "@/components/glyphs";
 import { ListItem } from "@/components/list-item";
 import { RowIcon } from "@/components/row-icon";
-import { useMember } from "@/components/session";
+import { useSwitcher } from "@/components/instances";
+import { openInstance, useMember } from "@/components/session";
+import { otherTrouble } from "@/lib/switcher";
 import { useLocale } from "@/hooks/use-locale";
 import { useTheme } from "@/hooks/use-theme";
 import { useSystemColors } from "@/theme/system-colors";
@@ -81,7 +83,14 @@ export function usePagingNotice(): ReactNode {
   const colors = useTheme();
   const system = useSystemColors();
   const [retrying, setRetrying] = useState(false);
-  const trouble = pagingTrouble(member);
+  // Another instance's trouble only when the open one has none (RFC 0015 section 5): it names that instance and
+  // workspace, and tapping it opens them there, where Try again is.
+  const { groups } = useSwitcher();
+  const elsewhere = otherTrouble(groups);
+  const trouble =
+    pagingTrouble(member) ??
+    (elsewhere?.detail ? { paging: elsewhere.detail, name: elsewhere.label } : undefined);
+  const other = pagingTrouble(member) === undefined ? elsewhere : undefined;
   const title =
     trouble === undefined
       ? null
@@ -94,6 +103,19 @@ export function usePagingNotice(): ReactNode {
     if (title && text) AccessibilityInfo.announceForAccessibility(`${title}. ${text}`);
   }, [title, text]);
   if (!trouble || !title || !text) return null;
+  if (other) {
+    return (
+      <FieldGroup.Section key="paging-notice">
+        <ListItem
+          onPress={() => void openInstance(other.instanceId, other.workspaceId)}
+          leading={<RowIcon glyph={PAGING_OFF_GLYPH} color={system.destructive} />}
+          supportingText={text}
+        >
+          <Text textStyle={{ color: system.destructive, fontWeight: "600" }}>{title}</Text>
+        </ListItem>
+      </FieldGroup.Section>
+    );
+  }
   const settings = trouble.paging === "off";
   const retry = () => {
     setRetrying(true);

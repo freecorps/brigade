@@ -225,10 +225,17 @@ export function instancesStore(deps: {
         listeners.delete(listener);
       };
     },
-    /** Adds the instance at `origin` (not made active), or finds it; `full` or `invalid` adds nothing. */
+    /**
+     * Adds the instance at `origin` (not made active), or finds it; `full` or `invalid` adds nothing. The build's
+     * default instance, removed and added again, comes back as itself (`DEFAULT_INSTANCE`, with its keys).
+     */
     add: (origin: string) =>
       change<Instance | "full" | "invalid">((list) => {
-        const added = withInstance(list, origin, deps.newId());
+        const id =
+          deps.defaultOrigin !== undefined && originOf(origin) === deps.defaultOrigin
+            ? DEFAULT_INSTANCE
+            : deps.newId();
+        const added = withInstance(list, origin, id);
         return typeof added === "string"
           ? { list, result: added }
           : { list: added.list, result: added.instance };

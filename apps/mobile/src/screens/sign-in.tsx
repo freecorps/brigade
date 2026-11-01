@@ -11,8 +11,12 @@ import { useRef, useState } from "react";
 import { AccessibilityInfo, Linking } from "react-native";
 import { NativeForm } from "@/components/native-form";
 import { NewWorkspaceForm } from "@/components/new-workspace";
-import { useSessionView } from "@/components/session";
+import { say as sayInstances, useInstanceList, useRelays } from "@/components/instances";
+import { openInstance, useSessionView } from "@/components/session";
 import { useActiveInstance } from "@/hooks/use-instance";
+import { hostOf, instanceLabel } from "@/lib/instance-address";
+import { DEFAULT_INSTANCE } from "@/lib/instances";
+import { instancePaging } from "@/lib/switcher";
 import { useSignUpMode } from "@/lib/sign-up-mode";
 
 /**
@@ -36,6 +40,7 @@ export function SignIn() {
 
 /** Everything before a member is ready, by the session's view. */
 function SignInView({ view }: { view: ReturnType<typeof useSessionView> }) {
+  const instanceLinks = useOtherInstances();
   if (view.kind === "no-workspace") {
     return (
       <NewWorkspaceForm
@@ -57,17 +62,52 @@ function SignInView({ view }: { view: ReturnType<typeof useSessionView> }) {
             : m.session_loading()
       }
       fields={[]}
-      links={
-        view.kind === "unavailable" ? [{ label: m.stack_check_again(), onPress: view.retry }] : []
-      }
+      links={[
+        ...(view.kind === "unavailable"
+          ? [{ label: m.stack_check_again(), onPress: view.retry }]
+          : []),
+        // A build with no Brigade of its own can still be pointed at one.
+        ...(view.kind === "no-server" || view.kind === "unavailable" ? instanceLinks : []),
+      ]}
     />
   );
+}
+
+/**
+ * The links under a sign-in to the other instances on this phone ("Open acme.example", each keeps paging in the
+ * background) and to add another (RFC 0015 section 5).
+ */
+function useOtherInstances(): { label: string; note?: string; onPress: () => void }[] {
+  const list = useInstanceList();
+  const others = list.instances.filter((one) => one.id !== list.active);
+  return [
+    ...others.map((one, index) => ({
+      label: sayInstances("open_instance", instanceLabel(one.origin)),
+      ...(index === 0 ? { note: sayInstances("other_instances") } : {}),
+      onPress: () => void openInstance(one.id),
+    })),
+    {
+      label: sayInstances("another"),
+      onPress: () => router.push("/add-instance"),
+    },
+  ];
 }
 
 function SignInForm() {
   const instance = useActiveInstance();
   const forgotPassword = instance?.server.forgotPassword;
   const signUpMode = useSignUpMode();
+  const instanceLinks = useOtherInstances();
+  const list = useInstanceList();
+  const relays = useRelays(list);
+  const host = instance ? hostOf(instance.instance.origin) : "";
+  // Named in full before anyone types a password, so an address from a stranger is seen for what it is.
+  const where = instance ? sayInstances("signing_in_to", host) : "";
+  const relay = instance ? relays[instance.instance.id] : undefined;
+  const noRelay =
+    relay !== undefined &&
+    instance !== undefined &&
+    instancePaging(relay, instance.instance.id === DEFAULT_INSTANCE) === "no-relay";
   const [values, setValues] = useState<Record<SignInField, string>>({ email: "", password: "" });
   const [errors, setErrors] = useState<FieldErrors<SignInField>>({});
   const [failure, setFailure] = useState<string | null>(null);
@@ -117,12 +157,15 @@ function SignInForm() {
   return (
     <NativeForm
       brand={m.auth_sign_in_title()}
-      intro={
+      intro={[
+        where,
+        m.auth_sign_in_description(),
         // Closed: no way to sign up from the app, and the form says so up front.
-        signUpMode === "closed"
-          ? `${m.auth_sign_in_description()}\n\n${m.auth_error_sign_up_closed()}`
-          : m.auth_sign_in_description()
-      }
+        signUpMode === "closed" ? m.auth_error_sign_up_closed() : "",
+        noRelay ? `${sayInstances("no_relay")}. ${sayInstances("no_relay_body", host)}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n")}
       fields={[
         {
           key: "email",
@@ -167,6 +210,7 @@ function SignInForm() {
               },
             ]
           : []),
+        ...instanceLinks,
       ]}
     />
   );

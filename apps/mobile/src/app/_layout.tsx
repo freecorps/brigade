@@ -132,6 +132,36 @@ export default function RootLayout() {
                 />
                 <Stack.Screen name="sign-up" options={{ title: m.auth_sign_up_title() }} />
               </Stack.Protected>
+              {/* Instances (RFC 0015): open signed in or not, from the sign-in screen, the account section or a
+                dashboard link (`brigade://connect`), and kept open while the instance shown changes under them. */}
+              <Stack.Screen
+                name="add-instance"
+                options={{
+                  title: m.mobile_instances({ part: "add_title", host: "", name: "" }),
+                  ...SHEET,
+                  sheetAllowedDetents: [0.75, 1],
+                }}
+              />
+              <Stack.Screen
+                name="connect"
+                options={{
+                  title: m.mobile_instances({ part: "add_title", host: "", name: "" }),
+                  ...SHEET,
+                  sheetAllowedDetents: [0.75, 1],
+                }}
+              />
+              <Stack.Screen
+                name="scan"
+                options={{
+                  title: m.mobile_instances({ part: "scan", host: "", name: "" }),
+                  presentation: "fullScreenModal",
+                  headerShown: true,
+                }}
+              />
+              <Stack.Screen
+                name="instance/[id]"
+                options={{ title: "", ...SHEET, sheetAllowedDetents: [0.75, 1] }}
+              />
             </Stack>
           </>
         )}

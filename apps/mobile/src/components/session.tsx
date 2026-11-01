@@ -21,7 +21,14 @@ import { useUserLocale } from "@/hooks/use-user-locale";
 import { forgetSession } from "@/lib/auth-client";
 import { registerEverywhere, unregisterPhone, type Paging, type Registrations } from "@/lib/device";
 import { drainer, type Drainable } from "@/lib/drain";
-import { clientsFor, instances, relayDeps, type InstanceClients } from "@/lib/instance-clients";
+import {
+  board,
+  clientsFor,
+  instances,
+  relayDeps,
+  type InstanceClients,
+} from "@/lib/instance-clients";
+import type { InstanceState } from "@/lib/switcher";
 import { activeInstance } from "@/lib/instances";
 import {
   devicePresent,
@@ -294,8 +301,37 @@ function BackgroundInstance({ clients }: { clients: InstanceClients }) {
         void store.update(userId, (list) => withoutWorkspaces(list, gone));
       });
   }, [clients, store, userId, workspaceId, ids]);
-  usePaging(clients.server, true, online, register);
+  const { paging } = usePaging(clients.server, true, online, register);
+  const user = session.data?.user;
+  usePublish(
+    clients.instance.id,
+    user
+      ? {
+          kind: "signed-in",
+          userId: user.id,
+          name: user.name,
+          email: user.email,
+          ...(workspaceId ? { workspaceId } : {}),
+          workspaces: listed?.workspaces ?? [],
+          registrations: paging,
+        }
+      : // A session that could not be read is not a sign-out.
+        session.isPending || session.error
+        ? { kind: "unknown" }
+        : { kind: "signed-out" },
+  );
   return null;
+}
+
+/**
+ * Tells the switcher (src/lib/instance-clients.ts `board`) what the member's session at instance `id` is now; a new
+ * state only when it changed.
+ */
+function usePublish(id: string, state: InstanceState) {
+  const key = JSON.stringify(state);
+  useEffect(() => {
+    board.publish(id, JSON.parse(key) as InstanceState);
+  }, [id, key]);
 }
 
 /**
@@ -352,10 +388,32 @@ function InstanceSession({
   else view = { kind: "signed-out" };
   return (
     <>
+      <Publish
+        id={clients.instance.id}
+        state={
+          data
+            ? {
+                kind: "signed-in",
+                userId: data.user.id,
+                name: data.user.name,
+                email: data.user.email,
+                workspaces: [],
+                registrations: {},
+              }
+            : view.kind === "signed-out"
+              ? { kind: "signed-out" }
+              : { kind: "unknown" }
+        }
+      />
       <ClearWidgetWhen signedOut={view.kind === "signed-out" || view.kind === "no-workspace"} />
       <SessionContext value={view}>{children(false)}</SessionContext>
     </>
   );
+}
+
+function Publish({ id, state }: { id: string; state: InstanceState }) {
+  usePublish(id, state);
+  return null;
 }
 
 /**
@@ -426,6 +484,83 @@ async function signOut(clients: InstanceClients): Promise<void> {
   await signOutHere(clients);
   await forgetMember(clients);
   clearWidget();
+  await SecureStore.deleteItemAsync(clients.storage.workspace).catch(() => {});
+  await dropQueues(clients.pendingFiles).catch(() => {});
+}
+
+/**
+ * Opens instance `id` (the switcher, RFC 0015 section 5), in `workspaceId` when given: that workspace is made active
+ * there first, with that instance's own session, so it opens on it. A workspace that could not be made active (offline)
+ * still opens the instance, on the workspace it had. The instance left keeps paging this phone in the background.
+ */
+export async function openInstance(id: string, workspaceId?: string): Promise<void> {
+  const instance = instances.current().instances.find((one) => one.id === id);
+  if (!instance) return;
+  if (workspaceId) {
+    await clientsFor(instance)
+      .authClient.organization.setActive({ organizationId: workspaceId })
+      .catch(() => undefined);
+  }
+  await instances.activate(id);
+}
+
+/**
+ * Removes instance `id` from this phone (RFC 0015 section 5 "Removing one"), signing out of it first so it stops
+ * paging this phone: the shown instance by its own sign-out (`signOutShown`: the member's, which takes the phone off
+ * the open workspace's shard), any other by `/sign-out` with this phone's device id, which the server takes off the
+ * member's every workspace there. `kept`: the server did not hear it, so the instance stays listed (signed out here)
+ * and its background session finishes the sign-out when it can (src/lib/sign-out.ts); removing it then works. Every
+ * other instance is untouched. The last instance is never removed (src/lib/switcher.ts `removal`).
+ */
+export async function removeInstance(
+  id: string,
+  signOutShown?: () => Promise<unknown>,
+): Promise<"removed" | "kept" | "failed"> {
+  const list = instances.current();
+  const instance = list.instances.find((one) => one.id === id);
+  if (!instance || list.instances.length <= 1) return "failed";
+  const clients = clientsFor(instance);
+  try {
+    if (signOutShown) await signOutShown();
+    else if ((await clients.authClient.getCookie().catch(() => "")) !== "") {
+      await signOutBackground(clients);
+    }
+    // Anything kept from an offline sign-out there is finished now, or the instance stays.
+    if ((await finishLeftover(clients.server)) === "pending") return "kept";
+    await SecureStore.deleteItemAsync(clients.storage.handle).catch(() => {});
+    await instances.remove(id);
+    board.forget(id);
+    return "removed";
+  } catch {
+    return "failed";
+  }
+}
+
+/**
+ * Signs out of an instance the app does not show: `/sign-out` with the phone's device id, which takes this phone off
+ * the member's workspaces there; unanswered, kept to finish later (src/lib/sign-out.ts). Then nothing of the member's
+ * there is kept, as `signOut` does.
+ */
+async function signOutBackground(clients: InstanceClients): Promise<void> {
+  // As last read (the background instance keeps it), so this works offline too.
+  const data = clients.authClient.$store.atoms.session?.get().data as
+    | { user: { id: string }; session: { activeOrganizationId?: string | null } }
+    | null
+    | undefined;
+  await signOutPhone(
+    { userId: data?.user.id ?? "", workspaceId: data?.session.activeOrganizationId ?? "" },
+    {
+      cookie: () => clients.authClient.getCookie(),
+      unregister: null,
+      signOut: () => signOutHere(clients),
+      forget: () => forgetSession(clients.authClient),
+      add: keptSignOuts.add,
+      origin: clients.server.auth,
+      now: Date.now,
+      lifetime: SESSION_LIFETIME_MS,
+    },
+  );
+  await forgetMember(clients);
   await SecureStore.deleteItemAsync(clients.storage.workspace).catch(() => {});
   await dropQueues(clients.pendingFiles).catch(() => {});
 }
@@ -635,6 +770,17 @@ function ActiveWorkspace({
       })),
     [listed, registrations],
   );
+  usePublish(clients.instance.id, {
+    kind: "signed-in",
+    userId,
+    name,
+    email,
+    workspaceId,
+    workspaces: (listed?.workspaces ?? []).map((workspace) =>
+      workspace.id === workspaceId && liveName ? { ...workspace, name: liveName } : workspace,
+    ),
+    registrations,
+  });
 
   const leave = useCallback(async () => {
     // No registration the cycle started may reach the shard after the phone comes off it below.

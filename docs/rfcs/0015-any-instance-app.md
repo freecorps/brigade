@@ -247,8 +247,7 @@ version 2 for a device registered with `envelope: 2`, version 1 for any other; t
 
 **Built (step 4, first slice): the data layer.** apps/mobile `src/lib/instances.ts`, `src/lib/instance-clients.ts`,
 `src/lib/relay.ts`, `src/components/session.tsx`; the native lists in `BrigadePushCrypto.swift` and `Pages.kt`/
-`PushPayload.kt`. The screens to add, switch and remove instances, the address checks and QR sign-in come next; until
-then the app shows the build's default instance. As built:
+`PushPayload.kt`. The screens came with the second slice (below). As built:
 
 - **The list** (`brigade.instances` in secure storage): at most 5, one active. With nothing stored (every install from
   before), it is the build's default instance alone (id `default`, origin `EXPO_PUBLIC_BRIGADE_URL`, or the dev
@@ -288,6 +287,59 @@ then the app shows the build's default instance. As built:
   build's relay), `registration.test.ts` (handles against the real `device.register`, refusals, backoff per instance),
   `page-routing.test.ts`, `page-taps.test.ts`, `auth-client.test.ts` (the default instance's session, prefixes);
   `EnvelopeV2Test.kt`/`PageTapTest.kt` and `ios/tests/main.swift` for several paired origins.
+
+**Built (step 4, second slice): the screens.** apps/mobile `src/lib/instance-address.ts`, `src/lib/connect-link.ts`,
+`src/lib/switcher.ts`, `src/screens/add-instance.tsx`, `src/screens/scan.tsx`, `src/screens/connect.tsx`,
+`src/screens/instance-details.tsx`, the Account tab and the sign-in screen. As built:
+
+- **Adding one.** The sign-in screen names the host in full ("You are signing in to brigade.example.com") above the
+  form, and offers the phone's other instances and "Another instance"; a build with no instance of its own (a release
+  build without `EXPO_PUBLIC_BRIGADE_URL`) offers it too. "Add an instance" (a sheet, also in the Account tab) takes an
+  address, a scan, or the build's own instance when it was removed (it comes back as itself, `default`, with its keys).
+  An address without a scheme reads as `https://`; a path, query or credentials are dropped or refused. Checks, in
+  order: not an address; `http://` (allowed only in a development build on a private address: this machine, RFC 1918,
+  link-local, unique local, `.local`); `/api/config` unreachable (no answer, a 5xx or 429: "Couldn't reach", try
+  again); not a Brigade (any other answer, or JSON with neither `brigade` nor the `signUp` every Brigade serves, so an
+  instance from before step 3 still counts); app older than `brigade.minApp` ("Update the app", checked before the
+  relay; a version that does not read never blocks); `relay.origin` not this build's ("This instance uses its own app
+  build", with `relay.app`'s link when there is one; never for the build's default instance, nor while this build's
+  relay is not known); no `relay` ("This instance cannot page this phone" on the confirm and sign-in screens and in
+  its details; not for the build's default instance, which pages with the raw tokens). At 5 instances adding says so.
+- **The link and the scanner.** `brigade://connect?server=…[&code=…]` (also `brigade:///connect`) opens
+  `src/app/connect.tsx` from the system camera or the in-app scanner; a bare `https://` QR is the address alone. The
+  query is read by hand (React Native's `URL` has no working `searchParams`); a code not shaped like one, or a param
+  given twice, is no link. The scanner is expo-camera's `CameraView` with QR barcodes only (the Expo SDK's own; the
+  older expo-barcode-scanner is gone), its iOS usage text from packages/i18n (`mobile_camera_usage`, en in Info.plist,
+  pt-BR in InfoPlist.strings via `locales`), no microphone. Any other code says "This QR code isn't from Brigade" and
+  scanning goes on. An instance already signed in on the phone opens instead.
+- **Switching.** The Account tab's first section is the open instance's workspaces (titled by the instance, rows
+  "Freecorps · Production" when there are several), then one section per other instance with the workspaces this
+  phone pages the member for there (as last seen, `brigade.<id>.workspaces`) and each one's paging state: on, setting
+  up, not paged (with why), "it uses its own app" (`foreign`), "cannot page this phone" (no relay). Tapping one makes
+  that workspace active there with that instance's session, then opens the instance; a signed-out instance offers
+  Sign in. The instance labels are "Freecorps" for the hosted Brigade and the host otherwise (`/config` names no
+  instance). Each background instance publishes its session and registrations to an in-memory board
+  (`instance-clients.ts` `board`), which the switcher reads; the incident list's notice names another instance's
+  workspace where this phone is not paged ("This phone isn't paging you in acme.example · Ops") when the open one has
+  no trouble of its own, and opens it there.
+- **Details** (section 8): host in full, who is signed in, "Pages go through Freecorps' relay" or "… its own relay
+  (host)" (from the instance's `/config`; "Pages come straight from this instance" for the build's default instance
+  without a relay), the paging state per workspace, and for a foreign instance "This instance uses its own app:
+  install your company's app from its dashboard's Use the app page" (`/config` has no app name; the link when it has
+  `relay.app`).
+- **Removing one** signs out of it first: the open instance by the member's sign-out (its shard first), another by
+  `/sign-out` with this phone's device id. The warning names the workspaces where the member's shifts, as last seen
+  on the phone (`oncall` in its workspace list), have them on call now; with no shifts seen there it warns in general.
+  An instance whose sign-out the server did not hear stays listed, signed out, until its kept sign-out is finished
+  (else nothing would finish it and it would keep paging the phone); removing it works then. The last instance is
+  never removed, the build's default included: signing out is what is left, and the app would have nothing to sign
+  in to.
+- **Tests:** apps/mobile `instance-address.test.ts` (each answer), `connect-link.test.ts`, `switcher.test.ts`
+  (grouping, labels, relays, the notice, on call now, removal rules), `instances.test.ts` (the default instance
+  added back), `plugins/camera-usage.test.ts`.
+- **Left out:** an unacknowledged page in another instance in the notice (the board has no incidents: each instance
+  would need its sync socket open, which only the shown one has); the widget and "I'm on call" across instances; the
+  instance's own name (`/config` has none).
 
 ### 6. Signing in with a QR code (decided, D2)
 
@@ -394,8 +446,30 @@ apps/web's "Use the app" page (`/use-the-app`, `src/components/app-sign-in-card.
   a `401` (the dashboard session ended) stops the polls with "Your dashboard session ended. Sign in again." and has
   the session read again, so the page sends the member to sign in. The QR's `server` is
   `DASHBOARD_URL`, or the origin the request came through without it.
-- **Still to do (the phone, step 4):** the scanner on the sign-in screen, "Sign in to <host>?", the claim, showing the
-  number and polling, storing the cookie per instance.
+
+**Built (step 4, second slice): the phone's side.** apps/mobile `src/lib/qr-sign-in.ts`, `src/screens/connect.tsx`,
+`storeSessionCookie` in `src/lib/auth-client.ts`, `keepSignIn` in `src/lib/instance-clients.ts`; against the routes
+above (docs/api/openapi.json). As built:
+
+- The link's address is checked as a typed one is (section 5), then "Sign in to <host>?" with "Continue only if you
+  showed this code on <host>'s dashboard yourself, just now"; nothing is claimed before the member confirms. A phone
+  already signed in there opens it instead; a phone with 5 instances says so before spending the code.
+- The claim sends `{ code, deviceName, platform }` (`deviceName` is the system's device name, else "iPhone" or
+  "Android"). The screen then shows the number large, "Type this number on the dashboard", "Never share this number"
+  and polls every 2 s with `Authorization: Bearer <secret>`, following the `expiresAt` each `pending` answer gives
+  (an approval moves it), and stops 5 s past it. No answer or a 5xx while waiting is asked again until then.
+- Each end is worded: `denied`, `wrong_number`, `timeout`, `delivered`, `signed_out` (an unknown future reason reads as
+  `timeout`), and on the phone's side `invalid_code` (404 on the claim), `rate_limited`, unreachable, `lost` (404 on a
+  poll) and not stored. Leaving the screen stops polling.
+- Approved, the `Set-Cookie` value is merged and stored as `@better-auth/expo` stores a sign-in's (its own
+  `getSetCookie` and storage wrapper, `<prefix>_cookie`), under that instance's prefix only, read back to prove it was
+  kept, and that instance's last session read is cleared; its client is told (`$sessionSignal`). The instance is
+  added for it (removed again if the session could not be kept). Then "Signed in to <host> as <name>", with the email,
+  and Open makes it the shown instance.
+- **Tests:** apps/mobile `qr-sign-in.test.ts`: the claim's body and the poll's header, each expired reason (nothing
+  stored), each claim refusal, retries until the time is up, an approval moving the end, `lost`, leaving the screen,
+  the session stored for the claim's instance and never another's key (the default instance's session untouched),
+  and a session that cannot be kept.
 
 ### 7. The instance side
 
@@ -719,7 +793,8 @@ built:
 4. App: handles and per-instance keys and storage; the instance switcher, address field, QR and link, address
    checks, which relay; QR sign-in (with its API routes and the dashboard's approval). Built: handles, storage per
    instance, background registration and page routing (section 5); QR sign-in's API routes and the dashboard's "Use
-   the app" page with the approval (section 6), the phone's side of it still to do.
+   the app" page with the approval (section 6); the app's screens: adding (address, QR, link and their checks), the
+   switcher, which relay, removing, and the phone's side of the QR sign-in (sections 5, 6 and 8).
 5. Our instance moves (section 9); then the docs for self-hosters ("Your own app" included) and the terms.
 
 Each step is a paging path: it keeps the old path working until the next one ships, and comes with its tests

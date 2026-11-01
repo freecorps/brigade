@@ -1,0 +1,31 @@
+diff --git a/dist/pool/index.mjs b/dist/pool/index.mjs
+index 527e22ea53904a3457e135636b5fa65c6433127c..8f96f5f64a38f8f906041f44f863f4f32531c35c 100644
+--- a/dist/pool/index.mjs
++++ b/dist/pool/index.mjs
+@@ -69305,6 +69305,7 @@ function inlineCachedModule(module$1, cacheContents) {
+ * both paths need inlining. Reuse reads within this reply because aliases in
+ * the map can reference the same cache file.
+ */
++const WARM_MODULES_INLINE_BUDGET = 8 * 1024 * 1024;
+ function inlineCachedModules(response) {
+ 	const cacheContents = /* @__PURE__ */ new Map();
+ 	let inlined;
+@@ -69315,9 +69316,18 @@ function inlineCachedModules(response) {
+ 	}
+ 	if (inlined !== response || response === null || typeof response !== "object" || Array.isArray(response)) return inlined;
+ 	let hasCachedModules = false;
++	// Brigade patch (freecorps/brigade#151): workerd refuses a WebSocket message over 32 MiB, and this map inlines
++	// every warm module's code, each under both its url and its id. Past a budget, leave the rest of the cached
++	// modules out: the worker fetches a module missing from the map one at a time.
++	let inlinedBytes = 0;
+ 	const entries = Object.entries(response).flatMap(([specifier, module$1]) => {
+ 		try {
++			if (inlinedBytes > WARM_MODULES_INLINE_BUDGET && module$1 !== null && typeof module$1 === "object" && module$1.cached === true) {
++				hasCachedModules = true;
++				return [];
++			}
+ 			const inlinedModule = inlineCachedModule(module$1, cacheContents);
++			if (inlinedModule !== module$1 && typeof inlinedModule.code === "string") inlinedBytes += Buffer.byteLength(inlinedModule.code);
+ 			hasCachedModules ||= inlinedModule !== module$1;
+ 			return [[specifier, inlinedModule]];
+ 		} catch {

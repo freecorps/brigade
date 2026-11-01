@@ -593,6 +593,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
         the relay's admin token), or none (RFC 0015 section 8, apps/api README "Push relay"); Freecorps' relay's
         public address is `relay.brigade.freecorps.com.br`, its domain still to attach (Q31). The dashboard says which relay pages go through and its state
         ("Phones and pages" in the workspace settings) and which app to install ("Use the app" on the account page)
+  - [x] Docs for self-hosters on paging phones: [Freecorps' relay and the store app](self-hosting/phones.md) and
+        [their own app and relay](self-hosting/own-app.md) (RFC 0015 step 5)
   - Left (decided, Q23; RFC 0002 "Environments"): the setup wizard running those steps, the custom domains' and
     `setup:first-user`.
 - [ ] Hosted push relay with terms of service

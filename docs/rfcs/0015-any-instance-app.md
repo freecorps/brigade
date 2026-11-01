@@ -3,7 +3,9 @@
 - Status: Accepted (decisions D1–D5 below); the relay side and envelope version 2 on the phone (steps 1 and 2 of
   "Order of work") are built, and of step 3 the API side (handles in `device.register`, the notifier on `/v1/send`,
   `/config`, the watchdog's signed check) and `vp run setup:relay` with the relay's closed registration (section 8);
-  of step 4 the app's data layer (instances, storage per instance, handles, page routing; section 5); the rest is not
+  of step 4 the app's data layer (instances, storage per instance, handles, page routing; section 5) and its screens
+  (adding, switching and removing instances, QR sign-in; sections 5 and 6); of step 5 the docs for self-hosters
+  (docs/self-hosting); the rest is not
 - Builds on: RFC 0006 (push relay), RFC 0002 (auth, environments), RFC 0010 (calls)
 
 ## Problem
@@ -612,7 +614,7 @@ asks which, and can be run again later:
      `RELAY_APNS_TOPIC`, `FCM_SERVICE_ACCOUNT`, `RELAY_HANDLE_KEYS`) and turns its registration to this instance only
      (`RELAY_CLOSED=1`, also a secret; the instance registered directly by the script, no terms or email).
    - Binds the relay to the API as `RELAY` (no hop over the internet, as on our instance) and sets the instance key.
-   - Points to "Your own app" in the docs (apps/mobile README): the EAS build with the company's bundle id, App
+   - Points to "Your own app" in the docs ([docs/self-hosting/own-app.md](../self-hosting/own-app.md)): the EAS build with the company's bundle id, App
      Group, relay address and store accounts. That build is the company's to publish (or to hand out through
      TestFlight, an MDM or an internal store). The bundle id and Android package are the build variable
      `BRIGADE_APP_ID` (default `app.freecorps.brigade`, apps/mobile `plugins/app-id.ts`), and the App Group is derived
@@ -845,7 +847,12 @@ built:
    instance, background registration and page routing (section 5); QR sign-in's API routes and the dashboard's "Use
    the app" page with the approval (section 6); the app's screens: adding (address, QR, link and their checks), the
    switcher, which relay, removing, and the phone's side of the QR sign-in (sections 5, 6 and 8).
-5. Our instance moves (section 9); then the docs for self-hosters ("Your own app" included) and the terms.
+5. Our instance moves (section 9); then the docs for self-hosters ("Your own app" included) and the terms. Built:
+   the docs, [Page your team with the Brigade app](../self-hosting/phones.md) (Freecorps' relay: setup, limits, how
+   members get the app, the dashboard's states and what to do about each, key rotation, what the relay sees, the
+   terms as a draft not in effect) and [Run your own app and relay](../self-hosting/own-app.md) (accounts, the build
+   variables, `vp run setup:relay` for an own relay, keeping it), linked from the READMEs, which keep the reference.
+   Left: our instance's move (section 9), a store release of the app with step 4, and the final terms (Q31, D5).
 
 Each step is a paging path: it keeps the old path working until the next one ships, and comes with its tests
 (AGENTS.md).

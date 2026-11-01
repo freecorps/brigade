@@ -29,7 +29,7 @@ export const FREECORPS_RELAY_URL = "https://relay.brigade.freecorps.com.br";
 export const TERMS_VERSION = "draft-2026-11";
 export const TERMS_URL = "https://github.com/freecorps/brigade/blob/main/docs/legal/relay-terms.md";
 const YOUR_OWN_APP_DOCS =
-  "https://github.com/freecorps/brigade/blob/main/apps/mobile/README.md#your-own-app";
+  "https://github.com/freecorps/brigade/blob/main/docs/self-hosting/own-app.md";
 
 export type Choice = "freecorps" | "own" | "none";
 export type Environment = "production" | "staging" | "dev";

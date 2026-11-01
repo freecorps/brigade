@@ -38,6 +38,11 @@ See [RFC 0002 — Architecture](docs/rfcs/0002-architecture.md).
 - [Voice paging](docs/rfcs/0010-voice-paging.md)
 - [Roadmap](docs/roadmap.md) · [Open questions](docs/open-questions.md)
 
+Self-hosting:
+
+- [Page your team with the Brigade app](docs/self-hosting/phones.md) (Freecorps' relay, the default)
+- [Run your own app and relay](docs/self-hosting/own-app.md)
+
 ## Development
 
 Requires [Vite+](https://viteplus.dev) (`vp`). Bun is the package manager (pinned in `package.json`).

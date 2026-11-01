@@ -24,6 +24,9 @@ Monitores, alertas, plantão, incidentes, Slack e apps mobile nativos — sem co
 Os documentos de design estão em inglês, em [`docs/`](docs/). Comece pela [visão e escopo](docs/rfcs/0001-vision-and-scope.md),
 o [roadmap](docs/roadmap.md) e as [questões em aberto](docs/open-questions.md).
 
+Para quem hospeda o Brigade (em inglês): [Page your team with the Brigade app](docs/self-hosting/phones.md), que
+pagina os celulares pelo relay da Freecorps e o app das lojas, e [Run your own app and relay](docs/self-hosting/own-app.md).
+
 ## Licença
 
 As aplicações são licenciadas sob [AGPL-3.0](LICENSE). Os pacotes em `packages/` são MIT.

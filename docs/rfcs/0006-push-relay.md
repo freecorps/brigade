@@ -33,8 +33,11 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   tests). Web Push encryption (RFC 8291) was rejected: no native API on either platform. P-256 rather than X25519 so
   the device key can move into the Secure Enclave or StrongBox later. The APNs payload is
   `{ aps: { alert: <fallback keys>, mutable-content: 1, … }, brigade: { v: 1, enc, ct } }`, with `enc` and `ct`
-  base64url and at most 2048 bytes of plaintext.
-- **Device key:** created by the app on first use; on iOS a Keychain item in the App Group
+  base64url and at most 2048 bytes of plaintext. Version 2 (RFC 0015 section 4) is `brigade: { v: 2, k, enc, ct }`:
+  `k` the device key's id in clear, HPKE `info` `"app.freecorps.brigade push v2"`, and `iat`, `exp`, `origin` and
+  `urgency` sealed in the plaintext; the app opens both.
+- **Device key:** one per instance the phone is paired with, keyed by its origin (RFC 0015 section 4; the key from
+  before is kept as the configured instance's), created by the app on first use; on iOS a Keychain item in the App Group
   `group.app.freecorps.brigade` (which is also its Keychain access group), readable after first unlock, this device
   only, so the extension can read it while the phone is locked. On Android (decided with FCM, `DeviceKey.kt`), the
   same P-256 key: from Android 12 (API 31) it is made inside the Android Keystore with `PURPOSE_AGREE_KEY` and the
@@ -53,7 +56,12 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   an old push or raise its urgency (`interruption-level` is in clear), and anyone with a device public key and
   relay access could forge one. Before production: seal `iat`, the instance id and the urgency inside the
   plaintext, let the extension take the interruption level from the decrypted urgency and fall back on stale
-  pushes, then authenticate the sender (HPKE auth mode or the instance's Ed25519 signature).
+  pushes, then authenticate the sender (HPKE auth mode or the instance's Ed25519 signature). **Built on the phone
+  as envelope version 2** (RFC 0015 section 4: `iat`, `exp`, the instance's `origin` and `urgency` sealed, a key id
+  `k` in clear, one device key per instance, every refusal the fallback text; the sealed urgency binds only a push
+  that opens, so a fallback for one that does not keeps the clear level); the API still seals version 1 until
+  RFC 0015 step 3 switches it, and the app opens both. Sender authentication and sealing `critical` and `kind`:
+  open question Q29.
 - **Offline phones:** pushes carry an `apns-expiration` by urgency (pages 15 minutes; the relay refuses "try once"
   for a page). APNs keeps only the latest undelivered push per app and device, so a later push (even a `low`
   status update) replaces a stored page. Decided for the same incident: a page's `apns-collapse-id` is the incident
@@ -94,7 +102,7 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   OAuth2 access token (the JWT bearer flow), cached per isolate until 5 minutes before it expires and fetched again
   when FCM answers 401 (the send is tried once more); neither is ever logged. Every message is **data only** (no
   `notification`, so FCM never shows anything the app did not decrypt): `data` is `{ v, enc, ct, kind, urgency,
-  callId?, tag? }`, all strings, at most 4 KB (the 2 KB plaintext seals to about 2.8 KB), with `android.priority:
+  callId?, tag? }` (version 2 adds `k`, the key id, which the app needs to open it), all strings, at most 4 KB (the 2 KB plaintext seals to about 2.8 KB), with `android.priority:
   HIGH` (`NORMAL` for `low`) and `android.ttl` from the same expirations as APNs (pages 15 minutes, calls 60 s).
   `tag` is the APNs collapse id's role: the app's notification tag, so a repeat replaces it. FCM's refusals are
   answered like APNs' (`502` with FCM's `status` and its error code as `reason`): `UNREGISTERED` and an

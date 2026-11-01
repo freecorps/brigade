@@ -324,7 +324,10 @@ describe("voipPushPlan (iOS)", () => {
       /receive\(id, envelope: payload\["brigade"\], completion: completion\)/,
     );
     const receive = body(swift, "private func receive(");
-    const dispatch = receive.indexOf("switch known(id)");
+    // `kind` is kept so a push sealed as less than a page ends only its own new call (RFC 0015 section 4).
+    expect(receive).toContain("let kind = known(id)");
+    const dispatch = receive.indexOf("switch kind {");
+    expect(dispatch).toBeGreaterThan(0);
     expect(receive.slice(0, dispatch)).not.toMatch(/\breturn\b/);
     expect(receive).toMatch(/case \.new: report\(call, completion: completion\)/);
     expect(receive).toMatch(/case \.active: reportRepeat\(call, completion: completion\)/);

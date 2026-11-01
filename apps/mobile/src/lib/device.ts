@@ -27,6 +27,31 @@ export function deviceId(publicKey: string): string {
   return newId("dev", 0, () => bytes.subarray(1, 11));
 }
 
+/** The push module's key functions (modules/brigade-push), as `devicePublicKey` reads them. */
+export type DeviceKeys = {
+  getPublicKey(): Promise<string>;
+  getInstancePublicKey?(origin: string): Promise<string>;
+};
+
+/**
+ * This phone's device key for the instance at `url` (any of its URLs): one key per instance, keyed by its origin
+ * (RFC 0015 section 4), so the device id differs at each instance. The native side moves the key from before keys
+ * per instance to the first origin it is asked for, so the instance this build talks to keeps the phone's device id.
+ * Without a usable origin, on an app binary from before keys per instance, or when the native side refuses the origin
+ * (a parser stricter than `URL`'s), the key it always had: registering is never stopped by the origin's form.
+ */
+export async function devicePublicKey(keys: DeviceKeys, url?: string): Promise<string> {
+  const origin = url === undefined ? undefined : instanceOrigin(url);
+  if (origin && keys.getInstancePublicKey) {
+    try {
+      return await keys.getInstancePublicKey(origin);
+    } catch {
+      // The key it always had, below.
+    }
+  }
+  return keys.getPublicKey();
+}
+
 /**
  * The APNs environment of this build's tokens: `aps-environment` is `development` for local Xcode builds and
  * `production` for EAS builds (app.config.ts), and APNs calls the first `sandbox`.

@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
-import { generateRecipient, sealPush, toBase64url } from "@freecorps/brigade-push";
+import { generateRecipient, sealPush, sealPushV2, toBase64url } from "@freecorps/brigade-push";
 import { describe, expect, test } from "vite-plus/test";
 import { handle, type RelayEnv } from "../src/index.ts";
 import { hang } from "./hang.ts";
@@ -55,6 +55,28 @@ describe("POST /send", () => {
     expect(apns.sent).toHaveLength(1);
     expect(apns.sent[0]?.url).toBe(`https://api.sandbox.push.apple.com/3/device/${DEVICE_TOKEN}`);
     expect(apns.sent[0]?.headers.get("authorization")).toMatch(/^bearer ey/);
+  });
+
+  test("carries a version 2 envelope as it is, key id included; a v2 without a valid key id is refused", async () => {
+    const recipient = await generateRecipient();
+    const envelope = await sealPushV2(
+      toBase64url(recipient.publicKey),
+      { title: "t", body: "b" },
+      { origin: "https://brigade.example.com", urgency: "page", ttlSeconds: 900 },
+    );
+    const apns = fakeApns();
+    const response = await handle(post(await sendBody({ envelope })), env, apns.send);
+    expect(response.status).toBe(200);
+    expect(((await apns.sent[0]!.json()) as { brigade: unknown }).brigade).toEqual(envelope);
+    for (const k of [undefined, "short", "with space"]) {
+      const refused = await handle(
+        post(await sendBody({ envelope: { ...envelope, k } })),
+        env,
+        apns.send,
+      );
+      expect(refused.status).toBe(400);
+    }
+    expect(apns.sent).toHaveLength(1);
   });
 
   test("a push may name its device's APNs environment; anything but sandbox or production is refused", async () => {

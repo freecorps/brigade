@@ -10,6 +10,8 @@ import { useTheme } from "@/hooks/use-theme";
 import { useSystemColors } from "@/theme/system-colors";
 import { pagingText } from "@/components/account";
 import { useMember } from "@/components/session";
+import { server } from "@/lib/auth-client";
+import { devicePublicKey } from "@/lib/device";
 import { BrigadePush } from "../../modules/brigade-push";
 
 type Field = "permission" | "deviceToken" | "publicKey";
@@ -28,7 +30,7 @@ function loadPushInfo(set: (field: Field, value: string) => void): void {
     );
   const keys = BrigadePush;
   if (!keys) return;
-  const publicKey = keys.getPublicKey();
+  const publicKey = devicePublicKey(keys, server?.auth);
   void load("publicKey", () => publicKey);
   void load("permission", async () => {
     const { status } = await Notifications.requestPermissionsAsync({

@@ -4,6 +4,7 @@ import * as Notifications from "expo-notifications";
 import { useEffect } from "react";
 import { BrigadePush } from "../../modules/brigade-push";
 import { authClient, server } from "@/lib/auth-client";
+import { instanceOrigin } from "@/lib/device";
 import {
   ACK_ACTION,
   ackFeedback,
@@ -46,6 +47,7 @@ async function handle(response: ActionResponse): Promise<void> {
   try {
     const outcome = await acknowledgeFromNotification(action, {
       url: (workspaceId, incidentId) => server?.ack(workspaceId, incidentId),
+      ...(server ? { origin: instanceOrigin(server.auth) } : {}),
       cookie: () => authClient.getCookie(),
       fetch: (url, init) => fetch(url, init),
       key: () => `ack-${randomUUID()}`,

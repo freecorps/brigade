@@ -233,6 +233,8 @@ const COLLAPSE_ID_MAX_BYTES = 64;
 export function fcmData(push: Omit<FcmPush, "token" | "ttlSeconds">): Record<string, string> {
   return {
     v: String(push.envelope.v),
+    // Version 2 names the device key it is sealed to (RFC 0015 section 4).
+    ...(push.envelope.v === 2 ? { k: push.envelope.k } : {}),
     enc: push.envelope.enc,
     ct: push.envelope.ct,
     kind: push.kind,

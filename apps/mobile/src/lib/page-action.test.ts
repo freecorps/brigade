@@ -99,6 +99,24 @@ describe("the Acknowledge tap", () => {
     expect(swift).toContain(`["incident": incident, "workspace": workspace]`);
   });
 
+  test("a version 2 page names the instance it came from (RFC 0015 section 4)", () => {
+    const origin = "https://brigade.test";
+    expect(pageAction(tap({ payload: { [PAGE_DATA_KEY]: { ...ids, origin } } }))).toMatchObject({
+      ...ids,
+      origin,
+    });
+    // Not a string: an origin that matches none, so no ack goes anywhere.
+    expect(pageAction(tap({ payload: { [PAGE_DATA_KEY]: { ...ids, origin: 1 } } }))?.origin).toBe(
+      "",
+    );
+    expect(pageAction(tap())).not.toHaveProperty("origin");
+    const swift = readFileSync(
+      new URL("../../modules/brigade-push/ios/BrigadePage.swift", import.meta.url),
+      "utf8",
+    );
+    expect(swift).toContain('page["origin"] = origin');
+  });
+
   test("each tap is handled once", () => {
     const first = onceEach();
     expect(first("note-1")).toBe(true);
@@ -151,6 +169,38 @@ describe("sending the ack", () => {
       "Idempotency-Key": "tap-1",
     });
     expect(call!.init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  test("a page from another instance than the app's is not acknowledged anywhere", async () => {
+    const origin = "https://brigade.test";
+    const ours = deps([{ status: 200 }], { origin });
+    expect(await acknowledgeFromNotification({ ...ids, origin }, ours.deps)).toBe("acknowledged");
+    for (const [page, app] of [
+      ["https://other.example.org", origin],
+      ["", origin],
+      [origin, undefined],
+    ] as const) {
+      const fake = deps([{ status: 200 }], app === undefined ? {} : { origin: app });
+      expect(await acknowledgeFromNotification({ ...ids, origin: page }, fake.deps)).toBe(
+        "signed_out",
+      );
+      expect(fake.calls).toHaveLength(0);
+    }
+    // Version 1 (no origin): the app's instance, as before.
+    const v1 = deps([{ status: 200 }], { origin });
+    expect(await acknowledgeFromNotification(ids, v1.deps)).toBe("acknowledged");
+  });
+
+  test("a failed ack's retry keeps the page's origin", () => {
+    const action = { notificationId: "n", title: "t", ...ids, origin: "https://brigade.test" };
+    const messages = Object.fromEntries(
+      ["acknowledged", "already", "inactive", "not_found", "forbidden", "signed_out", "failed"].map(
+        (k) => [k, () => k],
+      ),
+    ) as AckMessages;
+    expect(ackFeedback(action, "failed", messages).data).toEqual({
+      [PAGE_DATA_KEY]: { ...ids, origin: "https://brigade.test" },
+    });
   });
 
   test("the server's refusals are final, each with its own outcome", async () => {

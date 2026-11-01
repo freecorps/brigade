@@ -12,6 +12,7 @@ import { createSyncClient, type SyncSocket } from "@freecorps/brigade-sync";
 import { expect, test } from "vite-plus/test";
 import {
   deviceId,
+  devicePublicKey,
   deviceRegistration,
   instanceOrigin,
   pushEnvironment,
@@ -27,6 +28,43 @@ import { neverOpened } from "./sync";
 
 // An uncompressed P-256 point's shape (0x04 then 64 bytes), base64url.
 const KEY = `BA${"abcdefghij".repeat(9).slice(0, 85)}`;
+
+test("one device key per instance, keyed by its origin (RFC 0015 section 4); an older binary keeps its one key", async () => {
+  const asked: string[] = [];
+  const keys = {
+    getPublicKey: async () => "old",
+    getInstancePublicKey: async (origin: string) => {
+      asked.push(origin);
+      return `key for ${origin}`;
+    },
+  };
+  // The app's server URL (`/api/auth`) names the instance by its origin only.
+  expect(await devicePublicKey(keys, "https://brigade.example.com/api/auth")).toBe(
+    "key for https://brigade.example.com",
+  );
+  expect(await devicePublicKey(keys, "http://192.168.1.5:8787/api/auth")).toBe(
+    "key for http://192.168.1.5:8787",
+  );
+  expect(asked).toEqual(["https://brigade.example.com", "http://192.168.1.5:8787"]);
+  // No usable origin, or a binary from before keys per instance: the key it always had.
+  expect(await devicePublicKey(keys)).toBe("old");
+  expect(await devicePublicKey(keys, "not a url")).toBe("old");
+  expect(
+    await devicePublicKey({ getPublicKey: async () => "old" }, "https://brigade.example.com"),
+  ).toBe("old");
+  // A native side that refuses the origin never stops registration.
+  expect(
+    await devicePublicKey(
+      {
+        getPublicKey: async () => "old",
+        getInstancePublicKey: async () => {
+          throw new Error("not an http(s) origin");
+        },
+      },
+      "https://my_host.internal/api/auth",
+    ),
+  ).toBe("old");
+});
 const ANA: Actor = { kind: "user", id: "usr_ana", role: "responder" };
 const BIA: Actor = { kind: "user", id: "usr_bia", role: "responder" };
 

@@ -90,6 +90,32 @@ location and is eventually consistent, so the D4 limits (600 sends, 60 calls, 30
 and apply per location. Good enough against an instance flooding APNs, or does the per-instance limit need a Durable
 Object?
 
+## Q29 — What is left of the sealed page (RFC 0015 section 4, RFC 0006)
+
+Envelope version 2 is built on the phone (step 2): it seals `iat`, `exp`, `origin` and `urgency`, names its key
+(`k`), and the app keeps one device key per instance. Left open:
+
+- **When the app stops opening version 1.** While it opens v1, anyone holding a device public key (the instance it
+  was given to, or whoever that instance leaked it to) can send a page with no expiry, origin or urgency sealed, and
+  the relay can replay one for as long as APNs keeps it. Proposal: the API seals v2 from step 3 on, and the app drops
+  v1 in the release that adds several instances (step 4), once `/config` `brigade.minApp` says every supported app
+  opens v2. Is that the right moment, or later?
+- **How an instance knows a phone opens version 2** (step 3): an app from before it shows the fallback text for every
+  v2 page. Proposal: `device.register` gains `envelope: 2` (left out by older apps, as `criticalAlerts` is), and the
+  notifier seals v2 only to devices that sent it.
+- **The sealed urgency only binds a push that opens.** For one that opens (shown, or refused for another origin or
+  pairing) a Critical Alert is kept only on a sealed `page`, and a `low` one never rings as a page. A push that does
+  not open (unknown key, AEAD failure, malformed) or opened expired shows the fallback at the level the relay set in
+  clear, on purpose: those must stay loud. So the relay can still make such a fallback critical, and can still make a
+  SEV2 page critical (`critical` is in clear), or on Android ring a sealed page as a call (`kind` is in clear; a call
+  sealed as anything less than a page shows the fallback text at that urgency). Seal `critical` and `kind` too?
+- **The 5 minutes of clock skew** are applied to `exp` only. A phone whose clock runs more than the TTL plus 5
+  minutes ahead shows the fallback text for every page (never silence). Is that enough, or should the app warn when
+  its clock is far from the instance's (the `Date` of its own API answers)?
+- **Sender authentication** (HPKE auth mode, or the instance's Ed25519 signature over the envelope, RFC 0006): with a
+  key per instance, a page that opens is from whoever holds that instance's copy of the device public key. Worth the
+  extra bytes and a signature check in the extension?
+
 # Decided
 
 | #   | Question                       | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |

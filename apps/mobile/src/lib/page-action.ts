@@ -10,7 +10,7 @@
 export const PAGE_CATEGORY = "brigade_page";
 /** Its one action. */
 export const ACK_ACTION = "ack";
-/** The notification's user info key holding `{ incident, workspace }`. */
+/** The notification's user info key holding `{ incident, workspace, origin? }`. */
 export const PAGE_DATA_KEY = "page";
 
 /**
@@ -57,6 +57,11 @@ export type PageAction = {
   incident: string;
   workspace: string;
   title: string;
+  /**
+   * The instance a version 2 page sealed (RFC 0015 section 4), which the extension checked the phone is paired with;
+   * the ack goes there only. Absent from a version 1 page, whose ack goes to the app's instance as before.
+   */
+  origin?: string;
 };
 
 /**
@@ -73,11 +78,14 @@ export function pageAction(response: ActionResponse): PageAction | null {
   const incident = page?.incident;
   const workspace = page?.workspace;
   if (typeof incident !== "string" || typeof workspace !== "string") return null;
+  const origin = page?.origin;
   return {
     notificationId: request.identifier,
     incident,
     workspace,
     title: request.content.title ?? "",
+    // Anything but a string is not an origin: no ack goes anywhere for it (`acknowledgeFromNotification`).
+    ...(origin === undefined ? {} : { origin: typeof origin === "string" ? origin : "" }),
   };
 }
 
@@ -120,6 +128,11 @@ export const IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
 export type AckDeps = {
   /** The endpoint for the incident, or undefined when the build has no server. */
   url: (workspaceId: string, incidentId: string) => string | undefined;
+  /**
+   * The origin of the instance `url` points at (`URL.origin`). A page that names another (`PageAction.origin`) is not
+   * acknowledged there: the member is not signed in to its instance on this phone.
+   */
+  origin?: string;
   /** The session's `Cookie` header; empty when signed out. */
   cookie: () => Promise<string>;
   fetch: (url: string, init: RequestInit) => Promise<Pick<Response, "status" | "json">>;
@@ -135,9 +148,11 @@ export type AckDeps = {
  * server refused is not. Never throws.
  */
 export async function acknowledgeFromNotification(
-  action: Pick<PageAction, "incident" | "workspace">,
+  action: Pick<PageAction, "incident" | "workspace" | "origin">,
   deps: AckDeps,
 ): Promise<AckOutcome> {
+  // Only to the instance the page sealed (RFC 0015 section 4); nothing is sent anywhere else.
+  if (action.origin !== undefined && action.origin !== deps.origin) return "signed_out";
   const url = deps.url(action.workspace, action.incident);
   if (!url) return "failed";
   let cookie: string;
@@ -216,7 +231,13 @@ export function ackFeedback(
     // Seen on the lock screen: the responder thinks the page was handled until it says otherwise.
     interruptionLevel: "active",
     categoryIdentifier: PAGE_CATEGORY,
-    data: { [PAGE_DATA_KEY]: { incident: action.incident, workspace: action.workspace } },
+    data: {
+      [PAGE_DATA_KEY]: {
+        incident: action.incident,
+        workspace: action.workspace,
+        ...(action.origin === undefined ? {} : { origin: action.origin }),
+      },
+    },
   };
 }
 

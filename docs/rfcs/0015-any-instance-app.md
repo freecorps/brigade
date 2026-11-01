@@ -1,6 +1,7 @@
 # RFC 0015 — One store app for every instance
 
-- Status: Accepted (decisions D1–D5 below); the relay side (step 1 of "Order of work") is built, the rest is not
+- Status: Accepted (decisions D1–D5 below); the relay side and envelope version 2 on the phone (steps 1 and 2 of
+  "Order of work") are built, the rest is not
 - Builds on: RFC 0006 (push relay), RFC 0002 (auth, environments), RFC 0010 (calls)
 
 ## Problem
@@ -141,6 +142,57 @@ moment, and it is what makes several instances on one phone safe:
   Then instance A, which holds only its own device key, cannot seal a page that opens as instance B's. The clear part
   of the payload names which key (`brigade.k`, a short key id) so the extension tries one key. Since the device id
   comes from the key, the phone is a different device at each instance, which is what they should see.
+
+**Built (step 2): envelope version 2 and keys per instance on the phone.** The instance side (step 3) still seals
+version 1; the app opens both.
+
+- **The envelope.** `{ v: 2, k, enc, ct }` (packages/push `sealPushV2`, `PushEnvelopeV2`): the same HPKE suite under
+  its own `info`, `"app.freecorps.brigade push v2"`, so a v2 ciphertext relabelled v1 (or the other way round) does
+  not open. The plaintext is v1's plus `iat` (Unix seconds), `exp` (`iat` + the TTL the instance gives the relay, 0 to
+  30 days), `origin` (the instance's origin as `URL.origin` writes it: where the app signs in, the dashboard's) and
+  `urgency`. A receipt not on that origin is left out at sealing. The relay carries it as it is (`parsePushEnvelope`
+  takes both versions; FCM's `data` gains `k`).
+- **The key id** (`pushKeyId`): base64url of the first 6 bytes of SHA-256 over the uncompressed device public key
+  (65 bytes), 8 characters. Only a hint (the AEAD decides), so 48 bits are plenty among a phone's few keys; not the
+  device id (the key's x coordinate), so the relay cannot tie a push to a device row. One test vector is checked by
+  packages/push's and the Kotlin tests (in CI) and by the Swift script below (by hand, on a Mac).
+- **What the phone does** (packages/push `openOnPhone` is the reference; `BrigadePushCrypto.swift`,
+  `PushPayload.kt`/`Pages.kt` follow it): v1 is tried with each key, the paired instance's first, as before. v2 is
+  tried with the key `k` names only; then refused if opened more than 5 minutes (clock skew) past its `exp`, if
+  sealed for another origin than its key's, or if the phone is not paired with that origin (today: the instance the
+  app registered with, `setReceiptOrigin`, which the app forgets on an explicit sign-out, `clearReceiptOrigin`; a
+  list with step 4). **Every refusal, an unknown key id included, shows the fallback text, never silence**; a VoIP
+  call already reported to CallKit keeps its fallback name. The sealed urgency sets the interruption level (iOS) or
+  channel (Android) of **a push that opens**: shown, or refused for another origin or pairing (the fallback, then no
+  louder than sealed, so the relay cannot make a refused `low` push ring as a page or a Critical Alert). A page is
+  time-sensitive and keeps a Critical Alert, anything less is `active` with the default sound (Android: the updates
+  channel). A push that does not open (unknown key, AEAD failure, malformed) or opened expired keeps the level the
+  relay set in clear: loud, so a phone clock running ahead never quiets a page, and the relay still decides those.
+  A call push whose sealed urgency is not a page does not ring: iOS still reports it to CallKit first (iOS stops
+  delivering VoIP pushes to an app that does not), ends it as soon as CallKit has it and shows the fallback text,
+  `active`; Android shows the fallback text at the sealed urgency. The receipt goes only to the sealed origin, and the
+  Acknowledge action only there (`page.origin` in the notification, the page CallKit's fallback posts included,
+  checked by `page-action.ts` against the app's instance). Origins compare
+  as `URL.origin` writes them on every side (an IPv6 host keeps its brackets; Android reads the authority itself, so a
+  host with `_` works), and an origin the native side refuses falls back to the key from before.
+- **Keys per instance.** The app asks for the key of its instance's origin (`getInstancePublicKey`, `devicePublicKey`
+  in `src/lib/device.ts`). iOS keeps one Keychain item per origin (account `device-key-v2 <origin>`, App Group,
+  after first unlock, this device only); the key from before (`device-key-v1`) is moved to the paired instance's
+  origin (any first origin asked for when none is paired) in one `SecItemUpdate`, so it is the same key and the same
+  device id (an update that fails is an error, never a new key that would change the device id). Android cannot
+  rename a Keystore alias: each origin gets its own slot (alias `…device-key.v2.<slot>`, or the wrapped file,
+  `<slot>` from SHA-256 of the origin), and the paired instance (any first origin when none is paired) claims the
+  old key (`legacy-key-origin` in the app's preferences). Another origin gets a new key, so the instance the phone is
+  registered with keeps the key it holds. Either way phones in the field keep paging, and the device id still comes
+  from the key.
+- **Tests:** packages/push `tests/envelope-v2.test.ts` (round trip, tampering, versions not crossing, expired, wrong
+  origin, not paired, unknown key, how loud each fallback is, the key id); the Kotlin on the JVM
+  (`EnvelopeV2Test.kt`, a page sealed by packages/push, the channel rule, origins). **The Swift is not tested in
+  CI** (CryptoKit's HPKE needs an Apple OS): `apps/mobile/modules/brigade-push/ios/tests/main.swift` opens the same
+  sealed page and covers each refusal, the fallback's level, the key id and origins, run by hand on a Mac (the
+  commands are in the file; the pod compiles `ios/*.swift` only, so it stays out of the app). In CI,
+  `apps/mobile/src/lib/envelope-v2.test.ts` only checks the Swift and Kotlin sources against packages/push (constants,
+  each refusal leading to the fallback). Open points: Q29.
 
 ### 5. Instances in the app
 
@@ -374,9 +426,11 @@ does it.
    APNs/FCM (built; apps/relay README "Handles and /v1/send"). Still to do here: closed-mode registration by the relay
    admin secret (section 8), and the `send_email` binding for the contact code.
 2. Envelope v2 (sealed `iat`, `origin`, `urgency`; key id) in `packages/push`, the iOS extension and Android; the
-   app accepts v1 and v2.
+   app accepts v1 and v2 (built, section 4, with one key per instance on the phone).
 3. Instance: `device.register` with `handle`/`tag`, the notifier on `/v1/send`, `/config` additions, watchdog
-   reasons, `vp run setup:relay` (both relays), the dashboard's "Phones and pages".
+   reasons, `vp run setup:relay` (both relays), the dashboard's "Phones and pages". The notifier switches to
+   `sealPushV2` (origin: the dashboard's, TTL: the one it gives the relay) only for apps that open v2: an older app
+   shows the fallback text for every v2 page.
 4. App: handles and per-instance keys and storage; the instance switcher, address field, QR and link, address
    checks, which relay; QR sign-in (with its API routes and the dashboard's approval).
 5. Our instance moves (section 9); then the docs for self-hosters ("Your own app" included) and the terms.

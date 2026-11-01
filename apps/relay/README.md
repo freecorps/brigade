@@ -117,7 +117,8 @@ Nothing to create by hand: the binding, its migration and `CODE_LIMIT` are in `w
 `env.dev`), and the deploy creates the class. `CODE_LIMIT` may be dropped from the config (an own relay, say): the code
 treats it as optional and then limits nothing per IP. For the hosted relay's contact code, the `send_email` binding
 (`"send_email": [{ "name": "EMAIL" }]`) and `EMAIL_FROM`, a bare address on a domain onboarded to Cloudflare Email
-Sending (as `apps/api`), are still to be added; until then `/v1/instances/contact` answers `503 not_configured`.
+Sending (as `apps/api`), are set on the production relay (top level only, sending from `relay@brigade.freecorps.com.br`);
+`env.dev` and a relay without them answer `503 not_configured` on `/v1/instances/contact`.
 `RELAY_TERMS_VERSION` is a var (`draft-2026-11`, RFC 0015 decision D5).
 
 **Closed registration** (the secret `RELAY_CLOSED=1`, a company's own relay, RFC 0015 section 8; an older relay's var

@@ -14,8 +14,9 @@
   },
   "upload_source_maps": true,
   // Production APNs; the app's build sets `aps-environment` to match. RELAY_TERMS_VERSION is the hosted relay's terms
-  // version a registration must accept (RFC 0015, decision D5). The contact code's email (`EMAIL`, `EMAIL_FROM`) is
-  // optional and not bound yet: without it `/v1/instances/contact` answers 503 (README "Instance registration"). A
+  // version a registration must accept (RFC 0015, decision D5). The contact code's email is the `send_email` binding
+  // `EMAIL` below and the secret `EMAIL_FROM` (relay@brigade.freecorps.com.br, a subdomain onboarded to Email Sending);
+  // `env.dev` binds neither, so its `/v1/instances/contact` answers 503 (README "Instance registration"). A
   // company's own relay keeps these vars: `vp run setup:relay` sets its topic and closed registration as the secrets
   // `RELAY_APNS_TOPIC` (which wins over `APNS_TOPIC`) and `RELAY_CLOSED=1`, kept by every deploy (README "Closed
   // registration"). Never add a var with either name: a secret may not share a var's name. The hosted relay's Custom Domain (relay.brigade.freecorps.com.br) is attached in the dashboard,
@@ -28,6 +29,8 @@
   // The instance registry (RFC 0015, src/registry.ts): one object per instance and per contact address. The deploy
   // creates the class; nothing to set up by hand. Not inherited by `env.dev`, so repeated there.
   "durable_objects": { "bindings": [{ "name": "REGISTRY", "class_name": "RegistryDO" }] },
+  // No sender or destination restriction: the sender is the secret EMAIL_FROM, the destination the caller's contact.
+  "send_email": [{ "name": "EMAIL" }],
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RegistryDO"] }],
   // Workers Rate Limiting (config only, nothing to create; each is optional in the code). CODE_LIMIT: per caller IP, on
   // every /v1/instances route (src/instances.ts). The rest are RFC 0015 section 3 (src/v1.ts): HANDLE_LIMIT per caller

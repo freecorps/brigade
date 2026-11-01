@@ -40,6 +40,11 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "address_title" | "Only the address" |
 * | "address_description" | "Adds this Brigade to the app without signing in, for a phone that signs in another way (with its password, or your company's sign-in)." |
 * | "address_label" | "QR code with this Brigade's address" |
+* | "device_apple" | "An iPhone or iPad" |
+* | "device_android" | "An Android phone" |
+* | "device_phone" | "A phone" |
+* | "expired_claimed" | "The sign-in ran out of time before it finished. Nobody was signed in." |
+* | "cancel_failed" | "Couldn't cancel. Try again; the code stops working on its own when the countdown ends." |
 * | * | "Sign in with a QR code" |
 *
 * @param {App_Sign_InInputs} inputs
@@ -79,6 +84,11 @@ export const app_sign_in = /** @type {((inputs: App_Sign_InInputs, options?: { l
 		if (i?.part === "address_title") return /** @type {LocalizedString} */ (`Só o endereço`);
 		if (i?.part === "address_description") return /** @type {LocalizedString} */ (`Adiciona este Brigade ao app sem entrar, para um celular que entra de outro jeito (com a senha, ou o acesso da sua empresa).`);
 		if (i?.part === "address_label") return /** @type {LocalizedString} */ (`QR code com o endereço deste Brigade`);
+		if (i?.part === "device_apple") return /** @type {LocalizedString} */ (`Um iPhone ou iPad`);
+		if (i?.part === "device_android") return /** @type {LocalizedString} */ (`Um celular Android`);
+		if (i?.part === "device_phone") return /** @type {LocalizedString} */ (`Um celular`);
+		if (i?.part === "expired_claimed") return /** @type {LocalizedString} */ (`O acesso expirou antes de terminar. Ninguém entrou.`);
+		if (i?.part === "cancel_failed") return /** @type {LocalizedString} */ (`Não foi possível cancelar. Tente de novo; o código para de funcionar sozinho quando a contagem acabar.`);
 		return /** @type {LocalizedString} */ (`Entrar com um QR code`)
 	}
 	{
@@ -112,6 +122,11 @@ export const app_sign_in = /** @type {((inputs: App_Sign_InInputs, options?: { l
 		if (i?.part === "address_title") return /** @type {LocalizedString} */ (`Only the address`);
 		if (i?.part === "address_description") return /** @type {LocalizedString} */ (`Adds this Brigade to the app without signing in, for a phone that signs in another way (with its password, or your company's sign-in).`);
 		if (i?.part === "address_label") return /** @type {LocalizedString} */ (`QR code with this Brigade's address`);
+		if (i?.part === "device_apple") return /** @type {LocalizedString} */ (`An iPhone or iPad`);
+		if (i?.part === "device_android") return /** @type {LocalizedString} */ (`An Android phone`);
+		if (i?.part === "device_phone") return /** @type {LocalizedString} */ (`A phone`);
+		if (i?.part === "expired_claimed") return /** @type {LocalizedString} */ (`The sign-in ran out of time before it finished. Nobody was signed in.`);
+		if (i?.part === "cancel_failed") return /** @type {LocalizedString} */ (`Couldn't cancel. Try again; the code stops working on its own when the countdown ends.`);
 		return /** @type {LocalizedString} */ (`Sign in with a QR code`)
 	}
 });

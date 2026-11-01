@@ -844,9 +844,13 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
     // Stated, not left to the default: the mobile app keeps a session from an offline sign-out this long at most.
     session: {
       expiresIn: SESSION_LIFETIME_S,
-      // The phone a QR sign-in made the session for (RFC 0015 section 6, src/app-sign-in.ts), so the account's
-      // sessions say which device each is; never set by a client (`input: false`), null for any other sign-in.
-      additionalFields: { deviceName: { type: "string", required: false, input: false } },
+      // The phone a QR sign-in made the session for, and `signInMethod: "qr"` (RFC 0015 section 6,
+      // src/app-sign-in.ts), so the account's sessions say which device each is and how it was signed in; never set
+      // by a client (`input: false`), null for any other sign-in.
+      additionalFields: {
+        deviceName: { type: "string", required: false, input: false },
+        signInMethod: { type: "string", required: false, input: false },
+      },
     },
     // Off by default on Workers (Better Auth enables it only when NODE_ENV is "production"). The in-memory store
     // would count per isolate, so the counts live in D1.

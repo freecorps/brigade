@@ -3994,6 +3994,11 @@
         "part=address_title": "Só o endereço",
         "part=address_description": "Adiciona este Brigade ao app sem entrar, para um celular que entra de outro jeito (com a senha, ou o acesso da sua empresa).",
         "part=address_label": "QR code com o endereço deste Brigade",
+        "part=device_apple": "Um iPhone ou iPad",
+        "part=device_android": "Um celular Android",
+        "part=device_phone": "Um celular",
+        "part=expired_claimed": "O acesso expirou antes de terminar. Ninguém entrou.",
+        "part=cancel_failed": "Não foi possível cancelar. Tente de novo; o código para de funcionar sozinho quando a contagem acabar.",
         "part=*": "Entrar com um QR code"
       }
     }

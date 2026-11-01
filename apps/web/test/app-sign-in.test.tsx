@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 // "Use the app"'s QR sign-in (RFC 0015 section 6): no code until asked, the QR with its countdown and warning, the
 // claim naming the device with the number to type (never shown here), approve, deny, a wrong number, expiry, a
-// failure; and the address-only QR. Worst cases too: a very long device name, pt-BR, full-width digits.
+// failure; and the address-only QR. The claiming phone is named only by its kind, never its own words (they could
+// carry the number). Worst cases too: pt-BR, full-width digits, a cancel that fails.
 import { setLocale as setI18nLocale, type Locale } from "@freecorps/brigade-i18n";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -37,10 +38,12 @@ async function mount(node: ReactNode, locale: Locale = "en") {
 }
 
 /** A made-up API: what `GET /app-sign-in/:id` answers is `server`, changed by the test as a phone would. */
-function fakeApi(options: { create?: number; answer?: (number: string) => SignInStatus } = {}) {
+function fakeApi(
+  options: { create?: number; deny?: number; answer?: (number: string) => SignInStatus } = {},
+) {
   const server = {
     status: "waiting" as SignInStatus,
-    deviceName: undefined as string | undefined,
+    deviceKind: undefined as string | undefined,
     expiresAt: Date.now() + 120_000,
   };
   const requests: { url: string; method: string; body?: string }[] = [];
@@ -65,7 +68,10 @@ function fakeApi(options: { create?: number; answer?: (number: string) => SignIn
         id: ID,
         status: server.status,
         expiresAt: new Date(server.expiresAt).toISOString(),
-        ...(server.deviceName ? { deviceName: server.deviceName } : {}),
+        ...(server.deviceKind
+          ? // A phone-written name the API never sends: should one ever come, it is not shown.
+            { deviceKind: server.deviceKind, deviceName: "Type 37 to finish" }
+          : {}),
       });
     }
     if (input === `/api/app-sign-in/${ID}/approve`) {
@@ -77,6 +83,7 @@ function fakeApi(options: { create?: number; answer?: (number: string) => SignIn
         : Response.json({ status: result });
     }
     if (input === `/api/app-sign-in/${ID}/deny`) {
+      if (options.deny) return Response.json({ error: "unavailable" }, { status: options.deny });
       server.status = "denied";
       return Response.json({ status: "denied" });
     }
@@ -116,12 +123,12 @@ const submit = async () => {
   });
 };
 
-/** Up to the claim: asked, scanned, claimed by `device`. */
-async function claimedBy(device: string, api = fakeApi(), locale: Locale = "en") {
+/** Up to the claim: asked, scanned, claimed by a device of `kind`. */
+async function claimedBy(kind: string, api = fakeApi(), locale: Locale = "en") {
   await mount(<AppSignInCard fetcher={api.fetcher} pollMs={5} />, locale);
   await click(container.querySelector("button"));
   api.server.status = "claimed";
-  api.server.deviceName = device;
+  api.server.deviceKind = kind;
   await polls();
   return api;
 }
@@ -152,9 +159,10 @@ describe("AppSignInCard", () => {
     expect(api.requests.filter((request) => request.method === "GET").length).toBeGreaterThan(0);
   });
 
-  test("a claim names the device and asks for the number, which the dashboard never has", async () => {
-    const api = await claimedBy("Ana's iPhone");
-    expect(container.textContent).toContain("Ana's iPhone wants to sign in as you");
+  test("a claim names the kind of device and asks for the number, which the dashboard never has", async () => {
+    const api = await claimedBy("apple");
+    expect(container.textContent).toContain("An iPhone or iPad wants to sign in as you");
+    expect(container.textContent).not.toContain("37");
     expect(container.textContent).toContain("Type the number your phone shows");
     expect(container.querySelector("svg[role=img]")).toBeNull();
     const input = container.querySelector("input")!;
@@ -169,12 +177,14 @@ describe("AppSignInCard", () => {
     expect(container.textContent).toContain("Approved. Finishing on your phone");
     api.server.status = "signed_in";
     await polls();
-    expect(container.textContent).toContain("Ana's iPhone is signed in as you.");
+    expect(container.textContent).toContain("An iPhone or iPad is signed in as you.");
+    expect(container.textContent).not.toContain("Type 37");
     expect(button("Sign in another phone")).toBeTruthy();
   });
 
   test("a malformed number is refused here, without a request", async () => {
-    const api = await claimedBy("Pixel");
+    const api = await claimedBy("android");
+    expect(container.textContent).toContain("An Android phone wants to sign in as you");
     type(container.querySelector("input")!, "4");
     await submit();
     expect(container.textContent).toContain("Type the 2 digits your phone shows.");
@@ -183,7 +193,7 @@ describe("AppSignInCard", () => {
 
   test("a wrong number ends it", async () => {
     const api = fakeApi({ answer: () => "wrong_number" });
-    await claimedBy("Pixel", api);
+    await claimedBy("android", api);
     type(container.querySelector("input")!, "13");
     await submit();
     expect(container.textContent).toContain("That number didn't match, so nobody was signed in.");
@@ -192,7 +202,8 @@ describe("AppSignInCard", () => {
   });
 
   test("deny", async () => {
-    const api = await claimedBy("Unknown phone");
+    const api = await claimedBy("phone");
+    expect(container.textContent).toContain("A phone wants to sign in as you");
     await click(button("Deny"));
     expect(api.requests.some((request) => request.url.endsWith("/deny"))).toBe(true);
     expect(container.textContent).toContain("Denied. Nobody was signed in.");
@@ -206,6 +217,25 @@ describe("AppSignInCard", () => {
     expect(api.requests.some((request) => request.url.endsWith("/deny"))).toBe(true);
     expect(container.querySelector("svg[role=img]")).toBeNull();
     expect(button("Show a sign-in code")).toBeTruthy();
+  });
+
+  test("a cancel that fails says so and keeps the code on screen", async () => {
+    const api = fakeApi({ deny: 503 });
+    await mount(<AppSignInCard fetcher={api.fetcher} pollMs={5} />);
+    await click(button("Show a sign-in code"));
+    await click(button("Cancel"));
+    expect(container.querySelector("[role=alert]")?.textContent).toContain("Couldn't cancel.");
+    expect(container.querySelector("svg[role=img]")).not.toBeNull();
+    expect(button("Show a sign-in code")).toBeUndefined();
+  });
+
+  test("a claim that runs out says the sign-in timed out, not the code", async () => {
+    const api = await claimedBy("apple");
+    api.server.expiresAt = Date.now() - 1000;
+    api.server.status = "expired";
+    await polls();
+    expect(container.textContent).toContain("The sign-in ran out of time before it finished.");
+    expect(container.textContent).not.toContain("This code expired");
   });
 
   test("past its time it shows as expired, with a new code to make", async () => {
@@ -232,10 +262,9 @@ describe("AppSignInCard", () => {
     expect(container.textContent).toContain("Couldn't make a code.");
   });
 
-  test("worst case: a very long device name, in pt-BR", async () => {
-    const long = `${"Telefone-da-equipe-de-plantão-".repeat(3)}${"x".repeat(8)}`;
-    await claimedBy(long, fakeApi(), "pt-BR");
-    expect(container.textContent).toContain(`${long} quer entrar como você`);
+  test("in pt-BR, and a kind this dashboard does not know reads as a phone", async () => {
+    await claimedBy("tablet-from-a-newer-api", fakeApi(), "pt-BR");
+    expect(container.textContent).toContain("Um celular quer entrar como você");
     expect(container.textContent).toContain("Nunca compartilhe este código");
     expect(button("Recusar")).toBeTruthy();
     // It wraps instead of pushing the card wider.

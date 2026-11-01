@@ -39,6 +39,11 @@ export type App_Sign_InInputs = {
 * | "address_title" | "Only the address" |
 * | "address_description" | "Adds this Brigade to the app without signing in, for a phone that signs in another way (with its password, or your company's sign-in)." |
 * | "address_label" | "QR code with this Brigade's address" |
+* | "device_apple" | "An iPhone or iPad" |
+* | "device_android" | "An Android phone" |
+* | "device_phone" | "A phone" |
+* | "expired_claimed" | "The sign-in ran out of time before it finished. Nobody was signed in." |
+* | "cancel_failed" | "Couldn't cancel. Try again; the code stops working on its own when the countdown ends." |
 * | * | "Sign in with a QR code" |
 *
 * @param {App_Sign_InInputs} inputs

@@ -15,6 +15,7 @@ import {
   POLL_MS,
   readSignIn,
   typedNumber,
+  type DeviceKind,
   type SignInStatus,
   type SignInView,
 } from "@/lib/app-sign-in";
@@ -22,11 +23,14 @@ import {
 export const signInText = (part: string, args: { device?: string; time?: string } = {}) =>
   m.app_sign_in({ part, device: args.device ?? "", time: args.time ?? "" });
 
+/** "An iPhone or iPad": the kind of device, the only thing the dashboard says of a phone before the approval. */
+const deviceLabel = (kind: DeviceKind | undefined) => signInText(`device_${kind ?? "phone"}`);
+
 type Phase =
   | { kind: "idle" }
   | { kind: "creating" }
   | { kind: "failed"; reason: "rate_limited" | "failed" | "unauthenticated" }
-  | { kind: "live"; view: SignInView; url: string };
+  | { kind: "live"; view: SignInView; url: string; cancelFailed?: boolean };
 
 /**
  * "Sign in with a QR code" (RFC 0015 section 6): a code only once the member asks for one (a credential on screen is
@@ -113,16 +117,25 @@ export function AppSignInCard({
           <Waiting
             url={phase.url}
             left={phase.view.expiresAt - now}
-            onCancel={() =>
-              void answerSignIn(phase.view.id, "deny", fetcher).then(() =>
-                setPhase({ kind: "idle" }),
-              )
-            }
+            cancelFailed={phase.cancelFailed ?? false}
+            onCancel={() => {
+              const id = phase.view.id;
+              void answerSignIn(id, "deny", fetcher).then((result) =>
+                setPhase((current) =>
+                  current.kind !== "live" || current.view.id !== id
+                    ? current
+                    : // Back to the start only once the code is really dead: denied, or ended already.
+                      result === "failed" || result === "waiting"
+                      ? { ...current, cancelFailed: true }
+                      : { kind: "idle" },
+                ),
+              );
+            }}
           />
         ) : status === "claimed" ? (
           <Claimed
             key={phase.view.id}
-            device={phase.view.deviceName ?? ""}
+            device={deviceLabel(phase.view.deviceKind)}
             left={phase.view.expiresAt - now}
             onAnswer={async (answer) => {
               const result = await answerSignIn(phase.view.id, answer, fetcher);
@@ -138,7 +151,7 @@ export function AppSignInCard({
         ) : status === "signed_in" ? (
           <Ended
             tone="ok"
-            text={signInText("signed_in", { device: phase.view.deviceName ?? "" })}
+            text={signInText("signed_in", { device: deviceLabel(phase.view.deviceKind) })}
             again={signInText("another")}
             onAgain={() => void start()}
           />
@@ -150,7 +163,10 @@ export function AppSignInCard({
                 ? "denied"
                 : status === "wrong_number"
                   ? "wrong_number"
-                  : "expired",
+                  : // Claimed before it ran out: the sign-in, not the code, timed out.
+                    phase.view.deviceKind
+                    ? "expired_claimed"
+                    : "expired",
             )}
             onAgain={() => void start()}
           />
@@ -161,7 +177,17 @@ export function AppSignInCard({
 }
 
 /** The QR, its countdown and the warning; Cancel drops the code. */
-function Waiting({ url, left, onCancel }: { url: string; left: number; onCancel: () => void }) {
+function Waiting({
+  url,
+  left,
+  cancelFailed,
+  onCancel,
+}: {
+  url: string;
+  left: number;
+  cancelFailed: boolean;
+  onCancel: () => void;
+}) {
   return (
     <div className="enter flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
       <QrCode
@@ -179,6 +205,7 @@ function Waiting({ url, left, onCancel }: { url: string; left: number; onCancel:
         <p role="status" className="sr-only">
           {signInText("waiting")}
         </p>
+        {cancelFailed ? <FormError>{signInText("cancel_failed")}</FormError> : null}
         <div>
           <Button variant="outline" onClick={onCancel}>
             {signInText("cancel")}

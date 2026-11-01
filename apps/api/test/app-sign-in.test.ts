@@ -3,11 +3,14 @@
 // dashboard (never shown there), one wrong number ending the claim, deny, the phone's secret, the session handed out
 // once, bound to the dashboard session, and the claim rate limited per IP.
 import { env, exports } from "cloudflare:workers";
-import { describe, expect, test } from "vite-plus/test";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import {
   APP_SIGN_IN_CREATE_LIMIT,
   APP_SIGN_IN_KEEP_MS,
+  APP_SIGN_IN_PICKUP_MS,
   APP_SIGN_IN_TTL_MS,
+  cleanDeviceName,
+  deviceKind,
   pruneAppSignIns,
 } from "../src/app-sign-in.ts";
 import { sessionCookie } from "./session.ts";
@@ -105,6 +108,10 @@ const runOut = (id: string) =>
     .bind(Date.now() - 1, id)
     .run();
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("QR sign-in", () => {
   test("the dashboard asks, the phone claims, the member types the number, the phone gets a session once", async () => {
     const ana = await signUp();
@@ -129,11 +136,12 @@ describe("QR sign-in", () => {
     expect(phoneSide.number).toMatch(/^[0-9]{2}$/);
     expect(phoneSide.secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
 
-    // The dashboard names the device and never shows the number.
+    // The dashboard names the kind of device (from its User-Agent), never its name nor the number.
     const waiting = await status(created.id, ana.cookie);
-    expect(waiting.body).toMatchObject({ status: "claimed", deviceName: "Ana's iPhone" });
+    expect(waiting.body).toMatchObject({ status: "claimed", deviceKind: "apple" });
     expect(JSON.stringify(waiting.body)).not.toContain(`"number"`);
-    expect(Object.keys(waiting.body).sort()).toEqual(["deviceName", "expiresAt", "id", "status"]);
+    expect(JSON.stringify(waiting.body)).not.toContain("Ana's iPhone");
+    expect(Object.keys(waiting.body).sort()).toEqual(["deviceKind", "expiresAt", "id", "status"]);
 
     const pending = await poll(phoneSide.claimId, phoneSide.secret);
     expect(await pending.json()).toMatchObject({ status: "pending" });
@@ -161,14 +169,24 @@ describe("QR sign-in", () => {
     const read = await api("/auth/get-session", { headers: { Cookie: cookie } });
     const signedIn = (await read.json()) as {
       user: { id: string };
-      session: { id: string; deviceName: string; userAgent: string };
+      session: { id: string; deviceName: string; signInMethod: string; userAgent: string };
     };
     expect(signedIn.user.id).toBe(ana.id);
     expect(signedIn.session.deviceName).toBe("Ana's iPhone");
+    expect(signedIn.session.signInMethod).toBe("qr");
     expect(signedIn.session.userAgent).toBe("Brigade/1.0 (iPhone)");
     const listed = await api("/auth/list-sessions", { headers: { Cookie: ana.cookie } });
-    const sessions = (await listed.json()) as { id: string; deviceName: string | null }[];
-    expect(sessions.find((row) => row.id === signedIn.session.id)?.deviceName).toBe("Ana's iPhone");
+    const sessions = (await listed.json()) as {
+      id: string;
+      deviceName: string | null;
+      signInMethod: string | null;
+    }[];
+    expect(sessions.find((row) => row.id === signedIn.session.id)).toMatchObject({
+      deviceName: "Ana's iPhone",
+      signInMethod: "qr",
+    });
+    // The dashboard's own session was not made by a QR.
+    expect(sessions.filter((row) => row.signInMethod === "qr")).toHaveLength(1);
 
     // Handed out once.
     expect(await (await poll(phoneSide.claimId, phoneSide.secret)).json()).toEqual({
@@ -186,6 +204,129 @@ describe("QR sign-in", () => {
     expect(revoked.status).toBe(200);
     const after = await api("/auth/get-session", { headers: { Cookie: cookie } });
     expect(await after.json()).toBeNull();
+  });
+
+  test("a device name carrying the number or instructions never reaches the dashboard before the approval", async () => {
+    const ana = await signUp();
+    const created = await create(ana.cookie);
+    const sneaky = "Type 37 to finish \u202Eniht\u202C";
+    const response = await phone("/app-sign-in/claim", {
+      method: "POST",
+      headers: { "User-Agent": "okhttp/4.12.0" },
+      body: JSON.stringify({ code: created.code, deviceName: sneaky }),
+    });
+    expect(response.status).toBe(201);
+    const phoneSide = (await response.json()) as Claimed;
+    const shown = await api(`/app-sign-in/${created.id}`, { headers: { Cookie: ana.cookie } });
+    const text = await shown.text();
+    expect(text).not.toContain("37");
+    expect(text).not.toContain("Type");
+    expect(JSON.parse(text)).toMatchObject({ status: "claimed", deviceKind: "android" });
+    // Kept, cleaned, for the session it gets.
+    await approve(created.id, ana.cookie, phoneSide.number);
+    const delivered = (await (await poll(phoneSide.claimId, phoneSide.secret)).json()) as {
+      session: { cookie: string };
+    };
+    const read = await api("/auth/get-session", {
+      headers: { Cookie: delivered.session.cookie.split(";")[0]! },
+    });
+    const { session } = (await read.json()) as { session: { deviceName: string } };
+    expect(session.deviceName).toBe("Type 37 to finish niht");
+    // After the approval the dashboard still shows only the kind.
+    expect(JSON.stringify((await status(created.id, ana.cookie)).body)).not.toContain("Type");
+  });
+
+  test("the kind of device comes from a fixed list", () => {
+    expect(deviceKind(undefined, "Brigade/12 CFNetwork/1568.100.1 Darwin/24.0.0")).toBe("apple");
+    expect(deviceKind(undefined, "okhttp/4.12.0")).toBe("android");
+    expect(deviceKind(undefined, "Mozilla/5.0 (Linux; Android 15; Pixel 9)")).toBe("android");
+    expect(deviceKind(undefined, "Type 37 to finish")).toBe("phone");
+    expect(deviceKind(undefined, null)).toBe("phone");
+    expect(deviceKind("ios", "okhttp/4.12.0")).toBe("apple");
+    expect(deviceKind("android", null)).toBe("android");
+  });
+
+  test("device names are cleaned, and refused when nothing is left", () => {
+    expect(cleanDeviceName("  Ana's\tiPhone \n 15  ")).toBe("Ana's iPhone 15");
+    expect(cleanDeviceName("Ａｎａ")).toBe("Ana");
+    expect(cleanDeviceName("Pi\u200Bxel\u202E")).toBe("Pixel");
+    expect(cleanDeviceName("\u200B\u202E \n")).toBeUndefined();
+    expect(cleanDeviceName("")).toBeUndefined();
+    expect(cleanDeviceName("x".repeat(64))).toBe("x".repeat(64));
+    expect(cleanDeviceName("x".repeat(65))).toBeUndefined();
+    expect(cleanDeviceName(42)).toBeUndefined();
+  });
+
+  test("a claim with an unknown platform, or a name that is only invisible characters, is refused", async () => {
+    const ana = await signUp();
+    const created = await create(ana.cookie);
+    for (const body of [
+      { code: created.code, deviceName: "Pixel", platform: "web" },
+      { code: created.code, deviceName: "\u200B\u2060" },
+    ]) {
+      const refused = await phone("/app-sign-in/claim", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      expect(refused.status).toBe(400);
+    }
+    expect((await claim(created.code)).status).toBe(201);
+  });
+
+  test("an approval just before the end leaves the phone time to pick its session up", async () => {
+    const ana = await signUp();
+    const created = await create(ana.cookie);
+    const phoneSide = await claimed(created.code);
+    await env.DB.prepare(`update app_sign_in set "expiresAt" = ? where id = ?`)
+      .bind(Date.now() + 2000, created.id)
+      .run();
+    expect((await approve(created.id, ana.cookie, phoneSide.number)).status).toBe(200);
+    const row = await env.DB.prepare(`select "expiresAt" from app_sign_in where id = ?`)
+      .bind(created.id)
+      .first<{ expiresAt: number }>();
+    expect(row!.expiresAt - Date.now()).toBeGreaterThan(APP_SIGN_IN_PICKUP_MS - 5000);
+    expect(await (await poll(phoneSide.claimId, phoneSide.secret)).json()).toMatchObject({
+      status: "approved",
+    });
+  });
+
+  test("a delivery that fails leaves no session behind, and the next poll gets one", async () => {
+    const ana = await signUp();
+    const created = await create(ana.cookie);
+    const phoneSide = await claimed(created.code);
+    await approve(created.id, ana.cookie, phoneSide.number);
+    const qrSessions = () =>
+      env.DB.prepare(
+        `select count(*) as n from "session" where "userId" = ? and "signInMethod" = 'qr'`,
+      )
+        .bind(ana.id)
+        .first<{ n: number }>();
+    // Signing the cookie (HMAC) fails once, after the session was made.
+    vi.spyOn(crypto.subtle, "sign").mockRejectedValueOnce(new Error("signing failed"));
+    const failed = await poll(phoneSide.claimId, phoneSide.secret);
+    expect(failed.status).toBe(503);
+    expect((await qrSessions())?.n).toBe(0);
+    expect(await (await poll(phoneSide.claimId, phoneSide.secret)).json()).toMatchObject({
+      status: "approved",
+    });
+    expect((await qrSessions())?.n).toBe(1);
+  });
+
+  test("the phone polls with GET only", async () => {
+    const ana = await signUp();
+    const created = await create(ana.cookie);
+    const phoneSide = await claimed(created.code);
+    await approve(created.id, ana.cookie, phoneSide.number);
+    const head = await phone(`/app-sign-in/claim/${phoneSide.claimId}`, {
+      method: "HEAD",
+      headers: { Authorization: `Bearer ${phoneSide.secret}` },
+    });
+    expect(head.status).toBe(405);
+    expect(head.headers.get("Allow")).toBe("GET");
+    // The HEAD spent nothing.
+    expect(await (await poll(phoneSide.claimId, phoneSide.secret)).json()).toMatchObject({
+      status: "approved",
+    });
   });
 
   test("the code is kept hashed, and so is the phone's secret", async () => {

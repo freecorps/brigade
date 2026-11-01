@@ -1519,7 +1519,13 @@ const APP_SIGN_IN_VIEW: JsonSchema = {
       enum: ["waiting", "claimed", "approved", "signed_in", "denied", "wrong_number", "expired"],
     },
     expiresAt: isoTime,
-    deviceName: { type: "string", description: "Once claimed: the device that wants to sign in." },
+    deviceKind: {
+      type: "string",
+      enum: ["apple", "android", "phone"],
+      description:
+        "Once claimed: what kind of device wants to sign in, from a fixed list (never the phone's own words, " +
+        "which could carry the number).",
+    },
   },
   required: ["id", "status", "expiresAt"],
   additionalProperties: false,
@@ -1583,8 +1589,8 @@ const APP_SIGN_IN: readonly Operation[] = [
     tag: "App sign-in",
     summary: "Where your QR sign-in is",
     description:
-      "Only for the session that asked. `claimed` names the device that wants to sign in as you; the number its " +
-      "phone shows is never here.",
+      "Only for the session that asked. Once claimed, `deviceKind` says what kind of device wants to sign in as you; " +
+      "the number its phone shows and its device name are never here.",
     auth: "session",
     parameters: [signInId],
     responses: answers(
@@ -1600,7 +1606,8 @@ const APP_SIGN_IN: readonly Operation[] = [
     summary: "Approve a claim with the number the phone shows",
     description:
       "`{ number }`: the 2 digits the claiming phone shows, typed by you. Any other number ends the claim " +
-      "(`403 wrong_number`); a malformed one (`400`) spends nothing.",
+      "(`403 wrong_number`); a malformed one (`400`) spends nothing. Approved, the phone has at least 30 seconds " +
+      "to pick its session up.",
     auth: "session",
     parameters: [signInId],
     body: {
@@ -1650,7 +1657,10 @@ const APP_SIGN_IN: readonly Operation[] = [
     tag: "App sign-in",
     summary: "Claim a QR code (the app)",
     description:
-      "`{ code, deviceName }` (1 to 64 characters, shown on the dashboard and kept with the session). Spends the " +
+      "`{ code, deviceName, platform? }`. `deviceName` is cleaned (NFKC, without controls or invisible characters, " +
+      "spaces collapsed; 1 to 64 characters left) and kept only with the session it may get, never shown on the " +
+      "dashboard before the approval; `platform` (`ios`, `android`) or else the User-Agent says what kind of device " +
+      "the dashboard names. Spends the " +
       "code: a code unknown, spent or past its time is the same `404 invalid_code`. Answers the claim's id, a " +
       "`secret` for polling `pollAppSignIn` (keep it on the phone only) and the 2-digit `number` to show, which the " +
       "member types on the dashboard. Limited per caller address (`429`).",
@@ -1659,7 +1669,8 @@ const APP_SIGN_IN: readonly Operation[] = [
       type: "object",
       properties: {
         code: { type: "string", pattern: "^[A-Za-z0-9_-]{22}$" },
-        deviceName: { type: "string", minLength: 1, maxLength: 64 },
+        deviceName: { type: "string", minLength: 1, maxLength: 256 },
+        platform: { type: "string", enum: ["ios", "android"] },
       },
       required: ["code", "deviceName"],
     },

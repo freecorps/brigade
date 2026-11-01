@@ -12,12 +12,18 @@ export type SignInStatus =
   | "wrong_number"
   | "expired";
 
+/**
+ * What kind of device claimed, from the API's fixed list. The dashboard never gets the phone's own device name before
+ * the approval: free text there could carry the number ("type 37 to finish").
+ */
+export type DeviceKind = "apple" | "android" | "phone";
+
 export type SignInView = {
   id: string;
   status: SignInStatus;
   /** When the code (or, once claimed, the claim) runs out, in ms since the epoch. */
   expiresAt: number;
-  deviceName?: string;
+  deviceKind?: DeviceKind;
 };
 
 export type Created = SignInView & { url: string };
@@ -95,13 +101,13 @@ export async function readSignIn(
       id: string;
       status: SignInStatus;
       expiresAt: string;
-      deviceName?: string;
+      deviceKind?: string;
     };
     return {
       id: body.id,
       status: body.status,
       expiresAt: Date.parse(body.expiresAt),
-      ...(body.deviceName === undefined ? {} : { deviceName: body.deviceName }),
+      ...(body.deviceKind === undefined ? {} : { deviceKind: kindOf(body.deviceKind) }),
     };
   } catch {
     return undefined;
@@ -139,4 +145,9 @@ export async function answerSignIn(
   } catch {
     return "failed";
   }
+}
+
+/** A kind this dashboard knows, `phone` for any other (a newer API's). */
+function kindOf(value: string): DeviceKind {
+  return value === "apple" || value === "android" ? value : "phone";
 }

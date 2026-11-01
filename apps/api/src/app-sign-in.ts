@@ -5,12 +5,13 @@
 //    that session; the QR is `brigade://connect?server=<dashboard origin>&code=<code>`.
 // 2. `POST /app-sign-in/claim` (no session, the phone; rate limited per IP): spends the code and answers a claim id,
 //    a secret only the phone gets and a 2-digit number the phone shows.
-// 3. `GET /app-sign-in/:id` (the same dashboard session, polled): "<device name> wants to sign in as you";
+// 3. `GET /app-sign-in/:id` (the same dashboard session, polled): "<an iPhone or iPad> wants to sign in as you", the
+//    kind of device read from a fixed list, never text the phone wrote (it could carry the number);
 //    `POST /app-sign-in/:id/approve { number }` with the number the member types (never shown on the dashboard), or
 //    `POST /app-sign-in/:id/deny`. One wrong number ends the claim.
 // 4. `GET /app-sign-in/claim/:id` (the phone, `Authorization: Bearer <secret>`, polled): `pending`, then once a new
-//    Better Auth session made here for the member (an ordinary one, listed and revocable, with `deviceName`), or
-//    `expired`.
+//    Better Auth session made here for the member (an ordinary one, listed and revocable, with `deviceName` and
+//    `signInMethod: "qr"`), or `expired`.
 //
 // Storage: D1's `app_sign_in` (migrations/0016_app_sign_in.sql), not a Durable Object. Every step that must happen
 // once (spending the code, approving or failing on the number, handing out the session) is one conditional
@@ -20,7 +21,7 @@
 // The code and the phone's secret are kept only as SHA-256 digests (both are 128 bits or more of randomness, so no
 // salt or slow hash is needed); the session token is never stored here: it is made when the phone picks it up.
 
-import { idPattern, newId, v, type RandomBytes } from "@freecorps/brigade-schema";
+import { idPattern, newId, type RandomBytes } from "@freecorps/brigade-schema";
 import { makeSignature } from "better-auth/crypto";
 import { countRequest, type Auth } from "./auth.ts";
 import { json, readJson } from "./member-route.ts";
@@ -38,8 +39,13 @@ export const APP_SIGN_IN_ID = new RegExp(idPattern("asi"));
 export const APP_SIGN_IN_TTL_MS = 2 * 60 * 1000;
 /** Codes one user may ask for a minute (each one is a D1 row), counted in D1's `rateLimit` table. */
 export const APP_SIGN_IN_CREATE_LIMIT = { window: 60, max: 10 };
-/** The longest device name a claim may give, shown on the dashboard and stored with the session. */
+/**
+ * The longest device name a claim may give (after `cleanDeviceName`). Stored with the session for the account's
+ * sessions list; never shown on the dashboard's approval step.
+ */
 export const DEVICE_NAME_MAX = 64;
+/** How long the phone has to pick its session up after an approval, at least, however close the claim's end was. */
+export const APP_SIGN_IN_PICKUP_MS = 30 * 1000;
 /** How long an ended row is kept before the cron deletes it. */
 export const APP_SIGN_IN_KEEP_MS = 24 * 60 * 60 * 1000;
 
@@ -50,7 +56,45 @@ const SECRET = /^[A-Za-z0-9_-]{43}$/;
 const NUMBER = /^[0-9]{2}$/;
 const READ_METHODS = ["GET", "HEAD"];
 
-const deviceName = v.string({ min: 1, max: DEVICE_NAME_MAX });
+/**
+ * What kind of device claimed, as the dashboard names it before the approval ("An iPhone or iPad wants to sign in as
+ * you"). Only these values, never text the phone wrote: a free device name would let whoever claims first write
+ * "type 37" on the member's own dashboard, and the number is the whole check.
+ */
+export const DEVICE_KINDS = ["apple", "android", "phone"] as const;
+export type DeviceKind = (typeof DEVICE_KINDS)[number];
+
+/**
+ * The kind from the claim's optional `platform` (`ios` or `android`, what Expo's `Platform.OS` says) or else its
+ * User-Agent (React Native's fetch sends `<app>/<build> CFNetwork/… Darwin/…` on iOS and `okhttp/…` on Android);
+ * `phone` for anything else.
+ */
+export function deviceKind(platform: unknown, userAgent: string | null): DeviceKind {
+  if (platform === "ios") return "apple";
+  if (platform === "android") return "android";
+  const agent = userAgent ?? "";
+  if (/\b(iPhone|iPad|iPod)\b|CFNetwork|Darwin/.test(agent)) return "apple";
+  if (/Android|okhttp/i.test(agent)) return "android";
+  return "phone";
+}
+
+/**
+ * The phone's device name as stored for the sessions list: NFKC, without control, format (bidi, zero-width) or
+ * other invisible characters, runs of whitespace as one space, trimmed; undefined when nothing is left or it is
+ * longer than `DEVICE_NAME_MAX`.
+ */
+export function cleanDeviceName(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > DEVICE_NAME_MAX * 4) return undefined;
+  const cleaned = value
+    .normalize("NFKC")
+    // Controls and line breaks part words; format, private-use and unassigned characters vanish.
+    .replaceAll(/[\p{Cc}\p{Zl}\p{Zp}]/gu, " ")
+    .replaceAll(/[\p{Cf}\p{Co}\p{Cn}]/gu, "")
+    .replaceAll(/\s+/gu, " ")
+    .trim();
+  if (cleaned === "" || cleaned.length > DEVICE_NAME_MAX) return undefined;
+  return cleaned;
+}
 
 type State = "issued" | "claimed" | "approved" | "delivered" | "denied" | "wrong_number";
 
@@ -61,6 +105,7 @@ type Row = {
   state: State;
   expiresAt: number;
   deviceName: string | null;
+  deviceKind: DeviceKind | null;
   secretHash: string | null;
 };
 
@@ -159,8 +204,9 @@ async function createSignIn(
 }
 
 /**
- * `GET /app-sign-in/:id`: the session's own request, as the dashboard shows it. `claimed` names the device that wants
- * to sign in; the number is never in it. 404 for an id that is not this session's.
+ * `GET /app-sign-in/:id`: the session's own request, as the dashboard shows it. Once claimed, `deviceKind` says what
+ * kind of device wants to sign in; the number and the phone's own device name are never in it. 404 for an id that is
+ * not this session's.
  */
 async function readSignIn(
   request: Request,
@@ -185,7 +231,8 @@ async function readSignIn(
  * `POST /app-sign-in/:id/approve { number }` and `POST /app-sign-in/:id/deny`. Approving compares the typed number in
  * the same statement that moves the claim on: the right one approves it, any other ends it (403 `wrong_number`). 409
  * `not_claimed` when there is no claim waiting (not claimed yet, or ended, or past its time: the body's `status` says
- * which). Denying ends the request at any step before the phone got its session.
+ * which). Denying ends the request at any step before the phone got its session. An approval leaves the phone at
+ * least `APP_SIGN_IN_PICKUP_MS` to pick its session up, however close the claim was to its end.
  */
 async function answerSignIn(
   request: Request,
@@ -217,11 +264,12 @@ async function answerSignIn(
         ? await env.DB.prepare(
             `update app_sign_in
              set state = case when number = ?3 then 'approved' else 'wrong_number' end,
-               "endedAt" = case when number = ?3 then null else ?4 end
+               "endedAt" = case when number = ?3 then null else ?4 end,
+               "expiresAt" = case when number = ?3 then max("expiresAt", ?4 + ?5) else "expiresAt" end
              where id = ?1 and "sessionId" = ?2 and state = 'claimed' and "expiresAt" > ?4
              returning state`,
           )
-            .bind(id, session.session.id, number, now)
+            .bind(id, session.session.id, number, now, APP_SIGN_IN_PICKUP_MS)
             .first<{ state: State }>()
         : await env.DB.prepare(
             `update app_sign_in set state = 'denied', "endedAt" = ?3
@@ -242,7 +290,9 @@ async function answerSignIn(
 }
 
 /**
- * `POST /app-sign-in/claim { code, deviceName }`: the phone spends the code. 201 `{ claimId, secret, number,
+ * `POST /app-sign-in/claim { code, deviceName, platform? }`: the phone spends the code. `deviceName` is cleaned
+ * (`cleanDeviceName`) and kept for the session only; `platform` (`ios`, `android`) or the User-Agent gives the kind the
+ * dashboard shows (`deviceKind`). 201 `{ claimId, secret, number,
  * expiresAt }`; 404 `invalid_code` for a code that is unknown, spent or past its time alike (no answer tells them
  * apart); 400 for a body that is not that; 429 past `APP_SIGN_IN_LIMIT` (per caller IP, checked before D1); 403 from
  * a browser page on another site. The phone keeps the secret and shows the number.
@@ -256,11 +306,18 @@ async function claimSignIn(request: Request, env: AppSignInEnv): Promise<Respons
   const body = await readJson(request, 1024);
   const code: unknown =
     typeof body === "object" && body !== null ? Reflect.get(body, "code") : undefined;
-  const name = deviceName(
-    typeof body === "object" && body !== null ? Reflect.get(body, "deviceName") : undefined,
-    "deviceName",
-  );
-  if (typeof code !== "string" || !name.ok) return json({ error: "invalid_args" }, 400);
+  const field = (key: string): unknown =>
+    typeof body === "object" && body !== null ? Reflect.get(body, key) : undefined;
+  const name = cleanDeviceName(field("deviceName"));
+  const platform = field("platform");
+  if (
+    typeof code !== "string" ||
+    name === undefined ||
+    (platform !== undefined && platform !== "ios" && platform !== "android")
+  ) {
+    return json({ error: "invalid_args" }, 400);
+  }
+  const kind = deviceKind(platform, request.headers.get("user-agent"));
   // Shaped like no code ever made: the same answer as a spent one.
   if (!CODE.test(code)) return json({ error: "invalid_code" }, 404, NO_STORE);
   const secret = base64url(randomBytes(32));
@@ -271,11 +328,11 @@ async function claimSignIn(request: Request, env: AppSignInEnv): Promise<Respons
     const claimed = await env.DB.prepare(
       `update app_sign_in
        set state = 'claimed', "deviceName" = ?2, "secretHash" = ?3, number = ?4, "claimedAt" = ?5,
-         "expiresAt" = ?6
+         "expiresAt" = ?6, "deviceKind" = ?7
        where "codeHash" = ?1 and state = 'issued' and "expiresAt" > ?5
        returning id`,
     )
-      .bind(await sha256(code), name.value, await sha256(secret), number, now, expiresAt)
+      .bind(await sha256(code), name, await sha256(secret), number, now, expiresAt, kind)
       .first<{ id: string }>();
     if (!claimed) return json({ error: "invalid_code" }, 404, NO_STORE);
     return json(
@@ -301,7 +358,8 @@ async function pollClaim(
   auth: () => Auth,
   id: string,
 ): Promise<Response> {
-  if (!READ_METHODS.includes(request.method)) return notAllowed(READ_METHODS);
+  // GET only: a HEAD would move an approved claim to `delivered` and drop the session's body on the floor.
+  if (request.method !== "GET") return notAllowed(["GET"]);
   const secret = /^Bearer (\S+)$/.exec(request.headers.get("Authorization") ?? "")?.[1];
   if (!APP_SIGN_IN_ID.test(id) || secret === undefined || !SECRET.test(secret)) {
     return json({ error: "not_found" }, 404);
@@ -342,7 +400,8 @@ async function pollClaim(
     try {
       return json(await newSession(env, auth, row, request), 200, NO_STORE);
     } catch (error) {
-      // Nothing was handed out: the phone's next poll may try again, within the same time.
+      // Nothing was handed out (`newSession` deleted any session it made): the phone's next poll may try again,
+      // within the same time.
       await env.DB.prepare(
         `update app_sign_in set state = 'approved', "endedAt" = null where id = ? and state = 'delivered'`,
       )
@@ -357,7 +416,9 @@ async function pollClaim(
 
 /**
  * A new Better Auth session for the row's user, made here (no password on the phone), with the device name, the
- * phone's address and user agent, and the user's first workspace active as a sign-in would.
+ * phone's address and user agent, `signInMethod: "qr"` (so the sessions list says how it was made), and the user's
+ * first workspace active as a sign-in would. Everything that can fail is read first and the session made last; should
+ * signing its cookie still fail, the session is deleted again, so no live session is ever left undelivered.
  */
 async function newSession(env: AppSignInEnv, auth: () => Auth, row: Row, request: Request) {
   const context = await auth().$context;
@@ -368,30 +429,39 @@ async function newSession(env: AppSignInEnv, auth: () => Auth, row: Row, request
   )
     .bind(row.userId)
     .first<{ id: string }>();
+  const cookie = context.authCookies.sessionToken;
   const session = await context.internalAdapter.createSession(row.userId, false, {
     deviceName: row.deviceName,
+    signInMethod: SIGN_IN_METHOD_QR,
     ipAddress: request.headers.get("cf-connecting-ip") ?? "",
     userAgent: request.headers.get("user-agent") ?? "",
     activeOrganizationId: workspace?.id ?? null,
   });
-  const cookie = context.authCookies.sessionToken;
-  const signed = `${session.token}.${await makeSignature(session.token, env.BETTER_AUTH_SECRET)}`;
-  const expiresAt = new Date(session.expiresAt);
-  const maxAge = Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000));
-  const attributes = [
-    `${cookie.name}=${encodeURIComponent(signed)}`,
-    `Max-Age=${maxAge}`,
-    `Path=${cookie.attributes.path ?? "/"}`,
-    "HttpOnly",
-    ...(cookie.attributes.secure ? ["Secure"] : []),
-    "SameSite=Lax",
-  ];
-  return {
-    status: "approved" as const,
-    session: { cookie: attributes.join("; "), expiresAt: expiresAt.toISOString() },
-    user: { id: user.id, name: user.name, email: user.email },
-  };
+  try {
+    const signed = `${session.token}.${await makeSignature(session.token, env.BETTER_AUTH_SECRET)}`;
+    const expiresAt = new Date(session.expiresAt);
+    const maxAge = Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000));
+    const attributes = [
+      `${cookie.name}=${encodeURIComponent(signed)}`,
+      `Max-Age=${maxAge}`,
+      `Path=${cookie.attributes.path ?? "/"}`,
+      "HttpOnly",
+      ...(cookie.attributes.secure ? ["Secure"] : []),
+      "SameSite=Lax",
+    ];
+    return {
+      status: "approved" as const,
+      session: { cookie: attributes.join("; "), expiresAt: expiresAt.toISOString() },
+      user: { id: user.id, name: user.name, email: user.email },
+    };
+  } catch (error) {
+    await context.internalAdapter.deleteSession(session.token);
+    throw error;
+  }
 }
+
+/** `session.signInMethod` for a session a QR sign-in made (src/auth.ts). */
+export const SIGN_IN_METHOD_QR = "qr";
 
 /** How the dashboard sees a row at `now`. */
 function view(row: Row, now: number) {
@@ -410,15 +480,15 @@ function view(row: Row, now: number) {
     id: row.id,
     status,
     expiresAt: new Date(row.expiresAt).toISOString(),
-    // Once claimed, who wants in; never the number.
-    ...(row.deviceName === null ? {} : { deviceName: row.deviceName }),
+    // Once claimed, what kind of device wants in: never the number, nor the phone's own device name.
+    ...(row.deviceKind === null ? {} : { deviceKind: row.deviceKind }),
   };
 }
 
 function readRow(db: D1Database, id: string): Promise<Row | null> {
   return db
     .prepare(
-      `select id, "userId", "sessionId", state, "expiresAt", "deviceName", "secretHash"
+      `select id, "userId", "sessionId", state, "expiresAt", "deviceName", "deviceKind", "secretHash"
        from app_sign_in where id = ?`,
     )
     .bind(id)

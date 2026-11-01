@@ -3987,6 +3987,11 @@
         "part=address_title": "Only the address",
         "part=address_description": "Adds this Brigade to the app without signing in, for a phone that signs in another way (with its password, or your company's sign-in).",
         "part=address_label": "QR code with this Brigade's address",
+        "part=device_apple": "An iPhone or iPad",
+        "part=device_android": "An Android phone",
+        "part=device_phone": "A phone",
+        "part=expired_claimed": "The sign-in ran out of time before it finished. Nobody was signed in.",
+        "part=cancel_failed": "Couldn't cancel. Try again; the code stops working on its own when the countdown ends.",
         "part=*": "Sign in with a QR code"
       }
     }

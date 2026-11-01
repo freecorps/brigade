@@ -122,12 +122,9 @@ seals v2 only to devices that sent it (and only with `DASHBOARD_URL` set, its se
 ## Q31 — What is left of the hosted relay's public address (RFC 0015 section 8)
 
 Owner: Heitor. Decided (see the table below): `https://relay.brigade.freecorps.com.br`, the setup script's default.
-Still open before pointing self-hosters at it:
+The Custom Domain is attached to `brigade-relay`, and the contact code is sent from `relay@brigade.freecorps.com.br`
+(the `send_email` binding and the secret `EMAIL_FROM`). Still open before pointing self-hosters at it:
 
-- **Attach the domain:** the Custom Domain on `brigade-relay`, added in the Cloudflare dashboard by the operator (not
-  in wrangler.jsonc, so a deploy creates no route).
-- **The contact code's email:** the `send_email` binding and `EMAIL_FROM` on the relay (RFC 0015 "Order of work"
-  step 1).
 - **The final terms,** reviewed by counsel, published in place of the template (D5).
 
 # Decided

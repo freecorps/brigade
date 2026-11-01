@@ -581,7 +581,7 @@ built:
 1. Relay: `/v1/instances` (with the emailed code and closed registration), signatures and the registry in a
    Durable Object; then `/v1/handles`, `/v1/send`, the signed `/v1/health?deep=1` and their limits, tested with fake
    APNs/FCM (built; apps/relay README "Handles and /v1/send"), and closed-mode registration by the relay admin secret
-   (built, section 8). Still to do here: the `send_email` binding for the contact code.
+   (built, section 8). The `send_email` binding for the contact code is bound too (`EMAIL_FROM` is `relay@brigade.freecorps.com.br`).
 2. Envelope v2 (sealed `iat`, `origin`, `urgency`; key id) in `packages/push`, the iOS extension and Android; the
    app accepts v1 and v2 (built, section 4, with one key per instance on the phone).
 3. Instance: `device.register` with `handle`/`tag`, the notifier on `/v1/send`, `/config` additions, watchdog

@@ -71,7 +71,7 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
   /// apps/mobile/src/lib/call-route.ts.
   static let answeredMaxLength: TimeInterval = 180
   /// How long an ended call's id is remembered, so a late repeat of its page does not ring again: a push expires
-  /// at most 5 minutes after it was sent (apps/relay/src/index.ts). Mirrors `ENDED_CALL_MEMORY_MS`.
+  /// at most 5 minutes after it was sent (apps/relay/src/send.ts). Mirrors `ENDED_CALL_MEMORY_MS`.
   static let endedMemory: TimeInterval = 300
   /// Declined or answered: a repeat does not ring again; after `missed` or `failed` it does. Mirrors
   /// `REPEAT_SUPPRESSING_END_REASONS` in apps/mobile/src/lib/call-route.ts.

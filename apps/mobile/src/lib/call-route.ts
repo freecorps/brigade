@@ -100,7 +100,7 @@ export const REPEAT_SUPPRESSING_END_REASONS: readonly CallEndReason[] = [
 /**
  * How long an ended call's id and end reason are remembered. The relay never repeats on its own; the instance
  * re-sends a page, with the same call id, and each send expires `ttlSeconds` after it was sent (60 s by default,
- * 5 minutes at most: apps/relay/src/index.ts). So a push sent before the call ended arrives at most 5 minutes after
+ * 5 minutes at most: apps/relay/src/send.ts). So a push sent before the call ended arrives at most 5 minutes after
  * the end: remembering for 5 minutes covers every copy in flight. A send after that is the instance paging again on
  * purpose and rings. The memory is in RAM only: a process that was killed treats a repeat as new, and rings.
  */

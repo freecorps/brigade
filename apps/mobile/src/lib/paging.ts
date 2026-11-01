@@ -359,6 +359,41 @@ export function pagingNudges(
 export type KnownTokens = ReturnType<typeof knownTokens>;
 
 /**
+ * A new push token for every instance's cycle (RFC 0015 section 5): `tokens` is shared, so whichever learns a new
+ * token first (the listener hearing it, or one instance's registration fetching it) nudges every cycle that joined,
+ * and each instance registers it, not only the first. `listen` adds the platform's listener (expo-notifications) and
+ * returns what removes it; it is added when the first cycle joins and removed when the last leaves.
+ */
+export function tokenFanOut(
+  tokens: KnownTokens,
+  listen: (heard: (token: { data: unknown }) => void) => () => void,
+) {
+  const cycles = new Set<Pick<PagingCycle, "nudge">>();
+  let stop: (() => void) | null = null;
+  const heard = (token: { data: unknown }) => {
+    // Only a real token: anything else would become a made-up "known" token and nudge every instance for nothing.
+    if (typeof token.data === "string" && token.data.length > 0) void tokens.changed(token.data);
+  };
+  tokens.onNew(() => {
+    for (const cycle of cycles) cycle.nudge();
+  });
+  return {
+    /** Joins `cycle`; returns what makes it leave. */
+    add(cycle: Pick<PagingCycle, "nudge">): () => void {
+      cycles.add(cycle);
+      stop ??= listen(heard);
+      return () => {
+        cycles.delete(cycle);
+        if (cycles.size === 0 && stop) {
+          stop();
+          stop = null;
+        }
+      };
+    },
+  };
+}
+
+/**
  * The longest a token event waits for a fetch still out before it is compared with the token known: a fetch that
  * never answers (no APNs) must not hold back every token event after it.
  */
@@ -374,11 +409,20 @@ export const TOKEN_FETCH_WAIT_MS = 5_000;
 export function knownTokens() {
   let known: string | undefined;
   let fetching: Promise<unknown> = Promise.resolve();
+  const listeners = new Set<() => void>();
+  const tell = () => {
+    for (const listener of listeners) listener();
+  };
   return {
-    /** Fetches a token to register (`get`), and knows it. */
+    /**
+     * Fetches a token to register (`get`), and knows it. One that replaces a token known before is told to
+     * `onNew`'s listeners: an instance that fetched it first must not keep it from the others.
+     */
     fetch(get: () => Promise<string>): Promise<string> {
       const token = get().then((value) => {
+        const replaced = known !== undefined && known !== value;
         known = value;
+        if (replaced) tell();
         return value;
       });
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -401,7 +445,15 @@ export function knownTokens() {
       } while (settled !== fetching);
       if (token === known) return false;
       known = token;
+      tell();
       return true;
+    },
+    /** Told whenever a new token replaces the known one (heard or fetched); returns what stops it. */
+    onNew(listener: () => void): () => void {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
   };
 }

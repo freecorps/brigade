@@ -1,6 +1,6 @@
 import { beforeEach, expect, test, vi } from "vite-plus/test";
 
-vi.mock("@/lib/auth-client", () => ({ server: undefined }));
+vi.mock("@/hooks/use-instance", () => ({ useActiveInstance: () => undefined }));
 
 const { loadSignUpMode, resetSignUpMode } = await import("./sign-up-mode");
 
@@ -18,6 +18,16 @@ test.each([
   const fetcher = answer(body);
   await expect(loadSignUpMode(URL, fetcher as unknown as typeof fetch)).resolves.toBe(mode);
   expect(fetcher).toHaveBeenCalledWith(URL, expect.anything());
+});
+
+test("each instance has its own mode", async () => {
+  const open = answer({ signUp: "open" });
+  const closed = answer({ signUp: "closed" });
+  await expect(loadSignUpMode(URL, open as unknown as typeof fetch)).resolves.toBe("open");
+  await expect(
+    loadSignUpMode("https://brigade.acme.example/api/config", closed as unknown as typeof fetch),
+  ).resolves.toBe("closed");
+  await expect(loadSignUpMode(URL, closed as unknown as typeof fetch)).resolves.toBe("open");
 });
 
 test("no server, or no answer, reads as closed; a failure is asked again", async () => {

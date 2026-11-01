@@ -10,7 +10,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { useSystemColors } from "@/theme/system-colors";
 import { pagingText } from "@/components/account";
 import { useMember } from "@/components/session";
-import { server } from "@/lib/auth-client";
+import { useInstance } from "@/hooks/use-instance";
 import { devicePublicKey } from "@/lib/device";
 import { BrigadePush } from "../../modules/brigade-push";
 
@@ -22,7 +22,7 @@ type PushInfo = Partial<Record<Field, string>>;
  * read), the notification permission, then the APNs device token. Registering the phone happens at sign-in
  * (src/components/session.tsx); this screen shows the result.
  */
-function loadPushInfo(set: (field: Field, value: string) => void): void {
+function loadPushInfo(origin: string, set: (field: Field, value: string) => void): void {
   const load = (field: Field, read: () => Promise<string>) =>
     read().then(
       (value) => set(field, value),
@@ -30,7 +30,7 @@ function loadPushInfo(set: (field: Field, value: string) => void): void {
     );
   const keys = BrigadePush;
   if (!keys) return;
-  const publicKey = devicePublicKey(keys, server?.auth);
+  const publicKey = devicePublicKey(keys, origin);
   void load("publicKey", () => publicKey);
   void load("permission", async () => {
     const { status } = await Notifications.requestPermissionsAsync({
@@ -49,6 +49,7 @@ export function PushDiagnostics() {
   const system = useSystemColors();
   const padding = useScreenPadding();
   const { paging } = useMember();
+  const origin = useInstance().server.auth;
   const [info, setInfo] = useState<PushInfo>({});
 
   useEffect(() => {
@@ -62,7 +63,7 @@ export function PushDiagnostics() {
       }),
     });
     let live = true;
-    loadPushInfo((field, value) => {
+    loadPushInfo(origin, (field, value) => {
       // Development only: lets a script read the values from the Metro log.
       console.log(`[brigade-push] ${JSON.stringify({ [field]: value })}`);
       if (live) setInfo((info) => ({ ...info, [field]: value }));
@@ -71,7 +72,7 @@ export function PushDiagnostics() {
       live = false;
       Notifications.setNotificationHandler(null);
     };
-  }, []);
+  }, [origin]);
 
   const mono = {
     fontFamily: Platform.select(fontFamily.native.mono),

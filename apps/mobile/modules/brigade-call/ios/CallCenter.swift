@@ -38,6 +38,8 @@ struct IncomingCall {
   var dictionary: [String: Any?] {
     [
       "id": id.uuidString.lowercased(), "title": title, "body": body, "incident": incident,
+      // The answered call acknowledges at the instance it came from (RFC 0015 section 5).
+      "workspace": workspace, "origin": origin,
       "ackKeyPressed": ackKeyPressed,
     ]
   }

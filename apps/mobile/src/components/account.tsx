@@ -19,7 +19,7 @@ import { useMember } from "@/components/session";
 import { useLocale } from "@/hooks/use-locale";
 import { useTheme } from "@/hooks/use-theme";
 import { useSystemColors } from "@/theme/system-colors";
-import { authClient } from "@/lib/auth-client";
+import { useInstance } from "@/hooks/use-instance";
 import type { Paging } from "@/lib/device";
 import { caughtUp } from "@/lib/picked";
 
@@ -28,6 +28,7 @@ const PAGING: Record<Paging, Parameters<typeof m.mobile_session>[0]["part"]> = {
   on: "pages_on",
   off: "pages_off",
   unsupported: "pages_unsupported",
+  foreign: "pages_foreign",
   taken: "pages_taken",
   limit: "pages_limit",
   failed: "pages_failed",
@@ -144,6 +145,7 @@ const RETRY_GLYPH: Glyph = { ios: "arrow.clockwise", android: "refresh", web: "r
 export function useWorkspaces() {
   const member = useMember();
   const current = member.workspaceId;
+  const { authClient } = useInstance();
   const list = authClient.useListOrganizations();
   const [switching, setSwitching] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -356,7 +358,7 @@ export function usePhonePaging() {
   return {
     text: pagingText(member.paging),
     problem: pagingProblem(member.paging),
-    muted: member.paging === "unsupported",
+    muted: member.paging === "unsupported" || member.paging === "foreign",
     /**
      * What the member can do about it: open the system settings, or try registering again now. `where` names the
      * workspace when the trouble is in another one this phone was opened in, as the incident list's notice does.

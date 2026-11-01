@@ -39,6 +39,19 @@ class PageTapTest {
   }
 
   @Test
+  fun signsTheSealedOriginWhenThereIsOne() {
+    val origin = "https://brigade.example.com"
+    val proof = PageTap.sign(key, incident, workspace, now, origin)
+    assertTrue(PageTap.verify(key, incident, workspace, now, proof, now, origin))
+    // Another instance's origin, or none, is not the tap this notification made.
+    assertFalse(PageTap.verify(key, incident, workspace, now, proof, now, "https://other.example.org"))
+    assertFalse(PageTap.verify(key, incident, workspace, now, proof, now))
+    // A tap without one signs the bytes it did before origins, so a notification posted before the update opens.
+    val plain = PageTap.sign(key, incident, workspace, now)
+    assertFalse(PageTap.verify(key, incident, workspace, now, plain, now, origin))
+  }
+
+  @Test
   fun refusesAnOldOrFutureTap() {
     val proof = PageTap.sign(key, incident, workspace, now)
     assertFalse(PageTap.verify(key, incident, workspace, now, proof, now + PageTap.MAX_AGE_MS + 1))

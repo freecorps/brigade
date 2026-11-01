@@ -9,8 +9,8 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AppState } from "react-native";
 import { useNow } from "@/components/incident-parts";
 import { useLocale } from "@/hooks/use-locale";
+import { useInstance } from "@/hooks/use-instance";
 import { queriesStatus } from "@/lib/oncall";
-import { phoneWorkspaces } from "@/lib/phone";
 import { withShifts } from "@/lib/phone-workspaces";
 import { widgetSnapshot, type WidgetSnapshot as Snapshot } from "@/lib/widget";
 import { BrigadeWidget } from "../../modules/brigade-widget";
@@ -31,6 +31,8 @@ export function useOtherWorkspaces(
   userId: string,
   workspaceId: string,
 ): NonNullable<Snapshot["others"]> {
+  // The open instance's workspaces; other instances' come with the switcher (RFC 0015 section 5).
+  const { phoneWorkspaces } = useInstance();
   const listed = useSyncExternalStore(phoneWorkspaces.subscribe, () =>
     phoneWorkspaces.current(userId),
   );
@@ -52,6 +54,7 @@ function Writer({
   workspaceName: string;
 }) {
   const { locale } = useLocale();
+  const { phoneWorkspaces } = useInstance();
   const schedules = useQuery("schedules.all", {});
   const overrides = useQuery("overrides.all", {});
   const incidents = useQuery("incidents.active", {});
@@ -97,6 +100,7 @@ function Writer({
       // The widget only goes stale; nothing else depends on it.
     }
   }, [
+    phoneWorkspaces,
     ready,
     schedules.rows,
     overrides.rows,

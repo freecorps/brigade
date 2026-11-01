@@ -1,5 +1,6 @@
-// Which Brigade the app talks to, and as whom it runs optimistic mutations. Pure, so it is tested in Node;
-// src/lib/auth-client.ts and src/components/session.tsx build the clients from it with the native pieces.
+// Where an instance's API is, which Brigade the build talks to by default, and as whom the app runs optimistic
+// mutations. Pure, so it is tested in Node; src/lib/instance-clients.ts and src/components/session.tsx build the
+// clients from it with the native pieces.
 import { isRole, type Actor, type Role } from "@freecorps/brigade-schema";
 import type { ConnectionState } from "@freecorps/brigade-sync";
 
@@ -43,22 +44,26 @@ export type Server = {
 };
 
 /**
- * The Brigade the app talks to: the dashboard's origin, which serves `/api/auth` and `/api/sync` (apps/web/worker).
- * `override` (EXPO_PUBLIC_BRIGADE_URL) is that origin, such as `https://brigade.example.com`; without it,
- * development builds (`dev`, the app's `__DEV__`) use the dev server on the Metro host. A release build never does,
- * even with a `hostUri`: with no override it has no server, and sign-in says so.
+ * The Brigade this build talks to by default: the dashboard's origin, which serves `/api/auth` and `/api/sync`
+ * (apps/web/worker). `override` (EXPO_PUBLIC_BRIGADE_URL) is that origin, such as `https://brigade.example.com`;
+ * without it, development builds (`dev`, the app's `__DEV__`) use the dev server on the Metro host. A release build
+ * never does, even with a `hostUri`: with no override it has no server, and sign-in says so. Every other instance is
+ * `serverAt` its own origin (RFC 0015 section 5).
  */
-export function brigadeServer({
-  override,
-  hostUri,
-  dev,
-}: {
-  override?: string;
-  hostUri?: string | null;
-  dev: boolean;
-}): Server | undefined {
-  const origin = serverOrigin(override, dev ? devHost(hostUri) : undefined);
-  if (!origin) return undefined;
+export function brigadeServer(build: BuildServer): Server | undefined {
+  const origin = buildOrigin(build);
+  return origin ? serverAt(origin) : undefined;
+}
+
+export type BuildServer = { override?: string; hostUri?: string | null; dev: boolean };
+
+/** The origin of the build's default instance (`brigadeServer`); undefined when it has none. */
+export function buildOrigin({ override, hostUri, dev }: BuildServer): string | undefined {
+  return serverOrigin(override, dev ? devHost(hostUri) : undefined);
+}
+
+/** Every URL the app uses at the instance whose dashboard is at `origin` (as `URL.origin` writes it). */
+export function serverAt(origin: string): Server {
   const socket = origin.replace(/^http/, "ws");
   return {
     auth: `${origin}/api/auth`,

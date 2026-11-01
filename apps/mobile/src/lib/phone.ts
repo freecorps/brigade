@@ -5,15 +5,17 @@
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
+import { defaultBuildOrigin } from "@/lib/build-origin";
 import {
   deviceId,
   devicePublicKey,
+  pairing,
   unregisterPhone,
   type DeviceDeps,
   type RegisterAnswer,
 } from "@/lib/device";
 import { DEVICE_HEADER, SESSION_LIFETIME_S } from "@freecorps/brigade-schema";
-import { PHONE_WORKSPACES_KEY, phoneWorkspacesStore } from "@/lib/phone-workspaces";
+import { phoneWorkspacesStore } from "@/lib/phone-workspaces";
 import {
   inTime,
   leftovers,
@@ -66,14 +68,23 @@ export function registerAllWith(
   };
 }
 
-/** The workspaces this phone pages the signed-in member for, in secure storage (src/lib/phone-workspaces.ts). */
-export const phoneWorkspaces = phoneWorkspacesStore({
-  read: () => SecureStore.getItemAsync(PHONE_WORKSPACES_KEY),
-  write: (raw) =>
-    raw === null
-      ? SecureStore.deleteItemAsync(PHONE_WORKSPACES_KEY)
-      : SecureStore.setItemAsync(PHONE_WORKSPACES_KEY, raw),
-});
+/**
+ * The workspaces this phone pages an instance's signed-in member for, in secure storage under `key` (src/lib/
+ * phone-workspaces.ts; src/lib/instances.ts `instanceStorage`).
+ */
+export function phoneWorkspacesAt(key: string) {
+  return phoneWorkspacesStore({
+    read: () => SecureStore.getItemAsync(key),
+    write: (raw) =>
+      raw === null ? SecureStore.deleteItemAsync(key) : SecureStore.setItemAsync(key, raw),
+  });
+}
+
+/** Pairing with an instance's origin on the native side, as this binary allows (src/lib/device.ts `pairing`). */
+export const nativePairing = {
+  keep: (origin: string) => pairing(BrigadePush, defaultBuildOrigin()).keep(origin),
+  forget: (origin: string) => pairing(BrigadePush, defaultBuildOrigin()).forget(origin),
+};
 
 /** The push tokens fetched to register, so the token listener asks for a registration only for a new one. */
 export const pushTokens = knownTokens();
@@ -81,10 +92,16 @@ export const pushTokens = knownTokens();
 /** The app's notification permission requests, so coming back from one is not taken as the member coming back. */
 export const permissions = permissionAsks();
 
+/**
+ * The phone's side of registering with the instance at `server`: `sync` runs mutations on a workspace's shard (or
+ * `mutate` stands for it), `registerAll` registers in every workspace at once, and `relay` names the phone by a relay
+ * handle instead of its tokens (src/lib/relay.ts).
+ */
 export function phoneDeps(
-  sync: WorkspaceSync,
+  sync: WorkspaceSync | Pick<DeviceDeps, "mutate">,
   server?: Server,
   registerAll?: DeviceDeps["registerAll"],
+  relay?: Pick<DeviceDeps, "handles" | "dropHandle">,
 ): DeviceDeps {
   const keys = BrigadePush;
   const android = process.env.EXPO_OS === "android";
@@ -124,12 +141,18 @@ export function phoneDeps(
     // Pages that ring as calls (RFC 0010). iOS: the module reports every VoIP push to CallKit, so its token is safe to
     // give. Android: a call is an FCM data message the app rings for, so the call token is the FCM token again.
     ...(BrigadeCall ? { voipToken: android ? pushToken : () => BrigadeCall!.getVoipToken() } : {}),
-    mutate: (name, args) => sync.client.mutate(sync.shard, name, args as never),
+    mutate:
+      "mutate" in sync
+        ? sync.mutate
+        : (name, args) => sync.client.mutate(sync.shard, name, args as never),
     ...(registerAll ? { registerAll } : {}),
-    // Delivery receipts go only to the instance this phone registered with (RFC 0006 "Delivery receipts").
+    ...(relay?.handles ? { handles: relay.handles } : {}),
+    ...(relay?.dropHandle ? { dropHandle: relay.dropHandle } : {}),
+    // Delivery receipts go only to the instances this phone registered with (RFC 0006 "Delivery receipts"): each
+    // registration adds its instance to the native list (RFC 0015 section 5).
     ...(server && keys?.setReceiptOrigin
       ? {
-          receiptOrigin: { origin: server.auth, keep: (origin) => keys.setReceiptOrigin?.(origin) },
+          receiptOrigin: { origin: server.auth, keep: nativePairing.keep },
         }
       : {}),
   };
@@ -149,6 +172,45 @@ export async function phoneDeviceId(origin?: string): Promise<string | undefined
   } catch {
     return undefined;
   }
+}
+
+/**
+ * A mutation on a workspace's shard at an instance the app does not show, over a socket of its own closed once it
+ * answers (or refused, or 10 s passed): what registering with an instance from before `POST /devices/register` needs
+ * when it is not the open one (src/components/session.tsx).
+ */
+export function oneShotMutate(
+  server: Server,
+  workspaceId: string,
+  userId: string,
+  cookie: () => Promise<string>,
+): DeviceDeps["mutate"] {
+  return async (name, args) => {
+    const failed = { ok: false as const, error: { code: "unavailable", message: "Not reached" } };
+    const value = await cookie().catch(() => "");
+    const sync = createWorkspaceSync({
+      server,
+      workspaceId,
+      // Only for the optimistic run: every role may register and unregister its own devices.
+      actor: () => memberActor(userId, undefined),
+      cookie: () => value,
+    });
+    const refused = neverOpened(sync.client, sync.shard);
+    try {
+      return await inTime(
+        () =>
+          Promise.race([
+            sync.client.mutate(sync.shard, name, args as never),
+            refused.promise.then(() => failed),
+          ]),
+        10_000,
+        failed,
+      );
+    } finally {
+      refused.dispose();
+      sync.client.close();
+    }
+  };
 }
 
 /** The sign-outs kept from offline, in secure storage: one list for the app, so its changes run in turn. */

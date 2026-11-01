@@ -23,6 +23,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "pages_on" | "On" |
 * | "pages_off" | "Notifications are off. Turn them on in Settings to be paged here." |
 * | "pages_unsupported" | "Not on this phone yet" |
+* | "pages_foreign" | "This instance pages through its own app, not this one. Install your company's app to be paged." |
 * | "pages_failed" | "Couldn't register this phone. Brigade keeps trying." |
 * | "pages_taken" | "This phone still pages the person signed in on it before you, who signed out without a connection. Brigade frees it for you once it can finish their sign-out." |
 * | "pages_limit" | "You have the most phones this workspace allows registered for pages. Sign out of Brigade on a phone you no longer use, then tap Try again." |
@@ -65,6 +66,7 @@ export const mobile_session = /** @type {((inputs: Mobile_SessionInputs, options
 		if (i?.part === "pages_on") return /** @type {LocalizedString} */ (`Ativados`);
 		if (i?.part === "pages_off") return /** @type {LocalizedString} */ (`As notificações estão desativadas. Ative-as nos Ajustes para receber chamados aqui.`);
 		if (i?.part === "pages_unsupported") return /** @type {LocalizedString} */ (`Ainda não neste telefone`);
+		if (i?.part === "pages_foreign") return /** @type {LocalizedString} */ (`Esta instância envia chamados pelo app próprio dela, não por este. Instale o app da sua empresa para receber chamados.`);
 		if (i?.part === "pages_failed") return /** @type {LocalizedString} */ (`Não foi possível registrar este telefone. O Brigade continua tentando.`);
 		if (i?.part === "pages_taken") return /** @type {LocalizedString} */ (`Este telefone ainda chama a pessoa que entrou nele antes de você e saiu sem conexão. O Brigade libera o telefone para você assim que conseguir concluir a saída dela.`);
 		if (i?.part === "pages_limit") return /** @type {LocalizedString} */ (`Você já tem o máximo de telefones que este workspace permite registrar para chamados. Saia do Brigade em um telefone que não usa mais e toque em Tentar de novo.`);
@@ -101,6 +103,7 @@ export const mobile_session = /** @type {((inputs: Mobile_SessionInputs, options
 		if (i?.part === "pages_on") return /** @type {LocalizedString} */ (`On`);
 		if (i?.part === "pages_off") return /** @type {LocalizedString} */ (`Notifications are off. Turn them on in Settings to be paged here.`);
 		if (i?.part === "pages_unsupported") return /** @type {LocalizedString} */ (`Not on this phone yet`);
+		if (i?.part === "pages_foreign") return /** @type {LocalizedString} */ (`This instance pages through its own app, not this one. Install your company's app to be paged.`);
 		if (i?.part === "pages_failed") return /** @type {LocalizedString} */ (`Couldn't register this phone. Brigade keeps trying.`);
 		if (i?.part === "pages_taken") return /** @type {LocalizedString} */ (`This phone still pages the person signed in on it before you, who signed out without a connection. Brigade frees it for you once it can finish their sign-out.`);
 		if (i?.part === "pages_limit") return /** @type {LocalizedString} */ (`You have the most phones this workspace allows registered for pages. Sign out of Brigade on a phone you no longer use, then tap Try again.`);

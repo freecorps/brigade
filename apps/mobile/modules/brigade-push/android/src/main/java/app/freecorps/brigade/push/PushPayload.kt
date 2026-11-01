@@ -188,16 +188,20 @@ data class PushSealed(val iat: Long, val exp: Long, val origin: String, val urge
 /**
  * Why a version 2 page is shown as the fallback text (packages/push `openOnPhone`), or null to show it. Plain, so the
  * JVM tests cover every branch. [keyOrigin]: the origin the key that opened it belongs to (null: the key from before
- * keys per instance, not claimed yet, which counts as the paired instance's). [paired]: the instance the phone is
- * paired with.
+ * keys per instance, not claimed yet, which counts as the paired instance's). [paired]: the instances the phone is
+ * paired with (RFC 0015 section 5: one per instance it is signed in to and registered with).
  */
 object PushChecks {
-  fun refusal(sealed: PushSealed, keyOrigin: String?, paired: String?, nowSeconds: Long): String? {
+  fun refusal(sealed: PushSealed, keyOrigin: String?, paired: Collection<String>, nowSeconds: Long): String? {
     if (nowSeconds > sealed.exp + PushSealed.CLOCK_SKEW_SECONDS) return "expired"
     if (keyOrigin != null && keyOrigin != sealed.origin) return "wrong_origin"
-    if (paired != sealed.origin) return "not_paired"
+    if (sealed.origin !in paired) return "not_paired"
     return null
   }
+
+  /** [refusal] for a phone paired with one instance, or none. */
+  fun refusal(sealed: PushSealed, keyOrigin: String?, paired: String?, nowSeconds: Long): String? =
+    refusal(sealed, keyOrigin, listOfNotNull(paired), nowSeconds)
 
   /**
    * Whether a push (shown, or the fallback text) goes on the pages channel: its sealed urgency whenever it opened and
@@ -208,12 +212,40 @@ object PushChecks {
   fun isPage(clearIsPage: Boolean, sealed: PushSealed?, refusal: String?): Boolean =
     if (sealed != null && refusal != "expired") sealed.isPage else clearIsPage
 
-  /** The receipt to post, if any: v1 to the registered instance (as before), v2 only to its sealed, paired origin. */
-  fun receiptToSend(content: PushContent, paired: String?): PushReceipt? {
+  /**
+   * The receipt to post, if any: v2 only to its sealed origin, when the phone is paired with it; v1, which seals no
+   * origin, only to the first paired instance (the one from before several instances), so a v1 page sealed by anyone
+   * holding a device key cannot make the phone call out to another paired instance. An instance added later that
+   * still seals v1 gets no receipts; its pages still show.
+   */
+  fun receiptToSend(content: PushContent, paired: List<String>): PushReceipt? {
     val receipt = content.receipt ?: return null
-    val sealed = content.sealed ?: return receipt.takeIf { it.isFor(paired) }
-    return receipt.takeIf { it.origin == sealed.origin && paired == sealed.origin }
+    val sealed = content.sealed ?: return receipt.takeIf { it.isFor(paired.firstOrNull()) }
+    return receipt.takeIf { it.origin == sealed.origin && sealed.origin in paired }
   }
+
+  /** [receiptToSend] for a phone paired with one instance, or none. */
+  fun receiptToSend(content: PushContent, paired: String?): PushReceipt? = receiptToSend(content, listOfNotNull(paired))
+}
+
+/**
+ * The instances this phone is paired with, as kept in the app's preferences (RFC 0015 section 5): one origin per line
+ * (`receipt-origins-v2`), the first the one paired before several instances (`receipt-origin-v1`, merged in front), so
+ * it stays the one that may claim the key from before keys per instance ([KeyChecks.mayTakeLegacy]). Plain, tested on
+ * the JVM.
+ */
+object ReceiptOrigins {
+  fun decode(list: String?, legacy: String?): List<String> {
+    val stored = list?.split('\n')?.filter { it.isNotEmpty() } ?: emptyList()
+    return (listOfNotNull(legacy) + stored).distinct()
+  }
+
+  fun encode(origins: List<String>): String = origins.joinToString("\n")
+
+  fun with(origins: List<String>, origin: String): List<String> =
+    if (origin in origins) origins else origins + origin
+
+  fun without(origins: List<String>, origin: String): List<String> = origins.filter { it != origin }
 }
 
 /**

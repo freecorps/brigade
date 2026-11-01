@@ -20,6 +20,7 @@ export type Mobile_SessionInputs = {
 * | "pages_on" | "On" |
 * | "pages_off" | "Notifications are off. Turn them on in Settings to be paged here." |
 * | "pages_unsupported" | "Not on this phone yet" |
+* | "pages_foreign" | "This instance pages through its own app, not this one. Install your company's app to be paged." |
 * | "pages_failed" | "Couldn't register this phone. Brigade keeps trying." |
 * | "pages_taken" | "This phone still pages the person signed in on it before you, who signed out without a connection. Brigade frees it for you once it can finish their sign-out." |
 * | "pages_limit" | "You have the most phones this workspace allows registered for pages. Sign out of Brigade on a phone you no longer use, then tap Try again." |

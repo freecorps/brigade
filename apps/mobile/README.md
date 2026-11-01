@@ -52,6 +52,16 @@ without it, a release build has no server and sign-in says so.
   ends the session. Offline it signs out on the phone only, keeps the session aside and finishes both once it is back
   online, before anyone else registers the phone (`src/lib/sign-out.ts`, RFC 0006 "A handed-over phone"). An Android
   build without Firebase (below) has no FCM token, so it shows "Not on this phone yet", muted.
+- **Relay handles** (`src/lib/relay.ts`, RFC 0015 sections 2 and 7): before registering, the app reads the
+  instance's `/api/config`. When it names this build's relay (below, "Your own app"), the app asks the relay for a
+  handle (`POST /v1/handles`) and registers the handle instead of its tokens; it keeps the handle per instance and asks
+  again only for a new push or VoIP token, a new relay or instance id, or a handle 30 days old (Q30). No relay, or a
+  relay that does not answer: the raw tokens, as before.
+- **Several instances** (`src/lib/instances.ts`, `src/lib/instance-clients.ts`, RFC 0015 section 5): up to 5, each
+  with its own session (secure storage prefix `brigade:<id>`), workspaces, queue, handle and device key; the build's
+  instance keeps the keys from before, so an existing install stays signed in. The app shows one; every other stays
+  registered in the background on its own backoff. Pages, the Acknowledge and calls go to the instance the page sealed.
+  The screens to add and switch instances come later; until then the app shows the build's instance.
 
 ## Run it
 
@@ -239,10 +249,13 @@ app ships (RFC 0015 "Order of work" step 5):
 - **Android:** a Firebase project with an Android app for the package, its `google-services.json` for the build
   (`GOOGLE_SERVICES_FILE`, "How it is wired" above) and a service account for the relay.
 - **Its instance:** `EXPO_PUBLIC_BRIGADE_URL`, the dashboard's origin the build signs in to.
-- **Its relay:** `EXPO_PUBLIC_BRIGADE_RELAY_URL`, where the app asks for handles, is **not read yet**: the app mints
-  handles with RFC 0015 step 4, and then defaults it from the instance's `/config` (`relay.origin`), so a build only
-  sets it to override that (decided, Q32). Until then the app registers raw tokens, which the instance pages through
-  the relay's `/send` with `RELAY_SEND_TOKEN` (the setup script sets it on both).
+- **Its relay:** `EXPO_PUBLIC_BRIGADE_RELAY_URL`, the relay this build is paged through (`src/lib/relay.ts`
+  `buildRelay`, Q32). Unset, a build whose `EXPO_PUBLIC_BRIGADE_URL` is not Freecorps' hosted Brigade takes the relay
+  its instance's `/config` names (`relay.origin`), so a company's build rarely sets it; the store build uses
+  `https://relay.brigade.freecorps.com.br`. The app asks that relay for handles only for instances whose `/config`
+  names it; an instance on another relay pages through its own app, so this one registers nothing there. An instance
+  with no relay in `/config`, or a relay that does not answer, gets the raw tokens, which it pages through the relay's
+  `/send` with `RELAY_SEND_TOKEN` (the setup script sets it on both).
 - **Store accounts and EAS:** the `owner`, EAS project id and update URL in `app.config.ts` are Freecorps'; the
   company's copy points them at its own Expo account (`eas init`), and its own App Store Connect and Google Play
   accounts for `eas submit`.

@@ -29,8 +29,27 @@ import java.lang.ref.WeakReference
 import java.util.UUID
 
 /** An incoming page, decrypted. `incident` is the id the ack names; null if the push carried none. */
-data class IncomingCall(val id: String, val title: String, val body: String, val incident: String?) {
-  fun toMap(): Map<String, Any?> = mapOf("id" to id, "title" to title, "body" to body, "incident" to incident)
+/**
+ * [workspace] and [origin]: the incident's workspace and the instance a version 2 page sealed, so the answered call
+ * acknowledges at that instance whichever one the app shows (RFC 0015 section 5).
+ */
+data class IncomingCall(
+  val id: String,
+  val title: String,
+  val body: String,
+  val incident: String?,
+  val workspace: String? = null,
+  val origin: String? = null,
+) {
+  fun toMap(): Map<String, Any?> =
+    mapOf(
+      "id" to id,
+      "title" to title,
+      "body" to body,
+      "incident" to incident,
+      "workspace" to workspace,
+      "origin" to origin,
+    )
 }
 
 /**

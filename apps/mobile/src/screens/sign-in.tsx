@@ -12,7 +12,7 @@ import { AccessibilityInfo, Linking } from "react-native";
 import { NativeForm } from "@/components/native-form";
 import { NewWorkspaceForm } from "@/components/new-workspace";
 import { useSessionView } from "@/components/session";
-import { authClient, server } from "@/lib/auth-client";
+import { useActiveInstance } from "@/hooks/use-instance";
 import { useSignUpMode } from "@/lib/sign-up-mode";
 
 /**
@@ -65,7 +65,8 @@ function SignInView({ view }: { view: ReturnType<typeof useSessionView> }) {
 }
 
 function SignInForm() {
-  const forgotPassword = server?.forgotPassword;
+  const instance = useActiveInstance();
+  const forgotPassword = instance?.server.forgotPassword;
   const signUpMode = useSignUpMode();
   const [values, setValues] = useState<Record<SignInField, string>>({ email: "", password: "" });
   const [errors, setErrors] = useState<FieldErrors<SignInField>>({});
@@ -95,7 +96,8 @@ function SignInForm() {
     setFailure(null);
     let error: Parameters<typeof authErrorMessage>[0] = null;
     try {
-      ({ error } = await authClient.signIn.email({
+      if (!instance) throw new Error("No server");
+      ({ error } = await instance.authClient.signIn.email({
         email: values.email.trim(),
         password: values.password,
       }));

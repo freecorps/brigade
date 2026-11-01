@@ -137,45 +137,84 @@ public enum BrigadePushCrypto {
       return "\(scheme)://\(host):\(port)"
     }
 
-    /// Whether this receipt goes to the instance the app registered the phone with (`receiptOrigin()`). A page names
-    /// its own receipt URL; only one on that origin is ever posted to, so a page sealed by anyone else holding the
-    /// device's public key cannot make the phone call out elsewhere.
+    /// Whether this version 1 receipt goes to the first paired instance (`receiptOrigin()`, the one from before several
+    /// instances). A v1 page names its own receipt URL and seals no origin, so only that instance's is ever posted
+    /// to: a page sealed by anyone else holding a device key cannot make the phone call out to another paired
+    /// instance. An instance added later that still seals v1 gets no receipts; its pages still show.
     public var isForRegisteredInstance: Bool {
-      guard let registered = BrigadePushCrypto.receiptOrigin(), let origin = Self.origin(of: url) else { return false }
-      return origin == registered
+      return Self.isFor(url: url, first: BrigadePushCrypto.receiptOrigin())
+    }
+
+    /// `isForRegisteredInstance` with the first paired origin given, for tests.
+    static func isFor(url: URL, first: String?) -> Bool {
+      guard let first, let origin = Self.origin(of: url) else { return false }
+      return origin == first
     }
   }
 
-  // MARK: - Receipt origin (the paired instance)
+  // MARK: - Receipt origins (the paired instances)
 
+  /// The one paired instance from before several instances; merged into `receiptOriginsKey` on the next change.
   private static let receiptOriginKey = "receipt-origin-v1"
+  /// Every paired instance (RFC 0015 section 5): one per instance the app registered the phone with.
+  private static let receiptOriginsKey = "receipt-origins-v2"
 
-  /// Keeps the origin of the instance the app registered this phone with, in the App Group's defaults, where the
-  /// extension reads it (RFC 0006 "Delivery receipts"). False for anything but an http(s) origin.
+  /// Adds the instance the app registered this phone with to the paired ones, in the App Group's defaults, where the
+  /// extension reads them (RFC 0006 "Delivery receipts"). False for anything but an http(s) origin.
   public static func setReceiptOrigin(_ value: String) -> Bool {
-    guard
-      let origin = normalizedOrigin(value),
-      let defaults = UserDefaults(suiteName: appGroup)
-    else { return false }
-    defaults.set(origin, forKey: receiptOriginKey)
+    guard let origin = normalizedOrigin(value), let defaults = UserDefaults(suiteName: appGroup) else { return false }
+    write(withOrigin(receiptOrigins(), origin), to: defaults)
     return true
   }
 
-  /// Forgets the paired instance: the member signed out on this phone. Its v2 pages then show the fallback text and
-  /// send no receipt until the app registers the phone there again.
-  public static func clearReceiptOrigin() {
-    UserDefaults(suiteName: appGroup)?.removeObject(forKey: receiptOriginKey)
+  /// Forgets the instance at `value` (the member signed out there), or every one without it. Its v2 pages then show
+  /// the fallback text and send no receipt until the app registers the phone there again; the others stay paired.
+  public static func clearReceiptOrigin(_ value: String? = nil) {
+    guard let defaults = UserDefaults(suiteName: appGroup) else { return }
+    guard let value else { return write([], to: defaults) }
+    guard let origin = normalizedOrigin(value) else { return }
+    write(withoutOrigin(receiptOrigins(), origin), to: defaults)
   }
 
-  /// The registered instance's origin; nil until the app registered the phone since it learned to keep it.
+  /// The paired instances, the one from before several instances first.
+  public static func receiptOrigins() -> [String] {
+    let defaults = UserDefaults(suiteName: appGroup)
+    return decodeOrigins(
+      list: defaults?.stringArray(forKey: receiptOriginsKey), legacy: defaults?.string(forKey: receiptOriginKey))
+  }
+
+  /// The first paired instance: the one that may adopt the key from before keys per instance (`mayAdoptLegacy`), and
+  /// the key JavaScript that names no origin gets. Nil until the app registered the phone since it learned to keep it.
   public static func receiptOrigin() -> String? {
-    return UserDefaults(suiteName: appGroup)?.string(forKey: receiptOriginKey)
+    return receiptOrigins().first
   }
 
-  /// Whether this phone is paired with `origin`: today the one instance the app registered with (one per build until
-  /// several instances, RFC 0015 step 4, make it a list).
+  /// Whether this phone is paired with `origin`: one of the instances the app registered with.
   static func isPaired(_ origin: String) -> Bool {
-    return receiptOrigin() == origin
+    return receiptOrigins().contains(origin)
+  }
+
+  /// Written as the list alone: the one from before several instances is in it, first, from the first change.
+  private static func write(_ origins: [String], to defaults: UserDefaults) {
+    defaults.set(origins, forKey: receiptOriginsKey)
+    defaults.removeObject(forKey: receiptOriginKey)
+  }
+
+  /// The stored list with the one from before several instances in front, each once. Android: `ReceiptOrigins`.
+  static func decodeOrigins(list: [String]?, legacy: String?) -> [String] {
+    var origins: [String] = []
+    for origin in [legacy].compactMap({ $0 }) + (list ?? []) where !origin.isEmpty && !origins.contains(origin) {
+      origins.append(origin)
+    }
+    return origins
+  }
+
+  static func withOrigin(_ origins: [String], _ origin: String) -> [String] {
+    return origins.contains(origin) ? origins : origins + [origin]
+  }
+
+  static func withoutOrigin(_ origins: [String], _ origin: String) -> [String] {
+    return origins.filter { $0 != origin }
   }
 
   /// `value`'s origin when it is an http(s) URL; nil otherwise.
@@ -222,13 +261,13 @@ public enum BrigadePushCrypto {
   /// Opens the `brigade` field of a push: `{ v: 1, enc, ct }` or `{ v: 2, k, enc, ct }` (packages/push
   /// `PushEnvelope`). Every throw is the fallback text to the caller, never silence.
   public static func open(envelope: Any?, now: Date = Date()) throws -> Content {
-    return try open(envelope: envelope, now: now, keys: allKeys, paired: receiptOrigin())
+    return try open(envelope: envelope, now: now, keys: allKeys, paired: receiptOrigins())
   }
 
-  /// `open` with the phone's keys and paired origin given: what it checks, without the Keychain.
+  /// `open` with the phone's keys and paired origins given: what it checks, without the Keychain.
   static func open(
     envelope: Any?, now: Date, keys allKeys: () throws -> [(origin: String?, key: P256.KeyAgreement.PrivateKey)],
-    paired: String?
+    paired: [String]
   ) throws -> Content {
     guard #available(iOS 17.0, macOS 14.0, *) else { throw Failure.unsupportedOS }
     guard
@@ -240,10 +279,13 @@ public enum BrigadePushCrypto {
     else { throw Failure.malformedEnvelope }
 
     if version == envelopeVersion {
-      // As before keys per instance: the paired instance's key first, then any other this phone has.
+      // As before keys per instance: the paired instances' keys first, then any other this phone has.
       let keys = try allKeys()
       guard !keys.isEmpty else { throw Failure.noKey }
-      let ordered = keys.filter { $0.origin != nil && $0.origin == paired } + keys.filter { $0.origin == nil || $0.origin != paired }
+      let pairedKey = { (entry: (origin: String?, key: P256.KeyAgreement.PrivateKey)) -> Bool in
+        entry.origin.map(paired.contains) ?? false
+      }
+      let ordered = keys.filter(pairedKey) + keys.filter { !pairedKey($0) }
       var lastError: Error = Failure.noKey
       for entry in ordered {
         do {
@@ -266,7 +308,7 @@ public enum BrigadePushCrypto {
     if Int64(now.timeIntervalSince1970) > sealed.exp + clockSkew { throw Failure.expired }
     // The unclaimed key from before keys per instance counts as the paired instance's.
     if let origin = entry.origin, origin != sealed.origin { throw Failure.wrongOrigin(urgency: sealed.urgency) }
-    guard paired == sealed.origin else { throw Failure.notPaired(urgency: sealed.urgency) }
+    guard paired.contains(sealed.origin) else { throw Failure.notPaired(urgency: sealed.urgency) }
     return opened
   }
 

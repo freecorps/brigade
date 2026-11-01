@@ -14,7 +14,39 @@ export type DeviceRegistration = {
    * instance from before the capability, whose `device.register` refuses unknown keys, still registers the phone.
    */
   criticalAlerts?: true;
+  /** The newest envelope the app opens (RFC 0015 section 4), only to an instance that knows the key (src/lib/relay.ts). */
+  envelope?: 2;
 };
+
+/**
+ * `device.register` with a relay handle (RFC 0015 section 7): the raw tokens left out, so the instance never sees them.
+ * `voip`: whether the handle can ring as a call.
+ */
+export type HandleRegistration = Omit<
+  DeviceRegistration,
+  "pushToken" | "voipToken" | "envelope"
+> & {
+  handle: string;
+  tag: string;
+  voip: boolean;
+  envelope: 2;
+};
+
+/** What the app sends `device.register`. */
+export type RegistrationArgs = DeviceRegistration | HandleRegistration;
+
+export function hasHandle(args: RegistrationArgs): args is HandleRegistration {
+  return "handle" in args;
+}
+
+/**
+ * `device.register` codes that refuse a handle: the only one is `invalid_args` (a handle or tag of the wrong form, or an
+ * instance from before handles; the instance never opens a handle, so `bad_handle` and `handle_not_yours` come only
+ * from the relay at send time). The kept handle is dropped, the raw tokens sent at once, and a new handle asked for on
+ * the next registration (Q30). A handle the relay refuses at send time shows on the phone as its device leaving the
+ * shard (`device.expire`), which drops the kept handle too (src/components/session.tsx, RFC 0015 section 7).
+ */
+export const HANDLE_REFUSALS: ReadonlySet<string> = new Set(["invalid_args"]);
 
 /**
  * The device's id, derived from its public key (the first 10 bytes of the key's x coordinate, as a ULID's
@@ -91,6 +123,11 @@ export type Paging =
   | "off"
   /** No device key or push token on this build (an Android build without Firebase, RFC 0006). */
   | "unsupported"
+  /**
+   * The instance pages through another relay, so only through its own app build (RFC 0015 section 5): this app is
+   * never paged by it and registers nothing there.
+   */
+  | "foreign"
   /** Another member's device has this id: they never signed out on this phone (RFC 0006 "A handed-over phone"). */
   | "taken"
   /**
@@ -148,7 +185,14 @@ export type DeviceDeps = {
    * `POST /devices/register` with the registration and the workspaces to register in, with the member's session.
    * Absent: only the open workspace registers, over `mutate`.
    */
-  registerAll?: (args: DeviceRegistration, workspaces: string[]) => Promise<RegisterAnswer>;
+  registerAll?: (args: RegistrationArgs, workspaces: string[]) => Promise<RegisterAnswer>;
+  /**
+   * The registration this instance gets (src/lib/relay.ts `withHandle`): with a relay handle, the raw tokens (no relay,
+   * or the relay did not answer), or `foreign` (the instance pages through its own app build). Absent: the raw tokens.
+   */
+  handles?: (args: DeviceRegistration) => Promise<RegistrationArgs | "foreign">;
+  /** Forgets the kept handle: the instance refused it (`HANDLE_REFUSALS`). */
+  dropHandle?: () => Promise<void>;
   /** Runs a mutation on the open workspace's shard. */
   mutate: (
     name: "device.register" | "device.unregister",
@@ -166,16 +210,23 @@ export async function registerPhone(
   proceed: () => boolean = () => true,
 ): Promise<Paging> {
   try {
-    const args = await registration(deps);
-    if (typeof args === "string") return args;
-    return await registerHere(deps, args, proceed);
+    const steps = await registration(deps);
+    if (typeof steps === "string") return steps;
+    return await registerHere(deps, steps, proceed);
   } catch {
     return "failed";
   }
 }
 
-/** The registration to send, or why there is none. Throws when the key or a token fails. */
-async function registration(deps: DeviceDeps): Promise<DeviceRegistration | "unsupported" | "off"> {
+/**
+ * What to send, newest first, or why there is nothing to send. Each next step is for an instance that refused the one
+ * before (`invalid_args`, or a handle refusal): the raw tokens instead of a handle, then without the keys an older
+ * instance does not know (`criticalAlerts`, `envelope`), so the phone is paged rather than not at all. Throws when
+ * the key or a token fails.
+ */
+async function registration(
+  deps: DeviceDeps,
+): Promise<RegistrationArgs[] | "unsupported" | "off" | "foreign"> {
   if (!deps.publicKey) return "unsupported";
   const publicKey = await deps.publicKey();
   if (!(await deps.permission())) return "off";
@@ -183,7 +234,7 @@ async function registration(deps: DeviceDeps): Promise<DeviceRegistration | "uns
   // A VoIP token that is not there by the time the alert token is gets registered when it arrives (`onVoipToken`).
   const voip = callToken(deps);
   const pushToken = await deps.pushToken();
-  return deviceRegistration({
+  const base = deviceRegistration({
     publicKey,
     pushToken,
     // Android's call token is its FCM token, fetched like the push token: waited for, since nothing registers it
@@ -196,6 +247,29 @@ async function registration(deps: DeviceDeps): Promise<DeviceRegistration | "uns
     platform: deps.platform,
     apsEnvironment: deps.apsEnvironment,
   });
+  // A relay that cannot be asked never stops the phone from registering its tokens.
+  const sent = deps.handles ? await deps.handles(base).catch(() => base) : base;
+  if (sent === "foreign") return "foreign";
+  const { criticalAlerts: _, envelope: __, ...legacy } = base;
+  const steps: RegistrationArgs[] = [sent];
+  if (hasHandle(sent)) steps.push({ ...base, envelope: 2 });
+  steps.push(legacy);
+  return steps.filter((step, index) => steps.findIndex((other) => sameArgs(other, step)) === index);
+}
+
+function sameArgs(a: RegistrationArgs, b: RegistrationArgs): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** Whether `code` refuses `args` in a way an older form of it may pass (`registration`'s steps). */
+function refusesForm(args: RegistrationArgs, code: string | undefined): boolean {
+  if (code === undefined) return false;
+  return code === "invalid_args" || (hasHandle(args) && HANDLE_REFUSALS.has(code));
+}
+
+/** A refused handle is forgotten, so the next registration asks the relay for a new one. */
+async function dropRefusedHandle(deps: DeviceDeps, args: RegistrationArgs): Promise<void> {
+  if (hasHandle(args)) await deps.dropHandle?.().catch(() => {});
 }
 
 /**
@@ -218,25 +292,23 @@ export async function registerEverywhere(
   const every = (paging: Paging): Registrations =>
     Object.fromEntries(all.map((id) => [id, paging]));
   try {
-    const args = await registration(deps);
-    if (typeof args === "string") return every(args);
-    if (!deps.registerAll) return { [active]: await registerHere(deps, args, proceed) };
-    if (!proceed()) return every("pending");
-    let answer = await deps.registerAll(args, all);
-    // As over the socket: an instance from before Critical Alerts refuses the unknown key.
-    if (
-      answer.ok &&
-      "criticalAlerts" in args &&
-      Object.values(answer.workspaces).includes("invalid_args")
-    ) {
-      const { criticalAlerts: _, ...older } = args;
+    const steps = await registration(deps);
+    if (typeof steps === "string") return every(steps);
+    if (!deps.registerAll) return { [active]: await registerHere(deps, steps, proceed) };
+    let answer: RegisterAnswer = { ok: false, status: 0 };
+    // As over the socket: an older instance refuses keys it does not know, and an instance may refuse a handle.
+    for (const [index, args] of steps.entries()) {
       if (!proceed()) return every("pending");
-      answer = await deps.registerAll(older, all);
+      answer = await deps.registerAll(args, all);
+      if (!answer.ok) {
+        if (answer.status === 404) return { [active]: await registerHere(deps, steps, proceed) };
+        return every("failed");
+      }
+      const codes = Object.values(answer.workspaces);
+      if (index === steps.length - 1 || !codes.some((code) => refusesForm(args, code))) break;
+      await dropRefusedHandle(deps, args);
     }
-    if (!answer.ok) {
-      if (answer.status === 404) return { [active]: await registerHere(deps, args, proceed) };
-      return every("failed");
-    }
+    if (!answer.ok) return every("failed");
     const registered: Registrations = {};
     const left: string[] = [];
     for (const id of all) {
@@ -255,21 +327,24 @@ export async function registerEverywhere(
   }
 }
 
-/** `device.register` on the open workspace's socket. */
+/** `device.register` on the open workspace's socket, each of `steps` in turn while the shard refuses its form. */
 async function registerHere(
   deps: DeviceDeps,
-  args: DeviceRegistration,
+  steps: RegistrationArgs[],
   proceed: () => boolean,
 ): Promise<Paging> {
   try {
-    if (!proceed()) return "pending";
-    let result = await deps.mutate("device.register", args);
-    // An instance from before Critical Alerts refuses the unknown key: register without it, so the phone is still
-    // paged (time-sensitive) rather than not at all.
-    if (!result.ok && result.error.code === "invalid_args" && "criticalAlerts" in args) {
-      const { criticalAlerts: _, ...older } = args;
+    let result: Awaited<ReturnType<DeviceDeps["mutate"]>> = {
+      ok: false,
+      error: { code: "internal", message: "Nothing to send" },
+    };
+    // An instance from before Critical Alerts (or envelopes, or handles) refuses the unknown key: register without it,
+    // so the phone is still paged rather than not at all.
+    for (const [index, args] of steps.entries()) {
       if (!proceed()) return "pending";
-      result = await deps.mutate("device.register", older);
+      result = await deps.mutate("device.register", args);
+      if (result.ok || index === steps.length - 1 || !refusesForm(args, result.error.code)) break;
+      await dropRefusedHandle(deps, args);
     }
     // `conflict`: registered already with these values.
     if (result.ok || result.error.code === "conflict") {
@@ -327,6 +402,48 @@ export function instanceOrigin(url: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** The push module's pairing calls (modules/brigade-push), as `pairing` reads them. */
+export type PairingModule = {
+  setReceiptOrigin?(origin: string): boolean;
+  clearReceiptOrigin?(origin?: string): void;
+  readonly receiptOriginList?: boolean;
+};
+
+/**
+ * Pairing the phone with an instance's origin on the native side (RFC 0015 section 5). A binary with the list
+ * (`receiptOriginList`) adds and removes each origin. An older one keeps one origin, which `setReceiptOrigin`
+ * replaces, and its `clearReceiptOrigin` takes no argument (one passed throws): there only the build's default
+ * instance (`defaultOrigin`) is paired and forgotten, so a second instance never takes its pages' origin away.
+ * Never throws.
+ */
+export function pairing(
+  module: PairingModule | null,
+  defaultOrigin: string | undefined,
+): { keep: (origin: string) => void; forget: (origin: string) => void } {
+  const list = module?.receiptOriginList === true;
+  const mine = (origin: string) =>
+    list || (defaultOrigin !== undefined && origin === defaultOrigin);
+  return {
+    keep: (origin) => {
+      if (!mine(origin)) return;
+      try {
+        module?.setReceiptOrigin?.(origin);
+      } catch {
+        // An app binary from before receipts has no such call.
+      }
+    },
+    forget: (origin) => {
+      if (!mine(origin)) return;
+      try {
+        if (list) module?.clearReceiptOrigin?.(origin);
+        else module?.clearReceiptOrigin?.();
+      } catch {
+        // Never in sign-out's way.
+      }
+    },
+  };
 }
 
 /** Never in registration's way: without it the extension only sends no receipts. */

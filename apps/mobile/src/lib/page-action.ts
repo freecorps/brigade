@@ -5,6 +5,7 @@
 //
 // The names below must match modules/brigade-push/ios/BrigadePage.swift, which sets the category and the ids on a
 // decrypted page (the Notification Service Extension) and on the page CallKit's fallback posts.
+import type { MutationOutcome, SyncErrorCode } from "@freecorps/brigade-sync";
 
 /** The category of a page that can be acknowledged from its notification. */
 export const PAGE_CATEGORY = "brigade_page";
@@ -93,6 +94,61 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+/**
+ * Which instance a page's tap, Acknowledge, call or receipt goes to (RFC 0015 section 5 "Opening a page"): a version 2
+ * page to the instance at its sealed origin, whichever one the app shows, and to none when the phone has no instance
+ * there (removed, or never added: nothing is sent); a version 1 page, which names none, to the one the app shows, as
+ * before several instances.
+ */
+export function pageInstance<T extends { origin: string }>(
+  page: { origin?: string },
+  instances: readonly T[],
+  active: T | undefined,
+): T | undefined {
+  if (page.origin === undefined) return active;
+  return instances.find((instance) => instance.origin === page.origin);
+}
+
+/**
+ * Where an answered call's ack goes: over the open workspace's socket (`sync`) for a call from the instance and
+ * workspace the app shows, or one that names no instance (as before several instances); over HTTPS (`http`, the
+ * Acknowledge action's route) to the instance it came from otherwise; nowhere (`none`) for an instance not on this
+ * phone, or another instance's call without its workspace.
+ */
+export function callAckRoute<T extends { origin: string }>(
+  call: { origin?: string | null; workspace?: string | null },
+  instances: readonly T[],
+  active: T | undefined,
+  openWorkspace: string | undefined,
+): { kind: "sync" } | { kind: "http"; instance: T; workspace: string } | { kind: "none" } {
+  if (!call.origin) return { kind: "sync" };
+  const instance = instances.find((one) => one.origin === call.origin);
+  if (!instance) return { kind: "none" };
+  const workspace = call.workspace ?? undefined;
+  // By origin, not identity: the list and the active instance may come from different snapshots.
+  if (
+    instance.origin === active?.origin &&
+    (workspace === undefined || workspace === openWorkspace)
+  ) {
+    return { kind: "sync" };
+  }
+  return workspace === undefined ? { kind: "none" } : { kind: "http", instance, workspace };
+}
+
+/** An ack over HTTPS, as the call screen reads a mutation's outcome (`conflict` is acknowledged already). */
+export function ackMutationOutcome(outcome: AckOutcome): MutationOutcome {
+  if (outcome === "acknowledged") return { ok: true, version: 0 };
+  const codes = {
+    already: "conflict",
+    inactive: "invalid_transition",
+    not_found: "not_found",
+    forbidden: "forbidden",
+    signed_out: "forbidden",
+    failed: "closed",
+  } as const satisfies Record<Exclude<AckOutcome, "acknowledged">, SyncErrorCode>;
+  return { ok: false, error: { code: codes[outcome], message: outcome } };
 }
 
 /**

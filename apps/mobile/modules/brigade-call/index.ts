@@ -6,6 +6,10 @@ export type IncomingCall = {
   title: string;
   body: string;
   incident?: string | null;
+  /** The incident's workspace, from the sealed page; absent from builds before several instances. */
+  workspace?: string | null;
+  /** The instance a version 2 page sealed (RFC 0015 section 4): the ack goes there. */
+  origin?: string | null;
   /** iOS: 1 was pressed on CallKit's keypad, maybe before JavaScript was listening. */
   ackKeyPressed?: boolean;
 };

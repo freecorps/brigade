@@ -1,7 +1,10 @@
 import { requireOptionalNativeModule, type EventSubscription } from "expo";
 
-/** A page notification the member tapped (Android): the incident it is about and its workspace. */
-export type OpenedPage = { incident: string; workspace: string };
+/**
+ * A page notification the member tapped (Android): the incident it is about, its workspace and, for a version 2 page,
+ * the instance it sealed.
+ */
+export type OpenedPage = { incident: string; workspace: string; origin?: string };
 
 type Events = {
   /** Android: a page's notification was tapped while the app was running. */
@@ -25,17 +28,23 @@ interface BrigadePushModule {
    */
   finishPageAction(id: string): void;
   /**
-   * Keeps the instance's origin (`https://brigade.example.com`) where the code that opens pages reads it (the iOS
-   * App Group, Android's preferences): it posts delivery receipts to that origin only. False for an origin it could
-   * not read. Absent from an app binary built before receipts.
+   * Adds the instance's origin (`https://brigade.example.com`) to the paired ones, where the code that opens pages
+   * reads them (the iOS App Group, Android's preferences): it opens version 2 pages and posts delivery receipts for
+   * those origins only (RFC 0015 section 5). False for an origin it could not read. Absent from an app binary built
+   * before receipts; a binary without `receiptOriginList` keeps one origin, which each call replaces, so the app sets
+   * only the build's default instance there (src/lib/device.ts `pairing`).
    */
   setReceiptOrigin?(origin: string): boolean;
   /**
-   * Forgets the instance kept by `setReceiptOrigin`: the member signed out on this phone. Its version 2 pages then
-   * show the fallback text and send no receipt until the app registers the phone there again (RFC 0015 section 4).
-   * Absent from an app binary from before it.
+   * Forgets the instance at `origin`: the member signed out there. Its version 2 pages then show the fallback text and
+   * send no receipt until the app registers the phone there again (RFC 0015 section 4); the other instances stay
+   * paired. A binary without `receiptOriginList` takes no argument (one passed throws, forgetting nothing): the app
+   * calls it without one, and only for the build's default instance (src/lib/device.ts `pairing`). Absent from an
+   * app binary from before it.
    */
-  clearReceiptOrigin?(): void;
+  clearReceiptOrigin?(origin?: string): void;
+  /** Whether the paired instances are a list (several instances, RFC 0015 section 5). */
+  readonly receiptOriginList?: boolean;
   /** Whether pages can be opened on this OS (HPKE needs iOS 17; every supported Android version). */
   readonly canDecrypt: boolean;
   /**

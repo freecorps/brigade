@@ -52,10 +52,13 @@ export function drainer<T extends Drainable>(deps: {
     take(key: string): T | undefined {
       return stop(key);
     },
-    /** Signing out: every draining client closed at once; nothing they queued is sent after. */
-    closeAll(): void {
+    /**
+     * Signing out: every draining client closed at once, or only those whose key starts with `prefix` (one instance's,
+     * src/components/session.tsx); nothing they queued is sent after.
+     */
+    closeAll(prefix = ""): void {
       // Deleting the entry being visited is safe while iterating a Map.
-      for (const key of draining.keys()) stop(key)?.close();
+      for (const key of draining.keys()) if (key.startsWith(prefix)) stop(key)?.close();
     },
     size: () => draining.size,
   };

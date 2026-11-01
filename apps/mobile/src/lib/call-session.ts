@@ -11,6 +11,9 @@ export type ActiveCall = {
   title: string;
   body: string;
   incident?: string | null;
+  /** The incident's workspace and the instance a version 2 page sealed: where the ack goes (RFC 0015 section 5). */
+  workspace?: string | null;
+  origin?: string | null;
   /** iOS: 1 was pressed on CallKit's keypad before JavaScript was listening (a cold launch). */
   ackKeyPressed?: boolean;
 };
@@ -25,7 +28,8 @@ export type AckState =
 export type CallState = { call: ActiveCall; ack: AckState; ended: boolean } | null;
 
 export type CallDeps = {
-  ack(incident: string): Promise<MutationOutcome>;
+  /** `call`: the call being acknowledged, whose instance and workspace say where (src/lib/call.ts). */
+  ack(incident: string, call: ActiveCall): Promise<MutationOutcome>;
   speak(text: string, language: string): void;
   endCall(id: string): void;
 };
@@ -132,7 +136,7 @@ export class CallSession {
     const incident = state.call.incident;
     if (!incident || state.ack.kind === "sending" || state.ack.kind === "acknowledged") return;
     this.#update({ kind: "sending" });
-    const outcome = await this.deps.ack(incident);
+    const outcome = await this.deps.ack(incident, state.call);
     if (this.#state?.call.id !== state.call.id) return;
     if (outcome.ok || outcome.error.code === "conflict") {
       this.#update({ kind: "acknowledged" });

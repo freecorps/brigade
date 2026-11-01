@@ -12,7 +12,7 @@ import { useRef, useState } from "react";
 import { AccessibilityInfo } from "react-native";
 import { NativeForm } from "@/components/native-form";
 import { workspaceNameError } from "@/components/new-workspace";
-import { authClient, server } from "@/lib/auth-client";
+import { useActiveInstance } from "@/hooks/use-instance";
 import { useSignUpMode } from "@/lib/sign-up-mode";
 import { createWorkspace } from "@/lib/workspaces";
 
@@ -53,6 +53,7 @@ export function SignUp() {
   const [busy, setBusy] = useState(false);
   const sending = useRef(false);
   const signUpMode = useSignUpMode();
+  const instance = useActiveInstance();
 
   const change = (field: SignUpField) => (text: string) => {
     setValues((current) => ({ ...current, [field]: text }));
@@ -79,6 +80,8 @@ export function SignUp() {
         AccessibilityInfo.announceForAccessibility(message);
       return;
     }
+    if (!instance) return;
+    const { authClient, server } = instance;
     sending.current = true;
     setBusy(true);
     setFailure(null);
@@ -102,9 +105,7 @@ export function SignUp() {
       return fail(authErrorMessage(null, "after-sign-up"));
     }
     const cookie = await authClient.getCookie().catch(() => "");
-    const created = server
-      ? await createWorkspace(server.workspaces, values.workspace.trim(), cookie)
-      : undefined;
+    const created = await createWorkspace(server.workspaces, values.workspace.trim(), cookie);
     if (created?.ok) {
       try {
         await authClient.organization.setActive({ organizationId: created.id });

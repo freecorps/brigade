@@ -64,8 +64,8 @@ Choose **1, Freecorps' relay (recommended)**. The script:
 Then, **required, or no phone is paged:**
 
 - **Remove the API's `RELAY` service binding** and deploy the API again. The production build binds `RELAY` to a
-  relay Worker on your own account (`apps/api/vite.config.ts`, `PRODUCTION_BINDINGS`; `dev` and `staging`:
-  `services` in `apps/api/wrangler.jsonc`), and the API sends through that binding before `RELAY_URL`. That relay
+  relay Worker on your own account (production: `apps/api/vite.config.ts`, `PRODUCTION_BINDINGS`; `dev`: `services`
+  in `apps/api/wrangler.jsonc`; `staging` has none), and the API sends through that binding before `RELAY_URL`. That relay
   does not know your instance. The script reads those files and says whether the binding is there.
 - **Keep the instance key in a password manager**, then delete the file. If it is lost, your instance gets a new id,
   and every phone has to open the app once before it is paged again.

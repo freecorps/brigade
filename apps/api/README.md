@@ -518,8 +518,9 @@ Workers of that environment (default production). It asks which relay, then:
      list them for any reason but "this Worker does not exist" (Cloudflare error 10007), the script stops, since new
      handle keys would void every phone's handle; `--assume-new-relay` goes on anyway;
   2. builds `apps/relay` and sets its secrets: `BRIGADE_OWN_RELAY`, a new `RELAY_ADMIN_TOKEN`, `RELAY_APNS_TOPIC`
-     (the bundle id) and `RELAY_REGISTRATION=closed` (secrets, so a later deploy with no flags keeps them; a relay
-     set up when they were `deploy --var` gets them on this run); `APNS_KEY`,
+     (the bundle id) and `RELAY_CLOSED=1` (secrets, so a later deploy with no flags keeps them; a relay set up when
+     the topic and `RELAY_REGISTRATION=closed` were `deploy --var` gets them on this run, under names those vars
+     never had, and stays closed throughout); `APNS_KEY`,
      `APNS_KEY_ID`, `APNS_TEAM_ID` and `FCM_SERVICE_ACCOUNT` unless the relay has them, which are kept unless
      `--replace-credentials` (or yes to the question; wrong ones stop every page through it); and `RELAY_HANDLE_KEYS`,
      `RELAY_TAG_KEY` and `RELAY_SEND_TOKEN` only if the relay has none;

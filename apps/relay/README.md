@@ -120,7 +120,8 @@ treats it as optional and then limits nothing per IP. For the hosted relay's con
 Sending (as `apps/api`), are still to be added; until then `/v1/instances/contact` answers `503 not_configured`.
 `RELAY_TERMS_VERSION` is a var (`draft-2026-11`, RFC 0015 decision D5).
 
-**Closed registration** (`RELAY_REGISTRATION=closed`, a company's own relay, RFC 0015 section 8): no terms, no
+**Closed registration** (the secret `RELAY_CLOSED=1`, a company's own relay, RFC 0015 section 8; an older relay's var
+`RELAY_REGISTRATION=closed` closes it too, `src/instances.ts` `registrationClosed`): no terms, no
 emailed codes. `/v1/instances/contact` answers `403 registration_closed`. `POST /v1/instances`, still signed with the
 instance key, registers the signer's original key only when it also carries the relay's admin secret,
 `Authorization: Bearer <RELAY_ADMIN_TOKEN>` (compared in constant time, `src/auth.ts`): `201 { instance, status,
@@ -129,8 +130,9 @@ terms: "none", termsCurrent: true }`, with `contact` optional (`400 invalid_cont
 `RELAY_ADMIN_TOKEN` is unset, `401 admin_unauthorized`; a key that is not the instance id's original one `403
 instance_unregistered`. A registered instance gets its record (`200`) with or without the token. A closed relay does
 not need `RELAY_TERMS_VERSION`. An open relay ignores the header. `vp run setup:relay` (choice "your own relay",
-apps/api README "Push relay") sets `RELAY_REGISTRATION=closed` as a secret (not a var, so every later deploy keeps
-it; it is read the same way), makes the admin token and
+apps/api README "Push relay") sets `RELAY_CLOSED=1` as a secret (so every later deploy keeps it; a relay deployed by
+an older script with `--var RELAY_REGISTRATION:closed` stays closed by that var until this deploy drops it, and by the
+secret after), makes the admin token and
 registers the instance with it, then deletes it (`RELAY_ADMIN_TOKEN` unset: nothing more registers); running it again
 makes a new one. It also sets `BRIGADE_OWN_RELAY`, a marker with nothing secret in it: a relay Worker without it was
 not set up by the script, and the script does not deploy over it without `--take-over-relay`.
@@ -216,11 +218,12 @@ Optional, for handles and `/v1/send` (see "Handles and /v1/send"): `RELAY_HANDLE
 `RELAY_TAG_KEY`. Not in `secrets.required` either, so `/send` keeps deploying without them.
 
 Optional, for a company's own relay: `RELAY_ADMIN_TOKEN` (the secret that authorizes closed registration),
-`RELAY_REGISTRATION=closed` (see "Closed registration" above) and `RELAY_APNS_TOPIC`, the company's bundle id, which
-takes precedence over the `APNS_TOPIC` var when set (a secret cannot share a var's name). `vp run setup:relay` sets
-all three as secrets, so a later `wrangler deploy` with no flags keeps them; wrangler.jsonc stays as it is. A relay set
-up by an earlier version of the script (the topic and registration as `deploy --var`) gets the secrets the next time
-the script runs. Make each key with
+`RELAY_CLOSED=1` (see "Closed registration" above) and `RELAY_APNS_TOPIC`, the company's bundle id, which takes
+precedence over the `APNS_TOPIC` var when set. `vp run setup:relay` sets all three as secrets, so a later `wrangler
+deploy` with no flags keeps them; wrangler.jsonc stays as it is. A secret may not share a deployed var's name, so
+none of them is named like a var any version of the script deployed: a relay set up by an earlier version (the
+topic and `RELAY_REGISTRATION=closed` as `deploy --var`) gets the secrets on the script's next run, then the deploy
+drops the old vars. Make each key with
 `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='` (32 random bytes in base64url) into the secrets file outside
 the repository, never into this repository or a shell history.
 

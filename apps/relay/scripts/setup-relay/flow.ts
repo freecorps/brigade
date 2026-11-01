@@ -141,7 +141,8 @@ const RELAY_WORKER: Partial<Record<Environment, string>> = {
 const EMAIL = /^[^\s@<>",;]+@[^\s@<>",;]+\.[^\s@<>",;]+$/;
 const HOSTNAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
 const APPLE_ID = /^[A-Z0-9]{10}$/;
-const BUNDLE_ID = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
+/** The app's bundle id rule, the same as `APP_ID_PATTERN` in apps/mobile `plugins/app-id.ts` (both stores accept it). */
+const BUNDLE_ID = /^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)+$/;
 
 /** Runs the whole setup; resolves to the exit code, or throws `Stop`. */
 export async function setupRelay(options: Options, deps: Deps): Promise<number> {
@@ -518,7 +519,9 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
     // Secrets, not `deploy --var`: a later deploy without flags (CI, by hand) keeps them. Set before the deploy, so the
     // Worker is closed from its first version; a relay deployed with the old `--var` flags gets them on this run.
     RELAY_APNS_TOPIC: needs.bundleId,
-    RELAY_REGISTRATION: "closed",
+    // `RELAY_CLOSED`, not `RELAY_REGISTRATION`: a relay set up with the old flags has a var by that name, and a
+    // secret may not share a var's name. That var keeps it closed until this run's deploy drops it.
+    RELAY_CLOSED: "1",
     // Only this run uses it, to register the instance; deleted once it has.
     RELAY_ADMIN_TOKEN: adminToken,
     [OWN_RELAY_MARKER]: "setup-relay",
@@ -633,7 +636,7 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
       `  dev to brigade-relay-dev (apps/api/wrangler.jsonc env.dev \`services\`). Build and deploy the API again so it`,
       "  binds the relay just deployed (a binding to a Worker that does not exist fails the deploy).",
       `- The topic (${needs.bundleId}) and closed registration are the relay's secrets RELAY_APNS_TOPIC and`,
-      "  RELAY_REGISTRATION: deploying apps/relay again, with no flags, keeps them.",
+      "  RELAY_CLOSED: deploying apps/relay again, with no flags, keeps them.",
       `- Keep the instance key (${key.file}) in a password manager, then delete the file.`,
       `- Build and publish your company's app (bundle id ${needs.bundleId}, relay ${relay}): ${YOUR_OWN_APP_DOCS}`,
     ].join("\n"),
@@ -701,7 +704,7 @@ async function prerequisites(options: Options, deps: Deps): Promise<Prerequisite
         ? "app.freecorps.brigade is the store app's: your build needs its own bundle id."
         : BUNDLE_ID.test(v)
           ? null
-          : "A bundle id looks like com.acme.brigade.",
+          : "A bundle id looks like com.acme.brigade: letters and digits, each part starting with a letter, no - or _.",
   );
   const fcmFile = await get(
     options.fcmServiceAccountFile,

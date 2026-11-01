@@ -20,6 +20,12 @@ import { handle, type RelayEnv } from "../src/index.ts";
 import { fakeRegistry } from "./fake-registry.ts";
 
 const HOSTED = "https://relay.freecorps.test";
+/** apps/relay wrangler.jsonc's production vars: what a deploy without `--var` leaves. */
+const CONFIG_VARS = {
+  APNS_ENVIRONMENT: "production",
+  APNS_TOPIC: "app.freecorps.brigade",
+  RELAY_TERMS_VERSION: TERMS_VERSION,
+};
 const OWN_HOST = "relay.acme.example";
 const HOME = "/home/oncall";
 const REPO = "/repo";
@@ -59,6 +65,8 @@ function harness(
     answers?: Answer[];
     /** Secret names each Worker already has. */
     secrets?: Record<string, string[]>;
+    /** The vars each Worker was last deployed with (an older script's `--var` flags, say). */
+    vars?: Record<string, Record<string, string>>;
     hosted?: Partial<RelayEnv>;
     files?: Record<string, string>;
     unreachable?: boolean;
@@ -106,7 +114,10 @@ function harness(
     EMAIL_FROM: "relay@freecorps.test",
     ...setup.hosted,
   };
+  /** Each Worker's deployed vars: a deploy replaces them with wrangler.jsonc's and its `--var` flags. */
+  const vars = new Map(Object.entries(setup.vars ?? {}));
   let deployed: { args: string[]; domain: string | null } | null = null;
+  let relayWorker: string | null = null;
   /** The topic each APNs request from the own relay went to. */
   const ownTopics: string[] = [];
 
@@ -149,6 +160,16 @@ function harness(
       }
       if (verb === "secret" && sub === "bulk") {
         const values = JSON.parse(command.input ?? "{}") as Record<string, string | null>;
+        if (name.startsWith("brigade-relay")) relayWorker = name;
+        // Cloudflare refuses a secret named like one of the Worker's deployed vars.
+        const clash = Object.keys(values).find((key) => key in (vars.get(name) ?? {}));
+        if (clash !== undefined) {
+          return {
+            code: 1,
+            stdout: "",
+            stderr: `✘ [ERROR] Binding name '${clash}' already in use. [code: 10053]\n`,
+          };
+        }
         const current = secrets.get(name) ?? new Map<string, string>();
         for (const [key, value] of Object.entries(values)) {
           if (value === null) current.delete(key);
@@ -161,6 +182,15 @@ function harness(
         return ok;
       }
       if (verb === "deploy") {
+        // The relay Worker the run set secrets on (the deploy names none: wrangler.jsonc does).
+        const worker = relayWorker ?? "brigade-relay";
+        const flags: Record<string, string> = {};
+        command.args.forEach((arg, i) => {
+          if (arg !== "--var") return;
+          const [key = "", ...value] = (command.args[i + 1] ?? "").split(":");
+          flags[key] = value.join(":");
+        });
+        vars.set(worker, { ...CONFIG_VARS, ...flags });
         const at = command.args.indexOf("--domain");
         deployed = {
           args: command.args,
@@ -185,15 +215,19 @@ function harness(
           secrets.get("brigade-relay") ??
           secrets.get("brigade-relay-dev") ??
           new Map<string, string>();
-        // The deployed relay: wrangler.jsonc's vars as they are (a deploy with no flags), and the secrets it was given.
+        // The deployed relay: its deployed vars, and the secrets it was given.
+        const deployedVars = vars.get("brigade-relay") ?? vars.get("brigade-relay-dev") ?? {};
         const secret = (name: string) => own.get(name) ?? "";
-        const optional = (name: "RELAY_APNS_TOPIC" | "RELAY_REGISTRATION") =>
+        const optional = (name: "RELAY_APNS_TOPIC" | "RELAY_CLOSED") =>
           own.has(name) ? { [name]: secret(name) } : {};
         const env: RelayEnv = {
           APNS_ENVIRONMENT: "production",
-          APNS_TOPIC: "app.freecorps.brigade",
+          APNS_TOPIC: (deployedVars.APNS_TOPIC ?? CONFIG_VARS.APNS_TOPIC) as RelayEnv["APNS_TOPIC"],
+          ...(deployedVars.RELAY_REGISTRATION === undefined
+            ? {}
+            : { RELAY_REGISTRATION: deployedVars.RELAY_REGISTRATION }),
           ...optional("RELAY_APNS_TOPIC"),
-          ...optional("RELAY_REGISTRATION"),
+          ...optional("RELAY_CLOSED"),
           RELAY_TERMS_VERSION: TERMS_VERSION,
           REGISTRY: ownRegistry,
           APNS_KEY: secret("APNS_KEY"),
@@ -556,15 +590,15 @@ describe("your own relay", () => {
       "BRIGADE_OWN_RELAY",
       "FCM_SERVICE_ACCOUNT",
       "RELAY_APNS_TOPIC",
+      "RELAY_CLOSED",
       "RELAY_HANDLE_KEYS",
-      "RELAY_REGISTRATION",
       "RELAY_SEND_TOKEN",
       "RELAY_TAG_KEY",
     ]);
     expect(relay?.get("APNS_KEY")).toBe(APNS_KEY.trim());
     // The topic and closed registration are secrets, which every later deploy keeps.
     expect(relay?.get("RELAY_APNS_TOPIC")).toBe("com.acme.brigade");
-    expect(relay?.get("RELAY_REGISTRATION")).toBe("closed");
+    expect(relay?.get("RELAY_CLOSED")).toBe("1");
     // Secrets before the deploy (a new Worker needs its required ones), then the deploy with its domain and no vars;
     // after the registration the admin token goes, then the API's secrets.
     expect(order(h)).toEqual([
@@ -618,9 +652,9 @@ describe("your own relay", () => {
   });
 
   test("a relay deployed with the old --var flags gets the topic and closed registration as secrets", async () => {
-    // Set up by an earlier version of this script: the two were vars, gone with the next deploy without flags.
-    const h = harness({
-      files: OWN_FILES,
+    // Set up by an earlier version of this script: the topic and registration are deployed vars, which a secret of
+    // the same name would collide with.
+    const old = {
       secrets: {
         "brigade-relay": [
           "BRIGADE_OWN_RELAY",
@@ -629,15 +663,53 @@ describe("your own relay", () => {
           "RELAY_TAG_KEY",
         ],
       },
+      vars: {
+        "brigade-relay": {
+          ...CONFIG_VARS,
+          APNS_TOPIC: "com.acme.brigade",
+          RELAY_REGISTRATION: "closed",
+        },
+      },
+    };
+    // The fake refuses what Cloudflare refuses: a secret named like a deployed var.
+    const clash = harness({ files: OWN_FILES, ...old });
+    const refused = await clash.deps.run({
+      tool: "wrangler",
+      args: ["secret", "bulk", "--name", "brigade-relay"],
+      cwd: REPO,
+      input: JSON.stringify({ RELAY_REGISTRATION: "closed" }),
     });
+    expect(refused.code).toBe(1);
+
+    const h = harness({ files: OWN_FILES, ...old });
     expect(await h.run({ ...OWN, yes: true })).toBe(0);
     const first = JSON.parse(h.commands.find((c) => c.args[1] === "bulk")?.input ?? "{}") as object;
-    expect(first).toMatchObject({
-      RELAY_APNS_TOPIC: "com.acme.brigade",
-      RELAY_REGISTRATION: "closed",
-    });
+    expect(first).toMatchObject({ RELAY_APNS_TOPIC: "com.acme.brigade", RELAY_CLOSED: "1" });
     expect(h.commands.find((c) => c.args[0] === "deploy")?.args).not.toContain("--var");
-    expect(h.secrets.get("brigade-relay")?.get("RELAY_REGISTRATION")).toBe("closed");
+    // Deployed with no flags, the old vars are gone; the secrets keep the relay closed and on the company's topic:
+    // the registration took no terms (only a closed relay allows that) and APNs was asked for that topic.
+    expect(h.secrets.get("brigade-relay")?.get("RELAY_CLOSED")).toBe("1");
+    const key = await importInstanceKey(
+      h.secrets.get("brigade-api")?.get("RELAY_INSTANCE_KEY") ?? "",
+    );
+    expect(h.ownRegistry.storage(`instance:${key.instance}`).get("record")).toMatchObject({
+      status: "registered",
+      terms: "none",
+    });
+    expect(h.ownTopics).toEqual(["com.acme.brigade"]);
+  });
+
+  test("a bundle id either store would refuse stops before anything", async () => {
+    for (const bundleId of [
+      "com.acme-corp.brigade",
+      "com.acme_corp.brigade",
+      "com.1acme.brigade",
+      "brigade",
+    ]) {
+      const h = harness({ files: OWN_FILES });
+      expect((await stopped(h.run({ ...OWN, bundleId }))).message).toMatch(/--bundle-id/);
+      expect(h.commands).toEqual([]);
+    }
   });
 
   test("a missing prerequisite stops before anything is deployed", async () => {

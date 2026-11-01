@@ -322,7 +322,7 @@ describe("closed registration (an own relay)", () => {
 
   test("refuses registration and codes without the admin token", async () => {
     const { call, askCode, email } = setup({
-      RELAY_REGISTRATION: "closed",
+      RELAY_CLOSED: "1",
       RELAY_ADMIN_TOKEN: ADMIN,
     });
     const key = await generateInstanceKey();
@@ -339,7 +339,7 @@ describe("closed registration (an own relay)", () => {
 
   test("the admin token registers the signed instance directly, with no terms, code or email", async () => {
     const { call, record, email } = setup({
-      RELAY_REGISTRATION: "closed",
+      RELAY_CLOSED: "1",
       RELAY_ADMIN_TOKEN: ADMIN,
       // A closed relay needs no terms version.
       RELAY_TERMS_VERSION: undefined,
@@ -362,7 +362,7 @@ describe("closed registration (an own relay)", () => {
   });
 
   test("keeps an optional contact, and refuses a malformed one", async () => {
-    const { call, record } = setup({ RELAY_REGISTRATION: "closed", RELAY_ADMIN_TOKEN: ADMIN });
+    const { call, record } = setup({ RELAY_CLOSED: "1", RELAY_ADMIN_TOKEN: ADMIN });
     const key = await generateInstanceKey();
     const bad = await call(key, "POST", "/v1/instances", { contact: "not an address" }, admin());
     expect(bad.status).toBe(400);
@@ -374,13 +374,13 @@ describe("closed registration (an own relay)", () => {
 
   test("a wrong admin token is 401 and registers nothing; an unset one matches nothing", async () => {
     const key = await generateInstanceKey();
-    const closed = setup({ RELAY_REGISTRATION: "closed", RELAY_ADMIN_TOKEN: ADMIN });
+    const closed = setup({ RELAY_CLOSED: "1", RELAY_ADMIN_TOKEN: ADMIN });
     const wrong = await closed.call(key, "POST", "/v1/instances", {}, admin("not-the-token"));
     expect(wrong.status).toBe(401);
     expect(await wrong.json()).toEqual({ error: "admin_unauthorized" });
     expect(closed.record(key)).toBeUndefined();
     // Without RELAY_ADMIN_TOKEN no token is right, an empty one included.
-    const unset = setup({ RELAY_REGISTRATION: "closed" });
+    const unset = setup({ RELAY_CLOSED: "1" });
     for (const token of [ADMIN, ""]) {
       const response = await unset.call(key, "POST", "/v1/instances", {}, admin(token));
       expect(response.status).toBe(401);
@@ -389,7 +389,7 @@ describe("closed registration (an own relay)", () => {
   });
 
   test("the token never stands in for the instance's signature, and only registers an original key", async () => {
-    const { call, record } = setup({ RELAY_REGISTRATION: "closed", RELAY_ADMIN_TOKEN: ADMIN });
+    const { call, record } = setup({ RELAY_CLOSED: "1", RELAY_ADMIN_TOKEN: ADMIN });
     const key = await generateInstanceKey();
     const other = await generateInstanceKey();
     // Signed by another key for this id: not the original key, so nothing registers.
@@ -401,6 +401,24 @@ describe("closed registration (an own relay)", () => {
     const unsigned = await handleUnsigned(ADMIN);
     expect(unsigned.status).toBe(401);
     expect(await unsigned.json()).toEqual({ error: "missing_signature" });
+  });
+
+  test("an older relay's var RELAY_REGISTRATION=closed closes it too; any other value of either is open", async () => {
+    const key = await generateInstanceKey();
+    const old = setup({ RELAY_REGISTRATION: "closed", RELAY_ADMIN_TOKEN: ADMIN });
+    expect(await (await old.askCode(key)).json()).toEqual({ error: "registration_closed" });
+    expect((await old.call(key, "POST", "/v1/instances", {}, admin())).status).toBe(201);
+    // Both set (a relay moving from the var to the secret): closed.
+    const both = setup({ RELAY_CLOSED: "1", RELAY_REGISTRATION: "closed" });
+    expect(await (await both.askCode(key)).json()).toEqual({ error: "registration_closed" });
+    for (const open of [
+      { RELAY_CLOSED: "true" },
+      { RELAY_CLOSED: "" },
+      { RELAY_REGISTRATION: "open" },
+    ]) {
+      const relay = setup(open);
+      expect((await relay.askCode(key)).status).not.toBe(403);
+    }
   });
 
   test("an open relay ignores the admin token: terms and the emailed code are still required", async () => {
@@ -415,7 +433,7 @@ describe("closed registration (an own relay)", () => {
 
 /** `POST /v1/instances` with the admin token and no signature at all. */
 async function handleUnsigned(token: string): Promise<Response> {
-  const { env } = setup({ RELAY_REGISTRATION: "closed", RELAY_ADMIN_TOKEN: token });
+  const { env } = setup({ RELAY_CLOSED: "1", RELAY_ADMIN_TOKEN: token });
   return handle(
     new Request("https://relay.test/v1/instances", {
       method: "POST",

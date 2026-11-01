@@ -1,8 +1,9 @@
 # RFC 0015 — One store app for every instance
 
 - Status: Accepted (decisions D1–D5 below); the relay side and envelope version 2 on the phone (steps 1 and 2 of
-  "Order of work") are built, and the API side of step 3 (handles in `device.register`, the notifier on `/v1/send`,
-  `/config`, the watchdog's signed check); the rest is not
+  "Order of work") are built, and of step 3 the API side (handles in `device.register`, the notifier on `/v1/send`,
+  `/config`, the watchdog's signed check) and `vp run setup:relay` with the relay's closed registration (section 8);
+  the rest is not
 - Builds on: RFC 0006 (push relay), RFC 0002 (auth, environments), RFC 0010 (calls)
 
 ## Problem
@@ -363,15 +364,48 @@ asks which, and can be run again later:
      `APNS_TOPIC`, `FCM_SERVICE_ACCOUNT`, `RELAY_HANDLE_KEYS`) and turns its registration to this instance only
      (`RELAY_REGISTRATION=closed`, the instance registered directly by the script, no terms or email).
    - Binds the relay to the API as `RELAY` (no hop over the internet, as on our instance) and sets the instance key.
-   - Points to "Your own app" in the docs: the EAS build with the company's bundle id, App Group, relay address
-     (`EXPO_PUBLIC_BRIGADE_RELAY_URL`) and store accounts. That build is the company's to publish (or to hand out
-     through TestFlight, an MDM or an internal store).
+   - Points to "Your own app" in the docs (apps/mobile README): the EAS build with the company's bundle id, App
+     Group, relay address and store accounts. That build is the company's to publish (or to hand out through
+     TestFlight, an MDM or an internal store). As the app is today, the bundle id (`APP_ID`, app.config.ts) and the
+     App Group (`APP_GROUP`, plugins/notification-service.ts) are constants a company's copy changes, not build
+     variables (Q32), and the relay address, `EXPO_PUBLIC_BRIGADE_RELAY_URL`, is not read yet: the app mints handles
+     with step 4 and registers raw tokens until then.
    - Asks for the build's store link (optional, `RELAY_APP_URL`), so the store app can send people there (below).
 3. **Not now.** No push; the email notifier still pages, and the dashboard says phones are not paged.
 
 **Switching relays** changes where every handle came from: each phone must open the app once to be paged again, and
 a switch to an own relay leaves the store app unable to page at all. The script says so and asks again before it
 does it.
+
+**Built (step 3): the setup script and closed registration.** `vp run setup:relay` (apps/relay
+`scripts/setup-relay/`, a root task in vite.config.ts; apps/api README "Push relay"); closed registration in apps/relay
+`src/instances.ts` and `src/registry.ts` (README "Closed registration"). As built:
+
+- **Closed registration.** With `RELAY_REGISTRATION=closed`, `POST /v1/instances`, still signed, registers the
+  signer's original key only with `Authorization: Bearer <RELAY_ADMIN_TOKEN>` (constant-time compare), with no terms
+  (`terms: "none"`) and no code; codes are refused (`403 registration_closed`), a wrong token is `401
+  admin_unauthorized`. An open relay ignores the header.
+- **The script** is interactive on a terminal, every answer also a flag (`--non-interactive` for CI and the tests).
+  It reads the API Worker's secret names (never values) to tell a first setup from a switch, asks again before a
+  switch (`--yes`), and gives wrangler every secret on stdin (`wrangler secret bulk`), never in arguments, output or a
+  file in the repository. The new instance key is saved before it is used, outside the repository and readable only by
+  its owner, so the operator can keep it in a password manager and a stopped run can finish with the same id
+  (`--instance-key-file`). Without a terminal, Freecorps' relay takes two runs: the first sends the code, the second
+  (`--code`) registers.
+- **Freecorps' relay:** terms (address, version `draft-2026-11`, marked a preliminary template) then contact, code,
+  key, registration, `RELAY_INSTANCE_KEY` and `RELAY_URL` (removing a `RELAY_INSTANCE_ID` and `RELAY_APP_URL` left from
+  before), and the signed deep health. **Its public address is not known yet** (Q31): `FREECORPS_RELAY_URL` is a
+  placeholder, so `--relay-url` is required and the script stops without it.
+- **Your own relay:** also needs a hostname on a zone of the account, deployed as the relay's custom domain, since
+  phones and the registration reach it there. The script sets `RELAY_SEND_TOKEN` on both the relay and the API, so
+  the company's app pages through `/send` until it mints handles (step 4), and keeps the relay's `RELAY_HANDLE_KEYS`
+  and `RELAY_TAG_KEY` when it has them (new ones would void every handle). `APNS_TOPIC` and `RELAY_REGISTRATION` go
+  in as `wrangler deploy --var`, which a later deploy without them undoes (Q32). It does not deploy the API: the
+  production build already binds `RELAY` to `brigade-relay`, so the operator builds and deploys the API again.
+- **Tests:** apps/relay `test/registry.test.ts` (closed registration) and `test/setup-relay.test.ts`, which runs every
+  flow against the relay's own `handle` and a fake wrangler: the terms refused, a wrong code, codes rate limited, the
+  relay unreachable, no relay address, a missing prerequisite, the switch confirmation, non-interactive runs, and no
+  secret value in the output or a command's arguments.
 
 **Showing which relay is in use.**
 
@@ -469,15 +503,15 @@ does it.
 
 1. Relay: `/v1/instances` (with the emailed code and closed registration), signatures and the registry in a
    Durable Object; then `/v1/handles`, `/v1/send`, the signed `/v1/health?deep=1` and their limits, tested with fake
-   APNs/FCM (built; apps/relay README "Handles and /v1/send"). Still to do here: closed-mode registration by the relay
-   admin secret (section 8), and the `send_email` binding for the contact code.
+   APNs/FCM (built; apps/relay README "Handles and /v1/send"), and closed-mode registration by the relay admin secret
+   (built, section 8). Still to do here: the `send_email` binding for the contact code.
 2. Envelope v2 (sealed `iat`, `origin`, `urgency`; key id) in `packages/push`, the iOS extension and Android; the
    app accepts v1 and v2 (built, section 4, with one key per instance on the phone).
 3. Instance: `device.register` with `handle`/`tag`, the notifier on `/v1/send`, `/config` additions, watchdog
    reasons, `vp run setup:relay` (both relays), the dashboard's "Phones and pages". The notifier switches to
    `sealPushV2` (origin: the dashboard's, TTL: the one it gives the relay) only for apps that open v2: an older app
    shows the fallback text for every v2 page. Built: the API side (`device.register`, the notifier, `/config`, the
-   watchdog; section 7). Still to do: `vp run setup:relay` and the dashboard's "Phones and pages".
+   watchdog; section 7) and `vp run setup:relay` (section 8). Still to do: the dashboard's "Phones and pages".
 4. App: handles and per-instance keys and storage; the instance switcher, address field, QR and link, address
    checks, which relay; QR sign-in (with its API routes and the dashboard's approval).
 5. Our instance moves (section 9); then the docs for self-hosters ("Your own app" included) and the terms.

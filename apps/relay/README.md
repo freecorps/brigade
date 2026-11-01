@@ -80,7 +80,7 @@ missing_signature`, a timestamp more than 5 minutes off `401 stale_timestamp`. B
 | Route                        | Body                         | Answers                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ---------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POST /v1/instances/contact` | `{ contact }`                | Emails a 6-digit code to `contact` (valid 15 minutes, 5 tries; limits below): `200 { sent, expiresInSeconds }`; `400 invalid_contact`, `409 already_registered`, `429 too_many_codes` (with `Retry-After`), `502 email_failed`, `503 not_configured` without `EMAIL`/`EMAIL_FROM`                                                                                                                                                         |
-| `POST /v1/instances`         | `{ terms, contact, code }`   | Registers the original key: `201 { instance, status, terms, termsCurrent }`, `200` when already registered (and `terms`, if current, is recorded as accepted); `409 terms_outdated { terms }` unless `terms` is `RELAY_TERMS_VERSION`; `400 code_invalid { triesLeft }` or `code_expired`; `403 instance_revoked`                                                                                                                         |
+| `POST /v1/instances`         | `{ terms, contact, code }`   | Registers the original key: `201 { instance, status, terms, termsCurrent }`, `200` when already registered (and `terms`, if current, is recorded as accepted); `409 terms_outdated { terms }` unless `terms` is `RELAY_TERMS_VERSION`; `400 code_invalid { triesLeft }` or `code_expired`; `403 instance_revoked`. On a closed relay, by the admin token instead (below)                                                                  |
 | `POST /v1/instances/keys`    | `{ add?, proof?, retire? }`  | Signed with a key in the record. Adds a raw public key (base64url, 32 bytes, at most 3 keys, `409 too_many_keys`) with `proof`, the new key's signature over `"brigade add-key\n" + instance id` (`signKeyProof`; `400 invalid_proof`); retires one other than the signer's (`409 cannot_retire_signer`, `400 unknown_key`); a key retired in the last 10 minutes cannot come back (`409 key_recently_retired`): `200 { instance, keys }` |
 | `GET /v1/instances/me`       | none (signed as empty bytes) | `200 { instance, status, terms, termsCurrent }`; `403 instance_unregistered` or `instance_revoked`                                                                                                                                                                                                                                                                                                                                        |
 
@@ -120,11 +120,17 @@ treats it as optional and then limits nothing per IP. For the hosted relay's con
 Sending (as `apps/api`), are still to be added; until then `/v1/instances/contact` answers `503 not_configured`.
 `RELAY_TERMS_VERSION` is a var (`draft-2026-11`, RFC 0015 decision D5).
 
-**Closed registration** (`RELAY_REGISTRATION=closed`, a company's own relay): `/v1/instances/contact` answers
-`403 registration_closed`, and so does `POST /v1/instances` for an instance not registered yet (a registered one gets
-its record, `200`). The setup script will register the relay's one instance
-through a closed-mode registration authorized by a relay admin secret, in a later slice; until then a closed relay
-refuses every registration.
+**Closed registration** (`RELAY_REGISTRATION=closed`, a company's own relay, RFC 0015 section 8): no terms, no
+emailed codes. `/v1/instances/contact` answers `403 registration_closed`. `POST /v1/instances`, still signed with the
+instance key, registers the signer's original key only when it also carries the relay's admin secret,
+`Authorization: Bearer <RELAY_ADMIN_TOKEN>` (compared in constant time, `src/auth.ts`): `201 { instance, status,
+terms: "none", termsCurrent: true }`, with `contact` optional (`400 invalid_contact` if malformed) and the body's
+`terms` and `code` ignored. Without the header it is `403 registration_closed`; with a wrong token, or any token while
+`RELAY_ADMIN_TOKEN` is unset, `401 admin_unauthorized`; a key that is not the instance id's original one `403
+instance_unregistered`. A registered instance gets its record (`200`) with or without the token. A closed relay does
+not need `RELAY_TERMS_VERSION`. An open relay ignores the header. `vp run setup:relay` (choice "your own relay",
+apps/api README "Push relay") deploys the relay with `RELAY_REGISTRATION=closed`, makes the admin token and
+registers the instance with it; running it again makes a new token.
 
 ## Handles and /v1/send
 
@@ -201,7 +207,12 @@ Optional, for Android: `FCM_SERVICE_ACCOUNT`, the Google service account's JSON 
 `secrets.required`, so a relay without it still deploys and serves iPhones.
 
 Optional, for handles and `/v1/send` (see "Handles and /v1/send"): `RELAY_HANDLE_KEYS` (the keyring) and
-`RELAY_TAG_KEY`. Not in `secrets.required` either, so `/send` keeps deploying without them. Make each key with
+`RELAY_TAG_KEY`. Not in `secrets.required` either, so `/send` keeps deploying without them.
+
+Optional, for a company's own relay: `RELAY_ADMIN_TOKEN` (the secret that authorizes closed registration) and the var
+`RELAY_REGISTRATION=closed` (see "Closed registration" above). `vp run setup:relay` sets both, with `APNS_TOPIC` as the
+company's bundle id, passing the two vars as `wrangler deploy --var`; keep them in a copy's `wrangler.jsonc` `vars` so
+a later deploy does not put the defaults back. Make each key with
 `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='` (32 random bytes in base64url) into the secrets file outside
 the repository, never into this repository or a shell history.
 
@@ -213,6 +224,14 @@ vp run build:dev                                                          # buil
 bunx wrangler deploy --secrets-file ~/.config/brigade/relay-dev-secrets.json  # deploys it with its secrets
 vp test                                                                   # JWTs, request builders, /send and /v1 (Node, fetch stubbed)
 ```
+
+## The setup script
+
+`scripts/setup-relay/` is `vp run setup:relay` (run from the root; apps/api README "Push relay" is the guide). It
+lives here because it signs with `@freecorps/brigade-push/instance` and deploys this Worker; `flow.ts` is the flow,
+with wrangler, fetch, files and the terminal passed in, and `index.ts` wires the real ones. `test/setup-relay.test.ts`
+runs every flow against this relay's own `handle` (over the fake registry) and a fake wrangler: nothing reaches
+Cloudflare, Apple or Google.
 
 ## Sending a test push
 

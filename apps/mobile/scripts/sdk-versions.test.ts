@@ -21,22 +21,30 @@ type Manifest = {
 const readManifest = (dir: string): Manifest =>
   JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as Manifest;
 
-/** Every expo-* and @expo/* package the app resolves, directly or through another one, by install directory. */
+const isExpoPackage = (name: string) =>
+  name === "expo" || name.startsWith("expo-") || name.startsWith("@expo/");
+
+/**
+ * Every expo-* and @expo/* package the app resolves, by install directory: directly, through another Expo package,
+ * or through any other dependency (`@better-auth/expo`, a workspace package). Every dependency is walked once.
+ */
 function installedExpoPackages(): Map<string, Manifest> {
   const found = new Map<string, Manifest>();
+  const seen = new Set<string>();
   const visit = (dir: string) => {
     const manifest = readManifest(dir);
     const resolve = createRequire(join(dir, "package.json")).resolve;
     for (const name of Object.keys({ ...manifest.dependencies, ...manifest.peerDependencies })) {
-      if (!name.startsWith("expo") && !name.startsWith("@expo/")) continue;
       let packageDir: string;
       try {
         packageDir = dirname(resolve(`${name}/package.json`));
       } catch {
-        continue; // an optional peer that is not installed
+        continue; // an optional peer that is not installed, or a package without an exported package.json
       }
-      if (found.has(packageDir)) continue;
-      found.set(packageDir, readManifest(packageDir));
+      if (seen.has(packageDir)) continue;
+      seen.add(packageDir);
+      const child = readManifest(packageDir);
+      if (isExpoPackage(child.name)) found.set(packageDir, child);
       visit(packageDir);
     }
   };

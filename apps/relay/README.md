@@ -131,11 +131,11 @@ RFC 0015 sections 2 and 3 (`src/handles.ts`, `src/v1.ts`). The app asks the rela
 for one instance, and gives the instance only that; the instance sends with the handle, signed with its key. Nothing
 is stored: the relay opens the handle on each send.
 
-| Route                   | Who                               | Body                                                                           | Answers                                                                                                                                                                                                                                                                                                                                                        |
-| ----------------------- | --------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /v1/handles`      | The app, unsigned                 | `{ instance, platform, environment, pushToken, voipToken? }`                   | `200 { handle, tag }`; `400 invalid_body`; `403 instance_unregistered` or `instance_revoked`; `503 registry_unavailable` (fails closed: an unknown id never gets a handle); `429 rate_limited { limit: "ip" }`                                                                                                                                                 |
-| `POST /v1/send`         | The instance, signed              | `/send`'s body with `handle` instead of `deviceToken`/`platform`/`environment` | As `/send` (`200`, `502` with the provider's reason, `400 invalid_body`, `500 relay_misconfigured`), plus `401 bad_signature`/`missing_signature`/`stale_timestamp`, `400 bad_handle`, `403 handle_not_yours`, `403 instance_revoked`, `429 rate_limited { limit }` with `Retry-After`, `503 registry_unavailable` (a rotated key the registry cannot confirm) |
-| `GET /v1/health?deep=1` | The instance, signed (empty body) | none                                                                           | `/health?deep=1`'s `{ ok, apns, fcm }` plus `handles` (whether the handle keys are set and parse) and `instance`; `503` unless all are ok; `401` for a bad signature, `403 instance_unregistered`/`instance_revoked`, `503 registry_unavailable`, `429 rate_limited`. Without `deep=1`, `200 {"ok":true}`                                                      |
+| Route                   | Who                               | Body                                                                           | Answers                                                                                                                                                                                                                                                                                                                                                                                           |
+| ----------------------- | --------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /v1/handles`      | The app, unsigned                 | `{ instance, platform, environment, pushToken, voipToken? }`                   | `200 { handle, tag }`; `400 invalid_body`; `403 instance_unregistered` or `instance_revoked`; `503 registry_unavailable` (fails closed: an unknown id never gets a handle); `429 rate_limited { limit: "ip" }`                                                                                                                                                                                    |
+| `POST /v1/send`         | The instance, signed              | `/send`'s body with `handle` instead of `deviceToken`/`platform`/`environment` | As `/send` (`200`, `502` with the provider's reason, `400 invalid_body`, `500 relay_misconfigured`), plus `401 bad_signature`/`missing_signature`/`stale_timestamp`, `400 bad_handle`, `403 handle_not_yours`, `403 instance_revoked`, `429 rate_limited { limit }` with `Retry-After`, `503 registry_unavailable` (a rotated key the registry cannot confirm)                                    |
+| `GET /v1/health?deep=1` | The instance, signed (empty body) | none                                                                           | `/health?deep=1`'s `{ ok, apns, fcm }` plus `handles` (whether the handle keys are set and parse) and `instance`; `503` unless all are ok; `429 rate_limited { limit: "ip" }` (before the registry is read), `401` for a bad signature, `403 instance_unregistered`/`instance_revoked`, `503 registry_unavailable`, `429 rate_limited { limit: "instance" }`. Without `deep=1`, `200 {"ok":true}` |
 
 **Minting.** `platform` is `ios` or `android`. On iOS `environment` (`sandbox` or `production`) is required and
 `pushToken` (and `voipToken`, the PushKit token, for calls) are hex APNs tokens, lowercased before sealing; on
@@ -146,19 +146,31 @@ pushToken, voipToken }` with the key id as additional data. The **tag** is base6
 instance ‖ 0x00 ‖ pushToken)): the same for one token at one instance however many times it is sealed and whatever key
 sealed it, different at every other instance. The instance compares tags where it compared tokens.
 
-**Sending.** The signature is checked first (so no one spends another instance's limits), then the sender: on the
-instance's original key only revocation is read, and a registry that does not answer is logged and **fails open** (the
-handle could only have been minted for a registered instance); a rotated key must be confirmed by the registry, else
-`503 registry_unavailable`, which the instance retries. Then the handle: one that does not open (tampered, sealed by
-another relay, a retired key id) is `400 bad_handle`; one sealed for another instance `403 handle_not_yours`, which the
-instance treats like `BadDeviceToken`. Calls and Critical Alerts are still a page's only, as on `/send`; a call to an
-iPhone handle without a VoIP token is `400 invalid_body`.
+**Sending.** The signature is checked first (so no one spends another instance's limits), then the handle, with local
+crypto only: one that does not open (tampered, sealed by another relay, a retired key id) is `400 bad_handle`; one
+sealed for another instance `403 handle_not_yours`, which the instance treats like `BadDeviceToken`. Only then the
+registry, so a made-up instance id (free to make) never forces a read. On the instance's original key the record is
+read through the cache: revoked is `403 instance_revoked`; a record that no longer lists the key (retired after a leak)
+is read again fresh and, if still missing it, `401 bad_signature`; a registry that does not answer is logged and
+**fails open** (the handle could only have been minted for a registered instance). A rotated key must be confirmed by
+the registry, else `503 registry_unavailable`, which the instance retries. Calls and Critical Alerts are still a page's
+only, as on `/send`; a call to an iPhone handle without a VoIP token is `400 invalid_body`.
 
 **Limits** (decision D4, Workers Rate Limiting, each binding optional): `SEND_LIMIT` 600 sends a minute per instance
 id, `CALL_LIMIT` 60 calls a minute per instance id on top, `PHONE_LIMIT` 30 a minute per phone keyed by the tag (every
 handle of one token counts together; not the handle, which differs on every sealing), `HANDLE_LIMIT` 60 handles a minute
-per caller IP. A page is never exempt. Only a send that passed every check counts, and a signed deep health counts as
-one send (it asks APNs). `429 { error: "rate_limited", limit: "instance" | "calls" | "phone" | "ip" }`, always
+per caller IP, `HEALTH_LIMIT` 120 signed deep health checks a minute per caller IP. A page is never exempt.
+
+What counts: a binding cannot check without counting, so on `/v1/send` the limits are taken only after every other
+check passed (signature, handle, registry, body), narrowest first: `PHONE_LIMIT`, then `CALL_LIMIT` (calls only), then
+`SEND_LIMIT`. A send refused by one has counted against the ones before it and none after: refused for its phone, it
+costs nothing else; refused as a call, it has counted for its phone; refused for the instance, it has counted for its
+phone and, if a call, the calls. A send that passed all of them counts against all of them even when APNs or FCM then
+refuses it or cannot be reached. A signed deep health counts against `HEALTH_LIMIT` (before the registry is read,
+whatever the answer) and, once the instance is admitted, as one send against `SEND_LIMIT` (it asks APNs).
+`HANDLE_LIMIT` counts every mint request, a malformed one included.
+
+`429 { error: "rate_limited", limit: "instance" | "calls" | "phone" | "ip" }`, always
 `Retry-After: 60` (the binding does not say when its window ends). A limiter that throws lets the call through, logged.
 Workers Rate Limiting counts per Cloudflare location and settles eventually, so the limits are approximate (Q28).
 
@@ -192,7 +204,7 @@ Optional, for handles and `/v1/send` (see "Handles and /v1/send"): `RELAY_HANDLE
 `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='` (32 random bytes in base64url) into the secrets file outside
 the repository, never into this repository or a shell history.
 
-The rate limits (`CODE_LIMIT`, `HANDLE_LIMIT`, `SEND_LIMIT`, `CALL_LIMIT`, `PHONE_LIMIT`) are config only, declared in
+The rate limits (`CODE_LIMIT`, `HANDLE_LIMIT`, `HEALTH_LIMIT`, `SEND_LIMIT`, `CALL_LIMIT`, `PHONE_LIMIT`) are config only, declared in
 `wrangler.jsonc` for both environments with their own namespace ids; nothing to create.
 
 ```bash

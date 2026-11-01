@@ -83,7 +83,9 @@ acceptable, or should the daily cap also count per IP or per network, at the cos
 The app asks the relay for a handle (`POST /v1/handles`) each time it registers, and the relay allows 60 a minute per
 caller IP (`HANDLE_LIMIT`). Phones on mobile data often share one IP behind a carrier's NAT, so in a busy minute some
 could be refused; the app keeps its previous handle, which still works, and tries again on its backoff. Is 60 right,
-or should the limit be higher, or count per instance as well? Also: Workers Rate Limiting counts per Cloudflare
+or should the limit be higher, or count per instance as well? The signed deep health is limited per IP too (120 a
+minute, `HEALTH_LIMIT`, so made-up instance ids cannot force unbounded registry reads), and instances on Workers may
+reach the relay from shared Cloudflare addresses: is 120 enough headroom for their watchdogs? Also: Workers Rate Limiting counts per Cloudflare
 location and is eventually consistent, so the D4 limits (600 sends, 60 calls, 30 per phone a minute) are approximate
 and apply per location. Good enough against an instance flooding APNs, or does the per-instance limit need a Durable
 Object?

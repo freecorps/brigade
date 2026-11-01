@@ -383,9 +383,12 @@ export async function checkMintable(
 }
 
 /**
- * May this signed caller send? On its original key only revocation is checked, and that fails open (`isRevoked`): the
- * handle it carries could only have been minted for a registered instance. A rotated key must be confirmed by the
- * registry, and fails closed (`checkRegistered`, `503 registry_unavailable`): an unconfirmed key never sends.
+ * May this signed caller send? On its original key the record is read through the cache, and a read that fails is
+ * _fail open_ (logged): the handle it carries could only have been minted for a registered instance, and a registry
+ * outage must not stop every self-hosted page. A record that is revoked refuses (`403 instance_revoked`); one that
+ * does not list the original key (retired after a leak) is read again fresh, and refuses (`401 bad_signature`) if the
+ * key is still missing. A rotated key must be confirmed by the registry, and fails closed (`checkRegistered`,
+ * `503 registry_unavailable`): an unconfirmed key never sends.
  */
 export async function checkSender(
   registry: RegistryNamespace,
@@ -393,9 +396,27 @@ export async function checkSender(
   now: number,
 ): Promise<{ ok: true } | Exclude<Admission, { ok: true }>> {
   if (caller.original) {
-    return (await isRevoked(registry, caller.instance, now))
-      ? { ok: false, status: 403, error: "instance_revoked" }
-      : { ok: true };
+    let record: InstanceRecord | null;
+    try {
+      record = await readInstance(registry, caller.instance, now);
+      if (record && record.status === "registered" && !record.keys.includes(caller.key)) {
+        record = await readInstance(registry, caller.instance, now, true);
+      }
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          message: "registry read failed, the send path fails open",
+          instance: caller.instance,
+          error: String(error),
+        }),
+      );
+      return { ok: true };
+    }
+    if (record?.status === "revoked") return { ok: false, status: 403, error: "instance_revoked" };
+    if (record && !record.keys.includes(caller.key)) {
+      return { ok: false, status: 401, error: "bad_signature" };
+    }
+    return { ok: true };
   }
   const admission = await checkRegistered(registry, caller, now);
   return admission.ok ? { ok: true } : admission;

@@ -4,11 +4,13 @@
 //   instance (src/handles.ts). Rate limited per IP; fails closed when the registry cannot say the instance is
 //   registered and not revoked.
 // - `POST /v1/send`, signed by the instance, opens the handle and delivers like `/send` (src/send.ts). A handle sealed
-//   for another instance is `403 handle_not_yours`. The revocation check fails open (a registry outage must not stop
-//   every self-hosted page); a rotated key the registry cannot confirm is `503 registry_unavailable`. Limits per
-//   instance (sends, calls) and per phone (the tag: instance and token, not the handle, which differs on every
-//   sealing). A page is never exempt: every caller can say `page`.
-// - `GET /v1/health?deep=1`, signed, answers the instance's registration state and then `/health?deep=1`'s answer.
+//   for another instance is `403 handle_not_yours`; both are checked before the registry is read, so a made-up
+//   instance id never forces a read. The registry read fails open (a registry outage must not stop every self-hosted
+//   page); a retired key is refused; a rotated key the registry cannot confirm is `503 registry_unavailable`. Limits
+//   per phone (the tag: instance and token, not the handle, which differs on every sealing) and per instance (calls,
+//   sends), narrowest first. A page is never exempt: every caller can say `page`.
+// - `GET /v1/health?deep=1`, signed and limited per IP before the registry is read, answers the instance's
+//   registration state and then `/health?deep=1`'s answer.
 
 import { verifyRequest, type VerifiedRequest } from "@freecorps/brigade-push/instance";
 import { DEVICE_TOKEN, type ApnsEnvironment } from "./apns.ts";
@@ -48,6 +50,8 @@ export type V1Env = ProviderEnv & {
   RELAY_TAG_KEY?: string;
   /** Handles minted per caller IP (wrangler.jsonc `ratelimits`). Optional, like every limiter here. */
   HANDLE_LIMIT?: Limiter;
+  /** Signed deep health checks per caller IP, before the registry is read. */
+  HEALTH_LIMIT?: Limiter;
   /** Sends per instance, keyed by instance id; a deep health check counts as one. */
   SEND_LIMIT?: Limiter;
   /** Calls per instance, keyed by instance id, on top of `SEND_LIMIT`. */
@@ -91,7 +95,10 @@ export async function v1Routes(
     now,
   });
   if (!verified.ok) return json({ error: verified.error }, 401);
-  if (url.pathname === "/v1/health") return health(verified, env, registry, send, now);
+  if (url.pathname === "/v1/health") {
+    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+    return health(verified, ip, env, registry, send, now);
+  }
   return sendHandle(verified, bytes, env, registry, send, now);
 }
 
@@ -173,8 +180,6 @@ async function sendHandle(
   now: number,
 ): Promise<Response> {
   if (!env.RELAY_HANDLE_KEYS || !env.RELAY_TAG_KEY) return json({ error: "not_configured" }, 503);
-  const sender = await checkSender(registry, caller, now);
-  if (!sender.ok) return json({ error: sender.error }, sender.status);
   let body: unknown;
   try {
     body = JSON.parse(new TextDecoder().decode(bytes));
@@ -192,6 +197,10 @@ async function sendHandle(
   } catch (error) {
     return misconfigured(error);
   }
+  // Only now the registry: the handle (local crypto) shows this id was registered when it was minted, so a made-up
+  // instance id, which costs nothing, never forces a registry read.
+  const sender = await checkSender(registry, caller, now);
+  if (!sender.ok) return json({ error: sender.error }, sender.status);
   const push = parsePush(body, sealed.platform);
   if (push === null) return json({ error: "invalid_body" }, 400);
   const call = push.kind === "call";
@@ -200,10 +209,12 @@ async function sendHandle(
   if (token === undefined) {
     return json({ error: "invalid_body", detail: "the handle has no VoIP token" }, 400);
   }
-  // Counted only for a send that would go out, so a malformed body never uses up an instance's minute.
-  if (!(await allowed(env.SEND_LIMIT, caller.instance, "sends"))) return limited("instance");
-  if (call && !(await allowed(env.CALL_LIMIT, caller.instance, "calls"))) return limited("calls");
+  // Only a send that passed every other check is counted, so a malformed body never uses up an instance's minute. The
+  // narrowest limit first: a binding cannot check without counting, so a send refused for one phone (or as a call)
+  // never uses up the instance's minute. One refused by a wider limit has still counted against the narrower ones.
   if (!(await allowed(env.PHONE_LIMIT, tag, "phone"))) return limited("phone");
+  if (call && !(await allowed(env.CALL_LIMIT, caller.instance, "calls"))) return limited("calls");
+  if (!(await allowed(env.SEND_LIMIT, caller.instance, "sends"))) return limited("instance");
   return deliver(
     {
       platform: sealed.platform,
@@ -220,17 +231,21 @@ async function sendHandle(
 }
 
 /**
- * `GET /v1/health?deep=1`: the instance's own state first (`401 bad_signature`, `403 instance_unregistered` or
- * `instance_revoked`, `503 registry_unavailable`, `429 rate_limited`), then the providers', as `/health?deep=1`, plus
- * `instance` and `handles` (whether this relay can mint and open handles).
+ * `GET /v1/health?deep=1`: the instance's own state first (`429 rate_limited` per IP, `401 bad_signature`,
+ * `403 instance_unregistered` or `instance_revoked`, `503 registry_unavailable`, `429 rate_limited` per instance), then
+ * the providers', as `/health?deep=1`, plus `instance` and `handles` (whether this relay can mint and open handles).
  */
 async function health(
   caller: VerifiedRequest,
+  ip: string,
   env: V1Env,
   registry: RegistryNamespace,
   send: Send,
   now: number,
 ): Promise<Response> {
+  // Before the registry: instance ids are free and a missing record is never cached, so only the caller's IP bounds
+  // how many registry reads made-up ids force.
+  if (!(await allowed(env.HEALTH_LIMIT, ip, "health"))) return limited("ip");
   const admission = await checkRegistered(registry, caller, now);
   if (!admission.ok) return json({ error: admission.error }, admission.status);
   // It asks APNs (and Google) each time: counted as a send, so it cannot be used to flood them.

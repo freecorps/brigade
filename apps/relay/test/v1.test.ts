@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from "node:crypto";
 import { generateRecipient, sealPush, toBase64url } from "@freecorps/brigade-push";
-import { generateInstanceKey, signRequest } from "@freecorps/brigade-push/instance";
+import { generateInstanceKey, signKeyProof, signRequest } from "@freecorps/brigade-push/instance";
 import { describe, expect, test, vi } from "vite-plus/test";
 import { handle, type RelayEnv } from "../src/index.ts";
 import type { InstanceRecord } from "../src/registry.ts";
@@ -158,7 +158,13 @@ function setup(overrides: Partial<RelayEnv> = {}) {
     method: string,
     path: string,
     body: unknown,
-    options: { signer?: Key; now?: number; env?: RelayEnv; send?: typeof fake.send } = {},
+    options: {
+      signer?: Key;
+      now?: number;
+      env?: RelayEnv;
+      send?: typeof fake.send;
+      ip?: string;
+    } = {},
   ) => {
     const text = body === undefined ? "" : JSON.stringify(body);
     const signer = options.signer ?? key;
@@ -174,7 +180,11 @@ function setup(overrides: Partial<RelayEnv> = {}) {
     return handle(
       new Request(`https://relay.test${path}`, {
         method,
-        headers: { ...headers, "Content-Type": "application/json" },
+        headers: {
+          ...headers,
+          "Content-Type": "application/json",
+          ...(options.ip ? { "CF-Connecting-IP": options.ip } : {}),
+        },
         ...(body === undefined ? {} : { body: text }),
       }),
       options.env ?? env,
@@ -557,9 +567,93 @@ describe("POST /v1/send", () => {
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "bad_signature" });
   });
+
+  test("a retired original key (one that leaked) cannot send, in this isolate or another", async () => {
+    const { instance, handleFor, sendV1, signed, registry, fake } = setup();
+    const original = await instance();
+    const next = await generateInstanceKey();
+    const { handle: sealed } = await handleFor(original);
+    expect((await sendV1(original, sealed)).status).toBe(200);
+    // Add the new key, then retire the original with it, through the relay (this isolate's cache follows).
+    const add = await signed(original, "POST", "/v1/instances/keys", {
+      add: next.publicKey,
+      proof: await signKeyProof(next.privateKey, original.instance),
+    });
+    expect(add.status).toBe(200);
+    const retire = await signed(
+      original,
+      "POST",
+      "/v1/instances/keys",
+      { retire: original.publicKey },
+      { signer: next },
+    );
+    expect(retire.status).toBe(200);
+    const refused = await sendV1(original, sealed);
+    expect(refused.status).toBe(401);
+    expect(await refused.json()).toEqual({ error: "bad_signature" });
+    // The new key sends with the same handle.
+    expect((await sendV1(original, sealed, {}, { signer: next })).status).toBe(200);
+
+    // Retired in another isolate: this one's cached record still lists the key until its 60 s pass.
+    const other = await instance();
+    const { handle: theirs } = await handleFor(other);
+    registry
+      .storage(`instance:${other.instance}`)
+      .set("record", { ...RECORD, keys: [next.publicKey] });
+    const later = await pastTheCache(() => sendV1(other, theirs));
+    expect(later.status).toBe(401);
+    expect(await later.json()).toEqual({ error: "bad_signature" });
+    // Neither refusal reached APNs.
+    expect(fake.apns()).toHaveLength(2);
+  });
+
+  test("a made-up instance id never forces a registry read: the handle is checked first", async () => {
+    const { instance, handleFor, sendV1, registry } = setup();
+    const owner = await instance();
+    const { handle: sealed } = await handleFor(owner);
+    const reads = () => registry.calls.get("record") ?? 0;
+    const before = reads();
+    for (let i = 0; i < 5; i++) {
+      // Self-signed by a brand-new id: a junk handle, then a real one sealed for someone else.
+      const stranger = await generateInstanceKey();
+      expect((await sendV1(stranger, "k1.AAAA")).status).toBe(400);
+      expect((await sendV1(stranger, sealed)).status).toBe(403);
+    }
+    expect(reads()).toBe(before);
+  });
 });
 
 describe("limits on /v1/send", () => {
+  test("narrowest first: a send refused per phone or as a call does not use up the instance's minute", async () => {
+    const perPhone = limiter(1);
+    const calls = limiter(1);
+    const perInstance = limiter(100);
+    const { instance, handleFor, sendV1 } = setup({
+      PHONE_LIMIT: perPhone,
+      CALL_LIMIT: calls,
+      SEND_LIMIT: perInstance,
+    });
+    const key = await instance();
+    const first = await handleFor(key);
+    const second = await handleFor(key, { pushToken: "d".repeat(64) });
+    const call = { kind: "call", callId: CALL_ID, urgency: undefined };
+    expect((await sendV1(key, first.handle)).status).toBe(200);
+    expect(perInstance.counts.get(key.instance)).toBe(1);
+    // The phone is over its limit: neither the calls nor the instance are charged.
+    expect((await sendV1(key, first.handle, call)).status).toBe(429);
+    expect(calls.counts.get(key.instance)).toBeUndefined();
+    expect(perInstance.counts.get(key.instance)).toBe(1);
+    // Another phone: the call goes out, and the next one is over the call limit, which charges the instance nothing.
+    expect((await sendV1(key, second.handle, call)).status).toBe(200);
+    expect(perInstance.counts.get(key.instance)).toBe(2);
+    const third = await handleFor(key, { pushToken: "e".repeat(64) });
+    const overCalls = await sendV1(key, third.handle, call);
+    expect(await overCalls.json()).toEqual({ error: "rate_limited", limit: "calls" });
+    expect(perInstance.counts.get(key.instance)).toBe(2);
+    // It still counted against the narrower phone limit it passed.
+    expect(perPhone.counts.get(third.tag)).toBe(1);
+  });
+
   test("SEND_LIMIT per instance id, pages included", async () => {
     const perInstance = limiter(2);
     const { instance, handleFor, sendV1, fake } = setup({ SEND_LIMIT: perInstance });
@@ -658,6 +752,49 @@ describe("GET /v1/health?deep=1", () => {
       ok: false,
       apns: { reason: "InvalidProviderToken" },
     });
+  });
+
+  test("HEALTH_LIMIT bounds checks per caller IP before the registry is read; a limiter that throws lets it through", async () => {
+    const perIp = limiter(2);
+    const { instance, signed, registry, env } = setup({
+      FCM_SERVICE_ACCOUNT: undefined,
+      HEALTH_LIMIT: perIp,
+    });
+    const ok = providers(400, "BadDeviceToken").send;
+    const ip = "192.0.2.7";
+    const reads = () => registry.calls.get("record") ?? 0;
+    // Made-up ids, each a registry read (a missing record is never cached), until the IP's limit.
+    for (let i = 0; i < 2; i++) {
+      const response = await signed(await instance(null), "GET", "/v1/health?deep=1", undefined, {
+        send: ok,
+        ip,
+      });
+      expect(response.status).toBe(403);
+    }
+    const before = reads();
+    const limited = await signed(await instance(null), "GET", "/v1/health?deep=1", undefined, {
+      send: ok,
+      ip,
+    });
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: "rate_limited", limit: "ip" });
+    expect(limited.headers.get("Retry-After")).toBe("60");
+    expect(reads()).toBe(before);
+    // Another IP is not limited, nor is anyone when the limiter fails.
+    const key = await instance();
+    expect(
+      (await signed(key, "GET", "/v1/health?deep=1", undefined, { send: ok, ip: "192.0.2.8" }))
+        .status,
+    ).toBe(200);
+    expect(
+      (
+        await signed(key, "GET", "/v1/health?deep=1", undefined, {
+          send: ok,
+          ip,
+          env: { ...env, HEALTH_LIMIT: throwing },
+        })
+      ).status,
+    ).toBe(200);
   });
 
   test("says why an instance cannot page: unregistered, revoked, a bad signature, no handle keys, the limit", async () => {

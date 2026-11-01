@@ -54,7 +54,11 @@ signed deep health are built too (sections 2 and 3, `src/handles.ts`, `src/v1.ts
   body bytes (of no bytes for a request without a body). The relay refuses a timestamp more than 5 minutes off. Replays inside that window only repeat a push and stay under the rate limits; no nonce
   store.
 - **Checking a signature needs no storage on the paging path.** If SHA-256 of the presented key gives the instance
-  id, the key is the original one and is checked against the signature alone. Only a rotated key needs a lookup
+  id, the key is the original one: the signature proves who signed, and the send path only asks the registry (through
+  the 60 s cache) whether that key was retired since, the same read as revocation. A record that no longer lists it
+  (retired after a leak) is read again fresh, and the key is refused (`401 bad_signature`) if it is still missing; a
+  read that fails lets the send through (fail open, logged), so a registry outage never stops the pages of an instance
+  on its original key. A rotated key needs a lookup to be accepted at all
   (below): the instance's key list, cached per isolate for 60 s. A key missing from the cached list is looked up again
   in the registry before it is refused, so a key added a moment ago works at once; only the registry's own answer
   refuses it. On a send, a rotated key the registry cannot confirm (not in a cached list, and no answer) is
@@ -68,7 +72,8 @@ signed deep health are built too (sections 2 and 3, `src/handles.ts`, `src/v1.ts
   answers `403 instance_unregistered`. Registering, minting a handle and rotating keys read the registry and **fail
   closed** when the registry cannot answer (`503 registry_unavailable`): an unknown id never gets a handle. A send needs no
   registration read, because the handle it carries could only have been minted for a registered instance; it checks
-  only revocation, below.
+  only revocation (below) and that the key was not retired. The handle is opened and matched to the signed instance
+  first (local crypto), so a made-up instance id never reaches the registry.
 - **Revocation** is a registry entry (`revoked`), read through a per-isolate cache of 60 s. On a send, a registry
   read that fails is _fail open_ (not revoked, logged): a registry outage must not stop every self-hosted page. Everything
   else fails closed.
@@ -113,9 +118,13 @@ signed deep health are built too (sections 2 and 3, `src/handles.ts`, `src/v1.ts
   minute, calls 60 a minute), and per phone 30 a minute from each instance, keyed by the tag (instance and token),
   not by the handle, which differs on every sealing. A page is never exempt, since every caller can say `page`;
   the limits are well above any real incident. **Decided (D4)**, raised on request. As built: each limit answers
-  `429 rate_limited` with `limit` (`instance`, `calls`, `phone`) and `Retry-After: 60`; only a send that would go out
-  counts; a signed deep health counts as one send (it asks APNs); minting is 60 a minute per IP (`HANDLE_LIMIT`,
-  Q28); a limiter that fails lets the call through.
+  `429 rate_limited` with `limit` (`instance`, `calls`, `phone`) and `Retry-After: 60`. A binding cannot check without
+  counting, so the limits are taken narrowest first, each only after every other check passed: per phone, then calls,
+  then per instance. A send refused by one limit has counted against the narrower ones before it, never the wider ones
+  after (a send refused for one phone costs the instance nothing; one refused as a call has counted for its phone); a
+  send that passed all three counts against all three even if APNs or FCM then refuses it. A signed deep health counts
+  as one send (it asks APNs) and, before it reads the registry, against a per-IP limit (`HEALTH_LIMIT`, 120 a
+  minute). Minting is 60 a minute per IP (`HANDLE_LIMIT`, Q28). A limiter that fails lets the call through.
 - **The old `/send`** stays for our instance with `RELAY_SEND_TOKEN`, until no supported app version sends raw
   tokens (below), then goes.
 

@@ -12,7 +12,8 @@ import { parseArgs } from "node:util";
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const mobile = join(root, "apps/mobile");
-export const appId = "app.freecorps.brigade";
+// The build's bundle id and Android package, as apps/mobile/plugins/app-id.ts reads it.
+export const appId = process.env.BRIGADE_APP_ID?.trim() || "app.freecorps.brigade";
 const windows = process.platform === "win32";
 
 /**

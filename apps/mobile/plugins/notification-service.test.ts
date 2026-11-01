@@ -1,16 +1,18 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, test } from "vite-plus/test";
+import { appGroup, appId, DEFAULT_APP_ID } from "./app-id.ts";
 import {
-  APP_GROUP,
   applyAppEntitlements,
   CRITICAL_ALERTS_ENTITLEMENT,
-  EXTENSION_ENTITLEMENTS,
+  extensionEntitlements,
   extensionInfoPlist,
   localizableStrings,
   NATIVE_LOCALES,
   NATIVE_STRING_KEYS,
   NSE_SOURCES,
 } from "./notification-service.ts";
+
+const GROUP = "group.com.acme.brigade";
 
 const messages = (locale: string) =>
   JSON.parse(
@@ -57,24 +59,25 @@ describe("applyAppEntitlements", () => {
       applyAppEntitlements(
         { "com.apple.security.application-groups": ["group.other"], other: true },
         { apsEnvironment: "production" },
+        GROUP,
       ),
     ).toEqual({
       other: true,
       "aps-environment": "production",
-      "com.apple.security.application-groups": ["group.other", APP_GROUP],
+      "com.apple.security.application-groups": ["group.other", GROUP],
       "com.apple.developer.usernotifications.time-sensitive": true,
     });
   });
 
   test("Critical Alerts only when the build asks for them (Apple grants the entitlement)", () => {
-    expect(applyAppEntitlements({}, { apsEnvironment: "production" })).not.toHaveProperty(
+    expect(applyAppEntitlements({}, { apsEnvironment: "production" }, GROUP)).not.toHaveProperty(
       CRITICAL_ALERTS_ENTITLEMENT,
     );
     expect(
-      applyAppEntitlements({}, { apsEnvironment: "production", criticalAlerts: false }),
+      applyAppEntitlements({}, { apsEnvironment: "production", criticalAlerts: false }, GROUP),
     ).not.toHaveProperty(CRITICAL_ALERTS_ENTITLEMENT);
     expect(
-      applyAppEntitlements({}, { apsEnvironment: "production", criticalAlerts: true }),
+      applyAppEntitlements({}, { apsEnvironment: "production", criticalAlerts: true }, GROUP),
     ).toMatchObject({
       [CRITICAL_ALERTS_ENTITLEMENT]: true,
       "com.apple.developer.usernotifications.time-sensitive": true,
@@ -84,6 +87,7 @@ describe("applyAppEntitlements", () => {
       applyAppEntitlements(
         { [CRITICAL_ALERTS_ENTITLEMENT]: true },
         { apsEnvironment: "production" },
+        GROUP,
       ),
     ).not.toHaveProperty(CRITICAL_ALERTS_ENTITLEMENT);
     expect(CRITICAL_ALERTS_ENTITLEMENT).toBe(
@@ -92,14 +96,16 @@ describe("applyAppEntitlements", () => {
   });
 
   test("does not add the App Group twice", () => {
-    const once = applyAppEntitlements({}, { apsEnvironment: "development" });
-    expect(applyAppEntitlements(once, { apsEnvironment: "development" })).toEqual(once);
+    const once = applyAppEntitlements({}, { apsEnvironment: "development" }, GROUP);
+    expect(applyAppEntitlements(once, { apsEnvironment: "development" }, GROUP)).toEqual(once);
   });
 });
 
 describe("extension plists", () => {
   test("Info.plist declares a notification service with the app's versions and locales", () => {
-    const plist = extensionInfoPlist("0.1.0", "7");
+    const plist = extensionInfoPlist("0.1.0", "7", GROUP);
+    // The App Group BrigadePushCrypto.swift reads.
+    expect(plist).toMatch(/BrigadeAppGroup<\/key>\s*<string>group\.com\.acme\.brigade</);
     expect(plist).toContain("<string>com.apple.usernotifications.service</string>");
     expect(plist).toContain("<string>$(PRODUCT_MODULE_NAME).NotificationService</string>");
     expect(plist).toMatch(/CFBundleShortVersionString<\/key>\s*<string>0\.1\.0</);
@@ -108,8 +114,34 @@ describe("extension plists", () => {
   });
 
   test("the extension is in the App Group, and only that", () => {
-    expect(EXTENSION_ENTITLEMENTS).toContain(`<string>${APP_GROUP}</string>`);
-    expect(EXTENSION_ENTITLEMENTS).not.toContain("aps-environment");
+    expect(extensionEntitlements(GROUP)).toContain(`<string>${GROUP}</string>`);
+    expect(extensionEntitlements(GROUP)).not.toContain("aps-environment");
+  });
+});
+
+describe("the app's identifiers", () => {
+  test("BRIGADE_APP_ID is the bundle id, the store app's when unset; the App Group follows it", () => {
+    expect(appId({})).toBe("app.freecorps.brigade");
+    expect(appId({ BRIGADE_APP_ID: " " })).toBe(DEFAULT_APP_ID);
+    expect(appId({ BRIGADE_APP_ID: "com.acme.brigade" })).toBe("com.acme.brigade");
+    expect(appGroup(DEFAULT_APP_ID)).toBe("group.app.freecorps.brigade");
+    expect(appGroup("com.acme.brigade")).toBe(GROUP);
+  });
+
+  test("an id iOS or Android would refuse stops the build", () => {
+    for (const id of ["brigade", "com.acme-corp.brigade", "com.1acme.brigade", "com..brigade"]) {
+      expect(() => appId({ BRIGADE_APP_ID: id })).toThrow(/BRIGADE_APP_ID/);
+    }
+  });
+
+  test("the Swift code reads the App Group from Info.plist", () => {
+    const crypto = readFileSync(
+      new URL("../modules/brigade-push/ios/BrigadePushCrypto.swift", import.meta.url),
+      "utf8",
+    );
+    expect(crypto).toContain(
+      `forInfoDictionaryKey: "BrigadeAppGroup") as? String ?? "${appGroup(DEFAULT_APP_ID)}"`,
+    );
   });
 });
 

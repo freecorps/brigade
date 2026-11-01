@@ -6,12 +6,16 @@ import {
   IOSConfig,
   withDangerousMod,
   withEntitlementsPlist,
+  withInfoPlist,
   withXcodeProject,
   type XcodeProject,
 } from "expo/config-plugins";
+import { APP_GROUP_PLIST_KEY, appGroup } from "./app-id.ts";
 
 // The iOS Notification Service Extension that decrypts Brigade pushes (spike S1, RFC 0006). It adds:
 // - the push, App Group and time-sensitive entitlements to the app, and Critical Alerts when asked (`criticalAlerts`);
+//   the App Group is `group.<bundle id>` (plugins/app-id.ts), and each target's Info.plist names it
+//   (`BrigadeAppGroup`) for the Swift code to read;
 // - a `BrigadeNotificationService` app extension target, embedded in the app, compiling
 //   modules/brigade-push/extension/NotificationService.swift and the app module's BrigadePushCrypto.swift and
 //   BrigadePage.swift (the Acknowledge action's category, set on decrypted pages);
@@ -21,7 +25,6 @@ import {
 // See docs/spikes/s1-apns-encryption.md.
 
 export const NSE_TARGET = "BrigadeNotificationService";
-export const APP_GROUP = "group.app.freecorps.brigade";
 /**
  * The strings both targets need, in every locale packages/i18n has. `call_caller` is the app's: CallKit's
  * handle for a page ringing as a call (modules/brigade-call, spike S6).
@@ -71,13 +74,18 @@ export function escapeStrings(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
 }
 
-/** The extension's Info.plist. Versions must match the app's, or App Store Connect rejects the build. */
-export function extensionInfoPlist(version: string, buildNumber: string): string {
+/**
+ * The extension's Info.plist. Versions must match the app's, or App Store Connect rejects the build; `group` is the
+ * App Group, read by BrigadePushCrypto.swift.
+ */
+export function extensionInfoPlist(version: string, buildNumber: string, group: string): string {
   const locales = NATIVE_LOCALES.map((locale) => `\t\t<string>${locale}</string>`).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+\t<key>${APP_GROUP_PLIST_KEY}</key>
+\t<string>${group}</string>
 \t<key>CFBundleDevelopmentRegion</key>
 \t<string>en</string>
 \t<key>CFBundleDisplayName</key>
@@ -112,13 +120,16 @@ ${locales}
 `;
 }
 
-export const EXTENSION_ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
+/** An extension's entitlements (this one's and the widget's): the App Group, and nothing else. */
+export const extensionEntitlements = (
+  group: string,
+): string => `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 \t<key>com.apple.security.application-groups</key>
 \t<array>
-\t\t<string>${APP_GROUP}</string>
+\t\t<string>${group}</string>
 \t</array>
 </dict>
 </plist>
@@ -131,6 +142,7 @@ export const EXTENSION_ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
 export function applyAppEntitlements(
   entitlements: Record<string, unknown>,
   { apsEnvironment, criticalAlerts }: NotificationServiceOptions,
+  group: string,
 ): Record<string, unknown> {
   const groups = Array.isArray(entitlements["com.apple.security.application-groups"])
     ? (entitlements["com.apple.security.application-groups"] as unknown[])
@@ -140,9 +152,7 @@ export function applyAppEntitlements(
   return {
     ...rest,
     "aps-environment": apsEnvironment,
-    "com.apple.security.application-groups": groups.includes(APP_GROUP)
-      ? groups
-      : [...groups, APP_GROUP],
+    "com.apple.security.application-groups": groups.includes(group) ? groups : [...groups, group],
     "com.apple.developer.usernotifications.time-sensitive": true,
     ...(criticalAlerts ? { [CRITICAL_ALERTS_ENTITLEMENT]: true } : {}),
   };
@@ -289,9 +299,16 @@ export const withNotificationService: ConfigPlugin<NotificationServiceOptions> =
 ) => {
   const bundleIdentifier = config.ios?.bundleIdentifier;
   if (!bundleIdentifier) throw new Error("withNotificationService needs ios.bundleIdentifier");
+  const group = appGroup(bundleIdentifier);
 
   config = withEntitlementsPlist(config, (mod) => {
-    mod.modResults = applyAppEntitlements(mod.modResults, options) as typeof mod.modResults;
+    mod.modResults = applyAppEntitlements(mod.modResults, options, group) as typeof mod.modResults;
+    return mod;
+  });
+
+  // The app's App Group for its Swift code (BrigadePushCrypto, BrigadeWidgetModule), as the extensions' plists say.
+  config = withInfoPlist(config, (mod) => {
+    mod.modResults[APP_GROUP_PLIST_KEY] = group;
     return mod;
   });
 
@@ -316,9 +333,9 @@ export const withNotificationService: ConfigPlugin<NotificationServiceOptions> =
         copyFileSync(source, join(extensionDir, source.split("/").pop()!));
       writeFileSync(
         join(extensionDir, "Info.plist"),
-        extensionInfoPlist(mod.version ?? "1.0.0", mod.ios?.buildNumber ?? "1"),
+        extensionInfoPlist(mod.version ?? "1.0.0", mod.ios?.buildNumber ?? "1", group),
       );
-      writeFileSync(join(extensionDir, `${NSE_TARGET}.entitlements`), EXTENSION_ENTITLEMENTS);
+      writeFileSync(join(extensionDir, `${NSE_TARGET}.entitlements`), extensionEntitlements(group));
       for (const locale of NATIVE_LOCALES) {
         const strings = localizableStrings(readMessages(locale));
         for (const dir of [extensionDir, join(ios, projectName)]) {
@@ -349,7 +366,7 @@ export const withNotificationService: ConfigPlugin<NotificationServiceOptions> =
               {
                 targetName: NSE_TARGET,
                 bundleIdentifier: `${bundleIdentifier}.NotificationService`,
-                entitlements: { "com.apple.security.application-groups": [APP_GROUP] },
+                entitlements: { "com.apple.security.application-groups": [group] },
               },
             ],
           },

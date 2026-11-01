@@ -7,8 +7,11 @@ import Security
 
 public enum BrigadePushCrypto {
   /// The App Group both targets are in. App Groups double as Keychain access groups, so the extension can read the
-  /// key the app created without a Keychain Sharing entitlement or the team id.
-  static let appGroup = "group.app.freecorps.brigade"
+  /// key the app created without a Keychain Sharing entitlement or the team id. `group.<bundle id>`, which
+  /// plugins/notification-service.ts writes into each target's Info.plist (`BrigadeAppGroup`); the store app's
+  /// group without it (a test binary).
+  static let appGroup =
+    Bundle.main.object(forInfoDictionaryKey: "BrigadeAppGroup") as? String ?? "group.app.freecorps.brigade"
   /// `PUSH_HPKE_INFO` in packages/push.
   static let info = Data("app.freecorps.brigade push v1".utf8)
   static let envelopeVersion = 1

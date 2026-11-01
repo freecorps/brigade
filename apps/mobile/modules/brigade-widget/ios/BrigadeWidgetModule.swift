@@ -27,7 +27,10 @@ public class BrigadeWidgetModule: Module {
 
 /// The App Group keys; the widget's copy is in ../widget/WidgetState.swift.
 enum WidgetStore {
-  static let appGroup = "group.app.freecorps.brigade"
+  /// `group.<bundle id>`, from the app's Info.plist (plugins/notification-service.ts); the store app's group without
+  /// it.
+  static let appGroup =
+    Bundle.main.object(forInfoDictionaryKey: "BrigadeAppGroup") as? String ?? "group.app.freecorps.brigade"
   static let snapshotKey = "widget.snapshot"
   static let localeKey = "widget.locale"
   static var defaults: UserDefaults? { UserDefaults(suiteName: appGroup) }

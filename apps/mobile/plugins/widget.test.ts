@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, test } from "vite-plus/test";
-import { APP_GROUP, NATIVE_LOCALES } from "./notification-service.ts";
+import { APP_GROUP_PLIST_KEY, appGroup, DEFAULT_APP_ID } from "./app-id.ts";
+import { NATIVE_LOCALES } from "./notification-service.ts";
 import {
   WIDGET_SOURCES,
   WIDGET_STRING_KEYS,
@@ -51,8 +52,10 @@ describe("widgetStrings", () => {
 
 describe("the widget extension", () => {
   test("Info.plist declares a WidgetKit extension with the app's versions and locales", () => {
-    const plist = widgetInfoPlist("0.1.0", "7");
+    const plist = widgetInfoPlist("0.1.0", "7", "group.com.acme.brigade");
     expect(plist).toContain("<string>com.apple.widgetkit-extension</string>");
+    // The App Group WidgetState.swift reads.
+    expect(plist).toMatch(/BrigadeAppGroup<\/key>\s*<string>group\.com\.acme\.brigade</);
     expect(plist).not.toContain("NSExtensionPrincipalClass");
     expect(plist).toMatch(/CFBundleShortVersionString<\/key>\s*<string>0\.1\.0</);
     expect(plist).toMatch(/CFBundleVersion<\/key>\s*<string>7</);
@@ -71,7 +74,7 @@ describe("the widget extension", () => {
     const extension = {
       targetName: WIDGET_TARGET,
       bundleIdentifier: "app.example.Widget",
-      entitlements: { "com.apple.security.application-groups": [APP_GROUP] },
+      entitlements: { "com.apple.security.application-groups": ["group.app.example"] },
     };
     const nse = {
       targetName: "BrigadeNotificationService",
@@ -102,9 +105,15 @@ test("the Swift copy of the widget's decisions keeps the keys and staleness the 
     new URL("../modules/brigade-widget/ios/BrigadeWidgetModule.swift", import.meta.url),
     "utf8",
   );
-  for (const key of ['"widget.snapshot"', '"widget.locale"', `"${APP_GROUP}"`]) {
+  for (const key of ['"widget.snapshot"', '"widget.locale"', `"${APP_GROUP_PLIST_KEY}"`]) {
     expect(swift).toContain(key);
     expect(app).toContain(key);
+  }
+  // The App Group comes from Info.plist; the literal is only the store app's fallback.
+  for (const source of [swift, app]) {
+    expect(source).toContain(
+      `forInfoDictionaryKey: "${APP_GROUP_PLIST_KEY}") as? String ?? "${appGroup(DEFAULT_APP_ID)}"`,
+    );
   }
   // Every key the views look up is generated.
   const views = readFileSync(

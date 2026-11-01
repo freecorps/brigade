@@ -162,7 +162,8 @@ vp run build            # cached expo export of the Android and iOS JS bundles i
 - **Encrypted pushes (iOS):** `plugins/notification-service.ts` adds the `BrigadeNotificationService` extension
   target, the push, App Group and time-sensitive entitlements, and fallback strings generated from
   `packages/i18n` (`push_fallback_*`). The local module `modules/brigade-push` creates the device key in the
-  Keychain shared through the App Group `group.app.freecorps.brigade`; the extension
+  Keychain shared through the App Group `group.app.freecorps.brigade` (`group.<BRIGADE_APP_ID>`, "Your own app"); the
+  extension
   (`modules/brigade-push/extension`) decrypts with it (HPKE, `packages/push` on the server side) or shows the
   fallback. `aps-environment` is `development` locally and `production` on EAS. For local builds signed for a
   device, set `APPLE_TEAM_ID` (never committed) and build with `xcodebuild -allowProvisioningUpdates`; the commands
@@ -219,11 +220,14 @@ and signed itself: Apple and Google deliver a push only with the publisher's key
 publishing (App Store, Google Play, TestFlight, an MDM or an internal store) is the company's. A stub until the store
 app ships (RFC 0015 "Order of work" step 5):
 
-- **Its own identifiers.** The bundle id and Android package (`APP_ID` in `app.config.ts`, `app.freecorps.brigade`)
-  and the App Group the Notification Service Extension and the widget share with the app (`APP_GROUP` in
-  `plugins/notification-service.ts`, `group.app.freecorps.brigade`). Both are constants today, changed in the
-  company's copy (Q32); the extensions' bundle ids follow the app's (`<bundle id>.NotificationService`,
-  `<bundle id>.Widget`). The relay's `APNS_TOPIC` is that bundle id.
+- **Its own identifiers.** Set `BRIGADE_APP_ID` at build time (and for `vp run mobile:install`, which launches the
+  app by it): the bundle id and Android package, `app.freecorps.brigade` when unset (`plugins/app-id.ts`; a reverse
+  DNS id Android also accepts, so no `-`). Everything else follows it: the App Group the Notification Service
+  Extension and the widget share with the app is `group.<BRIGADE_APP_ID>`, which the plugins put in the entitlements
+  and in each target's Info.plist (`BrigadeAppGroup`, read by the Swift code), and the extensions' bundle ids are
+  `<bundle id>.NotificationService` and `<bundle id>.Widget`. For EAS builds, set it as an environment variable of
+  the build profile. The relay's topic (`RELAY_APNS_TOPIC`, which `vp run setup:relay` sets from `--bundle-id`) is
+  that bundle id.
 - **Apple:** an Apple Developer account with App IDs for the app and both extensions, the App Group, Push
   Notifications, VoIP (PushKit, for calls) and, if granted, Critical Alerts (`BRIGADE_CRITICAL_ALERTS=1`); an APNs key
   (`.p8`) for the relay. Local builds take the team id from `APPLE_TEAM_ID`.
@@ -231,8 +235,9 @@ app ships (RFC 0015 "Order of work" step 5):
   (`GOOGLE_SERVICES_FILE`, "How it is wired" above) and a service account for the relay.
 - **Its instance:** `EXPO_PUBLIC_BRIGADE_URL`, the dashboard's origin the build signs in to.
 - **Its relay:** `EXPO_PUBLIC_BRIGADE_RELAY_URL`, where the app asks for handles, is **not read yet**: the app mints
-  handles with RFC 0015 step 4. Until then the app registers raw tokens, which the instance pages through the relay's
-  `/send` with `RELAY_SEND_TOKEN` (the setup script sets it on both).
+  handles with RFC 0015 step 4, and then defaults it from the instance's `/config` (`relay.origin`), so a build only
+  sets it to override that (decided, Q32). Until then the app registers raw tokens, which the instance pages through
+  the relay's `/send` with `RELAY_SEND_TOKEN` (the setup script sets it on both).
 - **Store accounts and EAS:** the `owner`, EAS project id and update URL in `app.config.ts` are Freecorps'; the
   company's copy points them at its own Expo account (`eas init`), and its own App Store Connect and Google Play
   accounts for `eas submit`.

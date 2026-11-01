@@ -6,7 +6,9 @@ import Foundation
 
 /// The App Group keys, as the app's module writes them.
 enum WidgetStore {
-  static let appGroup = "group.app.freecorps.brigade"
+  /// `group.<bundle id>`, from the widget's Info.plist (plugins/widget.ts); the store app's group without it.
+  static let appGroup =
+    Bundle.main.object(forInfoDictionaryKey: "BrigadeAppGroup") as? String ?? "group.app.freecorps.brigade"
   static let snapshotKey = "widget.snapshot"
   static let localeKey = "widget.locale"
 

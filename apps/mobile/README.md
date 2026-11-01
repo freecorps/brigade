@@ -20,6 +20,17 @@ APNs device token and the device public key that encrypted pushes are sealed to.
 [S4](../../docs/spikes/s4-expo-workspace.md), [S3](../../docs/spikes/s3-sync-engine.md),
 [S1](../../docs/spikes/s1-apns-encryption.md).
 
+## Expo SDK packages
+
+Add and bump Expo packages with `bunx expo install`, and move to a newer SDK patch with
+`bunx expo install expo@~58.0.<n>` then `bunx expo install --fix`. All of them must come from the same patch release:
+precompiled modules link against the installed expo-modules-core, so an expo-camera newer than `expo` builds fine
+and then crashes at launch with a missing ExpoModulesCore symbol (TestFlight build 0.1.0 (21)).
+`scripts/sdk-versions.test.ts`, part of this package's tests, fails on such a mix, without the network: it runs
+`expo install --check` against the installed expo and checks no Expo package was released after it.
+`expo.install.exclude` in `package.json` keeps typescript out of the check (the app uses TypeScript 7, expo
+asks for ~6.0).
+
 ## Live data in development
 
 The app signs in at `http://<Metro host>:5173/api/auth` and syncs at `ws://<Metro host>:5173/api/sync/<workspace>`,

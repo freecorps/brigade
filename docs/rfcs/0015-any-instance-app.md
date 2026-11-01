@@ -99,14 +99,18 @@ signed deep health are built too (sections 2 and 3, `src/handles.ts`, `src/v1.ts
   device", and `device.expire` "only if its token is still the one the push went to".
 - **Who asks for it.** The app, straight to the relay. Never through the instance, which must not see the token. The
   relay learns the phone's IP address when it does; the terms say so.
-- **When.** Each time the app registers today (launch, foreground, new token, Try again) it asks for a handle first,
-  so a new APNs, PushKit or FCM token always comes with a new handle. A VoIP token that arrives later gets a new
-  handle with both tokens.
+- **When (decided, Q30).** The app keeps the handle it was given, per instance, and asks the relay for a new one only
+  when its push tokens (APNs, PushKit or FCM) or the relay's handle key id change. So a new token always comes with a
+  new handle, a VoIP token that arrives later gets a new handle with both tokens, and a key rotation reaches the phone
+  on its next registration; a registration with nothing changed (launch, foreground, Try again) sends the handle it
+  has, the same row, and emits no `device.registered`. The handle's key id is its prefix; how the app learns the
+  relay's current one is part of building this with the app (step 4).
 - **Abuse of minting.** Anyone may ask for a handle for any token, for their own instance only. That is harmless
   without a real token, which only the phone and the relay ever see (and our own instance until migration, below).
   Rate limited per IP.
 - **Rotating the relay's key.** Handles carry the key id; the relay keeps old keys to open handles for at least 13
-  months (a phone opened once a year still works), and every registration re-seals with the current key. Only a leaked
+  months (a phone opened once a year still works), and a registration after a rotation (the key id changed) re-seals
+  with the current key. Only a leaked
   key is retired early, and then every phone needs opening once (the same as a lost instance key).
 
 ### 3. Sending
@@ -332,7 +336,9 @@ The address-only QR (`brigade://connect?server=<origin>`) stays for an instance 
   Cloudflare's egress addresses (Q28). The relay has no pending state to answer (registration completes with the
   emailed code), so `instance_registration_pending` is not a reason: an instance not registered yet is
   `instance_unregistered`.
-- Open: Q30 (a new handle, so a changed row, on every registration).
+- Decided, Q30: the instance keeps storing the handle it is given (the newest carries a relay key rotation); the
+  churn is avoided on the phone, which asks for a new handle only when its tokens or the relay's key id change
+  (section 2, step 4).
 
 ### 8. Which relay: Freecorps' or your own
 
@@ -361,15 +367,16 @@ asks which, and can be run again later:
      id, team id), a Firebase project and its service account JSON for Android, and the bundle id of the company's app
      build.
    - Deploys `apps/relay` to the same Cloudflare account, sets its secrets (`APNS_KEY`, `APNS_KEY_ID`, `APNS_TEAM_ID`,
-     `APNS_TOPIC`, `FCM_SERVICE_ACCOUNT`, `RELAY_HANDLE_KEYS`) and turns its registration to this instance only
-     (`RELAY_REGISTRATION=closed`, the instance registered directly by the script, no terms or email).
+     `RELAY_APNS_TOPIC`, `FCM_SERVICE_ACCOUNT`, `RELAY_HANDLE_KEYS`) and turns its registration to this instance only
+     (`RELAY_REGISTRATION=closed`, also a secret; the instance registered directly by the script, no terms or email).
    - Binds the relay to the API as `RELAY` (no hop over the internet, as on our instance) and sets the instance key.
    - Points to "Your own app" in the docs (apps/mobile README): the EAS build with the company's bundle id, App
      Group, relay address and store accounts. That build is the company's to publish (or to hand out through
-     TestFlight, an MDM or an internal store). As the app is today, the bundle id (`APP_ID`, app.config.ts) and the
-     App Group (`APP_GROUP`, plugins/notification-service.ts) are constants a company's copy changes, not build
-     variables (Q32), and the relay address, `EXPO_PUBLIC_BRIGADE_RELAY_URL`, is not read yet: the app mints handles
-     with step 4 and registers raw tokens until then.
+     TestFlight, an MDM or an internal store). The bundle id and Android package are the build variable
+     `BRIGADE_APP_ID` (default `app.freecorps.brigade`, apps/mobile `plugins/app-id.ts`), and the App Group is derived
+     from it, `group.<BRIGADE_APP_ID>`, written into each target's Info.plist for the Swift code (Q32). The relay
+     address, `EXPO_PUBLIC_BRIGADE_RELAY_URL`, will default from the instance's `/config` (`relay.origin`), decided
+     (Q32) and built with step 4; until then the app does not read it and registers raw tokens.
    - Asks for the build's store link (optional, `RELAY_APP_URL`), so the store app can send people there (below).
 3. **Not now.** No push; the email notifier still pages, and the dashboard says phones are not paged.
 
@@ -403,9 +410,10 @@ does it.
   detects from vite.config.ts or wrangler.jsonc). A switch from an own relay (marked by `RELAY_APP_URL`) also removes
   that link and its `RELAY_SEND_TOKEN`; an API without `RELAY_APP_URL` keeps its send token. The script says that
   phones on the app as released are not paged this way (raw tokens need Freecorps' send token): they are once an app
-  release mints handles (step 4). **Its public address is
-  not known yet** (Q31): `FREECORPS_RELAY_URL` is a placeholder, so `--relay-url` is required and the script stops
-  without it.
+  release mints handles (step 4). Its public address is `https://relay.brigade.freecorps.com.br`
+  (`FREECORPS_RELAY_URL`, the default; `--relay-url` or `BRIGADE_RELAY_URL` overrides it). The Custom Domain is
+  attached to `brigade-relay` in the Cloudflare dashboard, not in wrangler.jsonc, so a deploy creates no route; until
+  it is attached (Q31) the script stops with "Could not reach the relay".
 - **Your own relay:** also needs a hostname on a zone of the account, deployed as the relay's custom domain (waited
   for, at most 5 minutes), since phones and the registration reach it there. It refuses a relay Worker it did not set
   up (no `BRIGADE_OWN_RELAY` marker secret; Freecorps' own, say) without `--take-over-relay`. It keeps the relay's
@@ -417,13 +425,17 @@ does it.
   a new token and marker go on both only after the registration, one right after the other, so a run that stops at any
   step (build, secrets, deploy, the domain, the registration) leaves the API as it was, and the next run puts tokens
   that drifted apart right. The admin token
-  is deleted once the instance is registered. `APNS_TOPIC` and `RELAY_REGISTRATION` go in as `wrangler deploy --var`,
-  which a later deploy without them undoes (Q32). It does not deploy the API: the production build already binds
+  is deleted once the instance is registered. The topic and closed registration are secrets set before the deploy,
+  `RELAY_APNS_TOPIC` (the company's bundle id; it takes precedence over the `APNS_TOPIC` var, since a secret cannot
+  share a var's name) and `RELAY_REGISTRATION=closed`, so every later deploy without flags (CI, by hand) keeps them (Q32); the
+  deploy passes no `--var`. A relay set up by an earlier version of the script, with the two as `--var`, gets the
+  secrets on its next run. It does not deploy the API: the production build already binds
   `RELAY` to `brigade-relay`, so the operator builds and deploys the API again.
 - **Tests:** apps/relay `test/registry.test.ts` (closed registration) and `test/setup-relay.test.ts`, which runs every
   flow against the relay's own `handle` and a fake wrangler: the terms refused, a wrong code, codes rate limited, the
-  relay unreachable, no relay address, a missing prerequisite, the switch confirmation, non-interactive runs, a secret
-  list that fails, a relay not set up by the script, a stop at each own-relay step with paging left working, the
+  relay unreachable, the default relay address and an empty one, a missing prerequisite, the switch confirmation,
+  non-interactive runs, a secret list that fails, a relay not set up by the script, the topic and closed registration
+  as secrets (an old `--var` relay included), a stop at each own-relay step with paging left working, the
   `RELAY` binding found, the key file kept out of the repository, and no secret value in the output or a command's
   arguments.
 
@@ -443,8 +455,8 @@ does it.
 `src/components/use-app-card.tsx` (account), `src/lib/relay.ts`; apps/api `relaySetup` in `src/relay-instance.ts`. As
 built:
 
-- **Which relay** comes from the server, not from the relay's origin: Freecorps' relay has no public address yet (Q31),
-  so no constant could tell the two apart. `GET /health/paging`, which the dashboard already asks every minute, gives
+- **Which relay** comes from the server, not from the relay's origin: built before Freecorps' relay had a public
+  address (Q31), and an own relay may sit behind any hostname, so the server says. `GET /health/paging`, which the dashboard already asks every minute, gives
   members `relay: { kind: "none" | "freecorps" | "own", host?, app? }`. `none` when phones cannot be paged at all (no
   relay to reach, or neither `RELAY_SEND_TOKEN` nor `RELAY_INSTANCE_KEY`; unlike `/config`'s `relay` it counts the send
   token, which pages raw-token phones today). A key that does not read still counts, so the card shows the watchdog's

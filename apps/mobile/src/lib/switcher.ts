@@ -5,7 +5,7 @@
 // session (the active instance) and the board the background instances publish to (`instanceBoard`).
 import type { Paging, Registrations } from "@/lib/device";
 import { instanceLabel, hostOf } from "@/lib/instance-address";
-import { DEFAULT_INSTANCE, type Instance, type Instances } from "@/lib/instances";
+import { DEFAULT_INSTANCE, MAX_INSTANCES, type Instance, type Instances } from "@/lib/instances";
 import type { PhoneWorkspace } from "@/lib/phone-workspaces";
 import { FREECORPS_RELAY, relayPlan, type InstanceConfig } from "@/lib/relay";
 
@@ -264,6 +264,37 @@ export async function keptSession(
   } catch {
     return "unknown";
   }
+}
+
+/**
+ * What "You're already signed in" can offer for the session kept at `home` (src/lib/instance-clients.ts `sessionAt`):
+ * Open, which lists it again when it is not listed (the build's own instance, removed, with a session left under its
+ * keys from before) and cannot at the cap (`full`, said under it); and "Sign out of it, then continue", which works
+ * listed or not, so the member always has a way on.
+ */
+export function alreadyChoices(
+  home: Instance,
+  list: Instances,
+): { listed: boolean; full: boolean; signOutFirst: true } {
+  const listed = list.instances.some((one) => one.id === home.id);
+  return { listed, full: !listed && list.instances.length >= MAX_INSTANCES, signOutFirst: true };
+}
+
+/**
+ * What the shown instance's sign-out answered (the member's: `released`, `kept`, `stuck`), for removing: `stuck` (the
+ * server did not hear it, nor could it be kept to finish later) may leave the phone paged there, so it reads as
+ * `unknown`, and the instance stays listed.
+ */
+export function shownSignOut(result: unknown): "kept" | "unknown" {
+  return result === "stuck" ? "unknown" : "kept";
+}
+
+/**
+ * A background sign-out's end: `done` when the server heard it or it was kept to finish later; `stuck` when neither
+ * (it may still page the phone, and nothing would finish it).
+ */
+export function backgroundSignOut(answered: boolean, stored: boolean): "done" | "stuck" {
+  return answered || stored ? "done" : "stuck";
 }
 
 /**

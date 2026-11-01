@@ -2,7 +2,7 @@
 // dashboard origin, and what the instance's `GET /api/config` says about it before anyone signs in there. Pure, so it
 // is tested in Node; src/screens/connect.tsx asks it with fetch and this build's relay.
 import { originOf } from "@/lib/instances";
-import { appLink, FREECORPS_BRIGADE, RELAY_TIMEOUT_MS } from "@/lib/relay";
+import { appLink, FREECORPS_BRIGADE, RELAY_TIMEOUT_MS, withDeadline } from "@/lib/relay";
 
 /** Why an address is not one the app goes to. */
 export type AddressProblem =
@@ -37,6 +37,18 @@ export function readAddress(
   if (url.protocol === "http:" && !(dev && privateHost(url.hostname)))
     return { problem: "insecure" };
   return { origin };
+}
+
+/**
+ * Whether the field now names another instance than the address that was checked: the same origin however it is
+ * written (spaces, a path, the scheme left out) is the same address; anything else, an unreadable one included, is
+ * not, so nothing is added for an address the member no longer shows.
+ */
+export function addressChanged(checked: string, now: string, dev: boolean): boolean {
+  if (checked.trim() === now.trim()) return false;
+  const before = readAddress(checked, dev);
+  const after = readAddress(now, dev);
+  return !("origin" in before && "origin" in after && before.origin === after.origin);
 }
 
 /** This machine, a private network (RFC 1918, link-local, unique local) or a `.local` name. */
@@ -105,25 +117,28 @@ export function readAddressConfig(status: number, body: unknown): AddressConfig 
 type Fetch = (url: string, init: RequestInit) => Promise<Pick<Response, "status" | "json">>;
 
 /** `GET <origin>/api/config` within `RELAY_TIMEOUT_MS`; never throws. */
-export async function loadAddressConfig(origin: string, fetcher: Fetch): Promise<AddressConfig> {
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), RELAY_TIMEOUT_MS);
+export async function loadAddressConfig(
+  origin: string,
+  fetcher: Fetch,
+  timeoutMs = RELAY_TIMEOUT_MS,
+): Promise<AddressConfig> {
   try {
-    const response = await fetcher(`${origin}/api/config`, {
-      headers: { accept: "application/json" },
-      signal: abort.signal,
+    // The body is read within the same time: one that never ends is no answer.
+    return await withDeadline(timeoutMs, async (signal) => {
+      const response = await fetcher(`${origin}/api/config`, {
+        headers: { accept: "application/json" },
+        signal,
+      });
+      let body: unknown = null;
+      try {
+        body = await response.json();
+      } catch {
+        body = null;
+      }
+      return readAddressConfig(response.status, body);
     });
-    let body: unknown = null;
-    try {
-      body = await response.json();
-    } catch {
-      body = null;
-    }
-    return readAddressConfig(response.status, body);
   } catch {
     return { kind: "unreachable" };
-  } finally {
-    clearTimeout(timer);
   }
 }
 

@@ -2,7 +2,10 @@ import { expect, test, vi } from "vite-plus/test";
 import { DEFAULT_INSTANCE, type Instances } from "./instances";
 import { FREECORPS_BRIGADE, FREECORPS_RELAY } from "./relay";
 import {
+  alreadyChoices,
+  backgroundSignOut,
   instanceBoard,
+  shownSignOut,
   keptSession,
   relayCache,
   removalOutcome,
@@ -292,6 +295,38 @@ test("a session that cannot be read is maybe signed in: never removed silently",
   expect(removalOutcome("kept", "pending")).toBe("kept");
   expect(removalOutcome("unknown", "none")).toBe("failed");
   expect(removalOutcome("unknown", "pending")).toBe("failed");
+});
+
+test("a sign-out nothing heard nor kept may still page the phone: the instance stays", () => {
+  expect(shownSignOut("released")).toBe("kept");
+  expect(shownSignOut("kept")).toBe("kept");
+  expect(shownSignOut("stuck")).toBe("unknown");
+  expect(shownSignOut(undefined)).toBe("kept");
+  expect(backgroundSignOut(true, false)).toBe("done");
+  expect(backgroundSignOut(false, true)).toBe("done");
+  expect(backgroundSignOut(false, false)).toBe("stuck");
+  expect(removalOutcome("unknown", "none")).toBe("failed");
+});
+
+test("already signed in: a way on whether the session's instance is listed or not", () => {
+  const home = { id: DEFAULT_INSTANCE, origin: FREECORPS_BRIGADE };
+  // Listed: Open opens it.
+  expect(alreadyChoices(home, list)).toEqual({ listed: true, full: false, signOutFirst: true });
+  // The build's own, removed, with a session left under its old keys, at the cap: Open cannot list it again, and
+  // signing out of it is still offered.
+  const others = {
+    instances: Array.from({ length: 5 }, (_, index) => ({
+      id: `i${index}`,
+      origin: `https://i${index}.example`,
+    })),
+    active: "i0",
+  };
+  expect(alreadyChoices(home, others)).toEqual({ listed: false, full: true, signOutFirst: true });
+  expect(alreadyChoices(home, { ...others, instances: others.instances.slice(1) })).toEqual({
+    listed: false,
+    full: false,
+    signOutFirst: true,
+  });
 });
 
 test("the board tells its readers only of changes", () => {

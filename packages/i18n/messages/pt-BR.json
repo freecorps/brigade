@@ -4091,6 +4091,8 @@
         "part=sign_out_first_hint": "Primeiro tira você de {host} neste telefone, como Sair faz, para que ela deixe de chamar você aqui. Depois este código conecta você.",
         "part=ended_already": "Você já está conectado a {host} neste telefone, então esta entrada não foi usada. Ela aparece nas sessões da conta no painel, onde você pode encerrá-la.",
         "part=add_failed": "Não foi possível adicionar esta instância neste telefone. Tente de novo.",
+        "part=address_changed": "O endereço mudou enquanto o Brigade o verificava. Toque em Continuar para verificar este.",
+        "part=sign_out_failed": "Não foi possível concluir sua saída de {host}, então ela ainda pode chamar este telefone. Nada foi conectado. Confira sua conexão e tente de novo, ou saia dela pela seção da conta.",
         "part=*": "Instâncias"
       }
     }

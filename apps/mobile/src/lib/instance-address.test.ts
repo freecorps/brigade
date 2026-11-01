@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import {
+  addressChanged,
   checkSafely,
   hostOf,
   instanceLabel,
@@ -199,6 +200,26 @@ test("a check that throws answers as not reached, never as nothing", async () =>
   expect(await checkSafely(failing, "not an address", false)).toEqual({ problem: "invalid" });
   const fine = { origin: "https://b.example", verdict: { kind: "no-relay" as const } };
   expect(await checkSafely(async () => fine, "b.example", false)).toBe(fine);
+});
+
+test("a /config whose body never ends is not reached", async () => {
+  expect(
+    await loadAddressConfig(
+      "https://brigade.example.com",
+      async () => ({ status: 200, json: () => new Promise<never>(() => {}) }),
+      5,
+    ),
+  ).toEqual({ kind: "unreachable" });
+});
+
+test("the field changed while it was checked: only another origin counts", () => {
+  expect(addressChanged("brigade.example.com", "brigade.example.com", false)).toBe(false);
+  expect(addressChanged("brigade.example.com", " https://brigade.example.com/x ", false)).toBe(
+    false,
+  );
+  expect(addressChanged("brigade.example.com", "brigade.other.com", false)).toBe(true);
+  expect(addressChanged("brigade.example.com", "", false)).toBe(true);
+  expect(addressChanged("not an address", "still not", false)).toBe(true);
 });
 
 test("versions", () => {

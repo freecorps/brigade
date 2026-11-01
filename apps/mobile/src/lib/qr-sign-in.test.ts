@@ -222,6 +222,45 @@ test("approved while the phone kept a session there meanwhile: never replaced", 
   expect(await sessionKept(locked, "brigade:acme1")).toBe(true);
 });
 
+test("an answer whose body never ends counts as no answer, within the same time", async () => {
+  const never = { status: 201, ok: true, json: () => new Promise<never>(() => {}) };
+  const states: ClaimState[] = [];
+  const claim = await runClaim(
+    { origin: ORIGIN, code: CODE, deviceName: "x", platform: "ios" },
+    {
+      fetch: async () => never,
+      now: () => START,
+      sleep: async () => {},
+      store: async () => {},
+      onState: (state) => states.push(state),
+      cancelled: () => false,
+      timeoutMs: 5,
+    },
+  );
+  expect(claim).toEqual({ step: "ended", reason: "unreachable" });
+  // Polls whose body never ends are asked again until the cap, then end.
+  const fake = server(CLAIMED, [PENDING]);
+  const clock = { now: START };
+  const polled = await runClaim(
+    { origin: ORIGIN, code: CODE, deviceName: "x", platform: "ios" },
+    {
+      fetch: async (url, init) =>
+        url.endsWith("/claim")
+          ? fake.fetch(url, init)
+          : { status: 200, ok: true, json: () => new Promise<never>(() => {}) },
+      now: () => clock.now,
+      sleep: async (ms) => {
+        clock.now += ms;
+      },
+      store: async () => {},
+      onState: () => {},
+      cancelled: () => false,
+      timeoutMs: 2,
+    },
+  );
+  expect(polled).toEqual({ step: "ended", reason: "timeout" });
+});
+
 test("a claim the server no longer knows ends as lost", async () => {
   const fake = server(CLAIMED, [{ status: 404, body: { error: "not_found" } }]);
   expect(await run(fake).done).toEqual({ step: "ended", reason: "lost" });

@@ -7,7 +7,9 @@ import { say, useInstanceList, verdictText } from "@/components/instances";
 import { openInstance } from "@/components/session";
 import { defaultOrigin } from "@/lib/auth-client";
 import { checkInstance, instances } from "@/lib/instance-clients";
-import { hostOf, instanceLabel } from "@/lib/instance-address";
+import { addressChanged, hostOf, instanceLabel } from "@/lib/instance-address";
+
+const dev = typeof __DEV__ !== "undefined" && __DEV__;
 import { instanceAt, MAX_INSTANCES } from "@/lib/instances";
 
 /** Closes the sheet: back to where it was opened from, or to the app's first screen when opened from nowhere. */
@@ -25,6 +27,8 @@ export function leaveSheet() {
 export function AddInstance() {
   const list = useInstanceList();
   const [address, setAddress] = useState("");
+  // What the field holds now, for a check that answers after the member kept typing.
+  const typed = useRef("");
   const [problem, setProblem] = useState<{ text: string; app?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const checking = useRef(false);
@@ -50,13 +54,24 @@ export function AddInstance() {
     await openInstance(added.instance.id);
   };
 
-  const submit = async () => {
+  /**
+   * Checks `input` (the field's address, or the build's own instance's) and adds it when it passes. The build's own
+   * goes through the same checks as any other: an app too old for it says so here, not after signing in.
+   */
+  const submit = async (input: string, fromField: boolean) => {
     if (checking.current) return;
     checking.current = true;
     setBusy(true);
     setProblem(null);
     try {
-      const checked = await checkInstance(address);
+      const checked = await checkInstance(input);
+      // The field changed while it was checked: what passed is not what it says now.
+      if (fromField && addressChanged(input, typed.current, dev)) {
+        const text = say("address_changed");
+        setProblem({ text });
+        AccessibilityInfo.announceForAccessibility(text);
+        return;
+      }
       const refused =
         "problem" in checked
           ? verdictText({ kind: checked.problem }, "")
@@ -109,6 +124,7 @@ export function AddInstance() {
           autoCapitalize: "none",
           maxLength: 512,
           onChange: (text) => {
+            typed.current = text;
             setAddress(text);
             setProblem(null);
           },
@@ -118,7 +134,7 @@ export function AddInstance() {
       submit={{
         label: busy ? say("checking") : say("continue"),
         busy,
-        onPress: () => void submit(),
+        onPress: () => void submit(address, true),
       }}
       links={[
         ...(problem?.app
@@ -139,8 +155,7 @@ export function AddInstance() {
               {
                 label: instanceLabel(defaultOrigin!),
                 note: say("default_hint"),
-                onPress: () =>
-                  void open(defaultOrigin!).catch(() => setProblem({ text: say("add_failed") })),
+                onPress: () => void submit(defaultOrigin!, false),
               },
             ]
           : []),

@@ -91,6 +91,8 @@ export type Mobile_InstancesInputs = {
 * | "sign_out_first_hint" | "Signs you out of {host} on this phone first, as Sign out does, so it stops paging you here. Then this code signs you in." |
 * | "ended_already" | "You're already signed in to {host} on this phone, so this sign-in wasn't used. It's listed in the account's sessions on the dashboard, where you can sign it ..." |
 * | "add_failed" | "Couldn't add this instance on this phone. Try again." |
+* | "address_changed" | "The address changed while Brigade was checking it. Tap Continue to check this one." |
+* | "sign_out_failed" | "Couldn't finish signing you out of {host}, so it may still page this phone. Nothing was signed in. Check your connection and try again, or sign out of it fro..." |
 * | * | "Instances" |
 *
 * @param {Mobile_InstancesInputs} inputs

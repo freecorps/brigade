@@ -28,8 +28,14 @@ import {
   relayDeps,
   type InstanceClients,
 } from "@/lib/instance-clients";
-import { keptSession, removalOutcome, type InstanceState } from "@/lib/switcher";
-import { activeInstance } from "@/lib/instances";
+import {
+  backgroundSignOut,
+  keptSession,
+  removalOutcome,
+  shownSignOut,
+  type InstanceState,
+} from "@/lib/switcher";
+import { activeInstance, type Instance } from "@/lib/instances";
 import {
   devicePresent,
   pagingCycle,
@@ -521,13 +527,17 @@ export async function removeInstance(
   if (!instance || list.instances.length <= 1) return "failed";
   const clients = clientsFor(instance);
   try {
-    const session = await signOutInstance(id, signOutShown);
+    // Its unsent changes stay until the instance is gone: a removal refused keeps everything it had.
+    const session = await signOutInstance(instance, signOutShown, { keepQueues: true });
     // Anything kept from an offline sign-out there is finished now, or the instance stays; a session that could not
-    // be read may still be live there, so the instance stays too (src/lib/switcher.ts `removalOutcome`).
+    // be read, or a sign-out nothing heard nor kept, may still be live there, so the instance stays too
+    // (src/lib/switcher.ts `removalOutcome`).
     const outcome = removalOutcome(session, await finishLeftover(clients.server));
     if (outcome !== "removed") return outcome;
+    // Decided on the stored list, in turn with every other change: never the last one.
+    if ((await instances.removeUnlessLast(id)) !== "removed") return "failed";
     await SecureStore.deleteItemAsync(clients.storage.handle).catch(() => {});
-    await instances.remove(id);
+    await dropQueues(clients.pendingFiles).catch(() => {});
     board.forget(id);
     return "removed";
   } catch {
@@ -536,47 +546,56 @@ export async function removeInstance(
 }
 
 /**
- * Signs out of instance `id` the way the account section does, keeping it listed: the shown instance by its own
+ * Signs out of `instance` the way the account section does, keeping it as it is (listed, or not): the shown instance by its own
  * sign-out (`signOutShown`), any other in the background (`signOutBackground`), both taking the phone off the
  * member's workspaces there or keeping the sign-out to finish later. Nothing when no session is kept there. Answers
- * whether one was (`unknown`: its cookie could not be read, so it may still be live).
+ * whether one was signed out (`kept`), none was there (`none`), or it may still be live (`unknown`: its cookie could
+ * not be read, or the sign-out was neither heard by the server nor kept to finish later). `keepQueues`: leave its
+ * unsent changes for the caller to drop once it is sure (removing); otherwise they go once the sign-out is done.
  */
 export async function signOutInstance(
-  id: string,
+  instance: Instance,
   signOutShown?: () => Promise<unknown>,
+  options: { keepQueues?: boolean } = {},
 ): Promise<"kept" | "none" | "unknown"> {
-  const instance = instances.current().instances.find((one) => one.id === id);
-  if (!instance) return "none";
+  // Listed or not: the build's own instance, removed, may keep a session under its keys from before, and its clients
+  // (`clientsFor`) sign out of it there without listing it again.
   const clients = clientsFor(instance);
-  if (signOutShown) {
-    await signOutShown();
-    return "kept";
-  }
+  if (signOutShown) return shownSignOut(await signOutShown());
   // A cookie that cannot be read may be a live session: the sign-out is tried all the same, and the caller told.
   const session = await keptSession(() => clients.authClient.getCookie());
-  if (session !== "none") await signOutBackground(clients).catch(() => {});
+  if (session === "none") return "none";
+  const ended = await signOutBackground(clients).catch(() => "stuck" as const);
+  if (ended === "stuck") return "unknown";
+  if (!options.keepQueues) await dropQueues(clients.pendingFiles).catch(() => {});
   return session;
 }
 
 /**
  * Signs out of an instance the app does not show: `/sign-out` with the phone's device id, which takes this phone off
  * the member's workspaces there; unanswered, kept to finish later (src/lib/sign-out.ts). Then nothing of the member's
- * there is kept, as `signOut` does.
+ * there is registered again. `stuck` when the server did not hear it and it could not be kept to finish later either
+ * (src/lib/switcher.ts `backgroundSignOut`). Its unsent changes are the caller's (`signOutInstance`).
  */
-async function signOutBackground(clients: InstanceClients): Promise<void> {
+async function signOutBackground(clients: InstanceClients): Promise<"done" | "stuck"> {
   // As last read (the background instance keeps it), so this works offline too.
   const data = clients.authClient.$store.atoms.session?.get().data as
     | { user: { id: string }; session: { activeOrganizationId?: string | null } }
     | null
     | undefined;
+  let answered = false;
+  let stored = false;
   await signOutPhone(
     { userId: data?.user.id ?? "", workspaceId: data?.session.activeOrganizationId ?? "" },
     {
       cookie: () => clients.authClient.getCookie(),
       unregister: null,
-      signOut: () => signOutHere(clients),
+      signOut: async () => (answered = await signOutHere(clients)),
       forget: () => forgetSession(clients.authClient),
-      add: keptSignOuts.add,
+      add: async (leftover) => {
+        await keptSignOuts.add(leftover);
+        stored = true;
+      },
       origin: clients.server.auth,
       now: Date.now,
       lifetime: SESSION_LIFETIME_MS,
@@ -584,7 +603,7 @@ async function signOutBackground(clients: InstanceClients): Promise<void> {
   );
   await forgetMember(clients);
   await SecureStore.deleteItemAsync(clients.storage.workspace).catch(() => {});
-  await dropQueues(clients.pendingFiles).catch(() => {});
+  return backgroundSignOut(answered, stored);
 }
 
 /**

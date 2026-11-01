@@ -213,8 +213,9 @@ version 2 for a device registered with `envelope: 2`, version 1 for any other; t
   (address only, or address and sign-in: section 6).
 - **Checking the address.** HTTPS only (development builds also allow `http://` on a private address). The app reads
   `GET /api/config` on the dashboard's origin (the API's `GET /config`, which the dashboard serves under `/api`, as the
-  app's `brigadeServer` already does) and needs `brigade` (the API version and the oldest app it supports) and `relay`
-  (`{ origin, instance }`). Answers:
+  app's `brigadeServer` already does). A Brigade's answer has `brigade` (the API version and the oldest app it
+  supports), or at least the sign-up mode every Brigade serves (`signUp`, an instance from before `brigade`); `relay`
+  (`{ origin, instance }`) is read when present and not required. Answers:
   - not a Brigade → "This address is not a Brigade instance";
   - `relay.origin` not this build's relay → "This instance uses its own app build" (its pages could never reach this
     app; it would sign in and never be paged);
@@ -295,7 +296,9 @@ version 2 for a device registered with `envelope: 2`, version 1 for any other; t
 - **Adding one.** The sign-in screen names the host in full ("You are signing in to brigade.example.com") above the
   form, and offers the phone's other instances and "Another instance"; a build with no instance of its own (a release
   build without `EXPO_PUBLIC_BRIGADE_URL`) offers it too. "Add an instance" (a sheet, also in the Account tab) takes an
-  address, a scan, or the build's own instance when it was removed (it comes back as itself, `default`, with its keys).
+  address, a scan, or the build's own instance when it was removed (it comes back as itself, `default`, with its keys,
+  after the same checks as any address: an app too old for it says so there). An address changed while it was being
+  checked is not added: the screen asks to check the new one.
   An address without a scheme reads as `https://`; a path, query or credentials are dropped or refused. Checks, in
   order: not an address; `http://` (allowed only in a development build on a private address: this machine, RFC 1918,
   link-local, unique local, `.local`); `/api/config` unreachable (no answer, a 5xx or 429: "Couldn't reach", try
@@ -308,7 +311,7 @@ version 2 for a device registered with `envelope: 2`, version 1 for any other; t
 - **The link and the scanner.** `brigade://connect?server=…[&code=…]` (also `brigade:///connect`) opens
   `src/app/connect.tsx` from the system camera or the in-app scanner; a bare `https://` QR is the address alone. The
   query is read by hand (React Native's `URL` has no working `searchParams`); a code not shaped like one, or a param
-  given twice, is no link. The scanner is expo-camera's `CameraView` with QR barcodes only (the Expo SDK's own; the
+  given twice, or an empty `code=`, is no link (only a link without `code` is the address alone). The scanner is expo-camera's `CameraView` with QR barcodes only (the Expo SDK's own; the
   older expo-barcode-scanner is gone), its iOS usage text from packages/i18n (`mobile_camera_usage`, en in Info.plist,
   each locale's `InfoPlist.strings` in the app's `<locale>.lproj` folder, `plugins/camera-usage.ts`; not Expo's
   `locales`, whose own `.lproj` group races that folder in the build), no microphone. Any other code says "This QR code isn't from Brigade" and
@@ -336,9 +339,14 @@ version 2 for a device registered with `envelope: 2`, version 1 for any other; t
   An instance whose sign-out the server did not hear stays listed, signed out, until its kept sign-out is finished
   (else nothing would finish it and it would keep paging the phone); removing it works then. So does one whose
   stored session cannot be read (secure storage failing): its sign-out is tried, and it stays listed ("Couldn't
-  remove"), since it may still be live there. The last instance is
-  never removed, the build's default included: signing out is what is left, and the app would have nothing to sign
-  in to.
+  remove"), since it may still be live there; and so does one whose sign-out was neither heard by the server nor
+  kept to finish later (the shown instance's `stuck`, a background one whose `/sign-out` failed with nothing kept).
+  Its unsent changes stay until it is actually removed. The last instance is never removed, the build's default
+  included: signing out is what is left, and the app would have nothing to sign in to. That is decided on the stored
+  list, in turn with every other change (`removeUnlessLast`), so two removals at once never leave none; the relay
+  handle is deleted only once the list took the removal.
+- **Which relay** is read once per instance and launch; an answer that failed or said nothing is asked again when a
+  screen showing it comes into focus or the app comes back to the foreground.
 - **Tests:** apps/mobile `instance-address.test.ts` (each answer), `connect-link.test.ts`, `switcher.test.ts`
   (grouping, labels, relays, the notice, on call now, removal rules), `instances.test.ts` (the default instance
   added back), `plugins/camera-usage.test.ts`.
@@ -474,7 +482,10 @@ above (docs/api/openapi.json). As built:
   sessions). Either way the screen shows "You're already signed in to <host>" and offers to open it (added back to
   the list when it is not on it), or, before the code is spent and for a listed instance, "Sign out of it, then
   continue", which signs out through the account section's own path (the shard first for the shown instance,
-  `/sign-out` with the device id for another, kept to finish later when offline) and checks again. The instance row
+  `/sign-out` with the device id for another, kept to finish later when offline) and checks again; the build's own
+  instance, removed, is signed out with its keys from before without being listed again, so at the 5-instance cap
+  (where Open cannot list it, which the screen says) the member still has a way on. A sign-out that may have left the
+  session live there says so and claims nothing. The instance row
   a sign-in adds is removed again on a failed store only if that sign-in created it (`addAndKeep`, from `add`'s
   `created`): one already stored, even if not yet read into memory, stays.
 - The claim sends `{ code, deviceName, platform }` (`deviceName` is the system's device name, else "iPhone" or
@@ -482,7 +493,8 @@ above (docs/api/openapi.json). As built:
   and polls every 2 s with `Authorization: Bearer <secret>`, following the `expiresAt` each `pending` answer gives
   (an approval moves it) and stopping 5 s past it, but never past the claim's first `expiresAt` plus 30 s (the
   server's pickup window, `POLL_CAP_MS`), whatever later end the server answers. No answer or a 5xx while waiting is
-  asked again until then.
+  asked again until then. Each request and the read of its answer's body share one time limit, so a body that never
+  ends counts as no answer (as `/api/config`'s does).
 - Each end is worded: `denied`, `wrong_number`, `timeout`, `delivered`, `signed_out` (an unknown future reason reads as
   `timeout`), and on the phone's side `invalid_code` (404 on the claim), `rate_limited`, unreachable, `lost` (404 on a
   poll), not stored and `already`. Leaving the screen stops polling.

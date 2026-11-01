@@ -3,7 +3,7 @@
 // number the member types on the dashboard, and polls its claim (`GET /api/app-sign-in/claim/:id`, with the secret
 // only it got) until the member approves (a new session, stored for that instance only), denies, or time runs out.
 // Pure, so it is tested in Node; src/screens/connect.tsx runs it with fetch and the instance's session storage.
-import { RELAY_TIMEOUT_MS } from "@/lib/relay";
+import { RELAY_TIMEOUT_MS, withDeadline } from "@/lib/relay";
 
 /** How often the phone asks whether the member answered. */
 export const POLL_INTERVAL_MS = 2_000;
@@ -146,6 +146,8 @@ export type ClaimDeps = {
   onState: (state: ClaimState) => void;
   /** True once the member left the screen: nothing more is asked or stored. */
   cancelled: () => boolean;
+  /** How long a request and the read of its answer may take together (`RELAY_TIMEOUT_MS`). */
+  timeoutMs?: number;
 };
 
 /**
@@ -161,10 +163,12 @@ export async function runClaim(
     return state;
   };
   deps.onState({ step: "claiming" });
+  const timeout = deps.timeoutMs ?? RELAY_TIMEOUT_MS;
   let claimed: Claimed;
   try {
-    const response = await inTime((signal) =>
-      deps.fetch(`${input.origin}/api/app-sign-in/claim`, {
+    // The answer's body is read within the same time as the request: a body that never ends ends the claim.
+    const answer = await withDeadline(timeout, async (signal) => {
+      const response = await deps.fetch(`${input.origin}/api/app-sign-in/claim`, {
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({
@@ -173,9 +177,10 @@ export async function runClaim(
           platform: input.platform,
         }),
         signal,
-      }),
-    );
-    const read = readClaim(response.status, await response.json().catch(() => null));
+      });
+      return { status: response.status, body: await response.json().catch(() => null) };
+    });
+    const read = readClaim(answer.status, answer.body);
     if ("ended" in read) return finish({ step: "ended", reason: read.ended });
     claimed = read;
   } catch {
@@ -191,13 +196,14 @@ export async function runClaim(
     if (deps.cancelled()) return { step: "ended", reason: "timeout" };
     let poll: Poll;
     try {
-      const response = await inTime((signal) =>
-        deps.fetch(url, {
+      const answer = await withDeadline(timeout, async (signal) => {
+        const response = await deps.fetch(url, {
           headers: { authorization: `Bearer ${claimed.secret}`, accept: "application/json" },
           signal,
-        }),
-      );
-      poll = readPoll(response.status, await response.json().catch(() => null));
+        });
+        return { status: response.status, body: await response.json().catch(() => null) };
+      });
+      poll = readPoll(answer.status, answer.body);
     } catch {
       poll = { kind: "retry" };
     }
@@ -226,16 +232,5 @@ export class SessionExists extends Error {
   constructor() {
     super("A session is kept for this instance already");
     this.name = "SessionExists";
-  }
-}
-
-async function inTime<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
-  // Not `AbortSignal.timeout`, which Hermes may lack.
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), RELAY_TIMEOUT_MS);
-  try {
-    return await run(abort.signal);
-  } finally {
-    clearTimeout(timer);
   }
 }

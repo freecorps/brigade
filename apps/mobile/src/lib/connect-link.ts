@@ -12,10 +12,10 @@ export type ConnectLink = {
   code?: string;
 };
 
-/** The query of `value` (after `?`, before `#`), decoded; repeated keys keep the first. */
-export function queryOf(value: string): Map<string, string> {
+/** The query of `value` (after `?`, before `#`), decoded: every value of each key, in order. */
+export function queryOf(value: string): Map<string, string[]> {
   const query = value.split("#")[0]!.split("?").slice(1).join("?");
-  const found = new Map<string, string>();
+  const found = new Map<string, string[]>();
   for (const pair of query.split("&")) {
     if (pair === "") continue;
     const at = pair.indexOf("=");
@@ -29,7 +29,7 @@ export function queryOf(value: string): Map<string, string> {
     } catch {
       continue;
     }
-    if (!found.has(key)) found.set(key, decoded);
+    found.set(key, [...(found.get(key) ?? []), decoded]);
   }
   return found;
 }
@@ -37,7 +37,8 @@ export function queryOf(value: string): Map<string, string> {
 /**
  * What a scanned or opened link asks: `brigade://connect?server=…[&code=…]` (also `brigade:///connect`, as some
  * readers write it). A bare `https://` address (a QR of the dashboard's own address) is the address alone. Undefined
- * for anything else, and for a code that is not shaped like one (no request goes out for it).
+ * for anything else, for a code that is not shaped like one (no request goes out for it), and for a link that gives
+ * `server` or `code` more than once: which one it means is not for the app to guess.
  */
 export function parseConnectLink(value: string): ConnectLink | undefined {
   const text = value.trim();
@@ -45,7 +46,10 @@ export function parseConnectLink(value: string): ConnectLink | undefined {
   const match = /^brigade:\/\/\/?connect\/?(?:[?#]|$)/i.exec(text);
   if (!match) return undefined;
   const query = queryOf(text);
-  return connectParams(query.get("server"), query.get("code"));
+  const server = query.get("server");
+  const code = query.get("code");
+  if ((server?.length ?? 0) > 1 || (code?.length ?? 0) > 1) return undefined;
+  return connectParams(server?.[0], code?.[0]);
 }
 
 let scanned: string | undefined;
@@ -94,7 +98,8 @@ export function takeScanned(link: ConnectLink | undefined): boolean {
  */
 export function connectParams(server: unknown, code: unknown): ConnectLink | undefined {
   if (typeof server !== "string" || server.trim() === "") return undefined;
-  if (code === undefined || code === "") return { server: server.trim() };
+  // Only a code left out is the address alone: `code=` with nothing is a broken sign-in link, not an address QR.
+  if (code === undefined) return { server: server.trim() };
   if (typeof code !== "string" || !SIGN_IN_CODE.test(code)) return undefined;
   return { server: server.trim(), code };
 }

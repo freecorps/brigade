@@ -32,6 +32,23 @@ export type InstanceConfig =
   | { kind: "unreachable" };
 
 /**
+ * `run` within `ms`: aborted then (its `signal`), and rejected at that moment whatever `run` still waits on, such as
+ * an answer's body that never ends, which an abort alone may not stop. Not `AbortSignal.timeout`, which Hermes may
+ * lack.
+ */
+export function withDeadline<T>(ms: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const abort = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      abort.abort();
+      reject(new Error("Timed out"));
+    }, ms);
+  });
+  return Promise.race([run(abort.signal), late]).finally(() => clearTimeout(timer));
+}
+
+/**
  * `relay.app`, the own app build's store link, when it is one the app may open: an `https://` URL with a host and no
  * username or password (as the API and the dashboard accept it); undefined otherwise.
  */

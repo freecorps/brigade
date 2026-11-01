@@ -32,12 +32,18 @@ test("the sign-in link", () => {
   expect(
     parseConnectLink(`brigade://connect?server=https://b.example&code=${CODE}x`),
   ).toBeUndefined();
-  // Repeated keys keep the first.
+  // A key given twice is no link: which one it means is not for the app to guess.
   expect(
     parseConnectLink(
       `brigade://connect?server=https://a.example&server=https://b.example&code=${CODE}`,
     ),
-  ).toEqual({ server: "https://a.example", code: CODE });
+  ).toBeUndefined();
+  expect(
+    parseConnectLink(`brigade://connect?server=https://a.example&code=${CODE}&code=${CODE}`),
+  ).toBeUndefined();
+  // An empty code is a broken sign-in link, not the address alone.
+  expect(parseConnectLink("brigade://connect?server=https://a.example&code=")).toBeUndefined();
+  expect(connectParams("https://a.example", "")).toBeUndefined();
 });
 
 test("anything else is not a connect link", () => {
@@ -106,9 +112,9 @@ test("an outside link asks before any request, each link again on the same scree
 });
 
 test("queries decode, and a bad escape is skipped", () => {
-  expect([...queryOf("x://y?a=1&b=%E2%9C%93&c=%E0%A4%A&d=a+b")]).toEqual([
-    ["a", "1"],
-    ["b", "✓"],
-    ["d", "a b"],
+  expect([...queryOf("x://y?a=1&b=%E2%9C%93&c=%E0%A4%A&d=a+b&a=2")]).toEqual([
+    ["a", ["1", "2"]],
+    ["b", ["✓"]],
+    ["d", ["a b"]],
   ]);
 });

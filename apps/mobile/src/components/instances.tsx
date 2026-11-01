@@ -2,7 +2,9 @@
 // (src/lib/instance-clients.ts `board`), which relay each pages through, grouped for the switcher
 // (src/lib/switcher.ts), and the words for each answer.
 import { m } from "@freecorps/brigade-i18n";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useFocusEffect } from "expo-router";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { AppState } from "react-native";
 import { pagingText } from "@/components/account";
 import { board, instances, relayOf } from "@/lib/instance-clients";
 import type { AddressProblem, AddressVerdict } from "@/lib/instance-address";
@@ -28,10 +30,26 @@ export function useBoard() {
   return useSyncExternalStore(board.subscribe, board.current);
 }
 
-/** Which relay each listed instance pages through, as each `/config` answers (`unknown` until then). */
+/**
+ * Which relay each listed instance pages through, as each `/config` answers (`unknown` until then). Asked again when
+ * the screen comes into focus and when the app comes back to the foreground: an answer kept is read from the cache,
+ * and one that failed or said nothing (`unknown`, which the cache drops) is asked anew.
+ */
 export function useRelays(list: Instances): Record<string, RelayView> {
   const [relays, setRelays] = useState<Record<string, RelayView>>({});
+  const [round, setRound] = useState(0);
   const key = list.instances.map((one) => `${one.id} ${one.origin}`).join(",");
+  useFocusEffect(
+    useCallback(() => {
+      setRound((value) => value + 1);
+    }, []),
+  );
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") setRound((value) => value + 1);
+    });
+    return () => subscription.remove();
+  }, []);
   useEffect(() => {
     let live = true;
     for (const instance of list.instances) {
@@ -45,8 +63,8 @@ export function useRelays(list: Instances): Record<string, RelayView> {
     return () => {
       live = false;
     };
-    // `key` names the instances: an activation alone asks nothing again.
-  }, [key]);
+    // `key` names the instances (an activation alone asks nothing again); `round` is a focus or a foreground.
+  }, [key, round]);
   return relays;
 }
 

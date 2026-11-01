@@ -218,6 +218,23 @@ describe("the store", () => {
     });
   });
 
+  test("the member's Remove never leaves no instance, decided on the stored list in turn", async () => {
+    const kept = storage();
+    const store = instancesStore(kept.deps);
+    await store.add(ACME);
+    // Two removals at once: the first goes, the second would leave none and is refused.
+    const [first, second] = await Promise.all([
+      store.removeUnlessLast(DEFAULT_INSTANCE),
+      store.removeUnlessLast("id1"),
+    ]);
+    expect([first, second]).toEqual(["removed", "last"]);
+    expect(store.current().instances.map((one) => one.id)).toEqual(["id1"]);
+    expect(await store.removeUnlessLast("nope")).toBe("last");
+    // The shared remove (a sign-in's rollback) is not limited.
+    await store.remove("id1");
+    expect(store.current().instances).toEqual([]);
+  });
+
   test("a failed keep removes only a row this call created, never one already stored", async () => {
     // Acme is stored but not read into memory yet (the store was never loaded).
     const kept = storage(

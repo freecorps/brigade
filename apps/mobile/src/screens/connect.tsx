@@ -16,6 +16,7 @@ import { checkInstance, instances, keepSignIn, sessionAt } from "@/lib/instance-
 import { hostOf, readAddress } from "@/lib/instance-address";
 import { instanceAt, MAX_INSTANCES, type Instance } from "@/lib/instances";
 import { runClaim, type ClaimState } from "@/lib/qr-sign-in";
+import { alreadyChoices } from "@/lib/switcher";
 import { leaveSheet } from "@/screens/add-instance";
 
 type Step =
@@ -24,10 +25,18 @@ type Step =
   | { kind: "checking" }
   | { kind: "refused"; title?: string; text: string; app?: string }
   /**
-   * A session is kept there (`instanceId`, when the instance is listed; the build's own instance, removed, may keep one
-   * under its keys from before). `ended`: found after the claim, when the delivered session went unused.
+   * A session is kept there, at `home`: a listed instance, or the build's own instance, removed, under its keys from
+   * before (`listed` false). `ended`: found after the claim, when the delivered session went unused.
    */
-  | { kind: "already"; origin: string; instanceId?: string; ended?: boolean }
+  | {
+      kind: "already";
+      origin: string;
+      home?: Instance;
+      listed?: boolean;
+      /** Not listed, and the phone has the most instances it can: Open cannot add it back. */
+      full?: boolean;
+      ended?: boolean;
+    }
   | { kind: "confirm"; origin: string; noRelay: boolean }
   | { kind: "claim"; origin: string; state: ClaimState; instanceId?: string };
 
@@ -115,23 +124,39 @@ export function Connect({ link, trusted }: { link: ConnectLink | undefined; trus
     // Checked for each link once it may be (trusted or approved), and again after signing out of a session kept there.
   }, [server, code, trusted, askHost, round]);
 
-  /** Signs out of the session kept there through the account section's own path, then checks again. */
-  const signOutFirst = async (instanceId: string) => {
+  /**
+   * Signs out of the session kept there through the account section's own path (the build's own instance, removed,
+   * with its keys from before, not listed again), then checks again; one that may still be live there is said, and
+   * nothing is claimed over it.
+   */
+  const signOutFirst = async (home: Instance, origin: string) => {
     setStep({ kind: "checking" });
     const shown =
-      instances.current().active === instanceId
+      instances.current().active === home.id
         ? view.kind === "ready"
           ? () => view.member.signOut()
           : view.kind === "no-workspace"
             ? view.signOut
             : undefined
         : undefined;
-    await signOutInstance(instanceId, shown).catch(() => {});
-    if (!left.current) setRound((value) => value + 1);
+    const ended = await signOutInstance(home, shown).catch(() => "unknown" as const);
+    if (left.current) return;
+    if (ended === "unknown") {
+      setStep({ kind: "refused", text: say("sign_out_failed", hostOf(origin)) });
+      return;
+    }
+    setRound((value) => value + 1);
   };
 
   const addAndOpen = async (origin: string) => {
-    const added = await instances.add(origin);
+    let added: Awaited<ReturnType<typeof instances.add>>;
+    try {
+      added = await instances.add(origin);
+    } catch {
+      // Secure storage could not keep the list: said, nothing opened.
+      setStep({ kind: "refused", text: say("add_failed") });
+      return;
+    }
     if (typeof added === "string") {
       setStep({
         kind: "refused",
@@ -209,7 +234,7 @@ export function Connect({ link, trusted }: { link: ConnectLink | undefined; trus
         }}
         onConfirm={(origin) => void (code ? claim(origin) : addAndOpen(origin))}
         onOpen={(origin) => void addAndOpen(origin)}
-        onSignOutFirst={code ? (id) => void signOutFirst(id) : undefined}
+        onSignOutFirst={code ? (home, origin) => void signOutFirst(home, origin) : undefined}
       />
     </>
   );
@@ -217,9 +242,8 @@ export function Connect({ link, trusted }: { link: ConnectLink | undefined; trus
 
 /** "You're already signed in": with the instance's id only when it is listed (its sign-out needs it). */
 function alreadyAt(kept: Instance, origin: string): Step {
-  return instances.current().instances.some((one) => one.id === kept.id)
-    ? { kind: "already", origin, instanceId: kept.id }
-    : { kind: "already", origin };
+  const { listed, full } = alreadyChoices(kept, instances.current());
+  return { kind: "already", origin, home: kept, listed, full };
 }
 
 function ConnectView({
@@ -237,7 +261,7 @@ function ConnectView({
   /** Opens the instance at that origin, added back to the list when it is not on it. */
   onOpen: (origin: string) => void;
   /** With a sign-in code: sign out of the session kept there, then go on with the code. */
-  onSignOutFirst?: (instanceId: string) => void;
+  onSignOutFirst?: (home: Instance, origin: string) => void;
 }) {
   const colors = useTheme();
   const heading = (text: string) => (
@@ -317,11 +341,16 @@ function ConnectView({
             label={say("open_instance", hostOf(step.origin))}
             onPress={() => onOpen(step.origin)}
           />
+          {step.full ? (
+            <FieldGroup.SectionFooter>
+              <FooterText>{m.mobile_instances_full({ max: MAX_INSTANCES })}</FooterText>
+            </FieldGroup.SectionFooter>
+          ) : null}
         </FieldGroup.Section>
-        {/* Before the code is spent, and for a listed instance (its sign-out runs through its own session). */}
-        {onSignOutFirst && !step.ended && step.instanceId !== undefined ? (
+        {/* Before the code is spent: listed or not (the build's own instance, removed, signs out with its old keys). */}
+        {onSignOutFirst && !step.ended && step.home ? (
           <FieldGroup.Section>
-            <ListItem onPress={() => onSignOutFirst(step.instanceId!)}>
+            <ListItem onPress={() => onSignOutFirst(step.home!, step.origin)}>
               <Text textStyle={{ color: colors.destructive }}>{say("sign_out_first")}</Text>
             </ListItem>
             <FieldGroup.SectionFooter>

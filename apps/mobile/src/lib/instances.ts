@@ -266,6 +266,16 @@ export function instancesStore(deps: {
       }),
     remove: (id: string) =>
       change((list) => ({ list: withoutInstance(list, id), result: undefined })),
+    /**
+     * The member's Remove: refused (`last`) when it would leave no instance, or the instance is not listed, decided
+     * on the list as stored, in turn with every other change, so two removals at once never leave none.
+     */
+    removeUnlessLast: (id: string) =>
+      change<"removed" | "last">((list) =>
+        list.instances.length <= 1 || !list.instances.some((one) => one.id === id)
+          ? { list, result: "last" }
+          : { list: withoutInstance(list, id), result: "removed" },
+      ),
     activate: (id: string) => change((list) => ({ list: withActive(list, id), result: undefined })),
   };
 }

@@ -389,8 +389,9 @@ does it.
   It reads Worker secret names (never values) to tell a first setup from a switch, and stops when wrangler cannot
   list them for any reason but "this Worker does not exist" (error 10007): read as "no secrets", a failure would make
   new keys over ones phones depend on. Whenever the API already has `RELAY_INSTANCE_KEY` it asks again before going on
-  (`--yes`), a reused key file included, since names cannot prove it is the same key; `RELAY_INSTANCE_ID` is removed
-  only then. It gives wrangler every secret on stdin (`wrangler secret bulk`), never in arguments, output or a file in
+  (`--yes`), a reused key file included, since names cannot prove it is the same key. Whenever it installs a key it
+  removes `RELAY_INSTANCE_ID`: it registers and checks the key as the id the key gives, so a leftover id would have the
+  API sign as another instance (an API with an id and no key has nothing working to confirm). It gives wrangler every secret on stdin (`wrangler secret bulk`), never in arguments, output or a file in
   the repository. The new instance key is saved before it is used, outside the repository (symlinks resolved) and
   readable only by its owner, so the operator can keep it in a password manager and a stopped run can finish with the
   same id (`--instance-key-file`). Without a terminal, Freecorps' relay takes two runs: the first sends the code, the
@@ -400,16 +401,22 @@ does it.
   registered", not as paging working: the API prefers a `RELAY` binding (the production build's `PRODUCTION_BINDINGS`)
   over `RELAY_URL`, so removing that binding and deploying the API is a required step, which the script says (and
   detects from vite.config.ts or wrangler.jsonc). A switch from an own relay (marked by `RELAY_APP_URL`) also removes
-  that link and its `RELAY_SEND_TOKEN`; an API without `RELAY_APP_URL` keeps its send token. **Its public address is
+  that link and its `RELAY_SEND_TOKEN`; an API without `RELAY_APP_URL` keeps its send token. The script says that
+  phones on the app as released are not paged this way (raw tokens need Freecorps' send token): they are once an app
+  release mints handles (step 4). **Its public address is
   not known yet** (Q31): `FREECORPS_RELAY_URL` is a placeholder, so `--relay-url` is required and the script stops
   without it.
 - **Your own relay:** also needs a hostname on a zone of the account, deployed as the relay's custom domain (waited
   for, at most 5 minutes), since phones and the registration reach it there. It refuses a relay Worker it did not set
   up (no `BRIGADE_OWN_RELAY` marker secret; Freecorps' own, say) without `--take-over-relay`. It keeps the relay's
-  `RELAY_HANDLE_KEYS` and `RELAY_TAG_KEY` when it has them (new ones would void every handle). `RELAY_SEND_TOKEN` lets
-  the company's app page through `/send` until it mints handles (step 4): a relay and API that both have one keep it,
-  and a new one goes on both only after the registration, one right after the other, so a run that stops at any step
-  (build, secrets, deploy, the domain, the registration) leaves raw-token pages going out as before. The admin token
+  `RELAY_HANDLE_KEYS` and `RELAY_TAG_KEY` when it has them (new ones would void every handle), and its APNs and
+  Firebase credentials unless told to replace them (`--replace-credentials`, or asked; the files are checked locally
+  first: an EC P-256 key, an RSA service account key). `RELAY_SEND_TOKEN` lets the company's app page through `/send`
+  until it mints handles (step 4). Since only names can be read, a marker set on both Workers in the same step as the
+  token (`BRIGADE_SEND_PAIR_<id>`) shows the two tokens match: with the same marker on both they are kept; otherwise
+  a new token and marker go on both only after the registration, one right after the other, so a run that stops at any
+  step (build, secrets, deploy, the domain, the registration) leaves the API as it was, and the next run puts tokens
+  that drifted apart right. The admin token
   is deleted once the instance is registered. `APNS_TOPIC` and `RELAY_REGISTRATION` go in as `wrangler deploy --var`,
   which a later deploy without them undoes (Q32). It does not deploy the API: the production build already binds
   `RELAY` to `brigade-relay`, so the operator builds and deploys the API again.

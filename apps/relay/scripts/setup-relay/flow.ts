@@ -13,6 +13,7 @@
 // command's arguments or a file in the repository: wrangler gets them on stdin (`wrangler secret bulk`), and the one
 // file written (the instance key, so it can be kept) goes outside the repository with mode 0600.
 
+import { createPrivateKey } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   generateInstanceKey,
@@ -64,6 +65,8 @@ export type Options = {
   assumeNewRelay?: boolean;
   /** Take over a relay Worker this script did not set up (no `BRIGADE_OWN_RELAY` secret). */
   takeOverRelay?: boolean;
+  /** Replace the APNs and Firebase credentials a relay already has (otherwise they are kept, or asked). */
+  replaceCredentials?: boolean;
 };
 
 export type Command = {
@@ -115,6 +118,11 @@ export class Stop extends Error {
  * some other way, Freecorps' own included, and is not taken over without `--take-over-relay`.
  */
 export const OWN_RELAY_MARKER = "BRIGADE_OWN_RELAY";
+/**
+ * The prefix of the secret this script sets on the relay and the API, in the same step as a shared `RELAY_SEND_TOKEN`:
+ * `BRIGADE_SEND_PAIR_<id>`. Only names can be read, so the same name on both is what shows the tokens match.
+ */
+export const SEND_PAIR = "BRIGADE_SEND_PAIR_";
 /** How long a new custom domain may take to answer before the script gives up (bounded: 30 tries, 10 s apart). */
 const DOMAIN_TRIES = 30;
 const DOMAIN_WAIT_MS = 10_000;
@@ -160,7 +168,7 @@ async function pickRelay(deps: Deps): Promise<Choice> {
       "  2. Your own relay. No third party on the paging path, but ONLY your company's own app build can be",
       "     paged through it: the store app cannot. Needs an Apple Developer account (APNs key), a Firebase",
       "     project and your own app build.",
-      "  3. Not now. No phone is paged; email still pages.",
+      "  3. Not now. No phone is paged; pages go out by email only if the API has EMAIL_FROM set.",
       "",
     ].join("\n"),
   );
@@ -178,10 +186,11 @@ function notNow(options: Options, deps: Deps): number {
     [
       "No relay for now. Nothing was changed.",
       "",
-      'Pages still go out by email (apps/api README "Email"), and the dashboard says that phones are not paged.',
+      "No phone is paged. Pages go out by email only if the API can send email (its EMAIL_FROM secret,",
+      'apps/api README "Email"); without it, nobody is paged at all.',
       "Run `vp run setup:relay` again whenever you want phones paged.",
       `If this instance already had a relay and you want it off, delete its secrets from ${API_WORKER[options.env]}:`,
-      "`wrangler secret delete RELAY_INSTANCE_KEY` (and RELAY_URL) in apps/api.",
+      "`wrangler secret delete RELAY_INSTANCE_KEY` (and RELAY_URL, and RELAY_INSTANCE_ID if set) in apps/api.",
     ].join("\n"),
   );
   return 0;
@@ -214,7 +223,7 @@ async function freecorps(options: Options, deps: Deps): Promise<number> {
     );
   }
   const existing = await apiSecrets(options, deps);
-  const switched = await confirmSwitch(options, deps, existing, "freecorps");
+  await confirmSwitch(options, deps, existing, "freecorps");
 
   // The terms first: nothing is made or sent before they are accepted.
   io.print(
@@ -316,7 +325,7 @@ async function freecorps(options: Options, deps: Deps): Promise<number> {
     {
       RELAY_INSTANCE_KEY: key.privateKey,
       RELAY_URL: relay,
-      ...replacedRelaySecrets(existing, switched),
+      ...replacedRelaySecrets(existing),
     },
     key.file,
   );
@@ -339,7 +348,10 @@ async function freecorps(options: Options, deps: Deps): Promise<number> {
           ]),
       `- Keep the instance key (${key.file}) in a password manager, then delete the file. If it is lost, this`,
       "  instance gets a new id and every phone must open the app once to be paged again.",
-      "- Phones are paged once they open the app and register with this instance.",
+      "- Phones on the app as released today are NOT paged through Freecorps' relay: they register raw device",
+      "  tokens, which the relay takes only with a send token (RELAY_SEND_TOKEN) a self-hosted instance never gets.",
+      "  A phone is paged here once it runs an app release that asks the relay for handles (RFC 0015 step 4) and",
+      "  has registered with this instance. Until then, pages reach people by email only if EMAIL_FROM is set.",
     ].join("\n"),
   );
   return 0;
@@ -448,7 +460,7 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
       ].join("\n"),
     );
   }
-  const switched = await confirmSwitch(options, deps, existing, "own");
+  await confirmSwitch(options, deps, existing, "own");
   if (
     io.interactive &&
     !(await confirm(
@@ -466,21 +478,51 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
   // Handle and tag keys a relay has are kept: new ones would make every phone's handle useless.
   const known = relaySecrets ?? new Set<string>();
   const adminToken = randomSecret();
-  // The send token pages phones that still register raw tokens (`/send`). A relay and an API that both have one are
-  // left as they are: rotating it before the API has the new one would stop those pages until the run finishes.
-  const keepSendToken = known.has("RELAY_SEND_TOKEN") && existing.has("RELAY_SEND_TOKEN");
-  const sendToken = keepSendToken ? null : randomSecret();
-  const before: Record<string, string> = {
+
+  // Provider credentials a relay already has are live: replaced only when asked to (`--replace-credentials`, or yes to
+  // the question), since a key from the wrong team or Firebase project stops every page through it at once.
+  const credentials: Record<string, string> = {
     APNS_KEY: needs.apnsKey,
     APNS_KEY_ID: needs.apnsKeyId,
     APNS_TEAM_ID: needs.apnsTeamId,
     FCM_SERVICE_ACCOUNT: needs.fcmServiceAccount,
+  };
+  const live = Object.keys(credentials).filter((name) => known.has(name));
+  let replace = options.replaceCredentials === true;
+  if (live.length > 0 && !replace && io.interactive) {
+    replace = await confirm(
+      deps,
+      `${relayWorker} already has ${live.join(", ")}. Replace them with the ones given? Wrong ones stop every page through it.`,
+      false,
+    );
+  }
+  for (const name of live) {
+    if (!replace) delete credentials[name];
+  }
+  if (live.length > 0 && !replace) {
+    io.print(`${relayWorker} keeps its ${live.join(", ")} (--replace-credentials replaces them).`);
+  }
+
+  // The send token pages phones that still register raw tokens (`/send`). Only names can be read, so a shared pair
+  // marker (`BRIGADE_SEND_PAIR_<id>`, set on both Workers in the same step as the token) is what shows the relay's and
+  // the API's tokens are the same one: kept then, so a rerun opens no gap. Otherwise a new token and a new marker go
+  // on both, one right after the other, after the registration.
+  const relayPairs = [...known].filter((name) => name.startsWith(SEND_PAIR));
+  const apiPairs = [...existing].filter((name) => name.startsWith(SEND_PAIR));
+  const keepSendToken =
+    known.has("RELAY_SEND_TOKEN") &&
+    existing.has("RELAY_SEND_TOKEN") &&
+    relayPairs.some((name) => apiPairs.includes(name));
+  const sendToken = keepSendToken ? null : randomSecret();
+  const pair = keepSendToken ? null : `${SEND_PAIR}${randomHex(6)}`;
+  const before: Record<string, string> = {
+    ...credentials,
     // Only this run uses it, to register the instance; deleted once it has.
     RELAY_ADMIN_TOKEN: adminToken,
     [OWN_RELAY_MARKER]: "setup-relay",
   };
   // A relay with no send token yet needs one to deploy (`secrets.required`); it accepts nothing on `/send` before,
-  // so setting it now stops no page.
+  // so setting it now stops no page. Its pair marker comes only with the API's token, after the registration.
   if (sendToken !== null && !known.has("RELAY_SEND_TOKEN")) before.RELAY_SEND_TOKEN = sendToken;
   if (!known.has("RELAY_HANDLE_KEYS")) {
     const id = `k${new Date(deps.now()).toISOString().slice(0, 10).replaceAll("-", "")}`;
@@ -492,10 +534,13 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
   }
   if (!known.has("RELAY_TAG_KEY")) before.RELAY_TAG_KEY = randomSecret();
   else io.print(`${relayWorker} keeps its RELAY_TAG_KEY (it never rotates).`);
-  if (keepSendToken) io.print(`${relayWorker} and the API keep their RELAY_SEND_TOKEN.`);
+  if (keepSendToken)
+    io.print(`${relayWorker} and the API keep their RELAY_SEND_TOKEN (same pair).`);
 
   const unchanged =
-    "The API is unchanged, so pages go out as they did before this run; run again (same flags) to finish.";
+    live.length > 0 && replace
+      ? `The API is unchanged, but ${relayWorker}'s ${live.join(", ")} were replaced: if they are wrong, pages through it fail until they are fixed. Run again (same flags) to finish.`
+      : "The API is unchanged, so pages go out as they did before this run; run again (same flags) to finish.";
   io.print(`\nBuilding apps/relay (${options.env})…`);
   const build = await deps.run({
     tool: "vp",
@@ -547,8 +592,13 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
   }
   io.print(`Registered with ${relayWorker} as ${key.instance}.`);
 
-  // Now, one right after the other: the relay's new send token (if it had one already), the admin token gone, then
-  // the API's secrets with the same send token.
+  // Now, one right after the other: the relay's new send token (unless it went on before the deploy) and pair
+  // marker, the admin token gone, then the API's secrets with the same token and marker. Old markers go, so a pair
+  // left by a run that stopped between the two never matches.
+  const swap = (pairs: string[]) =>
+    sendToken === null || pair === null
+      ? {}
+      : { [pair]: "setup-relay", ...Object.fromEntries(pairs.map((name) => [name, null])) };
   await setSecrets(
     deps,
     relayWorker,
@@ -557,6 +607,7 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
       ...(sendToken !== null && known.has("RELAY_SEND_TOKEN")
         ? { RELAY_SEND_TOKEN: sendToken }
         : {}),
+      ...swap(relayPairs),
       RELAY_ADMIN_TOKEN: null,
     },
     key.file,
@@ -569,8 +620,9 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
       RELAY_INSTANCE_KEY: key.privateKey,
       RELAY_URL: relay,
       ...(sendToken !== null ? { RELAY_SEND_TOKEN: sendToken } : {}),
+      ...swap(apiPairs),
       ...(appUrl ? { RELAY_APP_URL: appUrl } : {}),
-      ...(switched && existing.has("RELAY_INSTANCE_ID") ? { RELAY_INSTANCE_ID: null } : {}),
+      ...staleInstanceId(existing),
     },
     key.file,
   );
@@ -633,7 +685,7 @@ async function prerequisites(options: Options, deps: Deps): Promise<Prerequisite
     options.apnsKeyFile,
     "Path of the APNs key (.p8): ",
     "--apns-key-file",
-    file("an APNs .p8 key", (text) => text.includes("-----BEGIN PRIVATE KEY-----")),
+    file("an APNs .p8 key (an EC P-256 private key)", isApnsKey),
   );
   const apnsKeyId = await get(options.apnsKeyId, "APNs key id: ", "--apns-key-id", async (v) =>
     APPLE_ID.test(v) ? null : "A key id is 10 capital letters and digits.",
@@ -689,8 +741,20 @@ function isServiceAccount(text: string): boolean {
     const record = value as Record<string, unknown>;
     return (
       record.type === "service_account" &&
-      ["project_id", "private_key", "client_email"].every((k) => typeof record[k] === "string")
+      ["project_id", "private_key", "client_email"].every((k) => typeof record[k] === "string") &&
+      // A key the relay can sign its JWTs with (RS256), checked here, before it is set anywhere.
+      createPrivateKey(record.private_key as string).asymmetricKeyType === "rsa"
     );
+  } catch {
+    return false;
+  }
+}
+
+/** An APNs token key: a PEM holding an EC P-256 private key, as Apple's `.p8` files are (checked locally). */
+function isApnsKey(text: string): boolean {
+  try {
+    const key = createPrivateKey(text);
+    return key.asymmetricKeyType === "ec" && key.asymmetricKeyDetails?.namedCurve === "prime256v1";
   } catch {
     return false;
   }
@@ -851,19 +915,29 @@ async function confirmSwitch(
 }
 
 /**
- * What a switch to Freecorps' relay removes from the API. `RELAY_INSTANCE_ID` names the id of a rotated key, which a key
- * from this script never is, so it goes, but only once the switch was confirmed. `RELAY_APP_URL` marks an own relay:
- * its link and its `RELAY_SEND_TOKEN` (which Freecorps' relay never accepts from a self-hosted instance) go with it. An
- * API without `RELAY_APP_URL` (our own instance) keeps its send token.
+ * What setting up Freecorps' relay removes from the API: a stale instance id, and an own relay's leftovers.
+ * `RELAY_APP_URL` marks an own relay: its link and its `RELAY_SEND_TOKEN` (which Freecorps' relay never accepts from a
+ * self-hosted instance) go with it. An API without `RELAY_APP_URL` (our own instance) keeps its send token.
  */
-function replacedRelaySecrets(existing: Set<string>, switched: boolean): Record<string, null> {
-  const removed: Record<string, null> = {};
-  if (switched && existing.has("RELAY_INSTANCE_ID")) removed.RELAY_INSTANCE_ID = null;
+function replacedRelaySecrets(existing: Set<string>): Record<string, null> {
+  const removed: Record<string, null> = { ...staleInstanceId(existing) };
   if (existing.has("RELAY_APP_URL")) {
     removed.RELAY_APP_URL = null;
     if (existing.has("RELAY_SEND_TOKEN")) removed.RELAY_SEND_TOKEN = null;
   }
   return removed;
+}
+
+/**
+ * `RELAY_INSTANCE_ID`, removed whenever this script installs an instance key. The script registers and checks the key
+ * as the id the key itself gives (`importInstanceKey`, a key file included), so after it the API must sign as that id:
+ * an id left over (from a rotation, or a key deleted by hand) would make the API sign as another instance, and the relay
+ * would refuse every handle page while the script's own check passed. Replacing a working key still needs the switch
+ * confirmation first (`confirmSwitch`, before anything changes); an API with an id and no key has nothing working to
+ * keep.
+ */
+function staleInstanceId(existing: Set<string>): Record<string, null> {
+  return existing.has("RELAY_INSTANCE_ID") ? { RELAY_INSTANCE_ID: null } : {};
 }
 
 /**
@@ -1174,6 +1248,13 @@ async function confirm(deps: Deps, question: string, byDefault: boolean): Promis
     if (["n", "no"].includes(answer)) return false;
     deps.io.print("Answer y or n.");
   }
+}
+
+/** `bytes` random bytes as upper-case hex, for a secret's name. */
+function randomHex(bytes: number): string {
+  return Buffer.from(crypto.getRandomValues(new Uint8Array(bytes)))
+    .toString("hex")
+    .toUpperCase();
 }
 
 /** 32 random bytes, base64url: handle and tag keys, tokens. */

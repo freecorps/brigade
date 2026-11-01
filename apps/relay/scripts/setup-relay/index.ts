@@ -36,6 +36,7 @@ const usage = `Usage: vp run setup:relay -- [--relay freecorps|own|none] [--env 
   Your own relay:   [--apns-key-file <.p8>] [--apns-key-id <id>] [--apns-team-id <id>] [--bundle-id <id>]
                     [--fcm-service-account-file <json>] [--relay-domain <host>] [--app-url <store link>]
                     [--take-over-relay] (a relay Worker this script did not set up)
+                    [--replace-credentials] (replace the APNs and Firebase keys a relay has)
                     [--assume-new-relay] (wrangler cannot list the relay's secrets, and it does not exist)`;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
@@ -65,6 +66,7 @@ async function main(): Promise<number> {
       yes: { type: "boolean", short: "y", default: false },
       "assume-new-relay": { type: "boolean", default: false },
       "take-over-relay": { type: "boolean", default: false },
+      "replace-credentials": { type: "boolean", default: false },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -134,6 +136,7 @@ async function main(): Promise<number> {
         yes: values.yes,
         assumeNewRelay: values["assume-new-relay"],
         takeOverRelay: values["take-over-relay"],
+        replaceCredentials: values["replace-credentials"],
       },
       deps,
     );

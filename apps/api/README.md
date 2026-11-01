@@ -488,7 +488,10 @@ There are two, running the same `apps/relay` code and `/v1` protocol:
   zone of the same Cloudflare account for the relay. Then the app is the company's to build and publish
   (apps/mobile README "Your own app").
 
-Without either, email still pages (see "Email") and the dashboard says that phones are not paged.
+Without either, no phone is paged; pages reach people by email only if the API can send email (`EMAIL_FROM`, see
+"Email"). With Freecorps' relay, phones are paged once they run an app release that asks the relay for handles (RFC
+0015 step 4): the app as released today registers raw device tokens, which Freecorps' relay takes only from Freecorps'
+own instance (`RELAY_SEND_TOKEN`).
 
 `vp run setup:relay` (from the root; `apps/relay/scripts/setup-relay/`) sets either up, and can be run again later.
 Log in to wrangler first (`wrangler login`, or `CLOUDFLARE_API_TOKEN`); `--env dev` or `--env staging` picks the
@@ -506,14 +509,15 @@ Workers of that environment (default production). It asks which relay, then:
   yet** (docs/open-questions.md Q31): pass it with `--relay-url` (or `BRIGADE_RELAY_URL`); without it the script stops
   and says so.
 - **Your own relay:** says first that only the company's build can be paged, checks the prerequisites (and stops if any
-  is missing), then:
+  is missing; the APNs key must be an EC P-256 key and the service account's an RSA key, checked locally), then:
   1. reads the relay Worker's secret names. A Worker that exists but was not set up by this script (no
      `BRIGADE_OWN_RELAY` secret; Freecorps' own relay, say) is refused unless `--take-over-relay`. If wrangler cannot
      list them for any reason but "this Worker does not exist" (Cloudflare error 10007), the script stops, since new
      handle keys would void every phone's handle; `--assume-new-relay` goes on anyway;
-  2. builds `apps/relay` and sets its secrets: `APNS_KEY`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `FCM_SERVICE_ACCOUNT`,
-     `BRIGADE_OWN_RELAY`, a new `RELAY_ADMIN_TOKEN`, and `RELAY_HANDLE_KEYS`, `RELAY_TAG_KEY` and `RELAY_SEND_TOKEN`
-     only if the relay has none;
+  2. builds `apps/relay` and sets its secrets: `BRIGADE_OWN_RELAY`, a new `RELAY_ADMIN_TOKEN`; `APNS_KEY`,
+     `APNS_KEY_ID`, `APNS_TEAM_ID` and `FCM_SERVICE_ACCOUNT` unless the relay has them, which are kept unless
+     `--replace-credentials` (or yes to the question; wrong ones stop every page through it); and `RELAY_HANDLE_KEYS`,
+     `RELAY_TAG_KEY` and `RELAY_SEND_TOKEN` only if the relay has none;
   3. deploys it as `brigade-relay` (`brigade-relay-dev` for `--env dev`; the relay has no staging) with `APNS_TOPIC`
      the bundle id, `RELAY_REGISTRATION=closed` and the hostname as its custom domain, and waits for the domain (10 s
      apart, at most 5 minutes);
@@ -522,10 +526,13 @@ Workers of that environment (default production). It asks which relay, then:
      needed one), and sets `RELAY_INSTANCE_KEY`, `RELAY_URL`, `RELAY_SEND_TOKEN` (the relay's, for phones that still
      register raw tokens) and the store link (`RELAY_APP_URL`, optional) on the API.
 
-  A relay and an API that both have `RELAY_SEND_TOKEN` keep it: it is never rotated before the API can get the new
-  one, so a run that stops at any step leaves raw-token pages going out as before. The API reaches the relay through
-  the `RELAY` binding the production build already has (dev: `services` in wrangler.jsonc): build and deploy the API
-  again.
+  **The send token.** Only secret names can be read, so a shared marker, `BRIGADE_SEND_PAIR_<id>`, set on the relay
+  and the API in the same step as their token, is what shows the two tokens are the same. With the same marker on
+  both, the token is kept, so a rerun opens no gap. Otherwise (no marker, different ones, a run that stopped in
+  between, a token set by hand) both get a new token and marker, one right after the other, after the registration.
+  Change `RELAY_SEND_TOKEN` by hand only on both Workers, and delete their markers then. A run that stops before step
+  5 leaves the API as it was. The API reaches the relay through the `RELAY` binding the production build already has
+  (dev: `services` in wrangler.jsonc): build and deploy the API again.
 
 - **Not now:** changes nothing.
 
@@ -533,11 +540,12 @@ Workers of that environment (default production). It asks which relay, then:
 working and **every phone must open the app once** to be paged again; a switch to an own relay also leaves the store
 app unable to page at all. Whenever the API already has `RELAY_INSTANCE_KEY`, the script says so and asks again
 (`--yes` without questions), even with `--instance-key-file`: it can read only secret names, so it cannot prove the
-key is the one set. Only then does it remove `RELAY_INSTANCE_ID`. A switch to Freecorps' relay also removes
-`RELAY_APP_URL` and, with it (it marks an own relay), the own relay's `RELAY_SEND_TOKEN`; an API without
-`RELAY_APP_URL` keeps its send token. Keep the saved key in a password manager and delete the file: a lost key is the
-same as a switch. `--instance-key-file` reuses a saved key, to finish a run that stopped (a code that expired, secrets
-wrangler could not set) without a new id.
+key is the one set. Whenever it installs a key it also removes `RELAY_INSTANCE_ID`: it registers and checks the key as
+the id the key gives, so a leftover id (from a rotation, or a key deleted by hand) would make the API sign as another
+instance. A switch to Freecorps' relay also removes `RELAY_APP_URL` and, with it (it marks an own relay), the own
+relay's `RELAY_SEND_TOKEN`; an API without `RELAY_APP_URL` keeps its send token. Keep the saved key in a password
+manager and delete the file: a lost key is the same as a switch. `--instance-key-file` reuses a saved key, to finish a
+run that stopped (a code that expired, secrets wrangler could not set) without a new id.
 
 Secret values never appear on the screen, in a command's arguments or in a file in the repository: wrangler gets them
 on stdin (`wrangler secret bulk`). Without a terminal, or with `--non-interactive`, every answer is a flag (`vp run

@@ -9,6 +9,7 @@ import {
   childEnv,
   setupRelay,
   Stop,
+  SEND_PAIR,
   TERMS_VERSION,
   type Command,
   type Deps,
@@ -331,6 +332,11 @@ describe("Freecorps' relay", () => {
       /Relay check: Freecorps' relay is reachable and this instance is registered \(APNs ok, FCM not_configured, handles ok\)/,
     );
     expect(h.out()).not.toMatch(/working/);
+    // The app as released registers raw tokens, which Freecorps' relay does not page for a self-hosted instance.
+    expect(h.out()).toMatch(
+      /Phones on the app as released today are NOT paged through Freecorps' relay/,
+    );
+    expect(h.out()).not.toMatch(/Phones are paged once they open the app/);
     // vite.config.ts cannot be read here, so the binding step is said as one to check.
     expect(h.out()).toMatch(
       /REQUIRED, or no phone is paged: make sure the API has no RELAY service binding/,
@@ -522,7 +528,10 @@ describe("your own relay", () => {
     expect(h.out()).toMatch(/ONLY YOUR COMPANY'S OWN APP BUILD CAN BE PAGED THROUGH IT/);
 
     const relay = h.secrets.get("brigade-relay");
-    expect([...(relay?.keys() ?? [])].sort()).toEqual([
+    const pair = [...(relay?.keys() ?? [])].find((k) => k.startsWith(SEND_PAIR)) ?? "missing";
+    // The pair marker shows the relay's and the API's send tokens were set in one step.
+    expect(h.secrets.get("brigade-api")?.has(pair)).toBe(true);
+    expect([...(relay?.keys() ?? [])].filter((k) => k !== pair).sort()).toEqual([
       "APNS_KEY",
       "APNS_KEY_ID",
       "APNS_TEAM_ID",
@@ -544,7 +553,10 @@ describe("your own relay", () => {
       "wrangler secret bulk brigade-relay",
       "wrangler secret bulk brigade-api",
     ]);
-    expect(JSON.parse(h.commands[5]?.input ?? "")).toEqual({ RELAY_ADMIN_TOKEN: null });
+    expect(JSON.parse(h.commands[5]?.input ?? "")).toEqual({
+      [pair]: "setup-relay",
+      RELAY_ADMIN_TOKEN: null,
+    });
     expect(h.deployed).toEqual({
       vars: { APNS_TOPIC: "com.acme.brigade", RELAY_REGISTRATION: "closed" },
       domain: OWN_HOST,
@@ -628,8 +640,14 @@ describe("not now", () => {
   test("changes nothing and says email still pages", async () => {
     const h = harness({ interactive: true, answers: ["3"] });
     expect(await h.run({})).toBe(0);
-    expect(h.out()).toMatch(/Pages still go out by email/);
-    expect(h.out()).toMatch(/phones are not paged/);
+    // Email pages only when the API can send it: never said as if it always did.
+    expect(h.out()).toMatch(
+      /Pages go out by email only if the API can send email \(its EMAIL_FROM secret/,
+    );
+    expect(h.out()).not.toMatch(/email still pages|Pages still go out by email/);
+    expect(h.out()).toMatch(/No phone is paged\./);
+    // The dashboard's "Phones and pages" is not built yet: nothing says it shows anything.
+    expect(h.out()).not.toMatch(/dashboard/);
     expect(h.commands).toEqual([]);
     expect(h.fetched).toEqual([]);
   });
@@ -730,13 +748,22 @@ describe("what a switch removes from the API", () => {
     expect(h.secrets.get("brigade-api")?.has("RELAY_INSTANCE_ID")).toBe(true);
     expect(h.commands.filter((c) => c.args[1] === "bulk")).toEqual([]);
 
-    // RELAY_INSTANCE_ID with no RELAY_INSTANCE_KEY: nothing was confirmed, so it is left alone.
+    // RELAY_INSTANCE_ID with no RELAY_INSTANCE_KEY: nothing works to confirm replacing, and the id would make the API
+    // sign as another instance with the new key, so it goes with no question.
     const odd = harness({ secrets: { "brigade-api": ["RELAY_INSTANCE_ID"] } });
     expect(await odd.run(FREECORPS)).toBe(0);
     expect(
       await odd.run({ ...FREECORPS, code: odd.code(), instanceKeyFile: odd.keyFiles()[0] }),
     ).toBe(0);
-    expect(odd.secrets.get("brigade-api")?.get("RELAY_INSTANCE_ID")).toBe("kept");
+    expect(odd.questions).toEqual([]);
+    expect(odd.secrets.get("brigade-api")?.has("RELAY_INSTANCE_ID")).toBe(false);
+    expect(odd.secrets.get("brigade-api")?.has("RELAY_INSTANCE_KEY")).toBe(true);
+  });
+
+  test("an own relay removes a stale RELAY_INSTANCE_ID too", async () => {
+    const h = harness({ files: OWN_FILES, secrets: { "brigade-api": ["RELAY_INSTANCE_ID"] } });
+    expect(await h.run(OWN)).toBe(0);
+    expect(h.secrets.get("brigade-api")?.has("RELAY_INSTANCE_ID")).toBe(false);
   });
 });
 
@@ -814,15 +841,18 @@ describe("reading secret names", () => {
 });
 
 describe("an own relay that stops halfway keeps paging", () => {
-  // A relay this script set up before, and an API paging through it with the same send token.
+  // A relay this script set up before, and an API paging through it with the same send token (the shared pair marker
+  // says so).
+  const PAIR = "BRIGADE_SEND_PAIR_0A0B0C0D0E0F";
   const BEFORE = {
     "brigade-relay": [
       "BRIGADE_OWN_RELAY",
       "RELAY_SEND_TOKEN",
+      PAIR,
       "RELAY_HANDLE_KEYS",
       "RELAY_TAG_KEY",
     ],
-    "brigade-api": ["RELAY_INSTANCE_KEY", "RELAY_URL", "RELAY_SEND_TOKEN"],
+    "brigade-api": ["RELAY_INSTANCE_KEY", "RELAY_URL", "RELAY_SEND_TOKEN", PAIR],
   };
   const paging = (h: ReturnType<typeof harness>) => {
     const relay = h.secrets.get("brigade-relay")?.get("RELAY_SEND_TOKEN");
@@ -909,10 +939,119 @@ describe("an own relay that stops halfway keeps paging", () => {
       "wrangler secret bulk brigade-relay",
       "wrangler secret bulk brigade-api",
     ]);
-    expect(Object.keys(JSON.parse(h.commands.at(-2)?.input ?? "{}") as object).sort()).toEqual([
-      "RELAY_ADMIN_TOKEN",
-      "RELAY_SEND_TOKEN",
-    ]);
+    const relayStep = JSON.parse(h.commands.at(-2)?.input ?? "{}") as Record<string, unknown>;
+    const newPair = Object.keys(relayStep).find((k) => k.startsWith(SEND_PAIR) && k !== PAIR);
+    expect(relayStep).toEqual({
+      RELAY_SEND_TOKEN: expect.any(String),
+      [PAIR]: null,
+      [newPair ?? "missing"]: "setup-relay",
+      RELAY_ADMIN_TOKEN: null,
+    });
+    expect(h.secrets.get("brigade-api")?.has(newPair ?? "missing")).toBe(true);
+  });
+
+  test("names alone do not keep a send token: without a shared pair marker both get a new one", async () => {
+    // Both have a token, but nothing shows they are the same one (set by hand, or by an earlier relay).
+    const unpaired = {
+      "brigade-relay": BEFORE["brigade-relay"].filter((n) => n !== PAIR),
+      "brigade-api": [
+        "RELAY_INSTANCE_KEY",
+        "RELAY_URL",
+        "RELAY_SEND_TOKEN",
+        "BRIGADE_SEND_PAIR_FFFF",
+      ],
+    };
+    const h = harness({ files: OWN_FILES, secrets: unpaired });
+    expect(await h.run({ ...OWN, yes: true })).toBe(0);
+    paging(h);
+    expect(h.secrets.get("brigade-api")?.get("RELAY_SEND_TOKEN")).not.toBe("kept");
+    const pairs = (worker: string) =>
+      [...(h.secrets.get(worker)?.keys() ?? [])].filter((k) => k.startsWith(SEND_PAIR));
+    expect(pairs("brigade-api")).toEqual(pairs("brigade-relay"));
+    expect(pairs("brigade-api")).toHaveLength(1);
+  });
+
+  test("a run that stopped with the tokens apart is put right by the next one", async () => {
+    // The relay had no token: it gets one before the deploy, which then fails. The API keeps its old one.
+    const apart = {
+      "brigade-relay": ["BRIGADE_OWN_RELAY", "RELAY_HANDLE_KEYS", "RELAY_TAG_KEY"],
+      "brigade-api": ["RELAY_INSTANCE_KEY", "RELAY_URL", "RELAY_SEND_TOKEN"],
+    };
+    let fail = true;
+    const h = harness({
+      files: OWN_FILES,
+      secrets: apart,
+      failing: (c) => fail && c.args[0] === "deploy",
+    });
+    await stopped(h.run({ ...OWN, yes: true }));
+    const relayToken = h.secrets.get("brigade-relay")?.get("RELAY_SEND_TOKEN");
+    expect(relayToken).not.toBe(h.secrets.get("brigade-api")?.get("RELAY_SEND_TOKEN"));
+    // Both now have a token by name, but no shared pair: the rerun replaces both.
+    fail = false;
+    expect(await h.run({ ...OWN, yes: true })).toBe(0);
+    paging(h);
+  });
+});
+
+describe("an own relay's provider credentials", () => {
+  const LIVE = {
+    "brigade-relay": [
+      "BRIGADE_OWN_RELAY",
+      "APNS_KEY",
+      "APNS_KEY_ID",
+      "APNS_TEAM_ID",
+      "FCM_SERVICE_ACCOUNT",
+      "RELAY_HANDLE_KEYS",
+      "RELAY_TAG_KEY",
+    ],
+  };
+  const sent = (h: ReturnType<typeof harness>) =>
+    Object.keys(JSON.parse(h.commands.find((c) => c.args[1] === "bulk")?.input ?? "{}") as object);
+
+  test("a relay's live credentials are kept unless asked to replace them", async () => {
+    const h = harness({ files: OWN_FILES, secrets: LIVE });
+    expect(await h.run(OWN)).toBe(0);
+    expect(sent(h)).not.toContain("APNS_KEY");
+    expect(sent(h)).not.toContain("FCM_SERVICE_ACCOUNT");
+    expect(h.secrets.get("brigade-relay")?.get("APNS_KEY")).toBe("kept");
+    expect(h.out()).toMatch(/keeps its APNS_KEY, APNS_KEY_ID, APNS_TEAM_ID, FCM_SERVICE_ACCOUNT/);
+
+    const asked = harness({
+      interactive: true,
+      files: OWN_FILES,
+      secrets: LIVE,
+      answers: ["y", "n"],
+    });
+    expect(await asked.run(OWN)).toBe(0);
+    expect(asked.questions[1]).toMatch(/already has APNS_KEY.*Replace them/);
+    expect(asked.secrets.get("brigade-relay")?.get("APNS_KEY")).toBe("kept");
+  });
+
+  test("replaced on request, and a stop after that says so instead of claiming nothing changed", async () => {
+    const h = harness({
+      files: OWN_FILES,
+      secrets: LIVE,
+      failing: (c) => c.args[0] === "deploy",
+    });
+    const stop = await stopped(h.run({ ...OWN, replaceCredentials: true }));
+    expect(stop.message).toMatch(/brigade-relay's APNS_KEY, .* were replaced: if they are wrong/);
+    expect(stop.message).not.toMatch(/pages go out as they did before/);
+    expect(h.secrets.get("brigade-relay")?.get("APNS_KEY")).toBe(APNS_KEY.trim());
+  });
+
+  test("keys that are not an APNs EC key or an RSA service account key are refused before anything", async () => {
+    const rsaPem = generateKeyPairSync("rsa", { modulusLength: 2048 })
+      .privateKey.export({ type: "pkcs8", format: "pem" })
+      .toString();
+    const notApns = harness({
+      files: { ...OWN_FILES, [`${HOME}/keys/AuthKey_ABCDE12345.p8`]: rsaPem },
+    });
+    expect((await stopped(notApns.run(OWN))).message).toMatch(/is not an APNs .p8 key/);
+    expect(notApns.commands).toEqual([]);
+    const badFcm = JSON.stringify({ ...JSON.parse(FCM_SERVICE_ACCOUNT), private_key: APNS_KEY });
+    const notRsa = harness({ files: { ...OWN_FILES, [`${HOME}/keys/fcm.json`]: badFcm } });
+    expect((await stopped(notRsa.run(OWN))).message).toMatch(/is not a Google service account/);
+    expect(notRsa.commands).toEqual([]);
   });
 });
 

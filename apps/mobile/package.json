@@ -69,6 +69,11 @@
         "react-native-gesture-handler",
         "react-native-reanimated"
       ]
+    },
+    "install": {
+      "exclude": [
+        "typescript"
+      ]
     }
   }
 }

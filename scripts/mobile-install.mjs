@@ -61,6 +61,8 @@ const options = parseOptions(import.meta.url, {
   "build-only": { type: "boolean", default: false },
   "no-launch": { type: "boolean", default: false },
 });
+// After the options, so `--help` never depends on it.
+const bundleId = appId();
 const interactive = process.stdin.isTTY && !options.yes;
 const building = !options["no-build"] && !options.from;
 const releaseKeystore = join(homedir(), ".brigade/keystore.properties");
@@ -282,7 +284,7 @@ async function installIos(variant, target) {
         "--device",
         device.id,
         "--terminate-existing",
-        appId,
+        bundleId,
       ],
       { env },
     ).catch(() =>
@@ -416,7 +418,7 @@ async function installAndroid(variant, target, production) {
         "--brief",
         "-c",
         "android.intent.category.LAUNCHER",
-        appId,
+        bundleId,
       ])
         .trim()
         .split(/\r?\n/)

@@ -7,6 +7,7 @@ import { generateInstanceKey, importInstanceKey } from "@freecorps/brigade-push/
 import { describe, expect, test } from "vite-plus/test";
 import {
   childEnv,
+  FREECORPS_RELAY_URL,
   setupRelay,
   Stop,
   SEND_PAIR,
@@ -105,7 +106,9 @@ function harness(
     EMAIL_FROM: "relay@freecorps.test",
     ...setup.hosted,
   };
-  let deployed: { vars: Record<string, string>; domain: string | null } | null = null;
+  let deployed: { args: string[]; domain: string | null } | null = null;
+  /** The topic each APNs request from the own relay went to. */
+  const ownTopics: string[] = [];
 
   const deps: Deps = {
     io: {
@@ -158,15 +161,11 @@ function harness(
         return ok;
       }
       if (verb === "deploy") {
-        const vars: Record<string, string> = {};
-        command.args.forEach((arg, i) => {
-          if (arg === "--var") {
-            const [key, ...value] = (command.args[i + 1] ?? "").split(":");
-            vars[key ?? ""] = value.join(":");
-          }
-        });
         const at = command.args.indexOf("--domain");
-        deployed = { vars, domain: at === -1 ? null : (command.args[at + 1] ?? null) };
+        deployed = {
+          args: command.args,
+          domain: at === -1 ? null : (command.args[at + 1] ?? null),
+        };
         return ok;
       }
       throw new Error(`unexpected command: ${command.args.join(" ")}`);
@@ -186,13 +185,15 @@ function harness(
           secrets.get("brigade-relay") ??
           secrets.get("brigade-relay-dev") ??
           new Map<string, string>();
-        // The deployed relay: wrangler.jsonc's vars as the deploy overrode them, and the secrets it was given.
+        // The deployed relay: wrangler.jsonc's vars as they are (a deploy with no flags), and the secrets it was given.
         const secret = (name: string) => own.get(name) ?? "";
+        const optional = (name: "RELAY_APNS_TOPIC" | "RELAY_REGISTRATION") =>
+          own.has(name) ? { [name]: secret(name) } : {};
         const env: RelayEnv = {
           APNS_ENVIRONMENT: "production",
-          // The generated type is wrangler.jsonc's literal; an own relay's deploy overrides it (`--var`).
-          APNS_TOPIC: (deployed.vars.APNS_TOPIC ??
-            "app.freecorps.brigade") as RelayEnv["APNS_TOPIC"],
+          APNS_TOPIC: "app.freecorps.brigade",
+          ...optional("RELAY_APNS_TOPIC"),
+          ...optional("RELAY_REGISTRATION"),
           RELAY_TERMS_VERSION: TERMS_VERSION,
           REGISTRY: ownRegistry,
           APNS_KEY: secret("APNS_KEY"),
@@ -203,11 +204,12 @@ function harness(
           RELAY_HANDLE_KEYS: secret("RELAY_HANDLE_KEYS"),
           RELAY_TAG_KEY: secret("RELAY_TAG_KEY"),
           RELAY_ADMIN_TOKEN: secret("RELAY_ADMIN_TOKEN"),
-          ...(deployed.vars.RELAY_REGISTRATION
-            ? { RELAY_REGISTRATION: deployed.vars.RELAY_REGISTRATION }
-            : {}),
         };
-        return handle(request, env, providers);
+        return handle(request, env, (provider) => {
+          const topic = provider.headers.get("apns-topic");
+          if (topic !== null) ownTopics.push(topic);
+          return providers(provider);
+        });
       }
       throw new TypeError("fetch failed");
     },
@@ -245,8 +247,12 @@ function harness(
   /** The 6-digit code in the last email. */
   const code = () => /: (\d{6})\n/.exec(sent.at(-1)?.text ?? "")?.[1] ?? "";
   const keyFiles = () => [...files.keys()].filter((p) => p.includes("relay-instance-key"));
-  /** Every value a Worker was given, to check none of them leaked into output or arguments. */
-  const secretValues = () => given.filter((v) => v.length >= 16 && !v.startsWith("https://"));
+  /**
+   * Every value a Worker was given, to check none of them leaked into output or arguments; the relay's URL and its
+   * topic (the bundle id, `RELAY_APNS_TOPIC`) are not secret.
+   */
+  const secretValues = () =>
+    given.filter((v) => v.length >= 16 && !v.startsWith("https://") && v !== OWN.bundleId);
   const leaks = () => {
     const visible = [...out, ...commands.flatMap((c) => c.args)].join("\n");
     return secretValues().filter((value) =>
@@ -269,6 +275,7 @@ function harness(
     sleeps,
     hostedRegistry,
     ownRegistry,
+    ownTopics,
     get deployed() {
       return deployed;
     },
@@ -404,13 +411,24 @@ describe("Freecorps' relay", () => {
     expect(h.commands.filter((c) => c.args[1] === "bulk")).toEqual([]);
   });
 
-  test("no relay address yet: stops before touching wrangler or the network", async () => {
-    const h = harness();
+  test("without --relay-url it goes to Freecorps' relay's address; an empty one stops before anything", async () => {
+    expect(FREECORPS_RELAY_URL).toBe("https://relay.brigade.freecorps.com.br");
+    const h = harness({ unreachable: true });
     const stop = await stopped(h.run({ ...FREECORPS, relayUrl: undefined }));
-    expect(stop.code).toBe(2);
-    expect(stop.message).toMatch(/no public address yet.*--relay-url/s);
-    expect(h.commands).toEqual([]);
-    expect(h.fetched).toEqual([]);
+    expect(stop.message).toMatch(
+      /Could not reach the relay at https:\/\/relay.brigade.freecorps.com.br/,
+    );
+    expect(h.fetched.every((f) => f.includes("https://relay.brigade.freecorps.com.br/"))).toBe(
+      true,
+    );
+    expect(h.fetched.length).toBeGreaterThan(0);
+
+    const empty = harness();
+    const none = await stopped(empty.run({ ...FREECORPS, relayUrl: "" }));
+    expect(none.code).toBe(2);
+    expect(none.message).toMatch(/No relay address.*--relay-url/s);
+    expect(empty.commands).toEqual([]);
+    expect(empty.fetched).toEqual([]);
   });
 
   test("a closed relay given as Freecorps' says it is someone's own", async () => {
@@ -537,12 +555,17 @@ describe("your own relay", () => {
       "APNS_TEAM_ID",
       "BRIGADE_OWN_RELAY",
       "FCM_SERVICE_ACCOUNT",
+      "RELAY_APNS_TOPIC",
       "RELAY_HANDLE_KEYS",
+      "RELAY_REGISTRATION",
       "RELAY_SEND_TOKEN",
       "RELAY_TAG_KEY",
     ]);
     expect(relay?.get("APNS_KEY")).toBe(APNS_KEY.trim());
-    // Secrets before the deploy (a new Worker needs its required ones), then the deploy with the vars and domain;
+    // The topic and closed registration are secrets, which every later deploy keeps.
+    expect(relay?.get("RELAY_APNS_TOPIC")).toBe("com.acme.brigade");
+    expect(relay?.get("RELAY_REGISTRATION")).toBe("closed");
+    // Secrets before the deploy (a new Worker needs its required ones), then the deploy with its domain and no vars;
     // after the registration the admin token goes, then the API's secrets.
     expect(order(h)).toEqual([
       "wrangler secret list brigade-api",
@@ -557,10 +580,9 @@ describe("your own relay", () => {
       [pair]: "setup-relay",
       RELAY_ADMIN_TOKEN: null,
     });
-    expect(h.deployed).toEqual({
-      vars: { APNS_TOPIC: "com.acme.brigade", RELAY_REGISTRATION: "closed" },
-      domain: OWN_HOST,
-    });
+    expect(h.deployed).toEqual({ args: ["deploy", "--domain", OWN_HOST], domain: OWN_HOST });
+    // The deep health asked APNs for the company's topic, not wrangler.jsonc's `APNS_TOPIC`.
+    expect(h.ownTopics).toEqual(["com.acme.brigade"]);
 
     const api = h.secrets.get("brigade-api");
     expect(api?.get("RELAY_URL")).toBe(`https://${OWN_HOST}`);
@@ -593,6 +615,29 @@ describe("your own relay", () => {
     expect(Object.keys(bulk)).not.toContain("RELAY_HANDLE_KEYS");
     expect(Object.keys(bulk)).not.toContain("RELAY_TAG_KEY");
     expect(h.out()).toMatch(/keeps its RELAY_HANDLE_KEYS/);
+  });
+
+  test("a relay deployed with the old --var flags gets the topic and closed registration as secrets", async () => {
+    // Set up by an earlier version of this script: the two were vars, gone with the next deploy without flags.
+    const h = harness({
+      files: OWN_FILES,
+      secrets: {
+        "brigade-relay": [
+          "BRIGADE_OWN_RELAY",
+          "RELAY_SEND_TOKEN",
+          "RELAY_HANDLE_KEYS",
+          "RELAY_TAG_KEY",
+        ],
+      },
+    });
+    expect(await h.run({ ...OWN, yes: true })).toBe(0);
+    const first = JSON.parse(h.commands.find((c) => c.args[1] === "bulk")?.input ?? "{}") as object;
+    expect(first).toMatchObject({
+      RELAY_APNS_TOPIC: "com.acme.brigade",
+      RELAY_REGISTRATION: "closed",
+    });
+    expect(h.commands.find((c) => c.args[0] === "deploy")?.args).not.toContain("--var");
+    expect(h.secrets.get("brigade-relay")?.get("RELAY_REGISTRATION")).toBe("closed");
   });
 
   test("a missing prerequisite stops before anything is deployed", async () => {

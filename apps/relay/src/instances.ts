@@ -37,7 +37,8 @@ export type InstanceEnv = {
   RELAY_TERMS_VERSION?: string;
   /**
    * `closed`: a company's own relay, which registers only an instance whose `POST /v1/instances` carries
-   * `RELAY_ADMIN_TOKEN` (module comment). Anything else is open.
+   * `RELAY_ADMIN_TOKEN` (module comment). Anything else is open. A secret, so a deploy without flags keeps it (it
+   * is not a var in wrangler.jsonc).
    */
   RELAY_REGISTRATION?: string;
   /** A closed relay's admin secret, as `Authorization: Bearer` on `POST /v1/instances`. Unset: nothing registers. */

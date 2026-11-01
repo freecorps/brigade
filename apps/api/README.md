@@ -507,22 +507,24 @@ Workers of that environment (default production). It asks which relay, then:
   reachable and this instance is registered**. **Required afterwards:** the production build binds `RELAY` to
   `brigade-relay` (vite.config.ts `PRODUCTION_BINDINGS`; dev and staging: `services` in wrangler.jsonc), and the API
   sends through that binding before `RELAY_URL`, to a relay that does not know this instance: remove it and deploy the
-  API again. The script reads those files and says when the binding is there. **Freecorps' relay has no public address
-  yet** (docs/open-questions.md Q31): pass it with `--relay-url` (or `BRIGADE_RELAY_URL`); without it the script stops
-  and says so.
+  API again. The script reads those files and says when the binding is there. Freecorps' relay is
+  `https://relay.brigade.freecorps.com.br`, the default; `--relay-url` (or `BRIGADE_RELAY_URL`) points at another
+  (a test relay, say). Until its domain is attached (docs/open-questions.md Q31) the script stops with "Could not
+  reach the relay" and changes nothing.
 - **Your own relay:** says first that only the company's build can be paged, checks the prerequisites (and stops if any
   is missing; the APNs key must be an EC P-256 key and the service account's an RSA key, checked locally), then:
   1. reads the relay Worker's secret names. A Worker that exists but was not set up by this script (no
      `BRIGADE_OWN_RELAY` secret; Freecorps' own relay, say) is refused unless `--take-over-relay`. If wrangler cannot
      list them for any reason but "this Worker does not exist" (Cloudflare error 10007), the script stops, since new
      handle keys would void every phone's handle; `--assume-new-relay` goes on anyway;
-  2. builds `apps/relay` and sets its secrets: `BRIGADE_OWN_RELAY`, a new `RELAY_ADMIN_TOKEN`; `APNS_KEY`,
+  2. builds `apps/relay` and sets its secrets: `BRIGADE_OWN_RELAY`, a new `RELAY_ADMIN_TOKEN`, `RELAY_APNS_TOPIC`
+     (the bundle id) and `RELAY_REGISTRATION=closed` (secrets, so a later deploy with no flags keeps them; a relay
+     set up when they were `deploy --var` gets them on this run); `APNS_KEY`,
      `APNS_KEY_ID`, `APNS_TEAM_ID` and `FCM_SERVICE_ACCOUNT` unless the relay has them, which are kept unless
      `--replace-credentials` (or yes to the question; wrong ones stop every page through it); and `RELAY_HANDLE_KEYS`,
      `RELAY_TAG_KEY` and `RELAY_SEND_TOKEN` only if the relay has none;
-  3. deploys it as `brigade-relay` (`brigade-relay-dev` for `--env dev`; the relay has no staging) with `APNS_TOPIC`
-     the bundle id, `RELAY_REGISTRATION=closed` and the hostname as its custom domain, and waits for the domain (10 s
-     apart, at most 5 minutes);
+  3. deploys it as `brigade-relay` (`brigade-relay-dev` for `--env dev`; the relay has no staging) with the hostname
+     as its custom domain, and waits for the domain (10 s apart, at most 5 minutes);
   4. registers the instance with the admin token (no terms, no email);
   5. then, one right after the other: deletes the admin token from the relay (with the relay's new send token if it
      needed one), and sets `RELAY_INSTANCE_KEY`, `RELAY_URL`, `RELAY_SEND_TOKEN` (the relay's, for phones that still
@@ -564,9 +566,9 @@ setup:relay -- --help`); Freecorps' relay then takes two runs, the first sending
 `--code` and `--instance-key-file`, finishing:
 
 ```bash
-vp run setup:relay -- --relay freecorps --relay-url https://<relay> --accept-terms draft-2026-11 \
+vp run setup:relay -- --relay freecorps --accept-terms draft-2026-11 \
   --contact oncall@example.com
-vp run setup:relay -- --relay freecorps --relay-url https://<relay> --accept-terms draft-2026-11 \
+vp run setup:relay -- --relay freecorps --accept-terms draft-2026-11 \
   --contact oncall@example.com --instance-key-file ~/.config/brigade/relay-instance-key-… --code 123456
 vp run setup:relay -- --relay own --apns-key-file ~/keys/AuthKey_XXXXXXXXXX.p8 --apns-key-id XXXXXXXXXX \
   --apns-team-id XXXXXXXXXX --bundle-id com.example.brigade --fcm-service-account-file ~/keys/fcm.json \

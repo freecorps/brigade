@@ -4,8 +4,9 @@
 //      registered with `POST /v1/instances`, `RELAY_INSTANCE_KEY` and `RELAY_URL` set on the API Worker, and the
 //      signed deep health to show it works.
 //   2. Your own relay: for a company that wants no third party on the paging path, and only for its own app build.
-//      Checks the Apple and Firebase prerequisites, deploys apps/relay to the same account with its secrets and closed
-//      registration, registers the instance with the relay's admin token, and sets the API's secrets.
+//      Checks the Apple and Firebase prerequisites, deploys apps/relay to the same account with its secrets, its topic
+//      and closed registration (secrets too, so a later deploy keeps them), registers the instance with the relay's
+//      admin token, and sets the API's secrets.
 //   3. Not now: nothing changes; email still pages.
 //
 // Everything that touches the outside (wrangler, HTTP, files, the terminal) comes in through `Deps`, so the tests
@@ -21,11 +22,8 @@ import {
   signRequest,
 } from "@freecorps/brigade-push/instance";
 
-/**
- * The hosted relay's public address. PLACEHOLDER: Freecorps' relay has no public address yet (docs/open-questions.md
- * Q31). Until it has, `--relay-url` (or `BRIGADE_RELAY_URL`) must say where it is, and the script stops without it.
- */
-export const FREECORPS_RELAY_URL: string | null = null;
+/** The hosted relay's public address (docs/open-questions.md Q31); `--relay-url` (or `BRIGADE_RELAY_URL`) overrides it. */
+export const FREECORPS_RELAY_URL = "https://relay.brigade.freecorps.com.br";
 
 /** The terms a registration on Freecorps' relay accepts (apps/relay wrangler.jsonc `RELAY_TERMS_VERSION`, D5). */
 export const TERMS_VERSION = "draft-2026-11";
@@ -39,7 +37,7 @@ export type Environment = "production" | "staging" | "dev";
 export type Options = {
   relay?: Choice;
   env: Environment;
-  /** Freecorps' relay's address, while `FREECORPS_RELAY_URL` is a placeholder. */
+  /** Freecorps' relay's address, in place of `FREECORPS_RELAY_URL` (a test or staging relay, say). */
   relayUrl?: string;
   /** Non-interactive acceptance of the terms: must be `TERMS_VERSION`. */
   acceptTerms?: string;
@@ -517,6 +515,10 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
   const pair = keepSendToken ? null : `${SEND_PAIR}${randomHex(6)}`;
   const before: Record<string, string> = {
     ...credentials,
+    // Secrets, not `deploy --var`: a later deploy without flags (CI, by hand) keeps them. Set before the deploy, so the
+    // Worker is closed from its first version; a relay deployed with the old `--var` flags gets them on this run.
+    RELAY_APNS_TOPIC: needs.bundleId,
+    RELAY_REGISTRATION: "closed",
     // Only this run uses it, to register the instance; deleted once it has.
     RELAY_ADMIN_TOKEN: adminToken,
     [OWN_RELAY_MARKER]: "setup-relay",
@@ -559,15 +561,7 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
   io.print(`Deploying ${relayWorker} at ${relay}…`);
   const deploy = await deps.run({
     tool: "wrangler",
-    args: [
-      "deploy",
-      "--var",
-      `APNS_TOPIC:${needs.bundleId}`,
-      "--var",
-      "RELAY_REGISTRATION:closed",
-      "--domain",
-      needs.relayDomain,
-    ],
+    args: ["deploy", "--domain", needs.relayDomain],
     cwd: relayDir,
   });
   if (deploy.code !== 0) {
@@ -638,8 +632,8 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
       `  production build already binds RELAY to brigade-relay (apps/api/vite.config.ts PRODUCTION_BINDINGS), and`,
       `  dev to brigade-relay-dev (apps/api/wrangler.jsonc env.dev \`services\`). Build and deploy the API again so it`,
       "  binds the relay just deployed (a binding to a Worker that does not exist fails the deploy).",
-      `- Keep APNS_TOPIC (${needs.bundleId}) and RELAY_REGISTRATION ("closed") in apps/relay/wrangler.jsonc \`vars\``,
-      "  of your copy: a deploy without the flags this script passed puts the config's values back.",
+      `- The topic (${needs.bundleId}) and closed registration are the relay's secrets RELAY_APNS_TOPIC and`,
+      "  RELAY_REGISTRATION: deploying apps/relay again, with no flags, keeps them.",
       `- Keep the instance key (${key.file}) in a password manager, then delete the file.`,
       `- Build and publish your company's app (bundle id ${needs.bundleId}, relay ${relay}): ${YOUR_OWN_APP_DOCS}`,
     ].join("\n"),
@@ -1224,8 +1218,7 @@ function relayOrigin(value: string | null | undefined): string {
   if (!value) {
     throw new Stop(
       [
-        "Freecorps' relay has no public address yet, so this script does not know where to register.",
-        "Give it with --relay-url https://… (or BRIGADE_RELAY_URL) once Freecorps publishes it,",
+        "No relay address: give it with --relay-url https://… (or BRIGADE_RELAY_URL),",
         "or choose your own relay (--relay own), or none for now (--relay none).",
       ].join("\n"),
       2,

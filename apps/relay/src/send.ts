@@ -28,6 +28,11 @@ import { sendWithin, within } from "./deadline.ts";
 export type ProviderEnv = {
   APNS_ENVIRONMENT: string;
   APNS_TOPIC: string;
+  /**
+   * A company's own relay's topic, its app's bundle id (a secret `vp run setup:relay` sets, so every deploy keeps
+   * it). Takes precedence over the `APNS_TOPIC` var when set.
+   */
+  RELAY_APNS_TOPIC?: string;
   APNS_KEY: string;
   APNS_KEY_ID: string;
   APNS_TEAM_ID: string;
@@ -208,7 +213,7 @@ export async function deliver(
         expiration: push.ttlSeconds === 0 ? 0 : Math.floor(Date.now() / 1000) + push.ttlSeconds,
         ...(push.collapseId === undefined ? {} : { collapseId: push.collapseId }),
       },
-      { environment, topic: env.APNS_TOPIC, jwt },
+      { environment, topic: apnsTopic(env), jwt },
     );
   } catch (error) {
     return json({ error: "invalid_body", detail: String(error) }, 400);
@@ -269,12 +274,17 @@ export function providerHealth(env: ProviderEnv, send: Send): Promise<DeepHealth
     {
       credentials: credentials(env),
       environment: env.APNS_ENVIRONMENT === "production" ? "production" : "sandbox",
-      topic: env.APNS_TOPIC,
+      topic: apnsTopic(env),
       tokens,
       fcmServiceAccount: env.FCM_SERVICE_ACCOUNT,
     },
     send,
   );
+}
+
+/** The APNs topic: `RELAY_APNS_TOPIC` when set, else the `APNS_TOPIC` var. */
+export function apnsTopic(env: Pick<ProviderEnv, "APNS_TOPIC" | "RELAY_APNS_TOPIC">): string {
+  return env.RELAY_APNS_TOPIC || env.APNS_TOPIC;
 }
 
 function credentials(env: ProviderEnv): ApnsCredentials {

@@ -467,11 +467,16 @@ above (docs/api/openapi.json). As built:
   with 5 instances says so before spending the code.
 - **A session kept there is never replaced.** Whether one is kept is read from secure storage (`sessionKept`), not
   from the session as last loaded, so one still loading or offline counts, and storage that cannot be read counts as
-  one. It is checked after the address checks, again right before the claim, and once more by `storeSessionCookie`
-  itself (signed in meanwhile: `already`, and the delivered session stays unused, listed and revocable among the
-  account's sessions). The screen then offers to open that instance, or, for a sign-in code, "Sign out of it, then
+  one. The instance list is read from storage first (not as last held in memory), and the build's own origin, removed
+  from the list, is looked for under its keys from before (`brigade`), where a cookie may be left (`sessionHome`). It
+  is checked after the address checks, again right before the claim, and once more by `storeSessionCookie` itself
+  (signed in meanwhile: `already`, and the delivered session stays unused, listed and revocable among the account's
+  sessions). Either way the screen shows "You're already signed in to <host>" and offers to open it (added back to
+  the list when it is not on it), or, before the code is spent and for a listed instance, "Sign out of it, then
   continue", which signs out through the account section's own path (the shard first for the shown instance,
-  `/sign-out` with the device id for another, kept to finish later when offline) and checks again.
+  `/sign-out` with the device id for another, kept to finish later when offline) and checks again. The instance row
+  a sign-in adds is removed again on a failed store only if that sign-in created it (`addAndKeep`, from `add`'s
+  `created`): one already stored, even if not yet read into memory, stays.
 - The claim sends `{ code, deviceName, platform }` (`deviceName` is the system's device name, else "iPhone" or
   "Android"). The screen then shows the number large, "Type this number on the dashboard", "Never share this number"
   and polls every 2 s with `Authorization: Bearer <secret>`, following the `expiresAt` each `pending` answer gives

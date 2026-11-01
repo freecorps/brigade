@@ -3,6 +3,7 @@
 import { describe, expect, test } from "vite-plus/test";
 import {
   activeInstance,
+  addAndKeep,
   DEFAULT_INSTANCE,
   firstInstances,
   instanceAt,
@@ -10,6 +11,7 @@ import {
   instanceStorage,
   MAX_INSTANCES,
   readInstances,
+  sessionHome,
   withActive,
   withInstance,
   withoutInstance,
@@ -152,6 +154,7 @@ describe("the store", () => {
         })(),
       },
       writes,
+      raw: () => raw,
       fail: (value: boolean) => (failing = value),
     };
   }
@@ -182,8 +185,11 @@ describe("the store", () => {
       store.add(ACME),
       store.add("https://beta.example.com"),
     ]);
-    expect(acme).toEqual({ id: "id1", origin: ACME });
-    expect(beta).toEqual({ id: "id2", origin: "https://beta.example.com" });
+    expect(acme).toEqual({ instance: { id: "id1", origin: ACME }, created: true });
+    expect(beta).toEqual({
+      instance: { id: "id2", origin: "https://beta.example.com" },
+      created: true,
+    });
     await store.activate("id2");
     expect(activeInstance(store.current())?.id).toBe("id2");
     await store.remove("id2");
@@ -194,7 +200,10 @@ describe("the store", () => {
       ],
       active: DEFAULT_INSTANCE,
     });
-    expect(await store.add(ACME)).toEqual({ id: "id1", origin: ACME });
+    expect(await store.add(ACME)).toEqual({
+      instance: { id: "id1", origin: ACME },
+      created: false,
+    });
   });
 
   test("the build's default instance, removed and added again, comes back as itself", async () => {
@@ -203,7 +212,58 @@ describe("the store", () => {
     await store.add(ACME);
     await store.remove(DEFAULT_INSTANCE);
     expect(store.current().instances.map((one) => one.id)).toEqual(["id1"]);
-    expect(await store.add(`${BUILD}/sign-in`)).toEqual({ id: DEFAULT_INSTANCE, origin: BUILD });
+    expect(await store.add(`${BUILD}/sign-in`)).toEqual({
+      instance: { id: DEFAULT_INSTANCE, origin: BUILD },
+      created: true,
+    });
+  });
+
+  test("a failed keep removes only a row this call created, never one already stored", async () => {
+    // Acme is stored but not read into memory yet (the store was never loaded).
+    const kept = storage(
+      writeInstances({
+        instances: [
+          { id: DEFAULT_INSTANCE, origin: BUILD },
+          { id: "acme1", origin: ACME },
+        ],
+        active: DEFAULT_INSTANCE,
+      }),
+    );
+    const store = instancesStore(kept.deps);
+    expect(instanceAt(store.current(), ACME)).toBeUndefined();
+    const refused = async () => {
+      throw new Error("A session is kept for this instance already");
+    };
+    await expect(addAndKeep(store, ACME, refused)).rejects.toThrow("kept");
+    expect(instanceAt(store.current(), ACME)?.id).toBe("acme1");
+    expect(readInstances(kept.raw(), BUILD).instances.map((one) => one.id)).toEqual([
+      DEFAULT_INSTANCE,
+      "acme1",
+    ]);
+    // A new one this call added goes again.
+    await expect(addAndKeep(store, "https://beta.example.com", refused)).rejects.toThrow();
+    expect(instanceAt(store.current(), "https://beta.example.com")).toBeUndefined();
+    // Kept: listed, with what `keep` was given.
+    const seen: string[] = [];
+    const beta = await addAndKeep(store, "https://beta.example.com", async (one) => {
+      seen.push(one.id);
+    });
+    expect(seen).toEqual([beta.id]);
+    expect(instanceAt(store.current(), "https://beta.example.com")).toEqual(beta);
+  });
+
+  test("where a session for an origin would be kept: listed, or the build's own under its keys from before", () => {
+    const list = {
+      instances: [{ id: "acme1", origin: ACME }],
+      active: "acme1",
+    };
+    expect(sessionHome(list, `${ACME}/x`, BUILD)).toEqual({ id: "acme1", origin: ACME });
+    // The build's own instance, removed: a cookie may be left under `brigade`.
+    expect(sessionHome(list, BUILD, BUILD)).toEqual({ id: DEFAULT_INSTANCE, origin: BUILD });
+    expect(instanceStorage(sessionHome(list, BUILD, BUILD)!.id).auth).toBe("brigade");
+    // An origin the phone never had: nothing can be kept for it.
+    expect(sessionHome(list, "https://new.example.com", BUILD)).toBeUndefined();
+    expect(sessionHome(list, "not a url", BUILD)).toBeUndefined();
   });
 
   test("a list it cannot read is never overwritten", async () => {

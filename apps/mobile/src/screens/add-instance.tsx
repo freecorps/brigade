@@ -47,7 +47,7 @@ export function AddInstance() {
       return;
     }
     leaveSheet();
-    await openInstance(added.id);
+    await openInstance(added.instance.id);
   };
 
   const submit = async () => {

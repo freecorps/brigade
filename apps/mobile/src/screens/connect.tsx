@@ -14,7 +14,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { askFor, linkKey, type ConnectLink } from "@/lib/connect-link";
 import { checkInstance, instances, keepSignIn, sessionAt } from "@/lib/instance-clients";
 import { hostOf, readAddress } from "@/lib/instance-address";
-import { instanceAt, MAX_INSTANCES } from "@/lib/instances";
+import { instanceAt, MAX_INSTANCES, type Instance } from "@/lib/instances";
 import { runClaim, type ClaimState } from "@/lib/qr-sign-in";
 import { leaveSheet } from "@/screens/add-instance";
 
@@ -23,7 +23,11 @@ type Step =
   | { kind: "ask"; host: string }
   | { kind: "checking" }
   | { kind: "refused"; title?: string; text: string; app?: string }
-  | { kind: "already"; instanceId: string; origin: string }
+  /**
+   * A session is kept there (`instanceId`, when the instance is listed; the build's own instance, removed, may keep one
+   * under its keys from before). `ended`: found after the claim, when the delivered session went unused.
+   */
+  | { kind: "already"; origin: string; instanceId?: string; ended?: boolean }
   | { kind: "confirm"; origin: string; noRelay: boolean }
   | { kind: "claim"; origin: string; state: ClaimState; instanceId?: string };
 
@@ -89,7 +93,7 @@ export function Connect({ link, trusted }: { link: ConnectLink | undefined; trus
       const kept = await sessionAt(checked.origin);
       if (!live) return;
       if (kept) {
-        setStep({ kind: "already", instanceId: kept.id, origin: checked.origin });
+        setStep(alreadyAt(kept, checked.origin));
         return;
       }
       // Read after the wait: the list may have changed meanwhile.
@@ -136,7 +140,7 @@ export function Connect({ link, trusted }: { link: ConnectLink | undefined; trus
       return;
     }
     leaveSheet();
-    await openInstance(added.id);
+    await openInstance(added.instance.id);
   };
 
   // One claim per screen: a second tap would spend nothing but end the first claim's screen as `invalid_code`.
@@ -151,7 +155,7 @@ export function Connect({ link, trusted }: { link: ConnectLink | undefined; trus
     const kept = await sessionAt(origin);
     if (kept) {
       claimed.current = false;
-      setStep({ kind: "already", instanceId: kept.id, origin });
+      setStep(alreadyAt(kept, origin));
       return;
     }
     let instanceId: string | undefined;
@@ -171,8 +175,14 @@ export function Connect({ link, trusted }: { link: ConnectLink | undefined; trus
           instanceId = (await keepSignIn(origin, cookie)).id;
         },
         onState: (state) => {
-          setStep({ kind: "claim", origin, state, ...(instanceId ? { instanceId } : {}) });
           const host = hostOf(origin);
+          // Signed in there while the code waited: the same choice as before a claim, not a dead end.
+          if (state.step === "ended" && state.reason === "already") {
+            setStep({ kind: "already", origin, ended: true });
+            AccessibilityInfo.announceForAccessibility(endText(state.reason, host));
+            return;
+          }
+          setStep({ kind: "claim", origin, state, ...(instanceId ? { instanceId } : {}) });
           if (state.step === "waiting") {
             AccessibilityInfo.announceForAccessibility(`${say("number_title")}: ${state.number}`);
           } else if (state.step === "signed-in") {
@@ -198,14 +208,18 @@ export function Connect({ link, trusted }: { link: ConnectLink | undefined; trus
           if (link) setApproved(linkKey(link));
         }}
         onConfirm={(origin) => void (code ? claim(origin) : addAndOpen(origin))}
-        onOpen={(id) => {
-          leaveSheet();
-          void openInstance(id);
-        }}
+        onOpen={(origin) => void addAndOpen(origin)}
         onSignOutFirst={code ? (id) => void signOutFirst(id) : undefined}
       />
     </>
   );
+}
+
+/** "You're already signed in": with the instance's id only when it is listed (its sign-out needs it). */
+function alreadyAt(kept: Instance, origin: string): Step {
+  return instances.current().instances.some((one) => one.id === kept.id)
+    ? { kind: "already", origin, instanceId: kept.id }
+    : { kind: "already", origin };
 }
 
 function ConnectView({
@@ -220,7 +234,8 @@ function ConnectView({
   code: boolean;
   onContinue: () => void;
   onConfirm: (origin: string) => void;
-  onOpen: (instanceId: string) => void;
+  /** Opens the instance at that origin, added back to the list when it is not on it. */
+  onOpen: (origin: string) => void;
   /** With a sign-in code: sign out of the session kept there, then go on with the code. */
   onSignOutFirst?: (instanceId: string) => void;
 }) {
@@ -290,15 +305,23 @@ function ConnectView({
     body = (
       <>
         {heading(say("already", hostOf(step.origin)))}
+        {step.ended ? (
+          <FieldGroup.Section>
+            <ListItem>
+              <Text>{endText("already", hostOf(step.origin))}</Text>
+            </ListItem>
+          </FieldGroup.Section>
+        ) : null}
         <FieldGroup.Section>
           <SubmitButton
             label={say("open_instance", hostOf(step.origin))}
-            onPress={() => onOpen(step.instanceId)}
+            onPress={() => onOpen(step.origin)}
           />
         </FieldGroup.Section>
-        {onSignOutFirst ? (
+        {/* Before the code is spent, and for a listed instance (its sign-out runs through its own session). */}
+        {onSignOutFirst && !step.ended && step.instanceId !== undefined ? (
           <FieldGroup.Section>
-            <ListItem onPress={() => onSignOutFirst(step.instanceId)}>
+            <ListItem onPress={() => onSignOutFirst(step.instanceId!)}>
               <Text textStyle={{ color: colors.destructive }}>{say("sign_out_first")}</Text>
             </ListItem>
             <FieldGroup.SectionFooter>
@@ -407,10 +430,7 @@ function ConnectView({
             </ListItem>
           </FieldGroup.Section>
           <FieldGroup.Section>
-            <SubmitButton
-              label={say("open_instance", host)}
-              onPress={() => (step.instanceId ? onOpen(step.instanceId) : leaveSheet())}
-            />
+            <SubmitButton label={say("open_instance", host)} onPress={() => onOpen(step.origin)} />
           </FieldGroup.Section>
         </>
       );

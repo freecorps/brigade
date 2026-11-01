@@ -22,11 +22,13 @@ import {
 } from "@/lib/instance-address";
 import {
   activeInstance,
+  addAndKeep,
   DEFAULT_INSTANCE,
   INSTANCES_KEY,
   instanceAt,
   instancesStore,
   instanceStorage,
+  sessionHome,
   type Instance,
   type InstanceStorage,
 } from "@/lib/instances";
@@ -168,34 +170,32 @@ export function checkInstance(input: string): Promise<AddressCheck> {
 }
 
 /**
- * The instance at `origin` when the phone keeps a session there (src/lib/auth-client.ts `sessionKept`, from secure
- * storage, so a session still loading or offline counts); undefined otherwise.
+ * Where the phone keeps a session for the dashboard at `origin`, when it does (src/lib/auth-client.ts `sessionKept`,
+ * from secure storage, so a session still loading or offline counts): the list is read from storage first, not taken
+ * as last held in memory, and the build's default origin, not listed, is looked for under its keys from before
+ * (`sessionHome`), where a cookie may be left. Undefined when none is kept.
  */
 export async function sessionAt(origin: string): Promise<Instance | undefined> {
-  const instance = instanceAt(instances.current(), origin);
-  if (!instance) return undefined;
-  return (await sessionKept(SecureStore, instanceStorage(instance.id).auth)) ? instance : undefined;
+  const list = await instances.load();
+  const home = sessionHome(list, origin, defaultOrigin);
+  if (!home) return undefined;
+  return (await sessionKept(SecureStore, instanceStorage(home.id).auth)) ? home : undefined;
 }
 
 /**
  * A QR sign-in's session (RFC 0015 section 6), kept for the instance at `origin` and no other: the instance is added
  * (or found), the session stored under its own prefix (src/lib/auth-client.ts `storeSessionCookie`) and its client
- * told to read it. Not made active: the caller opens it once it said who signed in. An instance added for it is
- * removed again when the session could not be kept. Throws `full` when the phone has the most instances it can, and
- * `SessionExists` when a session is kept there already (signed in meanwhile): it is never replaced.
+ * told to read it. Not made active: the caller opens it once it said who signed in. When the session could not be
+ * kept, the row is removed again only if this call created it (`created`): an instance that was already stored, even
+ * if not yet read into memory, stays. Throws `full` when the phone has the most instances it can, and `SessionExists`
+ * when a session is kept there already (signed in meanwhile): it is never replaced.
  */
 export async function keepSignIn(origin: string, cookie: string): Promise<Instance> {
-  const before = instanceAt(instances.current(), origin);
-  const added = await instances.add(origin);
-  if (typeof added === "string") throw new Error(added);
-  try {
-    await storeSessionCookie(SecureStore, instanceStorage(added.id).auth, cookie);
-  } catch (error) {
-    if (!before) await instances.remove(added.id).catch(() => {});
-    throw error;
-  }
-  clientsFor(added).authClient.$store.notify("$sessionSignal");
-  return added;
+  const instance = await addAndKeep(instances, origin, (one) =>
+    storeSessionCookie(SecureStore, instanceStorage(one.id).auth, cookie),
+  );
+  clientsFor(instance).authClient.$store.notify("$sessionSignal");
+  return instance;
 }
 
 /** Registering with `clients`' instance by a relay handle, kept under its own key (src/lib/relay.ts `withHandle`). */

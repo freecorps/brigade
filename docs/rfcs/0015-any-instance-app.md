@@ -1,6 +1,6 @@
 # RFC 0015 — One store app for every instance
 
-- Status: Accepted (decisions D1–D5 below), not built yet
+- Status: Accepted (decisions D1–D5 below); the relay side (step 1 of "Order of work") is built, the rest is not
 - Builds on: RFC 0006 (push relay), RFC 0002 (auth, environments), RFC 0010 (calls)
 
 ## Problem
@@ -39,8 +39,8 @@ Instance ──(5) POST /v1/send { handle, envelope, … }, signed with the inst
 ### 1. Instance identity on the relay
 
 Built (apps/relay `src/instances.ts`, `src/registry.ts`; signing in `packages/push` `src/instance.ts`): the signed
-`/v1/instances` routes, the registry in `RegistryDO`, codes by email and the limits below. Handles and `/v1/send` come
-next.
+`/v1/instances` routes, the registry in `RegistryDO`, codes by email and the limits below. Handles, `/v1/send` and the
+signed deep health are built too (sections 2 and 3, `src/handles.ts`, `src/v1.ts`).
 
 - **The instance key.** Each instance has an Ed25519 key pair; the private key is a secret
   (`RELAY_INSTANCE_KEY`, PKCS#8, base64url), made by the setup script. Workers' WebCrypto signs with Ed25519.
@@ -54,7 +54,11 @@ next.
   body bytes (of no bytes for a request without a body). The relay refuses a timestamp more than 5 minutes off. Replays inside that window only repeat a push and stay under the rate limits; no nonce
   store.
 - **Checking a signature needs no storage on the paging path.** If SHA-256 of the presented key gives the instance
-  id, the key is the original one and is checked against the signature alone. Only a rotated key needs a lookup
+  id, the key is the original one: the signature proves who signed, and the send path only asks the registry (through
+  the 60 s cache) whether that key was retired since, the same read as revocation. A record that no longer lists it
+  (retired after a leak) is read again fresh, and the key is refused (`401 bad_signature`) if it is still missing; a
+  read that fails lets the send through (fail open, logged), so a registry outage never stops the pages of an instance
+  on its original key. A rotated key needs a lookup to be accepted at all
   (below): the instance's key list, cached per isolate for 60 s. A key missing from the cached list is looked up again
   in the registry before it is refused, so a key added a moment ago works at once; only the registry's own answer
   refuses it. On a send, a rotated key the registry cannot confirm (not in a cached list, and no answer) is
@@ -68,7 +72,8 @@ next.
   answers `403 instance_unregistered`. Registering, minting a handle and rotating keys read the registry and **fail
   closed** when the registry cannot answer (`503 registry_unavailable`): an unknown id never gets a handle. A send needs no
   registration read, because the handle it carries could only have been minted for a registered instance; it checks
-  only revocation, below.
+  only revocation (below) and that the key was not retired. The handle is opened and matched to the signed instance
+  first (local crypto), so a made-up instance id never reaches the registry.
 - **Revocation** is a registry entry (`revoked`), read through a per-isolate cache of 60 s. On a send, a registry
   read that fails is _fail open_ (not revoked, logged): a registry outage must not stop every self-hosted page. Everything
   else fails closed.
@@ -112,7 +117,14 @@ next.
   everyone. So: per instance (Workers Rate Limiting, keyed by instance id) a generous limit (proposal: 600 sends a
   minute, calls 60 a minute), and per phone 30 a minute from each instance, keyed by the tag (instance and token),
   not by the handle, which differs on every sealing. A page is never exempt, since every caller can say `page`;
-  the limits are well above any real incident. **Decided (D4)**, raised on request.
+  the limits are well above any real incident. **Decided (D4)**, raised on request. As built: each limit answers
+  `429 rate_limited` with `limit` (`instance`, `calls`, `phone`) and `Retry-After: 60`. A binding cannot check without
+  counting, so the limits are taken narrowest first, each only after every other check passed: per phone, then calls,
+  then per instance. A send refused by one limit has counted against the narrower ones before it, never the wider ones
+  after (a send refused for one phone costs the instance nothing; one refused as a call has counted for its phone); a
+  send that passed all three counts against all three even if APNs or FCM then refuses it. A signed deep health counts
+  as one send (it asks APNs) and, before it reads the registry, against a per-IP limit (`HEALTH_LIMIT`, 120 a
+  minute). Minting is 60 a minute per IP (`HANDLE_LIMIT`, Q28). A limiter that fails lets the call through.
 - **The old `/send`** stays for our instance with `RELAY_SEND_TOKEN`, until no supported app version sends raw
   tokens (below), then goes.
 
@@ -345,7 +357,8 @@ does it.
   dashboard by typing the number the phone shows (section 6). The address-only QR stays.
 - **D3 — Registration is required** to mint handles and send, with the terms accepted and a contact address
   confirmed by email (sections 1 and 8).
-- **D4 — Limits:** 600 sends a minute per instance, 60 calls a minute, 30 a minute per handle, raised on request.
+- **D4 — Limits:** 600 sends a minute per instance, 60 calls a minute, 30 a minute per phone (the tag: instance and
+  token, section 3), raised on request.
 - **D5 — Terms of the hosted relay:** free for any instance within the limits; a paid service built on it needs an
   agreement (RFC 0006 "Terms of the hosted relay"). A template, marked as a preliminary version, is in
   [docs/legal/relay-terms.md](../legal/relay-terms.md) (and pt-BR) so registration has a text and a version
@@ -357,7 +370,9 @@ does it.
 ## Order of work
 
 1. Relay: `/v1/instances` (with the emailed code and closed registration), signatures and the registry in a
-   Durable Object (built); then `/v1/handles`, `/v1/send` and their limits, tested with fake APNs/FCM.
+   Durable Object; then `/v1/handles`, `/v1/send`, the signed `/v1/health?deep=1` and their limits, tested with fake
+   APNs/FCM (built; apps/relay README "Handles and /v1/send"). Still to do here: closed-mode registration by the relay
+   admin secret (section 8), and the `send_email` binding for the contact code.
 2. Envelope v2 (sealed `iat`, `origin`, `urgency`; key id) in `packages/push`, the iOS extension and Android; the
    app accepts v1 and v2.
 3. Instance: `device.register` with `handle`/`tag`, the notifier on `/v1/send`, `/config` additions, watchdog

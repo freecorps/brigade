@@ -401,6 +401,18 @@ describe("POST /send to an Android device", () => {
     expect(Date.now() - started).toBeLessThan(9500);
   }, 20_000);
 
+  test("FCM that answers and then stalls its body is fcm_unreachable within the call's time", async () => {
+    const other = { ...env, FCM_SERVICE_ACCOUNT: serviceAccount({ private_key_id: "key-15" }) };
+    const started = Date.now();
+    const response = await handle(post(await sendBody()), other, async (request) => {
+      if (request.url === TOKEN_URI) return Response.json({ access_token: "x", expires_in: 3599 });
+      return new Response(new ReadableStream({ start() {} }), { status: 200 });
+    });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ error: "fcm_unreachable" });
+    expect(Date.now() - started).toBeLessThan(9500);
+  }, 15_000);
+
   test("a 401 with too little time left to retry is fcm_unreachable, so the instance tries again", async () => {
     const other = { ...env, FCM_SERVICE_ACCOUNT: serviceAccount({ private_key_id: "key-14" }) };
     const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

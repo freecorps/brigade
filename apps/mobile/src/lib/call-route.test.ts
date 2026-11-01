@@ -181,7 +181,7 @@ describe("knownCall: a repeat of an ended page", () => {
 
   test("the memory covers the relay's longest call expiry, counted from each send", () => {
     // A push sent just before the call ended can arrive up to the relay's maximum TTL later.
-    const relay = readFileSync(new URL("../../../relay/src/index.ts", import.meta.url), "utf8");
+    const relay = readFileSync(new URL("../../../relay/src/send.ts", import.meta.url), "utf8");
     const maxTtl = /const MAX_CALL_TTL_SECONDS = ([\d* ]+);/.exec(relay)?.[1];
     const maxTtlMs =
       (maxTtl ?? "0").split("*").reduce((product, factor) => product * Number(factor.trim()), 1) *

@@ -98,6 +98,18 @@ describe("POST /send", () => {
     expect(Date.now() - started).toBeLessThan(9000);
   }, 15_000);
 
+  test("APNs that answers and then stalls its body is a 502 apns_unreachable within the API's own timeout", async () => {
+    const started = Date.now();
+    const response = await handle(
+      post(await sendBody()),
+      env,
+      async () => new Response(new ReadableStream({ start() {} }), { status: 400 }),
+    );
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ error: "apns_unreachable" });
+    expect(Date.now() - started).toBeLessThan(9500);
+  }, 15_000);
+
   test("needs the bearer token", async () => {
     const apns = fakeApns();
     for (const request of [

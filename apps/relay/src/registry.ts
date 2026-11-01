@@ -4,9 +4,10 @@
 // SQLite-backed storage, so each call (compare a code and count the try, add or retire a key, register) runs whole,
 // with no other call in between: parallel guesses or two rotations cannot interleave.
 //
-// A failed call fails closed (`checkRegistered`, every route that registers or grants something), except the send
-// path's revocation check (`isRevoked`): a handle is only minted for a registered instance, so a send needs only that
-// check, and a registry outage must not stop every self-hosted page.
+// A failed call fails closed (`checkRegistered`, `checkMintable`, every route that registers or grants something),
+// except the send path's revocation check (`isRevoked`, through `checkSender`): a handle is only minted for a
+// registered instance, so a send on the original key needs only that check, and a registry outage must not stop every
+// self-hosted page.
 
 import { DurableObject } from "cloudflare:workers";
 import type { VerifiedRequest } from "@freecorps/brigade-push/instance";
@@ -349,6 +350,76 @@ export async function checkRegistered(
   if (record.status === "revoked") return { ok: false, status: 403, error: "instance_revoked" };
   if (!record.keys.includes(caller.key)) return { ok: false, status: 401, error: "bad_signature" };
   return { ok: true, record };
+}
+
+/**
+ * May a handle be minted for this instance? The app asks unsigned (it is not the instance), so only the record is
+ * read: it must exist and not be revoked. Fails closed (`503 registry_unavailable`): an unknown id never gets a handle.
+ */
+export async function checkMintable(
+  registry: RegistryNamespace,
+  instance: string,
+  now: number,
+): Promise<
+  | { ok: true }
+  | {
+      ok: false;
+      status: number;
+      error: "instance_unregistered" | "instance_revoked" | "registry_unavailable";
+    }
+> {
+  let record: InstanceRecord | null;
+  try {
+    record = await readInstance(registry, instance, now);
+  } catch (error) {
+    console.error(
+      JSON.stringify({ message: "registry read failed", instance, error: String(error) }),
+    );
+    return { ok: false, status: 503, error: "registry_unavailable" };
+  }
+  if (record === null) return { ok: false, status: 403, error: "instance_unregistered" };
+  if (record.status === "revoked") return { ok: false, status: 403, error: "instance_revoked" };
+  return { ok: true };
+}
+
+/**
+ * May this signed caller send? On its original key the record is read through the cache, and a read that fails is
+ * _fail open_ (logged): the handle it carries could only have been minted for a registered instance, and a registry
+ * outage must not stop every self-hosted page. A record that is revoked refuses (`403 instance_revoked`); one that
+ * does not list the original key (retired after a leak) is read again fresh, and refuses (`401 bad_signature`) if the
+ * key is still missing. A rotated key must be confirmed by the registry, and fails closed (`checkRegistered`,
+ * `503 registry_unavailable`): an unconfirmed key never sends.
+ */
+export async function checkSender(
+  registry: RegistryNamespace,
+  caller: VerifiedRequest,
+  now: number,
+): Promise<{ ok: true } | Exclude<Admission, { ok: true }>> {
+  if (caller.original) {
+    let record: InstanceRecord | null;
+    try {
+      record = await readInstance(registry, caller.instance, now);
+      if (record && record.status === "registered" && !record.keys.includes(caller.key)) {
+        record = await readInstance(registry, caller.instance, now, true);
+      }
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          message: "registry read failed, the send path fails open",
+          instance: caller.instance,
+          error: String(error),
+        }),
+      );
+      return { ok: true };
+    }
+    if (record?.status === "revoked") return { ok: false, status: 403, error: "instance_revoked" };
+    if (record && !record.keys.includes(caller.key)) {
+      return { ok: false, status: 401, error: "bad_signature" };
+    }
+    return { ok: true };
+  }
+  const admission = await checkRegistered(registry, caller, now);
+  return admission.ok ? { ok: true } : admission;
 }
 
 /**

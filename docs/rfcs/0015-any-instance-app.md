@@ -386,26 +386,39 @@ does it.
   (`terms: "none"`) and no code; codes are refused (`403 registration_closed`), a wrong token is `401
   admin_unauthorized`. An open relay ignores the header.
 - **The script** is interactive on a terminal, every answer also a flag (`--non-interactive` for CI and the tests).
-  It reads the API Worker's secret names (never values) to tell a first setup from a switch, asks again before a
-  switch (`--yes`), and gives wrangler every secret on stdin (`wrangler secret bulk`), never in arguments, output or a
-  file in the repository. The new instance key is saved before it is used, outside the repository and readable only by
-  its owner, so the operator can keep it in a password manager and a stopped run can finish with the same id
-  (`--instance-key-file`). Without a terminal, Freecorps' relay takes two runs: the first sends the code, the second
-  (`--code`) registers.
+  It reads Worker secret names (never values) to tell a first setup from a switch, and stops when wrangler cannot
+  list them for any reason but "this Worker does not exist" (error 10007): read as "no secrets", a failure would make
+  new keys over ones phones depend on. Whenever the API already has `RELAY_INSTANCE_KEY` it asks again before going on
+  (`--yes`), a reused key file included, since names cannot prove it is the same key; `RELAY_INSTANCE_ID` is removed
+  only then. It gives wrangler every secret on stdin (`wrangler secret bulk`), never in arguments, output or a file in
+  the repository. The new instance key is saved before it is used, outside the repository (symlinks resolved) and
+  readable only by its owner, so the operator can keep it in a password manager and a stopped run can finish with the
+  same id (`--instance-key-file`). Without a terminal, Freecorps' relay takes two runs: the first sends the code, the
+  second (`--code`) registers.
 - **Freecorps' relay:** terms (address, version `draft-2026-11`, marked a preliminary template) then contact, code,
-  key, registration, `RELAY_INSTANCE_KEY` and `RELAY_URL` (removing a `RELAY_INSTANCE_ID` and `RELAY_APP_URL` left from
-  before), and the signed deep health. **Its public address is not known yet** (Q31): `FREECORPS_RELAY_URL` is a
-  placeholder, so `--relay-url` is required and the script stops without it.
-- **Your own relay:** also needs a hostname on a zone of the account, deployed as the relay's custom domain, since
-  phones and the registration reach it there. The script sets `RELAY_SEND_TOKEN` on both the relay and the API, so
-  the company's app pages through `/send` until it mints handles (step 4), and keeps the relay's `RELAY_HANDLE_KEYS`
-  and `RELAY_TAG_KEY` when it has them (new ones would void every handle). `APNS_TOPIC` and `RELAY_REGISTRATION` go
-  in as `wrangler deploy --var`, which a later deploy without them undoes (Q32). It does not deploy the API: the
-  production build already binds `RELAY` to `brigade-relay`, so the operator builds and deploys the API again.
+  key, registration, `RELAY_INSTANCE_KEY` and `RELAY_URL`, and the signed deep health, reported as "reachable and
+  registered", not as paging working: the API prefers a `RELAY` binding (the production build's `PRODUCTION_BINDINGS`)
+  over `RELAY_URL`, so removing that binding and deploying the API is a required step, which the script says (and
+  detects from vite.config.ts or wrangler.jsonc). A switch from an own relay (marked by `RELAY_APP_URL`) also removes
+  that link and its `RELAY_SEND_TOKEN`; an API without `RELAY_APP_URL` keeps its send token. **Its public address is
+  not known yet** (Q31): `FREECORPS_RELAY_URL` is a placeholder, so `--relay-url` is required and the script stops
+  without it.
+- **Your own relay:** also needs a hostname on a zone of the account, deployed as the relay's custom domain (waited
+  for, at most 5 minutes), since phones and the registration reach it there. It refuses a relay Worker it did not set
+  up (no `BRIGADE_OWN_RELAY` marker secret; Freecorps' own, say) without `--take-over-relay`. It keeps the relay's
+  `RELAY_HANDLE_KEYS` and `RELAY_TAG_KEY` when it has them (new ones would void every handle). `RELAY_SEND_TOKEN` lets
+  the company's app page through `/send` until it mints handles (step 4): a relay and API that both have one keep it,
+  and a new one goes on both only after the registration, one right after the other, so a run that stops at any step
+  (build, secrets, deploy, the domain, the registration) leaves raw-token pages going out as before. The admin token
+  is deleted once the instance is registered. `APNS_TOPIC` and `RELAY_REGISTRATION` go in as `wrangler deploy --var`,
+  which a later deploy without them undoes (Q32). It does not deploy the API: the production build already binds
+  `RELAY` to `brigade-relay`, so the operator builds and deploys the API again.
 - **Tests:** apps/relay `test/registry.test.ts` (closed registration) and `test/setup-relay.test.ts`, which runs every
   flow against the relay's own `handle` and a fake wrangler: the terms refused, a wrong code, codes rate limited, the
-  relay unreachable, no relay address, a missing prerequisite, the switch confirmation, non-interactive runs, and no
-  secret value in the output or a command's arguments.
+  relay unreachable, no relay address, a missing prerequisite, the switch confirmation, non-interactive runs, a secret
+  list that fails, a relay not set up by the script, a stop at each own-relay step with paging left working, the
+  `RELAY` binding found, the key file kept out of the repository, and no secret value in the output or a command's
+  arguments.
 
 **Showing which relay is in use.**
 

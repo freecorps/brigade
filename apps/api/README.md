@@ -496,30 +496,48 @@ Workers of that environment (default production). It asks which relay, then:
 
 - **Freecorps' relay:** shows the terms' address and version and asks to accept them; asks for the contact address and
   has the relay email it a code (valid 15 minutes, 5 tries, 3 an hour); makes the instance key and saves it **outside
-  the repository**, readable only by you (`~/.config/brigade/relay-instance-key-<worker>-<instance id>`, or
-  `--key-out`); asks for the code and registers (`POST /v1/instances`); sets `RELAY_INSTANCE_KEY` and `RELAY_URL` on
-  the API Worker (and removes `RELAY_INSTANCE_ID` and `RELAY_APP_URL` if they were set); and runs the relay's signed
-  deep health. The production build binds `RELAY` to `brigade-relay` (vite.config.ts `PRODUCTION_BINDINGS`), and the
-  binding wins over `RELAY_URL`: remove it there and deploy the API again. **Freecorps' relay has no public address
+  the repository** (symlinks resolved), readable only by you (`~/.config/brigade/relay-instance-key-<worker>-<instance
+  id>`, or `--key-out`); asks for the code and registers (`POST /v1/instances`); sets `RELAY_INSTANCE_KEY` and
+  `RELAY_URL` on the API Worker; and runs the relay's signed deep health, which shows only that **Freecorps' relay is
+  reachable and this instance is registered**. **Required afterwards:** the production build binds `RELAY` to
+  `brigade-relay` (vite.config.ts `PRODUCTION_BINDINGS`; dev and staging: `services` in wrangler.jsonc), and the API
+  sends through that binding before `RELAY_URL`, to a relay that does not know this instance: remove it and deploy the
+  API again. The script reads those files and says when the binding is there. **Freecorps' relay has no public address
   yet** (docs/open-questions.md Q31): pass it with `--relay-url` (or `BRIGADE_RELAY_URL`); without it the script stops
   and says so.
 - **Your own relay:** says first that only the company's build can be paged, checks the prerequisites (and stops if any
-  is missing), builds `apps/relay` and sets its secrets (`APNS_KEY`, `APNS_KEY_ID`, `APNS_TEAM_ID`,
-  `FCM_SERVICE_ACCOUNT`, `RELAY_SEND_TOKEN`, a new `RELAY_ADMIN_TOKEN`, and `RELAY_HANDLE_KEYS` and `RELAY_TAG_KEY`
-  generated unless the relay has them already), deploys it as `brigade-relay` (`brigade-relay-dev` for `--env dev`;
-  the relay has no staging) with `APNS_TOPIC` the bundle id, `RELAY_REGISTRATION=closed` and the hostname as its
-  custom domain, registers the instance with the admin token (no terms, no email), asks for the build's store link
-  (optional, `RELAY_APP_URL`), and sets `RELAY_INSTANCE_KEY`, `RELAY_URL`, `RELAY_SEND_TOKEN` (the same as the
-  relay's, for phones that still register raw tokens) and `RELAY_APP_URL` on the API. The API reaches it through the
-  `RELAY` binding the production build already has (dev: `services` in wrangler.jsonc): build and deploy the API again.
+  is missing), then:
+  1. reads the relay Worker's secret names. A Worker that exists but was not set up by this script (no
+     `BRIGADE_OWN_RELAY` secret; Freecorps' own relay, say) is refused unless `--take-over-relay`. If wrangler cannot
+     list them for any reason but "this Worker does not exist" (Cloudflare error 10007), the script stops, since new
+     handle keys would void every phone's handle; `--assume-new-relay` goes on anyway;
+  2. builds `apps/relay` and sets its secrets: `APNS_KEY`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `FCM_SERVICE_ACCOUNT`,
+     `BRIGADE_OWN_RELAY`, a new `RELAY_ADMIN_TOKEN`, and `RELAY_HANDLE_KEYS`, `RELAY_TAG_KEY` and `RELAY_SEND_TOKEN`
+     only if the relay has none;
+  3. deploys it as `brigade-relay` (`brigade-relay-dev` for `--env dev`; the relay has no staging) with `APNS_TOPIC`
+     the bundle id, `RELAY_REGISTRATION=closed` and the hostname as its custom domain, and waits for the domain (10 s
+     apart, at most 5 minutes);
+  4. registers the instance with the admin token (no terms, no email);
+  5. then, one right after the other: deletes the admin token from the relay (with the relay's new send token if it
+     needed one), and sets `RELAY_INSTANCE_KEY`, `RELAY_URL`, `RELAY_SEND_TOKEN` (the relay's, for phones that still
+     register raw tokens) and the store link (`RELAY_APP_URL`, optional) on the API.
+
+  A relay and an API that both have `RELAY_SEND_TOKEN` keep it: it is never rotated before the API can get the new
+  one, so a run that stops at any step leaves raw-token pages going out as before. The API reaches the relay through
+  the `RELAY` binding the production build already has (dev: `services` in wrangler.jsonc): build and deploy the API
+  again.
+
 - **Not now:** changes nothing.
 
 **Switching relays**, or setting one up again, gives the instance a new key and id: every handle phones hold stops
 working and **every phone must open the app once** to be paged again; a switch to an own relay also leaves the store
-app unable to page at all. When the API already has `RELAY_INSTANCE_KEY`, the script says so and asks again
-(`--yes` without questions). Keep the saved key in a password manager and delete the file: a lost key is the same as a
-switch. `--instance-key-file` reuses a saved key, to finish a run that stopped (a code that expired, secrets wrangler
-could not set) without a new id.
+app unable to page at all. Whenever the API already has `RELAY_INSTANCE_KEY`, the script says so and asks again
+(`--yes` without questions), even with `--instance-key-file`: it can read only secret names, so it cannot prove the
+key is the one set. Only then does it remove `RELAY_INSTANCE_ID`. A switch to Freecorps' relay also removes
+`RELAY_APP_URL` and, with it (it marks an own relay), the own relay's `RELAY_SEND_TOKEN`; an API without
+`RELAY_APP_URL` keeps its send token. Keep the saved key in a password manager and delete the file: a lost key is the
+same as a switch. `--instance-key-file` reuses a saved key, to finish a run that stopped (a code that expired, secrets
+wrangler could not set) without a new id.
 
 Secret values never appear on the screen, in a command's arguments or in a file in the repository: wrangler gets them
 on stdin (`wrangler secret bulk`). Without a terminal, or with `--non-interactive`, every answer is a flag (`vp run

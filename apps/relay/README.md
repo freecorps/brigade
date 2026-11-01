@@ -130,7 +130,9 @@ terms: "none", termsCurrent: true }`, with `contact` optional (`400 invalid_cont
 instance_unregistered`. A registered instance gets its record (`200`) with or without the token. A closed relay does
 not need `RELAY_TERMS_VERSION`. An open relay ignores the header. `vp run setup:relay` (choice "your own relay",
 apps/api README "Push relay") deploys the relay with `RELAY_REGISTRATION=closed`, makes the admin token and
-registers the instance with it; running it again makes a new token.
+registers the instance with it, then deletes it (`RELAY_ADMIN_TOKEN` unset: nothing more registers); running it again
+makes a new one. It also sets `BRIGADE_OWN_RELAY`, a marker with nothing secret in it: a relay Worker without it was
+not set up by the script, and the script does not deploy over it without `--take-over-relay`.
 
 ## Handles and /v1/send
 

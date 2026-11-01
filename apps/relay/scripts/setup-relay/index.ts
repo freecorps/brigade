@@ -13,7 +13,7 @@
 // and without `--non-interactive`; otherwise every answer comes from a flag.
 
 import { spawn } from "node:child_process";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -33,7 +33,9 @@ const usage = `Usage: vp run setup:relay -- [--relay freecorps|own|none] [--env 
   Freecorps' relay: [--relay-url <https://…>] [--accept-terms <version>] [--contact <address>]
                     [--code <6 digits> --instance-key-file <path>] [--key-out <path>]
   Your own relay:   [--apns-key-file <.p8>] [--apns-key-id <id>] [--apns-team-id <id>] [--bundle-id <id>]
-                    [--fcm-service-account-file <json>] [--relay-domain <host>] [--app-url <store link>]`;
+                    [--fcm-service-account-file <json>] [--relay-domain <host>] [--app-url <store link>]
+                    [--take-over-relay] (a relay Worker this script did not set up)
+                    [--assume-new-relay] (wrangler cannot list the relay's secrets, and it does not exist)`;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 
@@ -60,6 +62,8 @@ async function main(): Promise<number> {
       "app-url": { type: "string" },
       "non-interactive": { type: "boolean", default: false },
       yes: { type: "boolean", short: "y", default: false },
+      "assume-new-relay": { type: "boolean", default: false },
+      "take-over-relay": { type: "boolean", default: false },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -90,6 +94,7 @@ async function main(): Promise<number> {
     run,
     fetch: globalThis.fetch,
     readText: (path) => readFile(path, "utf8"),
+    realpath: (path) => realpath(path),
     writeSecret: async (path, content) => {
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
       // `wx`: never overwrite a key kept from an earlier run.
@@ -126,6 +131,8 @@ async function main(): Promise<number> {
           appUrl: values["app-url"],
         }),
         yes: values.yes,
+        assumeNewRelay: values["assume-new-relay"],
+        takeOverRelay: values["take-over-relay"],
       },
       deps,
     );
@@ -143,27 +150,31 @@ function defined<T extends Record<string, string | undefined>>(
 }
 
 /** Runs the package's own wrangler or the repository's vp. Secret values only ever go in on stdin. */
-function run(command: Command): Promise<{ code: number; stdout: string }> {
+function run(command: Command): Promise<{ code: number; stdout: string; stderr: string }> {
   const bin = join(
     command.tool === "vp" ? repoRoot : command.cwd,
     "node_modules",
     ".bin",
     command.tool,
   );
+  // Not this script's `--conditions=@freecorps/source` (vite.config.ts): wrangler and vp run as they do by hand.
+  const { NODE_OPTIONS: _ours, ...inherited } = process.env;
   return new Promise((done, fail) => {
     const child = spawn(bin, command.args, {
       cwd: command.cwd,
-      env: { ...process.env, ...command.env },
+      env: { ...inherited, ...command.env },
       stdio: [
         command.input === undefined ? "inherit" : "pipe",
         command.capture ? "pipe" : "inherit",
-        "inherit",
+        command.capture ? "pipe" : "inherit",
       ],
     });
     let stdout = "";
+    let stderr = "";
     child.stdout?.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+    child.stderr?.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
     child.on("error", fail);
-    child.on("close", (code) => done({ code: code ?? 1, stdout }));
+    child.on("close", (code) => done({ code: code ?? 1, stdout, stderr }));
     if (command.input !== undefined) child.stdin?.end(command.input);
   });
 }

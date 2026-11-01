@@ -13,7 +13,7 @@
 // command's arguments or a file in the repository: wrangler gets them on stdin (`wrangler secret bulk`), and the one
 // file written (the instance key, so it can be kept) goes outside the repository with mode 0600.
 
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   generateInstanceKey,
   importInstanceKey,
@@ -60,6 +60,10 @@ export type Options = {
   relayDomain?: string;
   /** The company's app build's store link (`RELAY_APP_URL`). */
   appUrl?: string;
+  /** Treat the relay Worker as new when wrangler cannot list its secrets (and cannot say it does not exist). */
+  assumeNewRelay?: boolean;
+  /** Take over a relay Worker this script did not set up (no `BRIGADE_OWN_RELAY` secret). */
+  takeOverRelay?: boolean;
 };
 
 export type Command = {
@@ -69,7 +73,7 @@ export type Command = {
   /** Written to the command's stdin: how secret values reach wrangler. */
   input?: string;
   env?: Record<string, string>;
-  /** Capture stdout instead of showing it. */
+  /** Capture stdout and stderr instead of showing them. */
   capture?: boolean;
 };
 
@@ -80,9 +84,11 @@ export type Deps = {
     /** Only called when `interactive`. The answer, trimmed. */
     ask(question: string): Promise<string>;
   };
-  run(command: Command): Promise<{ code: number; stdout: string }>;
+  run(command: Command): Promise<{ code: number; stdout: string; stderr: string }>;
   fetch: typeof fetch;
   readText(path: string): Promise<string>;
+  /** The path with every symlink resolved; throws for a path that does not exist. */
+  realpath(path: string): Promise<string>;
   /** Writes a file only its owner can read, making its directory if needed; fails if it exists. */
   writeSecret(path: string, content: string): Promise<void>;
   exists(path: string): Promise<boolean>;
@@ -97,10 +103,21 @@ export class Stop extends Error {
   constructor(
     message: string,
     readonly code = 1,
+    /** The relay could not be reached (yet): a new custom domain may still be coming up. */
+    readonly unreachable = false,
   ) {
     super(message);
   }
 }
+
+/**
+ * The secret this script sets on a relay it deploys (its value says nothing). A relay Worker without it was set up
+ * some other way, Freecorps' own included, and is not taken over without `--take-over-relay`.
+ */
+export const OWN_RELAY_MARKER = "BRIGADE_OWN_RELAY";
+/** How long a new custom domain may take to answer before the script gives up (bounded: 30 tries, 10 s apart). */
+const DOMAIN_TRIES = 30;
+const DOMAIN_WAIT_MS = 10_000;
 
 type Key = { privateKey: string; publicKey: string; instance: string };
 type Answer = { status: number; body: Record<string, unknown>; retryAfter: number | null };
@@ -197,7 +214,7 @@ async function freecorps(options: Options, deps: Deps): Promise<number> {
     );
   }
   const existing = await apiSecrets(options, deps);
-  await confirmSwitch(options, deps, existing, "freecorps");
+  const switched = await confirmSwitch(options, deps, existing, "freecorps");
 
   // The terms first: nothing is made or sent before they are accepted.
   io.print(
@@ -299,26 +316,29 @@ async function freecorps(options: Options, deps: Deps): Promise<number> {
     {
       RELAY_INSTANCE_KEY: key.privateKey,
       RELAY_URL: relay,
-      // Keys this script makes are original keys, whose id is their own: an id kept from a rotation would sign as
-      // another instance.
-      ...(existing.has("RELAY_INSTANCE_ID") ? { RELAY_INSTANCE_ID: null } : {}),
-      // The store app pages through Freecorps' relay: an own build's link would send people elsewhere.
-      ...(existing.has("RELAY_APP_URL") ? { RELAY_APP_URL: null } : {}),
+      ...replacedRelaySecrets(existing, switched),
     },
     key.file,
   );
 
-  await deepHealth(deps, relay, key);
+  await deepHealth(deps, relay, key, "Freecorps' relay");
+  const binding = await relayBinding(options, deps);
   io.print(
     [
       "",
       "Done. Next:",
+      ...(binding === false
+        ? []
+        : [
+            binding === true
+              ? `- REQUIRED, or no phone is paged: remove the API's RELAY service binding (it is in ${bindingSource(options.env)}),`
+              : `- REQUIRED, or no phone is paged: make sure the API has no RELAY service binding (${bindingSource(options.env)}),`,
+            `  then build and deploy ${API_WORKER[options.env]} again. The API sends through that binding, to a relay Worker`,
+            "  on this account, before RELAY_URL, and that relay does not know this instance. The check above asked",
+            '  Freecorps\' relay directly, so it does not cover this (apps/api README "Push relay").',
+          ]),
       `- Keep the instance key (${key.file}) in a password manager, then delete the file. If it is lost, this`,
       "  instance gets a new id and every phone must open the app once to be paged again.",
-      "- The API reaches a relay through its RELAY service binding when it has one, before RELAY_URL. The",
-      "  production build binds RELAY to a brigade-relay Worker on this account (apps/api/vite.config.ts",
-      "  PRODUCTION_BINDINGS; dev: apps/api/wrangler.jsonc env.dev `services`). With Freecorps' relay, remove that",
-      "  binding, then build and deploy the API again.",
       "- Phones are paged once they open the app and register with this instance.",
     ].join("\n"),
   );
@@ -412,7 +432,23 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
   const needs = await prerequisites(options, deps);
   const appUrl = await storeLink(options, deps);
   const existing = await apiSecrets(options, deps);
-  await confirmSwitch(options, deps, existing, "own");
+  const relayDir = join(deps.repoRoot, "apps/relay");
+  // Read before anything is asked or changed: a relay Worker set up some other way (Freecorps' own, say) is not
+  // turned into a closed relay by mistake.
+  const relaySecrets = await listSecrets(deps, relayWorker, relayDir, {
+    assumeNew: options.assumeNewRelay === true,
+  });
+  if (relaySecrets !== null && !relaySecrets.has(OWN_RELAY_MARKER) && !options.takeOverRelay) {
+    throw new Stop(
+      [
+        `${relayWorker} already exists on this account and was not set up by this script. Nothing was changed.`,
+        "Deploying over it would replace its APNs and Firebase keys, its topic, and open registration with closed: if",
+        "it is a relay other instances use, they would stop being paged. If it is yours to replace, run again with",
+        "--take-over-relay.",
+      ].join("\n"),
+    );
+  }
+  const switched = await confirmSwitch(options, deps, existing, "own");
   if (
     io.interactive &&
     !(await confirm(
@@ -423,33 +459,43 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
   ) {
     throw new Stop("Nothing was deployed or changed.");
   }
-  const relayDir = join(deps.repoRoot, "apps/relay");
   const relay = `https://${needs.relayDomain}`;
+  // Made (and saved) before anything changes, so a key that cannot be saved stops the run with nothing deployed.
+  const key = await instanceKey(options, deps);
 
-  // Keys a relay must keep: new handle or tag keys would make every phone's handle useless.
-  const relaySecrets = await listSecrets(deps, relayWorker, relayDir);
+  // Handle and tag keys a relay has are kept: new ones would make every phone's handle useless.
+  const known = relaySecrets ?? new Set<string>();
   const adminToken = randomSecret();
-  const sendToken = randomSecret();
-  const secrets: Record<string, string> = {
+  // The send token pages phones that still register raw tokens (`/send`). A relay and an API that both have one are
+  // left as they are: rotating it before the API has the new one would stop those pages until the run finishes.
+  const keepSendToken = known.has("RELAY_SEND_TOKEN") && existing.has("RELAY_SEND_TOKEN");
+  const sendToken = keepSendToken ? null : randomSecret();
+  const before: Record<string, string> = {
     APNS_KEY: needs.apnsKey,
     APNS_KEY_ID: needs.apnsKeyId,
     APNS_TEAM_ID: needs.apnsTeamId,
     FCM_SERVICE_ACCOUNT: needs.fcmServiceAccount,
-    // `/send` (raw tokens, the app before handles) and the relay's required secrets. The API gets the same one.
-    RELAY_SEND_TOKEN: sendToken,
-    // Only this run uses it, to register the instance; a later run makes a new one.
+    // Only this run uses it, to register the instance; deleted once it has.
     RELAY_ADMIN_TOKEN: adminToken,
+    [OWN_RELAY_MARKER]: "setup-relay",
   };
-  if (!relaySecrets.has("RELAY_HANDLE_KEYS")) {
+  // A relay with no send token yet needs one to deploy (`secrets.required`); it accepts nothing on `/send` before,
+  // so setting it now stops no page.
+  if (sendToken !== null && !known.has("RELAY_SEND_TOKEN")) before.RELAY_SEND_TOKEN = sendToken;
+  if (!known.has("RELAY_HANDLE_KEYS")) {
     const id = `k${new Date(deps.now()).toISOString().slice(0, 10).replaceAll("-", "")}`;
-    secrets.RELAY_HANDLE_KEYS = JSON.stringify({ current: id, keys: { [id]: randomSecret() } });
-  } else
+    before.RELAY_HANDLE_KEYS = JSON.stringify({ current: id, keys: { [id]: randomSecret() } });
+  } else {
     io.print(
       `${relayWorker} keeps its RELAY_HANDLE_KEYS, so handles phones already have stay valid.`,
     );
-  if (!relaySecrets.has("RELAY_TAG_KEY")) secrets.RELAY_TAG_KEY = randomSecret();
+  }
+  if (!known.has("RELAY_TAG_KEY")) before.RELAY_TAG_KEY = randomSecret();
   else io.print(`${relayWorker} keeps its RELAY_TAG_KEY (it never rotates).`);
+  if (keepSendToken) io.print(`${relayWorker} and the API keep their RELAY_SEND_TOKEN.`);
 
+  const unchanged =
+    "The API is unchanged, so pages go out as they did before this run; run again (same flags) to finish.";
   io.print(`\nBuilding apps/relay (${options.env})…`);
   const build = await deps.run({
     tool: "vp",
@@ -457,11 +503,14 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
     cwd: relayDir,
     ...(options.env === "dev" ? { env: { CLOUDFLARE_ENV: "dev" } } : {}),
   });
-  if (build.code !== 0)
-    throw new Stop(`Building apps/relay failed (exit ${build.code}); see above.`);
+  if (build.code !== 0) {
+    throw new Stop(
+      `Building apps/relay failed (exit ${build.code}); see above. Nothing was deployed.`,
+    );
+  }
 
   // Before the deploy: a Worker that does not exist yet needs its required secrets first, and `secret bulk` makes it.
-  await setSecrets(deps, relayWorker, relayDir, secrets, null);
+  await setSecrets(deps, relayWorker, relayDir, before, null, unchanged);
   io.print(`Deploying ${relayWorker} at ${relay}…`);
   const deploy = await deps.run({
     tool: "wrangler",
@@ -476,11 +525,13 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
     ],
     cwd: relayDir,
   });
-  if (deploy.code !== 0)
-    throw new Stop(`Deploying ${relayWorker} failed (exit ${deploy.code}); see above.`);
+  if (deploy.code !== 0) {
+    throw new Stop(
+      `Deploying ${relayWorker} failed (exit ${deploy.code}); see above. ${unchanged}`,
+    );
+  }
 
-  const key = await instanceKey(options, deps);
-  const answer = await untilReachable(deps, relay, () =>
+  const answer = await untilReachable(deps, relay, unchanged, () =>
     relayCall(
       deps,
       relay,
@@ -491,9 +542,25 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
       { Authorization: `Bearer ${adminToken}` },
     ),
   );
-  if (answer.status !== 200 && answer.status !== 201) throw new Stop(describe(answer, key.file));
+  if (answer.status !== 200 && answer.status !== 201) {
+    throw new Stop(`${describe(answer, key.file)} ${unchanged}`);
+  }
   io.print(`Registered with ${relayWorker} as ${key.instance}.`);
 
+  // Now, one right after the other: the relay's new send token (if it had one already), the admin token gone, then
+  // the API's secrets with the same send token.
+  await setSecrets(
+    deps,
+    relayWorker,
+    relayDir,
+    {
+      ...(sendToken !== null && known.has("RELAY_SEND_TOKEN")
+        ? { RELAY_SEND_TOKEN: sendToken }
+        : {}),
+      RELAY_ADMIN_TOKEN: null,
+    },
+    key.file,
+  );
   await setSecrets(
     deps,
     API_WORKER[options.env],
@@ -501,14 +568,14 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
     {
       RELAY_INSTANCE_KEY: key.privateKey,
       RELAY_URL: relay,
-      RELAY_SEND_TOKEN: sendToken,
+      ...(sendToken !== null ? { RELAY_SEND_TOKEN: sendToken } : {}),
       ...(appUrl ? { RELAY_APP_URL: appUrl } : {}),
-      ...(existing.has("RELAY_INSTANCE_ID") ? { RELAY_INSTANCE_ID: null } : {}),
+      ...(switched && existing.has("RELAY_INSTANCE_ID") ? { RELAY_INSTANCE_ID: null } : {}),
     },
     key.file,
   );
 
-  await deepHealth(deps, relay, key);
+  await deepHealth(deps, relay, key, `${relayWorker} (${relay})`);
   io.print(
     [
       "",
@@ -648,22 +715,36 @@ async function storeLink(options: Options, deps: Deps): Promise<string | null> {
   }
 }
 
-/** A new custom domain can take a minute to answer: retries while the relay cannot be reached at all. */
+/**
+ * A new custom domain can take minutes to answer (DNS, a certificate). Retries, 10 s apart and at most
+ * `DOMAIN_TRIES` times, while the relay cannot be reached or answers as something that is not the relay yet (an edge
+ * error with no relay body); gives up with `unchanged` said.
+ */
 async function untilReachable(
   deps: Deps,
   relay: string,
+  unchanged: string,
   call: () => Promise<Answer>,
 ): Promise<Answer> {
   for (let attempt = 1; ; attempt++) {
+    let notYet: string;
     try {
-      return await call();
+      const answer = await call();
+      if (answer.status < 500 || typeof answer.body.error === "string") return answer;
+      notYet = `it answers ${answer.status}`;
     } catch (error) {
-      if (!(error instanceof Stop) || attempt >= 6) throw error;
-      deps.io.print(
-        `${relay} does not answer yet (a new domain takes a moment); trying again in 10 s…`,
-      );
-      await deps.sleep(10_000);
+      if (!(error instanceof Stop) || !error.unreachable) throw error;
+      notYet = "it does not answer";
     }
+    if (attempt >= DOMAIN_TRIES) {
+      throw new Stop(
+        `${relay} still does not answer as the relay after ${Math.round((DOMAIN_TRIES * DOMAIN_WAIT_MS) / 60_000)} minutes (${notYet}). Check the custom domain in the Cloudflare dashboard. ${unchanged}`,
+      );
+    }
+    deps.io.print(
+      `${relay}: ${notYet} yet (a new domain takes a few minutes); trying again in ${DOMAIN_WAIT_MS / 1000} s (${attempt}/${DOMAIN_TRIES})…`,
+    );
+    await deps.sleep(DOMAIN_WAIT_MS);
   }
 }
 
@@ -671,10 +752,32 @@ async function untilReachable(
 
 /** The names of the API Worker's secrets (never their values): whether a relay was set up before. */
 async function apiSecrets(options: Options, deps: Deps): Promise<Set<string>> {
-  return listSecrets(deps, API_WORKER[options.env], join(deps.repoRoot, "apps/api"));
+  const worker = API_WORKER[options.env];
+  const names = await listSecrets(deps, worker, join(deps.repoRoot, "apps/api"), {
+    assumeNew: false,
+  });
+  if (names === null) {
+    throw new Stop(
+      `${worker} does not exist on this account yet: deploy the API first (apps/api README "Self-host setup"). Nothing was changed.`,
+    );
+  }
+  return names;
 }
 
-async function listSecrets(deps: Deps, worker: string, cwd: string): Promise<Set<string>> {
+/** wrangler's codes for a Worker that does not exist (its isWorkerNotFoundError: 10007, and 10090 for a legacy environment). */
+const NOT_FOUND = /\[code: 100(?:07|90)\]/;
+
+/**
+ * A Worker's secret names (never values), or `null` when wrangler says the Worker does not exist. Any other failure
+ * (no login, a rate limit, Cloudflare or the network down) stops the script: read as "no secrets", it would make new
+ * keys over ones phones depend on. `assumeNew` takes such a failure as a Worker that does not exist.
+ */
+async function listSecrets(
+  deps: Deps,
+  worker: string,
+  cwd: string,
+  { assumeNew }: { assumeNew: boolean },
+): Promise<Set<string> | null> {
   const listed = await deps.run({
     tool: "wrangler",
     args: ["secret", "list", "--name", worker, "--format", "json"],
@@ -682,10 +785,26 @@ async function listSecrets(deps: Deps, worker: string, cwd: string): Promise<Set
     capture: true,
   });
   if (listed.code !== 0) {
-    // A Worker not deployed yet has no secrets; wrangler says so with a failure, like a missing login does.
-    if (worker.startsWith("brigade-relay")) return new Set();
+    if (NOT_FOUND.test(listed.stderr) || NOT_FOUND.test(listed.stdout)) return null;
+    if (assumeNew) {
+      deps.io.print(
+        `wrangler could not list the secrets of ${worker}; taking it as a new Worker (--assume-new-relay).`,
+      );
+      return null;
+    }
+    const said = listed.stderr.trim().split("\n").filter(Boolean).slice(-3).join("\n  ");
     throw new Stop(
-      `wrangler could not list the secrets of ${worker} (exit ${listed.code}). Log in (\`wrangler login\`, or CLOUDFLARE_API_TOKEN) and deploy the API first (apps/api README "Self-host setup").`,
+      [
+        `wrangler could not list the secrets of ${worker} (exit ${listed.code}), so nothing was changed:`,
+        ...(said ? [`  ${said}`] : []),
+        "Log in (`wrangler login`, or CLOUDFLARE_API_TOKEN) and run again.",
+        ...(worker.startsWith("brigade-relay")
+          ? [
+              "If the relay Worker really does not exist yet, --assume-new-relay goes on (it would otherwise replace the",
+              "relay's handle keys, and every phone would have to open the app again).",
+            ]
+          : []),
+      ].join("\n"),
     );
   }
   try {
@@ -696,19 +815,22 @@ async function listSecrets(deps: Deps, worker: string, cwd: string): Promise<Set
   }
 }
 
+/**
+ * Warns and asks again when the API already has an instance key: only names can be read, so a key reused from a
+ * file cannot be shown to be the same one. Resolves to whether the operator confirmed replacing a relay set up before.
+ */
 async function confirmSwitch(
   options: Options,
   deps: Deps,
   existing: Set<string>,
   to: "freecorps" | "own",
-): Promise<void> {
-  // A key reused from a file is the same instance finishing its setup, not a switch.
-  if (!existing.has("RELAY_INSTANCE_KEY") || options.instanceKeyFile) return;
+): Promise<boolean> {
+  if (!existing.has("RELAY_INSTANCE_KEY")) return false;
   const warning = [
     "",
-    `${API_WORKER[options.env]} already has a relay set up (RELAY_INSTANCE_KEY is set). Setting one up again gives`,
-    "this instance a new key and id on the relay, so every handle phones hold stops working: EVERY PHONE MUST OPEN",
-    "THE APP ONCE AGAIN to be paged.",
+    `${API_WORKER[options.env]} already has a relay set up (RELAY_INSTANCE_KEY is set). Unless the key this run uses is`,
+    "the very one it has, the instance gets a new key and id on the relay, so every handle phones hold stops working:",
+    "EVERY PHONE MUST OPEN THE APP ONCE AGAIN to be paged.",
     ...(to === "own"
       ? [
           "And with your own relay the Brigade app from the stores can no longer be paged at all: only your company's",
@@ -725,6 +847,74 @@ async function confirmSwitch(
   } else if (!options.yes) {
     throw new Stop("Nothing was changed. Pass --yes to switch relays anyway.");
   }
+  return true;
+}
+
+/**
+ * What a switch to Freecorps' relay removes from the API. `RELAY_INSTANCE_ID` names the id of a rotated key, which a key
+ * from this script never is, so it goes, but only once the switch was confirmed. `RELAY_APP_URL` marks an own relay:
+ * its link and its `RELAY_SEND_TOKEN` (which Freecorps' relay never accepts from a self-hosted instance) go with it. An
+ * API without `RELAY_APP_URL` (our own instance) keeps its send token.
+ */
+function replacedRelaySecrets(existing: Set<string>, switched: boolean): Record<string, null> {
+  const removed: Record<string, null> = {};
+  if (switched && existing.has("RELAY_INSTANCE_ID")) removed.RELAY_INSTANCE_ID = null;
+  if (existing.has("RELAY_APP_URL")) {
+    removed.RELAY_APP_URL = null;
+    if (existing.has("RELAY_SEND_TOKEN")) removed.RELAY_SEND_TOKEN = null;
+  }
+  return removed;
+}
+
+function bindingSource(env: Environment): string {
+  return env === "production"
+    ? "apps/api/vite.config.ts PRODUCTION_BINDINGS"
+    : `apps/api/wrangler.jsonc env.${env} \`services\``;
+}
+
+/**
+ * Whether the API's build for `env` binds `RELAY`: the production build adds it from vite.config.ts
+ * `PRODUCTION_BINDINGS`, the other environments have it in wrangler.jsonc. `null` when the files cannot be read.
+ */
+async function relayBinding(options: Options, deps: Deps): Promise<boolean | null> {
+  try {
+    if (options.env === "production") {
+      const config = await deps.readText(join(deps.repoRoot, "apps/api/vite.config.ts"));
+      const start = config.indexOf("const PRODUCTION_BINDINGS");
+      if (start === -1) return null;
+      const block = config.slice(start, config.indexOf("\n};", start));
+      return /binding:\s*["']RELAY["']/.test(block);
+    }
+    const config = JSON.parse(
+      stripJsonc(await deps.readText(join(deps.repoRoot, "apps/api/wrangler.jsonc"))),
+    ) as { env?: Record<string, { services?: { binding?: unknown }[] }> };
+    const environment = config.env?.[options.env];
+    if (!environment) return null;
+    return (environment.services ?? []).some((s) => s.binding === "RELAY");
+  } catch {
+    return null;
+  }
+}
+
+/** JSON with comments and trailing commas to JSON, leaving strings (URLs with `//`) alone. */
+function stripJsonc(text: string): string {
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
+      out += text.slice(i, j + 1);
+      i = j;
+    } else if (c === "/" && text[i + 1] === "/") {
+      while (i < text.length && text[i] !== "\n") i++;
+      out += "\n";
+    } else if (c === "/" && text[i + 1] === "*") {
+      i = text.indexOf("*/", i + 2) + 1;
+      if (i === 0) break;
+    } else out += c;
+  }
+  return out.replace(/,(\s*[}\]])/g, "$1");
 }
 
 /** The key from `--instance-key-file`, or a new one saved outside the repository before anything uses it. */
@@ -756,8 +946,10 @@ async function instanceKey(options: Options, deps: Deps): Promise<Key & { file: 
       ),
     deps.home,
   );
-  const inRepo = relative(resolve(deps.repoRoot), resolve(file));
-  if (!inRepo.startsWith("..") && !isAbsolute(inRepo)) {
+  // Compared with symlinks resolved on both sides (the file's directory may not exist yet: its nearest existing
+  // ancestor is resolved), and `..keys` is a folder inside the repository, not a way out of it.
+  const inRepo = relative(await canonical(deps, deps.repoRoot), await canonical(deps, file));
+  if (inRepo !== ".." && !inRepo.startsWith(`..${sep}`) && !isAbsolute(inRepo)) {
     throw new Stop(
       `${file} is inside the repository: keep the instance key outside it (--key-out).`,
       2,
@@ -781,6 +973,8 @@ async function setSecrets(
   cwd: string,
   secrets: Record<string, string | null>,
   keyFile: string | null,
+  /** Said when it fails, in place of the default for a registered instance. */
+  onFailure?: string,
 ): Promise<void> {
   const names = Object.entries(secrets).map(([name, value]) =>
     value === null ? `${name} (removed)` : name,
@@ -795,14 +989,16 @@ async function setSecrets(
   if (result.code !== 0) {
     throw new Stop(
       `wrangler could not set the secrets of ${worker} (exit ${result.code}); see above.` +
-        (keyFile
-          ? ` The instance is registered: run again with --instance-key-file ${keyFile} to finish with the same key.`
-          : ""),
+        (onFailure
+          ? ` ${onFailure}`
+          : keyFile
+            ? ` The instance is registered: run again with --instance-key-file ${keyFile} to finish with the same key.`
+            : ""),
     );
   }
 }
 
-async function deepHealth(deps: Deps, relay: string, key: Key): Promise<void> {
+async function deepHealth(deps: Deps, relay: string, key: Key, label: string): Promise<void> {
   const { io } = deps;
   let answer: Answer;
   try {
@@ -819,8 +1015,13 @@ async function deepHealth(deps: Deps, relay: string, key: Key): Promise<void> {
   };
   if (answer.status === 200 || (answer.status === 503 && "apns" in answer.body)) {
     const handles = answer.body.handles === true ? "handles ok" : "handles not set up";
+    const parts = `${part("apns").replace("apns", "APNs")}, ${part("fcm").replace("fcm", "FCM")}, ${handles}`;
+    // What this proves: the relay answers, knows this instance and reaches its providers. Not that the API pages
+    // through it (a RELAY binding elsewhere would win), so it never says "paging works".
     io.print(
-      `\nRelay check: ${answer.body.ok === true ? "working" : "NOT working"} (${part("apns").replace("apns", "APNs")}, ${part("fcm").replace("fcm", "FCM")}, ${handles}).`,
+      answer.body.ok === true
+        ? `\nRelay check: ${label} is reachable and this instance is registered (${parts}).`
+        : `\nRelay check: ${label} is reachable and this instance is registered, but the relay reports a problem (${parts}).`,
     );
     if (answer.body.ok !== true) {
       io.print(
@@ -869,6 +1070,8 @@ async function relayCall(
   } catch (error) {
     throw new Stop(
       `Could not reach the relay at ${relay} (${messageOf(error)}). Check the address and the network, then run again.`,
+      1,
+      true,
     );
   }
   if (response.status >= 300 && response.status < 400) {
@@ -879,7 +1082,8 @@ async function relayCall(
     parsed = await response.json();
   } catch {}
   if (response.status === 404 && (typeof parsed !== "object" || parsed === null)) {
-    throw new Stop(`${relay} does not look like a Brigade relay (404).`);
+    // Also what a custom domain answers before the Worker is routed there: retried while one comes up.
+    throw new Stop(`${relay} does not look like a Brigade relay (404).`, 1, true);
   }
   const retry = Number(response.headers.get("Retry-After"));
   return {
@@ -963,6 +1167,20 @@ async function confirm(deps: Deps, question: string, byDefault: boolean): Promis
 function randomSecret(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return Buffer.from(bytes).toString("base64url");
+}
+
+/** `path` with symlinks resolved, through its nearest ancestor that exists. */
+async function canonical(deps: Deps, path: string): Promise<string> {
+  const absolute = resolve(path);
+  const rest: string[] = [];
+  for (let at = absolute; ; at = dirname(at)) {
+    try {
+      return join(await deps.realpath(at), ...rest);
+    } catch {
+      if (dirname(at) === at) return absolute;
+      rest.unshift(basename(at));
+    }
+  }
 }
 
 function expandHome(path: string, home: string): string {

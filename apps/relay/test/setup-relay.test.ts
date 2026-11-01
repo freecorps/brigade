@@ -3,7 +3,7 @@
 // the secrets it was given. Nothing here reaches Cloudflare, Apple or Google.
 
 import { generateKeyPairSync } from "node:crypto";
-import { importInstanceKey } from "@freecorps/brigade-push/instance";
+import { generateInstanceKey, importInstanceKey } from "@freecorps/brigade-push/instance";
 import { describe, expect, test } from "vite-plus/test";
 import {
   setupRelay,
@@ -59,9 +59,21 @@ function harness(
     hosted?: Partial<RelayEnv>;
     files?: Record<string, string>;
     unreachable?: boolean;
+    /** How many calls to the own relay's domain fail before it answers (a new custom domain coming up). */
+    ownDown?: number;
     failing?: (command: Command) => boolean;
+    /** `secret list` fails for this Worker with a reason other than "not found". */
+    listFails?: string;
+    /** Workers that do not exist on the account (the API does, unless named here). */
+    missing?: string[];
+    /** Symlinks: path → what it points to. */
+    links?: Record<string, string>;
   } = {},
 ) {
+  let ownDown = setup.ownDown ?? 0;
+  const sleeps: number[] = [];
+  /** Every secret value any Worker was ever given, deleted ones included. */
+  const given: string[] = [];
   const out: string[] = [];
   const questions: string[] = [];
   const answers = [...(setup.answers ?? [])];
@@ -106,14 +118,27 @@ function harness(
     },
     run: async (command) => {
       commands.push(command);
-      if (setup.failing?.(command)) return { code: 1, stdout: "" };
+      const ok = { code: 0, stdout: "", stderr: "" };
+      if (setup.failing?.(command)) return { ...ok, code: 1 };
       const [verb, sub] = command.args;
       const name = command.args[command.args.indexOf("--name") + 1] ?? "";
-      if (command.tool === "vp") return { code: 0, stdout: "" };
+      if (command.tool === "vp") return ok;
       if (verb === "secret" && sub === "list") {
+        if (setup.listFails === name) {
+          return { code: 1, stdout: "", stderr: "✘ [ERROR] Too many requests. [code: 971]\n" };
+        }
+        const exists =
+          secrets.has(name) || (name.startsWith("brigade-api") && !setup.missing?.includes(name));
+        if (!exists) {
+          return {
+            code: 1,
+            stdout: "",
+            stderr: `✘ [ERROR] A request to the Cloudflare API failed.\n  This Worker does not exist on your account. [code: 10007]\n`,
+          };
+        }
         const names = [...(secrets.get(name)?.keys() ?? [])];
         return {
-          code: 0,
+          ...ok,
           stdout: JSON.stringify(names.map((n) => ({ name: n, type: "secret_text" }))),
         };
       }
@@ -122,10 +147,13 @@ function harness(
         const current = secrets.get(name) ?? new Map<string, string>();
         for (const [key, value] of Object.entries(values)) {
           if (value === null) current.delete(key);
-          else current.set(key, value);
+          else {
+            current.set(key, value);
+            given.push(value);
+          }
         }
         secrets.set(name, current);
-        return { code: 0, stdout: "" };
+        return ok;
       }
       if (verb === "deploy") {
         const vars: Record<string, string> = {};
@@ -137,7 +165,7 @@ function harness(
         });
         const at = command.args.indexOf("--domain");
         deployed = { vars, domain: at === -1 ? null : (command.args[at + 1] ?? null) };
-        return { code: 0, stdout: "" };
+        return ok;
       }
       throw new Error(`unexpected command: ${command.args.join(" ")}`);
     },
@@ -148,6 +176,10 @@ function harness(
       const url = new URL(request.url);
       if (url.origin === HOSTED) return handle(request, hostedEnv, providers);
       if (url.hostname === OWN_HOST && deployed?.domain === OWN_HOST) {
+        if (ownDown > 0) {
+          ownDown--;
+          throw new TypeError("fetch failed");
+        }
         const own =
           secrets.get("brigade-relay") ??
           secrets.get("brigade-relay-dev") ??
@@ -187,7 +219,21 @@ function harness(
       files.set(path, content);
     },
     exists: async (path) => files.has(path),
-    sleep: async () => {},
+    realpath: async (path) => {
+      for (const [from, to] of Object.entries(setup.links ?? {})) {
+        if (path === from || path.startsWith(`${from}/`)) return to + path.slice(from.length);
+      }
+      // A directory exists when it is the root, the repository, the home or holds a file.
+      const known = ["/", "/home", HOME, REPO];
+      if (
+        known.includes(path) ||
+        [...files.keys()].some((f) => f === path || f.startsWith(`${path}/`))
+      ) {
+        return path;
+      }
+      throw new Error(`ENOENT ${path}`);
+    },
+    sleep: async (ms) => void sleeps.push(ms),
     now: () => Date.now(),
     repoRoot: REPO,
     home: HOME,
@@ -198,10 +244,7 @@ function harness(
   const code = () => /: (\d{6})\n/.exec(sent.at(-1)?.text ?? "")?.[1] ?? "";
   const keyFiles = () => [...files.keys()].filter((p) => p.includes("relay-instance-key"));
   /** Every value a Worker was given, to check none of them leaked into output or arguments. */
-  const secretValues = () =>
-    [...secrets.values()]
-      .flatMap((m) => [...m.values()])
-      .filter((v) => v !== "kept" && v.length >= 16 && !v.startsWith("https://"));
+  const secretValues = () => given.filter((v) => v.length >= 16 && !v.startsWith("https://"));
   const leaks = () => {
     const visible = [...out, ...commands.flatMap((c) => c.args)].join("\n");
     return secretValues().filter((value) =>
@@ -221,12 +264,22 @@ function harness(
     code,
     keyFiles,
     leaks,
+    sleeps,
     hostedRegistry,
     ownRegistry,
     get deployed() {
       return deployed;
     },
   };
+}
+
+/** Each command as `tool verb sub worker` (the deploy as `wrangler deploy`). */
+function order(h: { commands: Command[] }): string[] {
+  return h.commands.map((c) => {
+    if (c.args[0] === "deploy") return `${c.tool} deploy`;
+    const name = c.args.indexOf("--name");
+    return [c.tool, ...c.args.slice(0, 2), ...(name === -1 ? [] : [c.args[name + 1]])].join(" ");
+  });
 }
 
 async function stopped(promise: Promise<number>): Promise<Stop> {
@@ -273,7 +326,14 @@ describe("Freecorps' relay", () => {
       `${HOME}/.config/brigade/relay-instance-key-brigade-api-${key.instance}`,
     ]);
     expect(h.files.get(h.keyFiles()[0] ?? "")?.trim()).toBe(api?.get("RELAY_INSTANCE_KEY"));
-    expect(h.out()).toMatch(/Relay check: working \(APNs ok, FCM not_configured, handles ok\)/);
+    expect(h.out()).toMatch(
+      /Relay check: Freecorps' relay is reachable and this instance is registered \(APNs ok, FCM not_configured, handles ok\)/,
+    );
+    expect(h.out()).not.toMatch(/working/);
+    // vite.config.ts cannot be read here, so the binding step is said as one to check.
+    expect(h.out()).toMatch(
+      /REQUIRED, or no phone is paged: make sure the API has no RELAY service binding/,
+    );
     // Secret values go to wrangler on stdin only: never printed, never an argument.
     expect(h.leaks()).toEqual([]);
     expect(h.commands.find((c) => c.args[1] === "bulk")?.args).toEqual([
@@ -365,7 +425,11 @@ describe("Freecorps' relay", () => {
       h.files.get(keyFile)?.trim(),
     );
     // Run again with the same key (finishing, or re-run): already registered, no new code.
-    expect(await h.run({ ...FREECORPS, instanceKeyFile: keyFile })).toBe(0);
+    // The API has a key now, which only names show: the same key cannot be proven, so it asks (--yes) again.
+    expect((await stopped(h.run({ ...FREECORPS, instanceKeyFile: keyFile }))).message).toMatch(
+      /--yes/,
+    );
+    expect(await h.run({ ...FREECORPS, instanceKeyFile: keyFile, yes: true })).toBe(0);
     expect(h.sent).toHaveLength(1);
     expect(h.out()).toMatch(/already registered/);
   });
@@ -407,7 +471,7 @@ describe("switching relays", () => {
     const asked = harness({ interactive: true, secrets: HAD, answers: ["n"] });
     const stop = await stopped(asked.run(FREECORPS));
     expect(stop.message).toMatch(/Nothing was changed/);
-    expect(asked.out()).toMatch(/EVERY PHONE MUST OPEN\nTHE APP ONCE AGAIN/);
+    expect(asked.out()).toMatch(/EVERY PHONE MUST OPEN THE APP ONCE AGAIN/);
     expect(asked.questions).toEqual(["Switch relays anyway? [y/N] "]);
     expect(asked.fetched).toEqual([]);
 
@@ -461,23 +525,25 @@ describe("your own relay", () => {
       "APNS_KEY",
       "APNS_KEY_ID",
       "APNS_TEAM_ID",
+      "BRIGADE_OWN_RELAY",
       "FCM_SERVICE_ACCOUNT",
-      "RELAY_ADMIN_TOKEN",
       "RELAY_HANDLE_KEYS",
       "RELAY_SEND_TOKEN",
       "RELAY_TAG_KEY",
     ]);
     expect(relay?.get("APNS_KEY")).toBe(APNS_KEY.trim());
-    // Secrets before the deploy (a new Worker needs its required ones), then the deploy with the vars and domain.
-    const order = h.commands.map((c) => `${c.tool} ${c.args.slice(0, 2).join(" ")}`);
-    expect(order).toEqual([
-      "wrangler secret list",
-      "wrangler secret list",
+    // Secrets before the deploy (a new Worker needs its required ones), then the deploy with the vars and domain;
+    // after the registration the admin token goes, then the API's secrets.
+    expect(order(h)).toEqual([
+      "wrangler secret list brigade-api",
+      "wrangler secret list brigade-relay",
       "vp build",
-      "wrangler secret bulk",
-      "wrangler deploy --var",
-      "wrangler secret bulk",
+      "wrangler secret bulk brigade-relay",
+      "wrangler deploy",
+      "wrangler secret bulk brigade-relay",
+      "wrangler secret bulk brigade-api",
     ]);
+    expect(JSON.parse(h.commands[5]?.input ?? "")).toEqual({ RELAY_ADMIN_TOKEN: null });
     expect(h.deployed).toEqual({
       vars: { APNS_TOPIC: "com.acme.brigade", RELAY_REGISTRATION: "closed" },
       domain: OWN_HOST,
@@ -494,7 +560,9 @@ describe("your own relay", () => {
     });
     // No terms and no email on an own relay; the generated keys work (handles ok).
     expect(h.out()).not.toMatch(/Terms of Freecorps' relay/);
-    expect(h.out()).toMatch(/Relay check: working \(APNs ok, FCM ok, handles ok\)/);
+    expect(h.out()).toMatch(
+      /Relay check: brigade-relay \(https:\/\/relay.acme.example\) is reachable and this instance is registered \(APNs ok, FCM ok, handles ok\)/,
+    );
     expect(h.out()).toMatch(/Bind the relay to the API as RELAY/);
     expect(h.leaks()).toEqual([]);
   });
@@ -502,7 +570,7 @@ describe("your own relay", () => {
   test("run again, it keeps the relay's handle and tag keys", async () => {
     const h = harness({
       files: OWN_FILES,
-      secrets: { "brigade-relay": ["RELAY_HANDLE_KEYS", "RELAY_TAG_KEY"] },
+      secrets: { "brigade-relay": ["BRIGADE_OWN_RELAY", "RELAY_HANDLE_KEYS", "RELAY_TAG_KEY"] },
     });
     // The fake relay needs real keys to answer the deep health; "kept" ones do not parse, which it reports.
     expect(await h.run(OWN)).toBe(0);
@@ -563,5 +631,286 @@ describe("not now", () => {
     expect(h.out()).toMatch(/phones are not paged/);
     expect(h.commands).toEqual([]);
     expect(h.fetched).toEqual([]);
+  });
+});
+
+describe("the API's RELAY binding (Freecorps' relay)", () => {
+  const VITE_CONFIG = (bindings: string) =>
+    `const X = 1;\nconst PRODUCTION_BINDINGS = {\n${bindings}\n};\n\nexport default {};\n`;
+
+  test("found in the production build, removing it is a required step", async () => {
+    const h = harness({
+      files: {
+        [`${REPO}/apps/api/vite.config.ts`]: VITE_CONFIG(
+          '  services: [{ binding: "RELAY", service: "brigade-relay" }],\n  ai: { binding: "AI" },',
+        ),
+      },
+    });
+    expect(await h.run(FREECORPS)).toBe(0);
+    expect(await h.run({ ...FREECORPS, code: h.code(), instanceKeyFile: h.keyFiles()[0] })).toBe(0);
+    expect(h.out()).toMatch(
+      /REQUIRED, or no phone is paged: remove the API's RELAY service binding \(it is in apps\/api\/vite.config.ts PRODUCTION_BINDINGS\)/,
+    );
+  });
+
+  test("not there, no such step", async () => {
+    const h = harness({
+      files: { [`${REPO}/apps/api/vite.config.ts`]: VITE_CONFIG('  ai: { binding: "AI" },') },
+    });
+    expect(await h.run(FREECORPS)).toBe(0);
+    expect(await h.run({ ...FREECORPS, code: h.code(), instanceKeyFile: h.keyFiles()[0] })).toBe(0);
+    expect(h.out()).not.toMatch(/REQUIRED/);
+  });
+
+  test("dev reads wrangler.jsonc, comments, URLs and trailing commas included", async () => {
+    const jsonc = `{
+  // a comment with "quotes"
+  "name": "brigade-api", /* block */
+  "vars": { "X": "https://example.com//path" },
+  "env": {
+    "dev": { "services": [{ "binding": "RELAY", "service": "brigade-relay-dev" },], },
+    "staging": {},
+  },
+}`;
+    const h = harness({ files: { [`${REPO}/apps/api/wrangler.jsonc`]: jsonc } });
+    const dev = { ...FREECORPS, env: "dev" as const };
+    expect(await h.run(dev)).toBe(0);
+    expect(await h.run({ ...dev, code: h.code(), instanceKeyFile: h.keyFiles()[0] })).toBe(0);
+    expect(h.out()).toMatch(
+      /remove the API's RELAY service binding \(it is in apps\/api\/wrangler.jsonc env.dev/,
+    );
+
+    const staging = harness({ files: { [`${REPO}/apps/api/wrangler.jsonc`]: jsonc } });
+    const stage = { ...FREECORPS, env: "staging" as const };
+    expect(await staging.run(stage)).toBe(0);
+    expect(
+      await staging.run({ ...stage, code: staging.code(), instanceKeyFile: staging.keyFiles()[0] }),
+    ).toBe(0);
+    expect(staging.out()).not.toMatch(/REQUIRED/);
+  });
+});
+
+describe("what a switch removes from the API", () => {
+  async function finish(h: ReturnType<typeof harness>) {
+    expect(await h.run({ ...FREECORPS, yes: true })).toBe(0);
+    expect(
+      await h.run({ ...FREECORPS, yes: true, code: h.code(), instanceKeyFile: h.keyFiles()[0] }),
+    ).toBe(0);
+    return h.secrets.get("brigade-api");
+  }
+
+  test("from an own relay (RELAY_APP_URL), its send token goes with its link", async () => {
+    const h = harness({
+      secrets: {
+        "brigade-api": ["RELAY_INSTANCE_KEY", "RELAY_URL", "RELAY_APP_URL", "RELAY_SEND_TOKEN"],
+      },
+    });
+    const api = await finish(h);
+    expect(api?.has("RELAY_SEND_TOKEN")).toBe(false);
+    expect(api?.has("RELAY_APP_URL")).toBe(false);
+  });
+
+  test("an instance with no RELAY_APP_URL (ours) keeps its send token", async () => {
+    const h = harness({
+      secrets: { "brigade-api": ["RELAY_INSTANCE_KEY", "RELAY_URL", "RELAY_SEND_TOKEN"] },
+    });
+    const api = await finish(h);
+    expect(api?.get("RELAY_SEND_TOKEN")).toBe("kept");
+  });
+
+  test("a reused key file still warns, and RELAY_INSTANCE_ID stays without the confirmation", async () => {
+    const key = await generateInstanceKey();
+    const file = `${HOME}/vault/key`;
+    const had = { "brigade-api": ["RELAY_INSTANCE_KEY", "RELAY_INSTANCE_ID"] };
+    const h = harness({ secrets: had, files: { [file]: key.privateKey } });
+    const stop = await stopped(h.run({ ...FREECORPS, instanceKeyFile: file }));
+    expect(stop.message).toMatch(/Pass --yes/);
+    expect(h.out()).toMatch(/already has a relay set up/);
+    expect(h.secrets.get("brigade-api")?.has("RELAY_INSTANCE_ID")).toBe(true);
+    expect(h.commands.filter((c) => c.args[1] === "bulk")).toEqual([]);
+
+    // RELAY_INSTANCE_ID with no RELAY_INSTANCE_KEY: nothing was confirmed, so it is left alone.
+    const odd = harness({ secrets: { "brigade-api": ["RELAY_INSTANCE_ID"] } });
+    expect(await odd.run(FREECORPS)).toBe(0);
+    expect(
+      await odd.run({ ...FREECORPS, code: odd.code(), instanceKeyFile: odd.keyFiles()[0] }),
+    ).toBe(0);
+    expect(odd.secrets.get("brigade-api")?.get("RELAY_INSTANCE_ID")).toBe("kept");
+  });
+});
+
+describe("where the instance key is saved", () => {
+  test("never inside the repository: a `..keys` folder, or a symlink into it", async () => {
+    const dots = harness();
+    expect((await stopped(dots.run({ ...FREECORPS, keyOut: `${REPO}/..keys/k` }))).message).toMatch(
+      /inside the repository/,
+    );
+    const linked = harness({ links: { [`${HOME}/vault`]: `${REPO}/secrets` } });
+    expect(
+      (await stopped(linked.run({ ...FREECORPS, keyOut: `${HOME}/vault/k` }))).message,
+    ).toMatch(/inside the repository/);
+    expect(linked.files.size).toBe(0);
+    // A sibling folder whose name starts like the repository's is outside it.
+    const sibling = harness();
+    expect(await sibling.run({ ...FREECORPS, keyOut: `${REPO}-keys/k` })).toBe(0);
+    expect(sibling.files.has(`${REPO}-keys/k`)).toBe(true);
+  });
+});
+
+describe("reading secret names", () => {
+  test("a relay list that fails stops before anything changes; --assume-new-relay goes on", async () => {
+    const h = harness({
+      files: OWN_FILES,
+      secrets: { "brigade-relay": ["BRIGADE_OWN_RELAY", "RELAY_HANDLE_KEYS", "RELAY_TAG_KEY"] },
+      listFails: "brigade-relay",
+    });
+    const stop = await stopped(h.run(OWN));
+    expect(stop.message).toMatch(
+      /could not list the secrets of brigade-relay .*nothing was changed/s,
+    );
+    expect(stop.message).toContain("[code: 971]");
+    expect(stop.message).toContain("--assume-new-relay");
+    expect(order(h)).toEqual([
+      "wrangler secret list brigade-api",
+      "wrangler secret list brigade-relay",
+    ]);
+    expect(h.secrets.get("brigade-relay")?.get("RELAY_HANDLE_KEYS")).toBe("kept");
+
+    const assumed = harness({ files: OWN_FILES, listFails: "brigade-relay" });
+    expect(await assumed.run({ ...OWN, assumeNewRelay: true })).toBe(0);
+    expect(assumed.secrets.get("brigade-relay")?.has("RELAY_HANDLE_KEYS")).toBe(true);
+  });
+
+  test("the API's list failing, or the API missing, stops too", async () => {
+    const failing = harness({ listFails: "brigade-api" });
+    expect((await stopped(failing.run(FREECORPS))).message).toMatch(
+      /could not list the secrets of brigade-api/,
+    );
+    expect(failing.fetched).toEqual([]);
+    const missing = harness({ missing: ["brigade-api"] });
+    expect((await stopped(missing.run(FREECORPS))).message).toMatch(
+      /brigade-api does not exist on this account yet: deploy the API first/,
+    );
+    expect(missing.fetched).toEqual([]);
+  });
+
+  test("a relay Worker this script did not set up is not taken over without --take-over-relay", async () => {
+    const theirs = { "brigade-relay": ["APNS_KEY", "RELAY_SEND_TOKEN", "RELAY_HANDLE_KEYS"] };
+    const h = harness({ files: OWN_FILES, secrets: theirs });
+    const stop = await stopped(h.run(OWN));
+    expect(stop.message).toMatch(/was not set up by this script\. Nothing was changed/);
+    expect(stop.message).toContain("--take-over-relay");
+    expect(order(h)).toEqual([
+      "wrangler secret list brigade-api",
+      "wrangler secret list brigade-relay",
+    ]);
+
+    const taken = harness({ files: OWN_FILES, secrets: theirs });
+    expect(await taken.run({ ...OWN, takeOverRelay: true })).toBe(0);
+    expect(taken.secrets.get("brigade-relay")?.get("RELAY_HANDLE_KEYS")).toBe("kept");
+    expect(taken.secrets.get("brigade-relay")?.has("BRIGADE_OWN_RELAY")).toBe(true);
+  });
+});
+
+describe("an own relay that stops halfway keeps paging", () => {
+  // A relay this script set up before, and an API paging through it with the same send token.
+  const BEFORE = {
+    "brigade-relay": [
+      "BRIGADE_OWN_RELAY",
+      "RELAY_SEND_TOKEN",
+      "RELAY_HANDLE_KEYS",
+      "RELAY_TAG_KEY",
+    ],
+    "brigade-api": ["RELAY_INSTANCE_KEY", "RELAY_URL", "RELAY_SEND_TOKEN"],
+  };
+  const paging = (h: ReturnType<typeof harness>) => {
+    const relay = h.secrets.get("brigade-relay")?.get("RELAY_SEND_TOKEN");
+    expect(relay).toBeDefined();
+    expect(h.secrets.get("brigade-api")?.get("RELAY_SEND_TOKEN")).toBe(relay);
+  };
+  const steps: [string, () => (c: Command) => boolean, RegExp][] = [
+    ["the build", () => (c) => c.tool === "vp", /Building apps\/relay failed/],
+    [
+      "the relay's secrets",
+      () => {
+        let bulks = 0;
+        return (c) => c.args[1] === "bulk" && c.args.includes("brigade-relay") && ++bulks === 1;
+      },
+      /could not set the secrets of brigade-relay.*The API is unchanged/s,
+    ],
+    [
+      "the deploy",
+      () => (c) => c.args[0] === "deploy",
+      /Deploying brigade-relay failed.*The API is unchanged/s,
+    ],
+    [
+      "the API's secrets",
+      () => (c) => c.args[1] === "bulk" && c.args.includes("brigade-api"),
+      /could not set the secrets of brigade-api/,
+    ],
+  ];
+  for (const [step, failing, message] of steps) {
+    test(`stopped at ${step}`, async () => {
+      const h = harness({ files: OWN_FILES, secrets: BEFORE, failing: failing() });
+      expect((await stopped(h.run({ ...OWN, yes: true }))).message).toMatch(message);
+      paging(h);
+      expect(h.secrets.get("brigade-api")?.get("RELAY_SEND_TOKEN")).toBe("kept");
+    });
+  }
+
+  test("stopped by a domain that never comes up, after a bounded wait", async () => {
+    const h = harness({ files: OWN_FILES, secrets: BEFORE, ownDown: Infinity });
+    const stop = await stopped(h.run({ ...OWN, yes: true }));
+    expect(stop.message).toMatch(
+      /still does not answer as the relay after 5 minutes.*The API is unchanged/s,
+    );
+    expect(h.sleeps).toHaveLength(29);
+    paging(h);
+  });
+
+  test("stopped by a refused registration", async () => {
+    const h = harness({ files: OWN_FILES, secrets: BEFORE });
+    h.ownRegistry.failing = true;
+    const stop = await stopped(h.run({ ...OWN, yes: true }));
+    expect(stop.message).toMatch(/registry did not answer.*The API is unchanged/s);
+    paging(h);
+  });
+
+  test("a domain that comes up after a while is waited for", async () => {
+    const h = harness({ files: OWN_FILES, secrets: BEFORE, ownDown: 3 });
+    expect(await h.run({ ...OWN, yes: true })).toBe(0);
+    expect(h.sleeps).toEqual([10_000, 10_000, 10_000]);
+  });
+
+  test("finished, a relay and API that both had a send token keep it", async () => {
+    const h = harness({ files: OWN_FILES, secrets: BEFORE });
+    expect(await h.run({ ...OWN, yes: true })).toBe(0);
+    paging(h);
+    expect(h.secrets.get("brigade-relay")?.get("RELAY_SEND_TOKEN")).toBe("kept");
+    expect(h.secrets.get("brigade-relay")?.has("RELAY_ADMIN_TOKEN")).toBe(false);
+    for (const c of h.commands.filter((c) => c.args[1] === "bulk")) {
+      expect(Object.keys(JSON.parse(c.input ?? "{}") as object)).not.toContain("RELAY_SEND_TOKEN");
+    }
+  });
+
+  test("a relay with a token the API lacks gets a new one only after registering, right before the API", async () => {
+    const lacking = { ...BEFORE, "brigade-api": ["RELAY_URL"] };
+    const refused = harness({ files: OWN_FILES, secrets: lacking });
+    refused.ownRegistry.failing = true;
+    await stopped(refused.run(OWN));
+    expect(refused.secrets.get("brigade-relay")?.get("RELAY_SEND_TOKEN")).toBe("kept");
+
+    const h = harness({ files: OWN_FILES, secrets: lacking });
+    expect(await h.run(OWN)).toBe(0);
+    paging(h);
+    expect(h.secrets.get("brigade-relay")?.get("RELAY_SEND_TOKEN")).not.toBe("kept");
+    expect(order(h).slice(-2)).toEqual([
+      "wrangler secret bulk brigade-relay",
+      "wrangler secret bulk brigade-api",
+    ]);
+    expect(Object.keys(JSON.parse(h.commands.at(-2)?.input ?? "{}") as object).sort()).toEqual([
+      "RELAY_ADMIN_TOKEN",
+      "RELAY_SEND_TOKEN",
+    ]);
   });
 });

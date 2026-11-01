@@ -11,14 +11,19 @@ export const DEFAULT_APP_ID = "app.freecorps.brigade";
  */
 export const APP_GROUP_PLIST_KEY = "BrigadeAppGroup";
 
-/** Reverse DNS that is also a valid Android package: two or more parts, each a letter then letters, digits or `_`. */
-const APP_ID = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/;
+/**
+ * An id both stores accept as bundle id and package: two or more parts, each a letter then letters or digits (Apple
+ * refuses `_`, Android `-` and a part that starts with a digit). The same rule is `BUNDLE_ID` in apps/relay
+ * `scripts/setup-relay/flow.ts` (the relay's topic) and `APP_ID_PATTERN` in scripts/lib/mobile.mjs; a test in
+ * notification-service.test.ts keeps the three the same.
+ */
+export const APP_ID_PATTERN = /^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)+$/;
 
-/** `BRIGADE_APP_ID`, or the store app's id when unset or empty. Throws for an id iOS or Android would refuse. */
+/** `BRIGADE_APP_ID`, or the store app's id when unset or empty. Throws for an id either store would refuse. */
 export function appId(env: Record<string, string | undefined> = process.env): string {
   const value = env.BRIGADE_APP_ID?.trim();
   if (!value) return DEFAULT_APP_ID;
-  if (!APP_ID.test(value)) {
+  if (!APP_ID_PATTERN.test(value)) {
     throw new Error(
       `BRIGADE_APP_ID ${JSON.stringify(value)} is not a bundle id and Android package (com.acme.brigade).`,
     );

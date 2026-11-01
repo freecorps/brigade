@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, test } from "vite-plus/test";
-import { appGroup, appId, DEFAULT_APP_ID } from "./app-id.ts";
+import { APP_GROUP_PLIST_KEY, APP_ID_PATTERN, appGroup, appId, DEFAULT_APP_ID } from "./app-id.ts";
 import {
   applyAppEntitlements,
   CRITICAL_ALERTS_ENTITLEMENT,
@@ -128,10 +128,28 @@ describe("the app's identifiers", () => {
     expect(appGroup("com.acme.brigade")).toBe(GROUP);
   });
 
-  test("an id iOS or Android would refuse stops the build", () => {
-    for (const id of ["brigade", "com.acme-corp.brigade", "com.1acme.brigade", "com..brigade"]) {
+  test("an id either store would refuse stops the build", () => {
+    const refused = [
+      "brigade",
+      "com.acme-corp.brigade", // Android: no `-`
+      "com.acme_corp.brigade", // Apple: no `_`
+      "com.1acme.brigade", // Android: each part starts with a letter
+      "com..brigade",
+    ];
+    for (const id of refused) {
       expect(() => appId({ BRIGADE_APP_ID: id })).toThrow(/BRIGADE_APP_ID/);
     }
+    expect(appId({ BRIGADE_APP_ID: "com.Acme2.brigade" })).toBe("com.Acme2.brigade");
+  });
+
+  test("setup:relay's --bundle-id and scripts/lib/mobile.mjs have the same rule", () => {
+    const copy = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
+    expect(copy("../../relay/scripts/setup-relay/flow.ts")).toContain(
+      `const BUNDLE_ID = ${APP_ID_PATTERN.toString()};`,
+    );
+    expect(copy("../../../scripts/lib/mobile.mjs")).toContain(
+      `const APP_ID_PATTERN = ${APP_ID_PATTERN.toString()};`,
+    );
   });
 
   test("the Swift code reads the App Group from Info.plist", () => {
@@ -139,9 +157,12 @@ describe("the app's identifiers", () => {
       new URL("../modules/brigade-push/ios/BrigadePushCrypto.swift", import.meta.url),
       "utf8",
     );
-    expect(crypto).toContain(
-      `forInfoDictionaryKey: "BrigadeAppGroup") as? String ?? "${appGroup(DEFAULT_APP_ID)}"`,
+    // The store app's group is only the fallback (the hand-run Swift test), with a warning in the log.
+    expect(crypto).toContain(`forInfoDictionaryKey: "${APP_GROUP_PLIST_KEY}") as? String`);
+    expect(crypto).toMatch(
+      /Logger\(subsystem: "app\.freecorps\.brigade", category: "app-group"\)\.warning\(/,
     );
+    expect(crypto).toContain(`return "${appGroup(DEFAULT_APP_ID)}"`);
   });
 });
 

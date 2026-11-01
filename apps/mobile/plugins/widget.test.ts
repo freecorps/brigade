@@ -109,11 +109,13 @@ test("the Swift copy of the widget's decisions keeps the keys and staleness the 
     expect(swift).toContain(key);
     expect(app).toContain(key);
   }
-  // The App Group comes from Info.plist; the literal is only the store app's fallback.
+  // The App Group comes from Info.plist; the literal is only the store app's fallback, with a warning in the log.
   for (const source of [swift, app]) {
-    expect(source).toContain(
-      `forInfoDictionaryKey: "${APP_GROUP_PLIST_KEY}") as? String ?? "${appGroup(DEFAULT_APP_ID)}"`,
+    expect(source).toContain(`forInfoDictionaryKey: "${APP_GROUP_PLIST_KEY}") as? String`);
+    expect(source).toMatch(
+      /Logger\(subsystem: "app\.freecorps\.brigade", category: "app-group"\)\.warning\(/,
     );
+    expect(source).toContain(`return "${appGroup(DEFAULT_APP_ID)}"`);
   }
   // Every key the views look up is generated.
   const views = readFileSync(

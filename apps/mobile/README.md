@@ -221,8 +221,9 @@ publishing (App Store, Google Play, TestFlight, an MDM or an internal store) is 
 app ships (RFC 0015 "Order of work" step 5):
 
 - **Its own identifiers.** Set `BRIGADE_APP_ID` at build time (and for `vp run mobile:install`, which launches the
-  app by it): the bundle id and Android package, `app.freecorps.brigade` when unset (`plugins/app-id.ts`; a reverse
-  DNS id Android also accepts, so no `-`). Everything else follows it: the App Group the Notification Service
+  app by it): the bundle id and Android package, `app.freecorps.brigade` when unset (`plugins/app-id.ts`). It must
+  suit both stores: two or more parts of letters and digits, each starting with a letter (no `-`, which Android
+  refuses, and no `_`, which Apple refuses); `vp run setup:relay --bundle-id` takes the same. Everything else follows it: the App Group the Notification Service
   Extension and the widget share with the app is `group.<BRIGADE_APP_ID>`, which the plugins put in the entitlements
   and in each target's Info.plist (`BrigadeAppGroup`, read by the Swift code), and the extensions' bundle ids are
   `<bundle id>.NotificationService` and `<bundle id>.Widget`. For EAS builds, set it as an environment variable of

@@ -3,12 +3,20 @@
 // `widgetState` and `widgetTimeline` there, which are tested in CI; the two must agree. No network, no credentials:
 // only times walked with the clock.
 import Foundation
+import os
 
 /// The App Group keys, as the app's module writes them.
 enum WidgetStore {
-  /// `group.<bundle id>`, from the widget's Info.plist (plugins/widget.ts); the store app's group without it.
-  static let appGroup =
-    Bundle.main.object(forInfoDictionaryKey: "BrigadeAppGroup") as? String ?? "group.app.freecorps.brigade"
+  /// `group.<bundle id>`, from the widget's Info.plist (plugins/widget.ts); the store app's group without it, with a
+  /// warning.
+  static let appGroup: String = {
+    if let group = Bundle.main.object(forInfoDictionaryKey: "BrigadeAppGroup") as? String, !group.isEmpty {
+      return group
+    }
+    Logger(subsystem: "app.freecorps.brigade", category: "app-group").warning(
+      "BrigadeAppGroup is missing from the widget's Info.plist: using the store app's group.app.freecorps.brigade")
+    return "group.app.freecorps.brigade"
+  }()
   static let snapshotKey = "widget.snapshot"
   static let localeKey = "widget.locale"
 

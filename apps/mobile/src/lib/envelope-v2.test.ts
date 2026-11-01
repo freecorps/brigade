@@ -131,6 +131,10 @@ describe("what a v2 page decides", () => {
     );
     // Only this push's own new call is ended: a repeat never ends a call an earlier page rang.
     expect(receive).toContain("if case .new = kind { endNotAPage(id) }");
+    // A call that opened and was refused (wrong origin, not paired) is no louder than it sealed either.
+    expect(receive).toMatch(
+      /if let urgency = BrigadePushCrypto\.fallbackUrgency\(for: error\), urgency != "page", case \.new = kind \{\s*endNotAPage\(id\)/,
+    );
     // Ended once CallKit has it, from the report's success; refused by CallKit, the fallback text, not a page.
     expect(callCenter).toMatch(
       /if self\.calls\[call\.id\]\?\.notAPage == true \{\s*self\.finishNotAPage\(call\.id\)/,

@@ -217,6 +217,12 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
       log.info("voip push decrypted")
     } catch {
       log.error("voip push not decrypted: \(String(describing: error), privacy: .public)")
+      // Opened, then refused (another instance's key, or an instance this phone is not paired with): no louder than
+      // it sealed, as the extension and Android do. Below a page it ends at once; a sealed page keeps ringing under
+      // the fallback name. Nothing opened (unknown key, AEAD, malformed, expired): it rings under the fallback name.
+      if let urgency = BrigadePushCrypto.fallbackUrgency(for: error), urgency != "page", case .new = kind {
+        endNotAPage(id)
+      }
     }
   }
 

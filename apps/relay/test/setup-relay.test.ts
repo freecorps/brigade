@@ -438,10 +438,15 @@ describe("Freecorps' relay", () => {
     expect(perIp.message).toMatch(/limiting calls from this address: wait 60 seconds/);
   });
 
-  test("relay unreachable: says so and sets nothing", async () => {
+  test("relay unreachable: says so, and neither sets nor saves anything, however often it is run", async () => {
     const h = harness({ unreachable: true });
-    const stop = await stopped(h.run(FREECORPS));
-    expect(stop.message).toMatch(/Could not reach the relay at https:\/\/relay.freecorps.test/);
+    for (let run = 0; run < 2; run++) {
+      const stop = await stopped(h.run(FREECORPS));
+      expect(stop.message).toMatch(/Could not reach the relay at https:\/\/relay.freecorps.test/);
+      expect(stop.message).toMatch(/Nothing was made or changed/);
+    }
+    // Checked before the key is made: no key file left per try.
+    expect(h.keyFiles()).toEqual([]);
     expect(h.commands.filter((c) => c.args[1] === "bulk")).toEqual([]);
   });
 
@@ -636,6 +641,22 @@ describe("your own relay", () => {
     );
     expect(h.out()).toMatch(/Bind the relay to the API as RELAY/);
     expect(h.leaks()).toEqual([]);
+  });
+
+  test("run again on a relay with a topic, it says which topic it sets (a changed bundle id cannot be seen)", async () => {
+    const h = harness({
+      files: OWN_FILES,
+      secrets: { "brigade-relay": ["BRIGADE_OWN_RELAY", "RELAY_APNS_TOPIC", "RELAY_CLOSED"] },
+    });
+    expect(await h.run({ ...OWN, bundleId: "com.acme.pager" })).toBe(0);
+    expect(h.out()).toMatch(
+      /brigade-relay's topic is set to com\.acme\.pager \(RELAY_APNS_TOPIC\): an app with another bundle id is no longer paged through it/,
+    );
+    expect(h.secrets.get("brigade-relay")?.get("RELAY_APNS_TOPIC")).toBe("com.acme.pager");
+    // A first setup has no topic to change, and says nothing about one.
+    const first = harness({ files: OWN_FILES });
+    expect(await first.run(OWN)).toBe(0);
+    expect(first.out()).not.toMatch(/topic is set to/);
   });
 
   test("run again, it keeps the relay's handle and tag keys", async () => {
@@ -1021,7 +1042,8 @@ describe("an own relay that stops halfway keeps paging", () => {
     [
       "the deploy",
       () => (c) => c.args[0] === "deploy",
-      /Deploying brigade-relay failed.*The API is unchanged/s,
+      // The secrets went on before the deploy, and a secret write is live: said, not "as before".
+      /Deploying brigade-relay failed.*The API is unchanged\. brigade-relay may already run with this run's secrets \(topic com\.acme\.brigade, closed registration\)/s,
     ],
     [
       "the API's secrets",
@@ -1183,7 +1205,7 @@ describe("an own relay's provider credentials", () => {
       failing: (c) => c.args[0] === "deploy",
     });
     const stop = await stopped(h.run({ ...OWN, replaceCredentials: true }));
-    expect(stop.message).toMatch(/brigade-relay's APNS_KEY, .* were replaced: if they are wrong/);
+    expect(stop.message).toMatch(/Its APNS_KEY, .* were replaced: if they are wrong/);
     expect(stop.message).not.toMatch(/pages go out as they did before/);
     expect(h.secrets.get("brigade-relay")?.get("APNS_KEY")).toBe(APNS_KEY.trim());
   });

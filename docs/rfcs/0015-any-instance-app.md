@@ -414,7 +414,8 @@ does it.
   release mints handles (step 4). Its public address is `https://relay.brigade.freecorps.com.br`
   (`FREECORPS_RELAY_URL`, the default; `--relay-url` or `BRIGADE_RELAY_URL` overrides it). The Custom Domain is
   attached to `brigade-relay` in the Cloudflare dashboard, not in wrangler.jsonc, so a deploy creates no route; until
-  it is attached (Q31) the script stops with "Could not reach the relay".
+  it is attached (Q31) the script stops with "Could not reach the relay": it asks the relay's `/health` before it makes
+  the instance key, so a run that cannot reach it leaves no key file.
 - **Your own relay:** also needs a hostname on a zone of the account, deployed as the relay's custom domain (waited
   for, at most 5 minutes), since phones and the registration reach it there. It refuses a relay Worker it did not set
   up (no `BRIGADE_OWN_RELAY` marker secret; Freecorps' own, say) without `--take-over-relay`. It keeps the relay's
@@ -424,7 +425,8 @@ does it.
   until it mints handles (step 4). Since only names can be read, a marker set on both Workers in the same step as the
   token (`BRIGADE_SEND_PAIR_<id>`) shows the two tokens match: with the same marker on both they are kept; otherwise
   a new token and marker go on both only after the registration, one right after the other, so a run that stops at any
-  step (build, secrets, deploy, the domain, the registration) leaves the API as it was, and the next run puts tokens
+  step (build, secrets, deploy, the domain, the registration) leaves the API as it was (not the relay, whose secrets
+  are live once set, which a stop then says), and the next run puts tokens
   that drifted apart right. The admin token
   is deleted once the instance is registered. The topic and closed registration are secrets set before the deploy,
   `RELAY_APNS_TOPIC` (the company's bundle id; it takes precedence over the `APNS_TOPIC` var) and `RELAY_CLOSED=1`,

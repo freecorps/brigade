@@ -509,8 +509,9 @@ Workers of that environment (default production). It asks which relay, then:
   sends through that binding before `RELAY_URL`, to a relay that does not know this instance: remove it and deploy the
   API again. The script reads those files and says when the binding is there. Freecorps' relay is
   `https://relay.brigade.freecorps.com.br`, the default; `--relay-url` (or `BRIGADE_RELAY_URL`) points at another
-  (a test relay, say). Until its domain is attached (docs/open-questions.md Q31) the script stops with "Could not
-  reach the relay" and changes nothing.
+  (a test relay, say). The script asks the relay's `/health` before it makes the instance key, so until its domain is
+  attached (docs/open-questions.md Q31) it stops there with "Could not reach the relay": no key file, nothing
+  changed (it has only read the API's secret names), however often it is run.
 - **Your own relay:** says first that only the company's build can be paged, checks the prerequisites (and stops if any
   is missing; the APNs key must be an EC P-256 key and the service account's an RSA key, checked locally), then:
   1. reads the relay Worker's secret names. A Worker that exists but was not set up by this script (no
@@ -537,7 +538,10 @@ Workers of that environment (default production). It asks which relay, then:
   both, the token is kept, so a rerun opens no gap. Otherwise (no marker, different ones, a run that stopped in
   between, a token set by hand) both get a new token and marker, one right after the other, after the registration.
   Change `RELAY_SEND_TOKEN` by hand only on both Workers, and delete their markers then. A run that stops before step
-  5 leaves the API as it was. The API reaches the relay through the `RELAY` binding the production build already has
+  5 leaves the API as it was, but not the relay: its secrets from step 2 (the topic and closed registration included)
+  are live as soon as they are set, so a stop after them says so, and running again finishes. The topic follows
+  `--bundle-id` on every run (only secret names can be read, so a changed one cannot be told apart; the script says
+  which topic it sets). The API reaches the relay through the `RELAY` binding the production build already has
   (dev: `services` in wrangler.jsonc): build and deploy the API again.
 
 - **Not now:** changes nothing.

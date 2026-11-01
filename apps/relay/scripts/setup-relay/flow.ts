@@ -248,6 +248,8 @@ async function freecorps(options: Options, deps: Deps): Promise<number> {
   }
 
   const contact = await contactAddress(options, deps);
+  // Before the key: a relay that cannot be reached (its domain not attached yet, say) leaves no key file behind.
+  await reachRelay(deps, relay);
   const key = await instanceKey(options, deps);
 
   // The emailed code: asked for unless this run finishes an earlier one (`--code`).
@@ -542,10 +544,25 @@ async function ownRelay(options: Options, deps: Deps): Promise<number> {
   if (keepSendToken)
     io.print(`${relayWorker} and the API keep their RELAY_SEND_TOKEN (same pair).`);
 
-  const unchanged =
-    live.length > 0 && replace
-      ? `The API is unchanged, but ${relayWorker}'s ${live.join(", ")} were replaced: if they are wrong, pages through it fail until they are fixed. Run again (same flags) to finish.`
-      : "The API is unchanged, so pages go out as they did before this run; run again (same flags) to finish.";
+  // Only names can be read, so a changed bundle id cannot be told from the same one: say what the topic becomes.
+  if (known.has("RELAY_APNS_TOPIC")) {
+    io.print(
+      `${relayWorker}'s topic is set to ${needs.bundleId} (RELAY_APNS_TOPIC): an app with another bundle id is no longer paged through it.`,
+    );
+  }
+  // Each secret write is live at once (a new version of the Worker), and the topic and closed registration go on
+  // before the deploy (an older relay's vars would otherwise drop first): from there on, a stop says so.
+  const replaced = live.length > 0 && replace;
+  const unchanged = [
+    "The API is unchanged.",
+    `${relayWorker} may already run with this run's secrets (topic ${needs.bundleId}, closed registration${replaced ? `, ${live.join(", ")}` : ""}), even if what followed failed.`,
+    ...(replaced
+      ? [
+          `Its ${live.join(", ")} were replaced: if they are wrong, pages through it fail until they are fixed.`,
+        ]
+      : []),
+    "Run again (same flags) to finish.",
+  ].join(" ");
   io.print(`\nBuilding apps/relay (${options.env})…`);
   const build = await deps.run({
     tool: "vp",
@@ -1121,6 +1138,33 @@ async function deepHealth(deps: Deps, relay: string, key: Key, label: string): P
     return;
   }
   io.print(`\nRelay check: refused. ${describe(answer, null)}`);
+}
+
+/** The relay's plain `GET /health`, unsigned. Throws `Stop` unless it answers as a Brigade relay. */
+async function reachRelay(deps: Deps, relay: string): Promise<void> {
+  const nothing = "Nothing was made or changed.";
+  let response: Response;
+  try {
+    response = await deps.fetch(new URL("/health", relay), {
+      redirect: "manual",
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (error) {
+    throw new Stop(
+      `Could not reach the relay at ${relay} (${messageOf(error)}). ${nothing} Check the address and the network, then run again.`,
+      1,
+      true,
+    );
+  }
+  let body: unknown = null;
+  try {
+    body = await response.json();
+  } catch {}
+  if (!response.ok || (body as { ok?: unknown } | null)?.ok !== true) {
+    throw new Stop(
+      `${relay} does not look like a Brigade relay (GET /health answered ${response.status}). ${nothing}`,
+    );
+  }
 }
 
 /** One signed call to the relay. Throws `Stop` when the relay cannot be reached at all. */

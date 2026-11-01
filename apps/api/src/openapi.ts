@@ -341,10 +341,13 @@ const LISTED: readonly Operation[] = [
       "reasons and times, since a responder needs to know they may not be paged, and `relay`. When the watchdog " +
       "cannot answer (`503`), a member's answer still has `relay` beside `error`.",
     auth: "optional",
-    responses: answers(
-      { 200: { description: "The pipeline's state.", body: ref("PagingHealth") } },
-      { 503: ["unavailable"] },
-    ),
+    responses: {
+      200: { description: "The pipeline's state.", body: ref("PagingHealth") },
+      503: {
+        description: "The watchdog cannot answer; a member still gets `relay`.",
+        body: ref("PagingHealthUnavailable"),
+      },
+    },
   },
   {
     method: "post",
@@ -1833,6 +1836,15 @@ const SCHEMAS: Record<string, JsonSchema> = {
       },
     },
     required: ["status"],
+    additionalProperties: false,
+  },
+  PagingHealthUnavailable: {
+    type: "object",
+    properties: {
+      error: { type: "string", enum: ["unavailable"] },
+      relay: { $ref: "#/components/schemas/PagingHealth/properties/relay" },
+    },
+    required: ["error"],
     additionalProperties: false,
   },
 };

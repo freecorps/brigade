@@ -26,7 +26,14 @@ describe("parseRelay", () => {
   });
 
   test("a link is https or nothing, and only an own relay has a host or a link", () => {
-    for (const app of ["javascript:alert(1)", "http://apps.example.com", "not a url", 7]) {
+    for (const app of [
+      "javascript:alert(1)",
+      "http://apps.example.com",
+      "https://user:pass@apps.example.com/x",
+      "https://user@apps.example.com/x",
+      "not a url",
+      7,
+    ]) {
       expect(parseRelay({ kind: "own", host: null, app }), String(app)).toEqual({
         kind: "own",
         host: null,
@@ -36,6 +43,14 @@ describe("parseRelay", () => {
     expect(
       parseRelay({ kind: "freecorps", host: "relay.example.com", app: "https://apps.example.com" }),
     ).toEqual({ kind: "freecorps" });
+  });
+
+  test("a host is shown trimmed", () => {
+    expect(parseRelay({ kind: "own", host: "  relay.acme.example  ", app: null })).toEqual({
+      kind: "own",
+      host: "relay.acme.example",
+      app: null,
+    });
   });
 
   test("anything else is not said, never shown as a relay", () => {

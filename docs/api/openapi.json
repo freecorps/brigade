@@ -106,22 +106,11 @@
             }
           },
           "503": {
-            "description": "Unavailable for now: retry.",
+            "description": "The watchdog cannot answer; a member still gets `relay`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "enum": [
-                        "unavailable"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
+                  "$ref": "#/components/schemas/PagingHealthUnavailable"
                 }
               }
             }
@@ -14106,6 +14095,24 @@
         },
         "required": [
           "status"
+        ],
+        "additionalProperties": false
+      },
+      "PagingHealthUnavailable": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": [
+              "unavailable"
+            ]
+          },
+          "relay": {
+            "$ref": "#/components/schemas/PagingHealth/properties/relay"
+          }
+        },
+        "required": [
+          "error"
         ],
         "additionalProperties": false
       }

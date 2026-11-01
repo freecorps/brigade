@@ -90,15 +90,17 @@ export function parseRelay(body: unknown): RelaySetup | null {
   if (kind !== "own") return null;
   return {
     kind,
-    host: typeof host === "string" && host.trim() !== "" ? host : null,
-    // A link is shown and followed: https only, so a `javascript:` URL can never reach an href.
+    host: typeof host === "string" && host.trim() !== "" ? host.trim() : null,
+    // A link is shown and followed: https only, so a `javascript:` URL can never reach an href, and never one that
+    // carries credentials (the API drops those too, `publicOrigin`).
     app: typeof app === "string" && isHttps(app) ? app : null,
   };
 }
 
 function isHttps(raw: string): boolean {
   try {
-    return new URL(raw).protocol === "https:";
+    const url = new URL(raw);
+    return url.protocol === "https:" && url.username === "" && url.password === "";
   } catch {
     return false;
   }

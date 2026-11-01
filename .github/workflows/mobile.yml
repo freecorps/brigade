@@ -185,9 +185,9 @@ jobs:
           retention-days: 90
       # Last, after the fingerprint is recorded: the build is kept and counts as built whatever Apple says, so a
       # failed submission fails the job, visibly, without making the next run build the same native code again. The
-      # kept .ipa can be submitted by hand then (apps/mobile/README.md "Submitting"). eas.json's
-      # submit.production.ios reads the key from these environment variables; without the three secrets the step
-      # only notes that nothing was submitted, and the job is what it was before submissions.
+      # kept .ipa can be submitted by hand then (apps/mobile/README.md "Submitting"). eas.json's `ci` submit profile
+      # (production's, plus the key) reads the key from these environment variables; without the three secrets the
+      # step only notes that nothing was submitted, and the job is what it was before submissions.
       - name: Submit to TestFlight
         if: steps.fingerprint.outputs.built != 'true' && matrix.platform == 'ios'
         env:
@@ -205,5 +205,5 @@ jobs:
           trap 'rm -f "$ASC_API_KEY_PATH"' EXIT
           (umask 077 && printf '%s\n' "$ASC_API_KEY_P8" > "$ASC_API_KEY_PATH")
           unset ASC_API_KEY_P8
-          vpx "$EAS_CLI" submit --platform ios --profile production --path "$IPA" --non-interactive
+          vpx "$EAS_CLI" submit --platform ios --profile ci --path "$IPA" --non-interactive
           echo "iOS build submitted to TestFlight" >> "$GITHUB_STEP_SUMMARY"

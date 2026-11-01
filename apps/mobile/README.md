@@ -127,13 +127,13 @@ vp run mobile:install --from ~/brigade-builds/brigade-ios-preview-<commit>.ipa
   of the same team, the iOS archive can fail with "Provisioning profile … doesn't include signing certificate"
   (see spike S4).
 - **Submitting**: iOS production builds go to TestFlight. `eas.json`'s `submit.production.ios` has the App Store
-  Connect app (`ascAppId` 6829554691, "Freecorps Brigade", `app.freecorps.brigade`) and reads the API key from
-  `ASC_API_KEY_PATH`, `ASC_API_KEY_ID` and `ASC_API_KEY_ISSUER_ID`. The Mobile workflow submits each production
-  .ipa it builds when the repository secrets `ASC_API_KEY_P8`, `ASC_API_KEY_ID` and `ASC_API_ISSUER_ID` are all
-  set; without them it only keeps the build. By hand, from this directory, with the three variables set (the .p8's
-  path, its key id and issuer id; unset, eas-cli rejects the profile as empty): `bunx eas-cli@latest submit
-  --platform ios --profile production --path <artifact>`. The Play Store submission waits for roadmap Phase 4 (after the CLA), with a Play service account in
-  `submit.production.android`.
+  Connect app (`ascAppId` 6829554691, "Freecorps Brigade", `app.freecorps.brigade`); the `ci` submit profile
+  extends it with an API key read from `ASC_API_KEY_PATH`, `ASC_API_KEY_ID` and `ASC_API_KEY_ISSUER_ID`. The Mobile
+  workflow submits each production .ipa it builds with `--profile ci` when the repository secrets `ASC_API_KEY_P8`,
+  `ASC_API_KEY_ID` and `ASC_API_ISSUER_ID` are all set; without them it only keeps the build. By hand, from this
+  directory: `bunx eas-cli@latest submit --platform ios --profile production --path <artifact>`, with the key EAS
+  keeps for the app or one it asks for (or `--profile ci` with the three variables set). The Play Store submission
+  waits for roadmap Phase 4 (after the CLA), with a Play service account in `submit.production.android`.
 - **A cloud build** (`bunx eas-cli@latest build --platform <platform> --profile <profile>`) is only for when EAS
   must create or regenerate credentials, such as a new distribution certificate or keystore. A newly registered
   iPhone should not need one: a local build goes through the same credentials step, which updates the ad hoc

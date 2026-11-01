@@ -55,6 +55,32 @@ export function relayView(
 }
 
 /**
+ * `load` once per key while it answers something: an answer that said nothing (`unknown`) or a rejection is dropped,
+ * so the next call asks again instead of keeping the failure for the whole launch.
+ */
+export function relayCache(load: (key: string) => Promise<RelayView>) {
+  const kept = new Map<string, Promise<RelayView>>();
+  return (key: string): Promise<RelayView> => {
+    let view = kept.get(key);
+    if (!view) {
+      const made = load(key).then(
+        (read) => {
+          if (read.kind === "unknown" && kept.get(key) === made) kept.delete(key);
+          return read;
+        },
+        (error: unknown) => {
+          if (kept.get(key) === made) kept.delete(key);
+          throw error;
+        },
+      );
+      view = made;
+      kept.set(key, view);
+    }
+    return view;
+  };
+}
+
+/**
  * A row's paging state: `on`; `pending` (setting up); `not-paged` (`detail` says why); `foreign` (only the instance's
  * own app is paged); `no-relay` (it cannot page this phone).
  */
@@ -223,6 +249,34 @@ export function removal(
     onCall,
     unknown: onCall.length === 0 && !state.workspaces.some((one) => one.oncall !== undefined),
   };
+}
+
+/**
+ * Whether the phone keeps a session at an instance, from its stored cookie (`read`, the auth client's `getCookie`):
+ * `unknown` when it cannot be read (secure storage locked or failing), which removing treats as maybe signed in, so
+ * an instance that may still page the phone is never dropped without its sign-out.
+ */
+export async function keptSession(
+  read: () => Promise<string>,
+): Promise<"kept" | "none" | "unknown"> {
+  try {
+    return (await read()) === "" ? "none" : "kept";
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * What removing does after the sign-out: `removed` only when the session was known (kept and signed out, or none) and
+ * nothing is left to finish at that instance; `kept` when a sign-out is left to finish there (the instance stays
+ * listed, signed out, until it is); `failed` when the session could not be read, so it may still be live.
+ */
+export function removalOutcome(
+  session: "kept" | "none" | "unknown",
+  leftover: "none" | "finished" | "pending",
+): "removed" | "kept" | "failed" {
+  if (session === "unknown") return "failed";
+  return leftover === "pending" ? "kept" : "removed";
 }
 
 /**

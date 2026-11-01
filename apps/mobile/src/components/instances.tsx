@@ -35,9 +35,12 @@ export function useRelays(list: Instances): Record<string, RelayView> {
   useEffect(() => {
     let live = true;
     for (const instance of list.instances) {
-      void relayOf(instance).then((view) => {
-        if (live) setRelays((current) => ({ ...current, [instance.id]: view }));
-      });
+      // A failure leaves that instance's relay unknown; the cache dropped it, so the next screen to show it asks again.
+      void relayOf(instance)
+        .catch((): RelayView => ({ kind: "unknown" }))
+        .then((view) => {
+          if (live) setRelays((current) => ({ ...current, [instance.id]: view }));
+        });
     }
     return () => {
       live = false;

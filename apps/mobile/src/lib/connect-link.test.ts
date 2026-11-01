@@ -1,5 +1,13 @@
 import { expect, test } from "vite-plus/test";
-import { connectParams, markScanned, parseConnectLink, queryOf, takeScanned } from "./connect-link";
+import {
+  askFor,
+  connectParams,
+  linkKey,
+  markScanned,
+  parseConnectLink,
+  queryOf,
+  takeScanned,
+} from "./connect-link";
 
 const CODE = "AbCdEfGhIjKlMnOpQrSt_-";
 
@@ -75,6 +83,26 @@ test("only the scanner's own link skips the Continue, once", () => {
   // Spent: the same link opened again from outside asks first.
   expect(takeScanned(link)).toBe(false);
   expect(takeScanned(undefined)).toBe(false);
+});
+
+test("an outside link asks before any request, each link again on the same screen", () => {
+  const read = (server: string) =>
+    server.startsWith("https://") ? new URL(server).origin : undefined;
+  const first = { server: "https://a.example", code: CODE };
+  const second = { server: "https://evil.example" };
+  expect(askFor(first, false, null, read)).toEqual({ host: "a.example" });
+  // Approved: the first goes on.
+  const approved = linkKey(first);
+  expect(askFor(first, false, approved, read)).toBeUndefined();
+  // A second outside link opened on the same screen asks again, approval or not.
+  expect(askFor(second, false, approved, read)).toEqual({ host: "evil.example" });
+  expect(askFor({ server: "https://a.example" }, false, approved, read)).toEqual({
+    host: "a.example",
+  });
+  // The scanner's own link, and an address that does not read (refused with no request), go on.
+  expect(askFor(second, true, null, read)).toBeUndefined();
+  expect(askFor({ server: "not an address" }, false, null, read)).toBeUndefined();
+  expect(askFor(undefined, false, null, read)).toBeUndefined();
 });
 
 test("queries decode, and a bad escape is skipped", () => {

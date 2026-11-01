@@ -91,6 +91,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "sign_out_first" | "Sign out of it, then continue" |
 * | "sign_out_first_hint" | "Signs you out of {host} on this phone first, as Sign out does, so it stops paging you here. Then this code signs you in." |
 * | "ended_already" | "You're already signed in to {host} on this phone, so this sign-in wasn't used. It's listed in the account's sessions on the dashboard, where you can sign it ..." |
+* | "add_failed" | "Couldn't add this instance on this phone. Try again." |
 * | * | "Instances" |
 *
 * @param {Mobile_InstancesInputs} inputs
@@ -181,6 +182,7 @@ export const mobile_instances = /** @type {((inputs: Mobile_InstancesInputs, opt
 		if (i?.part === "sign_out_first") return /** @type {LocalizedString} */ (`Sair dela e continuar`);
 		if (i?.part === "sign_out_first_hint") return /** @type {LocalizedString} */ (`Primeiro tira você de ${i?.host} neste telefone, como Sair faz, para que ela deixe de chamar você aqui. Depois este código conecta você.`);
 		if (i?.part === "ended_already") return /** @type {LocalizedString} */ (`Você já está conectado a ${i?.host} neste telefone, então esta entrada não foi usada. Ela aparece nas sessões da conta no painel, onde você pode encerrá-la.`);
+		if (i?.part === "add_failed") return /** @type {LocalizedString} */ (`Não foi possível adicionar esta instância neste telefone. Tente de novo.`);
 		return /** @type {LocalizedString} */ (`Instâncias`)
 	}
 	{
@@ -265,6 +267,7 @@ export const mobile_instances = /** @type {((inputs: Mobile_InstancesInputs, opt
 		if (i?.part === "sign_out_first") return /** @type {LocalizedString} */ (`Sign out of it, then continue`);
 		if (i?.part === "sign_out_first_hint") return /** @type {LocalizedString} */ (`Signs you out of ${i?.host} on this phone first, as Sign out does, so it stops paging you here. Then this code signs you in.`);
 		if (i?.part === "ended_already") return /** @type {LocalizedString} */ (`You're already signed in to ${i?.host} on this phone, so this sign-in wasn't used. It's listed in the account's sessions on the dashboard, where you can sign it out.`);
+		if (i?.part === "add_failed") return /** @type {LocalizedString} */ (`Couldn't add this instance on this phone. Try again.`);
 		return /** @type {LocalizedString} */ (`Instances`)
 	}
 });

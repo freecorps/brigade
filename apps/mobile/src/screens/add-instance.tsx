@@ -68,6 +68,11 @@ export function AddInstance() {
         return;
       }
       await open(checked.origin);
+    } catch {
+      // Adding it failed (secure storage locked): said, and the address stays to try again.
+      const text = say("add_failed");
+      setProblem({ text });
+      AccessibilityInfo.announceForAccessibility(text);
     } finally {
       checking.current = false;
       setBusy(false);
@@ -134,7 +139,8 @@ export function AddInstance() {
               {
                 label: instanceLabel(defaultOrigin!),
                 note: say("default_hint"),
-                onPress: () => void open(defaultOrigin!),
+                onPress: () =>
+                  void open(defaultOrigin!).catch(() => setProblem({ text: say("add_failed") })),
               },
             ]
           : []),

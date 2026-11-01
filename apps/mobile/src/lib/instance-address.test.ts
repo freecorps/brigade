@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import {
+  checkSafely,
   hostOf,
   instanceLabel,
   judgeAddress,
@@ -9,7 +10,7 @@ import {
   readAddress,
   readAddressConfig,
 } from "./instance-address";
-import { FREECORPS_BRIGADE, FREECORPS_RELAY } from "./relay";
+import { appLink, FREECORPS_BRIGADE, FREECORPS_RELAY } from "./relay";
 
 const RELAY = { origin: FREECORPS_RELAY, instance: "ins_aaaaaaaaaaaaaaaaaaaaaa" };
 const store = { appVersion: "0.1.0", thisBuild: FREECORPS_RELAY, isDefault: false };
@@ -166,6 +167,38 @@ test("an app older than the instance supports: update the app", () => {
   expect(judgeAddress(foreign, store).kind).toBe("update-app");
   // A minApp that does not read never blocks.
   expect(readAddressConfig(200, { brigade: { minApp: "soon" } })).toEqual({ kind: "brigade" });
+});
+
+test("the own app's link: https only, never with credentials", () => {
+  for (const app of [
+    "https://user:pass@apps.acme.example/brigade",
+    "https://user@apps.acme.example",
+    "http://apps.acme.example",
+    "javascript:alert(1)",
+    "https://",
+  ]) {
+    const config = readAddressConfig(200, {
+      brigade: {},
+      relay: { origin: "https://relay.acme.example", app },
+    });
+    expect(config.kind === "brigade" && config.relay?.app, app).toBeFalsy();
+    expect(appLink(app), app).toBeUndefined();
+  }
+  expect(appLink("https://apps.acme.example/brigade")).toBe("https://apps.acme.example/brigade");
+  expect(appLink(42)).toBeUndefined();
+});
+
+test("a check that throws answers as not reached, never as nothing", async () => {
+  const failing = async (): Promise<never> => {
+    throw new Error("Keychain locked");
+  };
+  expect(await checkSafely(failing, "brigade.example.com", false)).toEqual({
+    origin: "https://brigade.example.com",
+    verdict: { kind: "unreachable" },
+  });
+  expect(await checkSafely(failing, "not an address", false)).toEqual({ problem: "invalid" });
+  const fine = { origin: "https://b.example", verdict: { kind: "no-relay" as const } };
+  expect(await checkSafely(async () => fine, "b.example", false)).toBe(fine);
 });
 
 test("versions", () => {

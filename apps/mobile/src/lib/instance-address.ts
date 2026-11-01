@@ -2,7 +2,7 @@
 // dashboard origin, and what the instance's `GET /api/config` says about it before anyone signs in there. Pure, so it
 // is tested in Node; src/screens/connect.tsx asks it with fetch and this build's relay.
 import { originOf } from "@/lib/instances";
-import { FREECORPS_BRIGADE, RELAY_TIMEOUT_MS } from "@/lib/relay";
+import { appLink, FREECORPS_BRIGADE, RELAY_TIMEOUT_MS } from "@/lib/relay";
 
 /** Why an address is not one the app goes to. */
 export type AddressProblem =
@@ -91,7 +91,7 @@ export function readAddressConfig(status: number, body: unknown): AddressConfig 
     if (relayOrigin !== undefined) {
       relayOf = {
         origin: relayOrigin,
-        ...(typeof app === "string" && app.startsWith("https://") ? { app } : {}),
+        ...(appLink(app) ? { app: appLink(app) } : {}),
       };
     }
   }
@@ -170,6 +170,28 @@ export function judgeAddress(
     };
   }
   return { kind: "ok", relay: config.relay.origin };
+}
+
+/** What checking an address answers (src/lib/instance-clients.ts `checkInstance`). */
+export type AddressCheck =
+  | { origin: string; verdict: AddressVerdict }
+  | { problem: AddressProblem };
+
+/**
+ * `check` that never throws: a failure anywhere in it (storage, this build's relay, a bug) answers as an instance not
+ * reached, so the screen says "Couldn't reach" and the member can try again, rather than waiting on nothing.
+ */
+export async function checkSafely(
+  check: () => Promise<AddressCheck>,
+  input: string,
+  dev: boolean,
+): Promise<AddressCheck> {
+  try {
+    return await check();
+  } catch {
+    const read = readAddress(input, dev);
+    return "problem" in read ? read : { origin: read.origin, verdict: { kind: "unreachable" } };
+  }
 }
 
 /** `1.2.3` as numbers; undefined for anything else (a pre-release suffix is ignored). */

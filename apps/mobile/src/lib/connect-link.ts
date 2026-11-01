@@ -50,8 +50,26 @@ export function parseConnectLink(value: string): ConnectLink | undefined {
 
 let scanned: string | undefined;
 
-function linkKey(link: ConnectLink): string {
+/** One link's identity: its address and code. */
+export function linkKey(link: ConnectLink): string {
   return `${link.server}\n${link.code ?? ""}`;
+}
+
+/**
+ * Whether the connect screen must ask before any request for `link`, and the host to name: a link from outside the
+ * app (`trusted` false) that the member has not approved yet (`approved`, the key of the link they tapped Continue
+ * for). Re-derived for every link the screen shows, so a second outside link on the same screen asks again. Undefined
+ * when it may go on: trusted, approved, or an address that does not read (refused with no request).
+ */
+export function askFor(
+  link: ConnectLink | undefined,
+  trusted: boolean,
+  approved: string | null,
+  originOf: (server: string) => string | undefined,
+): { host: string } | undefined {
+  if (!link || trusted || approved === linkKey(link)) return undefined;
+  const origin = originOf(link.server);
+  return origin === undefined ? undefined : { host: origin.replace(/^[a-z]+:\/\//i, "") };
 }
 
 /**

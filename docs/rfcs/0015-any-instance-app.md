@@ -302,7 +302,7 @@ version 2 for a device registered with `envelope: 2`, version 1 for any other; t
   again); not a Brigade (any other answer, or JSON with neither `brigade` nor the `signUp` every Brigade serves, so an
   instance from before step 3 still counts); app older than `brigade.minApp` ("Update the app", checked before the
   relay; a version that does not read never blocks); `relay.origin` not this build's ("This instance uses its own app
-  build", with `relay.app`'s link when there is one; never for the build's default instance, nor while this build's
+  build", with `relay.app`'s link when it is an `https://` URL without credentials; never for the build's default instance, nor while this build's
   relay is not known); no `relay` ("This instance cannot page this phone" on the confirm and sign-in screens and in
   its details; not for the build's default instance, which pages with the raw tokens). At 5 instances adding says so.
 - **The link and the scanner.** `brigade://connect?server=…[&code=…]` (also `brigade:///connect`) opens
@@ -334,7 +334,9 @@ version 2 for a device registered with `envelope: 2`, version 1 for any other; t
   on the phone (`oncall` in its workspace list), have them on call now; with no shifts seen there it warns in general,
   as it does for an instance whose session was not read yet (loading, offline: maybe signed in).
   An instance whose sign-out the server did not hear stays listed, signed out, until its kept sign-out is finished
-  (else nothing would finish it and it would keep paging the phone); removing it works then. The last instance is
+  (else nothing would finish it and it would keep paging the phone); removing it works then. So does one whose
+  stored session cannot be read (secure storage failing): its sign-out is tried, and it stays listed ("Couldn't
+  remove"), since it may still be live there. The last instance is
   never removed, the build's default included: signing out is what is left, and the app would have nothing to sign
   in to.
 - **Tests:** apps/mobile `instance-address.test.ts` (each answer), `connect-link.test.ts`, `switcher.test.ts`
@@ -457,7 +459,9 @@ above (docs/api/openapi.json). As built:
 - **A link from outside the app asks first.** Any app or web page can open `brigade://connect` with any address, so
   a link the system opens shows the host and "Connect to <host>?" and sends no request, not even `GET /api/config`,
   before the member taps Continue. The in-app scanner's link (marked by the scanner, once, `takeScanned`) and a typed
-  address go straight to the checks: the member already chose to reach that address.
+  address go straight to the checks: the member already chose to reach that address. The question is derived for
+  each link the screen shows (`askFor`): Continue approves that link only, so another outside link opened on the same
+  screen asks again.
 - The link's address is checked as a typed one is (section 5), then "Sign in to <host>?" with "Continue only if you
   showed this code on <host>'s dashboard yourself, just now"; nothing is claimed before the member confirms. A phone
   with 5 instances says so before spending the code.

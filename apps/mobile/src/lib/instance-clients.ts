@@ -16,9 +16,9 @@ import type { DeviceDeps } from "@/lib/device";
 import {
   judgeAddress,
   loadAddressConfig,
+  checkSafely,
   readAddress,
-  type AddressProblem,
-  type AddressVerdict,
+  type AddressCheck,
 } from "@/lib/instance-address";
 import {
   activeInstance,
@@ -35,7 +35,7 @@ import { pendingFilesFor } from "@/lib/pending-files";
 import { phoneWorkspacesAt } from "@/lib/phone";
 import type { PhoneWorkspacesStore } from "@/lib/phone-workspaces";
 import { buildRelay, loadConfig, withHandle, type InstanceConfig } from "@/lib/relay";
-import { instanceBoard, relayView, type RelayView } from "@/lib/switcher";
+import { instanceBoard, relayCache, relayView, type RelayView } from "@/lib/switcher";
 import { serverAt, type Server } from "@/lib/sync";
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -123,26 +123,18 @@ export function thisBuildRelay(): Promise<string | undefined> {
  */
 export const board = instanceBoard();
 
-const relays = new Map<string, Promise<RelayView>>();
+const relays = relayCache(async (key) => {
+  const [id, origin] = key.split(" ") as [string, string];
+  const [config, build] = await Promise.all([configOf(serverAt(origin)), thisBuildRelay()]);
+  return relayView(config, build, id === DEFAULT_INSTANCE);
+});
 
 /**
  * Which relay the instance at `instance` pages through (src/lib/switcher.ts `relayView`), read once per launch and
- * origin; asked again after an answer that said nothing (`unknown`).
+ * origin; asked again after an answer that said nothing (`unknown`) or a failure.
  */
 export function relayOf(instance: Instance): Promise<RelayView> {
-  const key = `${instance.id} ${instance.origin}`;
-  let view = relays.get(key);
-  if (!view) {
-    view = Promise.all([configOf(serverAt(instance.origin)), thisBuildRelay()]).then(
-      ([config, build]) => {
-        const read = relayView(config, build, instance.id === DEFAULT_INSTANCE);
-        if (read.kind === "unknown") relays.delete(key);
-        return read;
-      },
-    );
-    relays.set(key, view);
-  }
-  return view;
+  return relays(`${instance.id} ${instance.origin}`);
 }
 
 /**
@@ -150,23 +142,29 @@ export function relayOf(instance: Instance): Promise<RelayView> {
  * (`http://` only on a private address in a development build), its `/api/config` asked, and judged for this app's
  * version and this build's relay.
  */
-export async function checkInstance(
-  input: string,
-): Promise<{ origin: string; verdict: AddressVerdict } | { problem: AddressProblem }> {
-  const read = readAddress(input, typeof __DEV__ !== "undefined" && __DEV__);
-  if ("problem" in read) return read;
-  const [config, build] = await Promise.all([
-    loadAddressConfig(read.origin, (url, init) => fetch(url, init)),
-    thisBuildRelay(),
-  ]);
-  return {
-    origin: read.origin,
-    verdict: judgeAddress(config, {
-      appVersion: Constants.expoConfig?.version,
-      thisBuild: build,
-      isDefault: read.origin === defaultOrigin,
-    }),
-  };
+export function checkInstance(input: string): Promise<AddressCheck> {
+  const dev = typeof __DEV__ !== "undefined" && __DEV__;
+  // Never throws: a failure reads as "Couldn't reach", which the screens say (`checkSafely`).
+  return checkSafely(
+    async () => {
+      const read = readAddress(input, dev);
+      if ("problem" in read) return read;
+      const [config, build] = await Promise.all([
+        loadAddressConfig(read.origin, (url, init) => fetch(url, init)),
+        thisBuildRelay(),
+      ]);
+      return {
+        origin: read.origin,
+        verdict: judgeAddress(config, {
+          appVersion: Constants.expoConfig?.version,
+          thisBuild: build,
+          isDefault: read.origin === defaultOrigin,
+        }),
+      };
+    },
+    input,
+    dev,
+  );
 }
 
 /**

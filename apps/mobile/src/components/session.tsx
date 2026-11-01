@@ -28,7 +28,7 @@ import {
   relayDeps,
   type InstanceClients,
 } from "@/lib/instance-clients";
-import type { InstanceState } from "@/lib/switcher";
+import { keptSession, removalOutcome, type InstanceState } from "@/lib/switcher";
 import { activeInstance } from "@/lib/instances";
 import {
   devicePresent,
@@ -521,9 +521,11 @@ export async function removeInstance(
   if (!instance || list.instances.length <= 1) return "failed";
   const clients = clientsFor(instance);
   try {
-    await signOutInstance(id, signOutShown);
-    // Anything kept from an offline sign-out there is finished now, or the instance stays.
-    if ((await finishLeftover(clients.server)) === "pending") return "kept";
+    const session = await signOutInstance(id, signOutShown);
+    // Anything kept from an offline sign-out there is finished now, or the instance stays; a session that could not
+    // be read may still be live there, so the instance stays too (src/lib/switcher.ts `removalOutcome`).
+    const outcome = removalOutcome(session, await finishLeftover(clients.server));
+    if (outcome !== "removed") return outcome;
     await SecureStore.deleteItemAsync(clients.storage.handle).catch(() => {});
     await instances.remove(id);
     board.forget(id);
@@ -536,19 +538,24 @@ export async function removeInstance(
 /**
  * Signs out of instance `id` the way the account section does, keeping it listed: the shown instance by its own
  * sign-out (`signOutShown`), any other in the background (`signOutBackground`), both taking the phone off the
- * member's workspaces there or keeping the sign-out to finish later. Nothing when no session is kept there.
+ * member's workspaces there or keeping the sign-out to finish later. Nothing when no session is kept there. Answers
+ * whether one was (`unknown`: its cookie could not be read, so it may still be live).
  */
 export async function signOutInstance(
   id: string,
   signOutShown?: () => Promise<unknown>,
-): Promise<void> {
+): Promise<"kept" | "none" | "unknown"> {
   const instance = instances.current().instances.find((one) => one.id === id);
-  if (!instance) return;
+  if (!instance) return "none";
   const clients = clientsFor(instance);
-  if (signOutShown) await signOutShown();
-  else if ((await clients.authClient.getCookie().catch(() => "")) !== "") {
-    await signOutBackground(clients);
+  if (signOutShown) {
+    await signOutShown();
+    return "kept";
   }
+  // A cookie that cannot be read may be a live session: the sign-out is tried all the same, and the caller told.
+  const session = await keptSession(() => clients.authClient.getCookie());
+  if (session !== "none") await signOutBackground(clients).catch(() => {});
+  return session;
 }
 
 /**

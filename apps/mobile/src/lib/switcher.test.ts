@@ -3,6 +3,9 @@ import { DEFAULT_INSTANCE, type Instances } from "./instances";
 import { FREECORPS_BRIGADE, FREECORPS_RELAY } from "./relay";
 import {
   instanceBoard,
+  keptSession,
+  relayCache,
+  removalOutcome,
   onCallNow,
   otherTrouble,
   relayView,
@@ -257,6 +260,38 @@ test("removal: never the last instance; others after an on-call warning", () => 
     onCall: [],
     unknown: true,
   });
+});
+
+test("the relay cache keeps answers, and drops failures and unknowns so they are asked again", async () => {
+  let calls = 0;
+  let mode: "fail" | "unknown" | "ok" = "fail";
+  const cached = relayCache(async () => {
+    calls += 1;
+    if (mode === "fail") throw new Error("offline");
+    return mode === "unknown" ? { kind: "unknown" } : { kind: "freecorps", foreign: false };
+  });
+  await expect(cached("a")).rejects.toThrow("offline");
+  mode = "unknown";
+  expect(await cached("a")).toEqual({ kind: "unknown" });
+  mode = "ok";
+  expect(await cached("a")).toEqual({ kind: "freecorps", foreign: false });
+  expect(await cached("a")).toEqual({ kind: "freecorps", foreign: false });
+  expect(calls).toBe(3);
+});
+
+test("a session that cannot be read is maybe signed in: never removed silently", async () => {
+  expect(await keptSession(async () => "better-auth.session_token=x")).toBe("kept");
+  expect(await keptSession(async () => "")).toBe("none");
+  expect(
+    await keptSession(async () => {
+      throw new Error("Keychain locked");
+    }),
+  ).toBe("unknown");
+  expect(removalOutcome("kept", "none")).toBe("removed");
+  expect(removalOutcome("none", "finished")).toBe("removed");
+  expect(removalOutcome("kept", "pending")).toBe("kept");
+  expect(removalOutcome("unknown", "none")).toBe("failed");
+  expect(removalOutcome("unknown", "pending")).toBe("failed");
 });
 
 test("the board tells its readers only of changes", () => {

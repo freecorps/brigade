@@ -11,7 +11,7 @@ import { NativeHost } from "@/components/native-host";
 import { openInstance, signOutInstance, useSessionView } from "@/components/session";
 import { SubmitButton } from "@/components/submit-button";
 import { useTheme } from "@/hooks/use-theme";
-import type { ConnectLink } from "@/lib/connect-link";
+import { askFor, linkKey, type ConnectLink } from "@/lib/connect-link";
 import { checkInstance, instances, keepSignIn, sessionAt } from "@/lib/instance-clients";
 import { hostOf, readAddress } from "@/lib/instance-address";
 import { instanceAt, MAX_INSTANCES } from "@/lib/instances";
@@ -41,16 +41,19 @@ export function Connect({ link, trusted }: { link: ConnectLink | undefined; trus
   const server = link?.server;
   const code = link?.code;
   // Opened from outside the app (any app or web page can open a `brigade://` link): nothing is asked of the address,
-  // not even its `/config`, before the member says so. The in-app scanner's own link goes straight on.
-  const [step, setStep] = useState<Step>(() => {
-    const read = server
-      ? readAddress(server, typeof __DEV__ !== "undefined" && __DEV__)
-      : undefined;
-    return !trusted && read && "origin" in read
-      ? { kind: "ask", host: hostOf(read.origin) }
-      : { kind: "checking" };
+  // not even its `/config`, before the member says so. The in-app scanner's own link goes straight on. Derived for
+  // every link the screen shows: approving one approves only that one (`approved`, its key).
+  const [approved, setApproved] = useState<string | null>(null);
+  const ask = askFor(link, trusted, approved, (value) => {
+    const read = readAddress(value, typeof __DEV__ !== "undefined" && __DEV__);
+    return "origin" in read ? read.origin : undefined;
   });
-  const [round, setRound] = useState(step.kind === "checking" ? 1 : 0);
+  const askHost = ask?.host;
+  const [step, setStep] = useState<Step>(
+    askHost !== undefined ? { kind: "ask", host: askHost } : { kind: "checking" },
+  );
+  // Bumped to check again after signing out of a session kept there.
+  const [round, setRound] = useState(0);
   const left = useRef(false);
   useEffect(() => {
     left.current = false;
@@ -60,7 +63,10 @@ export function Connect({ link, trusted }: { link: ConnectLink | undefined; trus
   }, []);
 
   useEffect(() => {
-    if (round === 0) return;
+    if (askHost !== undefined) {
+      setStep({ kind: "ask", host: askHost });
+      return;
+    }
     if (!server) {
       setStep({ kind: "refused", text: say("scan_not_brigade") });
       return;
@@ -79,8 +85,6 @@ export function Connect({ link, trusted }: { link: ConnectLink | undefined; trus
         setStep({ kind: "refused", ...refused });
         return;
       }
-      const list = instances.current();
-      const known = instanceAt(list, checked.origin);
       // From what secure storage keeps, not the session as last read: one still loading or offline counts.
       const kept = await sessionAt(checked.origin);
       if (!live) return;
@@ -88,6 +92,9 @@ export function Connect({ link, trusted }: { link: ConnectLink | undefined; trus
         setStep({ kind: "already", instanceId: kept.id, origin: checked.origin });
         return;
       }
+      // Read after the wait: the list may have changed meanwhile.
+      const list = instances.current();
+      const known = instanceAt(list, checked.origin);
       if (!known && list.instances.length >= MAX_INSTANCES) {
         setStep({ kind: "refused", text: m.mobile_instances_full({ max: MAX_INSTANCES }) });
         return;
@@ -101,8 +108,8 @@ export function Connect({ link, trusted }: { link: ConnectLink | undefined; trus
     return () => {
       live = false;
     };
-    // Checked once per round: the member's Continue, and again after signing out of a session kept there.
-  }, [server, code, round]);
+    // Checked for each link once it may be (trusted or approved), and again after signing out of a session kept there.
+  }, [server, code, trusted, askHost, round]);
 
   /** Signs out of the session kept there through the account section's own path, then checks again. */
   const signOutFirst = async (instanceId: string) => {
@@ -134,6 +141,9 @@ export function Connect({ link, trusted }: { link: ConnectLink | undefined; trus
 
   // One claim per screen: a second tap would spend nothing but end the first claim's screen as `invalid_code`.
   const claimed = useRef(false);
+  useEffect(() => {
+    claimed.current = false;
+  }, [server, code]);
   const claim = async (origin: string) => {
     if (!code || claimed.current) return;
     claimed.current = true;
@@ -184,7 +194,9 @@ export function Connect({ link, trusted }: { link: ConnectLink | undefined; trus
       <ConnectView
         step={step}
         code={code !== undefined}
-        onContinue={() => setRound((value) => value + 1)}
+        onContinue={() => {
+          if (link) setApproved(linkKey(link));
+        }}
         onConfirm={(origin) => void (code ? claim(origin) : addAndOpen(origin))}
         onOpen={(id) => {
           leaveSheet();

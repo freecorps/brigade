@@ -497,6 +497,10 @@ are paged ("Push relay").
 
 ## Push relay
 
+The guides for self-hosters are [Page your team with the Brigade app](../../docs/self-hosting/phones.md) (Freecorps'
+relay and the store app) and [Run your own app and relay](../../docs/self-hosting/own-app.md); this section is the
+reference behind them.
+
 Phones are paged through a push relay (RFC 0006, RFC 0015): APNs and FCM accept a push only when it is signed with the
 keys of whoever published the app, so the instance hands every page, sealed for the phone, to a relay that holds them.
 There are two, running the same `apps/relay` code and `/v1` protocol:
@@ -510,7 +514,7 @@ There are two, running the same `apps/relay` code and `/v1` protocol:
   be paged through it**, never the store app. It needs an Apple Developer account with an APNs key (`.p8`, key id,
   team id), a Firebase project and its service account JSON, the bundle id of the company's build, and a hostname on a
   zone of the same Cloudflare account for the relay. Then the app is the company's to build and publish
-  (apps/mobile README "Your own app").
+  ([Run your own app and relay](../../docs/self-hosting/own-app.md)).
 
 Without either, no phone is paged; pages reach people by email only if the API can send email (`EMAIL_FROM`, see
 "Email"). With Freecorps' relay, phones are paged once they run an app release that asks the relay for handles (RFC

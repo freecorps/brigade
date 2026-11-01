@@ -235,41 +235,22 @@ vp run build            # cached expo export of the Android and iOS JS bundles i
 
 ## Your own app
 
-A company that runs its own relay (`vp run setup:relay`, apps/api README "Push relay") can only page an app it built
-and signed itself: Apple and Google deliver a push only with the publisher's keys. This is what that build needs; the
-publishing (App Store, Google Play, TestFlight, an MDM or an internal store) is the company's. A stub until the store
-app ships (RFC 0015 "Order of work" step 5):
+A company that runs its own relay (`vp run setup:relay`, choice "your own relay") can only page an app it built and
+signed itself: Apple and Google deliver a push only with the publisher's keys. The guide for it, from the Apple and
+Google accounts to the build variables and keeping it running, is
+[Run your own app and relay](../../docs/self-hosting/own-app.md). What it builds on here:
 
-- **Its own identifiers.** Set `BRIGADE_APP_ID` at build time (and for `vp run mobile:install`, which launches the
-  app by it): the bundle id and Android package, `app.freecorps.brigade` when unset (`plugins/app-id.ts`). It must
-  suit both stores: two or more parts of letters and digits, each starting with a letter (no `-`, which Android
-  refuses, and no `_`, which Apple refuses); `vp run setup:relay --bundle-id` takes the same. Everything else follows
-  it: the App Group the Notification Service Extension and the widget share with the app is `group.<BRIGADE_APP_ID>`,
-  which the plugins put in the entitlements and in each target's Info.plist (`BrigadeAppGroup`, read by the Swift
-  code), and the extensions' bundle ids are `<bundle id>.NotificationService` and `<bundle id>.Widget`. For EAS
-  builds, set it as an environment variable of the build profile. The relay's topic (`RELAY_APNS_TOPIC`, which
-  `vp run setup:relay` sets from `--bundle-id`) is that bundle id. After changing it on a machine that already has
-  `ios/` and `android/`, prebuild with `--clean` (`mobile:install --clean`): a prebuild without it updates the
-  extensions' bundle ids and drops the store app's App Group, but anything else left from the old id stays.
-- **Apple:** an Apple Developer account with App IDs for the app and both extensions, the App Group, Push
-  Notifications, VoIP (PushKit, for calls) and, if granted, Critical Alerts (`BRIGADE_CRITICAL_ALERTS=1`); an APNs key
-  (`.p8`) for the relay. Local builds take the team id from `APPLE_TEAM_ID`.
-- **Android:** a Firebase project with an Android app for the package, its `google-services.json` for the build
-  (`GOOGLE_SERVICES_FILE`, "How it is wired" above) and a service account for the relay.
-- **Its instance:** `EXPO_PUBLIC_BRIGADE_URL`, the dashboard's origin the build signs in to.
-- **Its relay:** `EXPO_PUBLIC_BRIGADE_RELAY_URL`, the relay this build is paged through (`src/lib/relay.ts`
-  `buildRelay`, Q32). Unset, a build whose `EXPO_PUBLIC_BRIGADE_URL` is not Freecorps' hosted Brigade takes the relay
-  its instance's `/config` names (`relay.origin`), so a company's build rarely sets it; the store build uses
-  `https://relay.brigade.freecorps.com.br`. The app asks that relay for handles only for instances whose `/config`
-  names it; an instance on another relay pages through its own app, so this one registers nothing there. An instance
-  with no relay in `/config`, or a relay that does not answer, gets the raw tokens, which it pages through the relay's
-  `/send` with `RELAY_SEND_TOKEN` (the setup script sets it on both).
-- **Store accounts and EAS:** the `owner`, EAS project id and update URL in `app.config.ts` are Freecorps'; the
-  company's copy points them at its own Expo account (`eas init`), and its own App Store Connect and Google Play
-  accounts for `eas submit`.
-
-Its store link, given to the setup script (`RELAY_APP_URL`), lets the store app send people to it when they add the
-instance (RFC 0015 section 8).
+- **`BRIGADE_APP_ID`** is the bundle id and Android package (`plugins/app-id.ts`, `app.freecorps.brigade` when
+  unset; `vp run mobile:install` launches the app by it too). The App Group is `group.<BRIGADE_APP_ID>`, which the
+  plugins put in the entitlements and in each target's Info.plist (`BrigadeAppGroup`, read by the Swift code); the
+  extensions are `<bundle id>.NotificationService` and `<bundle id>.Widget`. After changing it on a machine that
+  already has `ios/` and `android/`, prebuild with `--clean` (`mobile:install --clean`): a prebuild without it
+  updates the extensions' bundle ids and drops the store app's App Group, but anything else left from the old id
+  stays.
+- **`EXPO_PUBLIC_BRIGADE_URL`** is the instance the build signs in to, and **`EXPO_PUBLIC_BRIGADE_RELAY_URL`** the
+  relay it is paged through (`src/lib/relay.ts` `buildRelay`, Q32): unset, the store build (default instance
+  Freecorps' hosted Brigade, or none) uses `https://relay.brigade.freecorps.com.br`, and any other build the relay
+  its default instance's `/config` names (`relay.origin`).
 
 ## Windows
 

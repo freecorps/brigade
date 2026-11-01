@@ -239,7 +239,8 @@ vp test                                                                   # JWTs
 
 ## The setup script
 
-`scripts/setup-relay/` is `vp run setup:relay` (run from the root; apps/api README "Push relay" is the guide). It
+`scripts/setup-relay/` is `vp run setup:relay` (run from the root; the guides are
+[docs/self-hosting](../../docs/self-hosting/phones.md), the reference apps/api README "Push relay"). It
 lives here because it signs with `@freecorps/brigade-push/instance` and deploys this Worker; `flow.ts` is the flow,
 with wrangler, fetch, files and the terminal passed in, and `index.ts` wires the real ones. `test/setup-relay.test.ts`
 runs every flow against this relay's own `handle` (over the fake registry) and a fake wrangler: nothing reaches

@@ -589,6 +589,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
         one-time `BOOTSTRAP_TOKEN` (RFC 0002 "Sign-up modes", "The first owner")
   - [x] The self-host setup steps create the `STATUS` KV namespace (apps/api README "Self-host setup")
   - [x] Custom domains for status pages, set up by hand for now (apps/api README "Custom domains")
+  - [x] Relay registration: `vp run setup:relay` for Freecorps' relay or the company's own (closed registration by
+        the relay's admin token), or none (RFC 0015 section 8, apps/api README "Push relay"); Freecorps' relay's
+        public address is still to be chosen (Q31)
   - Left (decided, Q23; RFC 0002 "Environments"): the setup wizard running those steps, the custom domains' and
     `setup:first-user`.
 - [ ] Hosted push relay with terms of service

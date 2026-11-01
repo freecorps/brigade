@@ -317,15 +317,115 @@ describe("registration on the hosted relay", () => {
 });
 
 describe("closed registration (an own relay)", () => {
-  test("refuses registration and codes", async () => {
-    const { call, askCode } = setup({ RELAY_REGISTRATION: "closed" });
+  const ADMIN = "admin-token-for-tests-only-0123456789";
+  const admin = (token = ADMIN) => ({ headers: { Authorization: `Bearer ${token}` } });
+
+  test("refuses registration and codes without the admin token", async () => {
+    const { call, askCode, email } = setup({
+      RELAY_REGISTRATION: "closed",
+      RELAY_ADMIN_TOKEN: ADMIN,
+    });
     const key = await generateInstanceKey();
     const refused = await call(key, "POST", "/v1/instances", { terms: "draft-2026-11" });
     expect(refused.status).toBe(403);
     expect(await refused.json()).toEqual({ error: "registration_closed" });
     expect(await (await askCode(key)).json()).toEqual({ error: "registration_closed" });
+    // Even with the admin token, a closed relay sends no codes.
+    expect(await (await askCode(key, "oncall@example.com", admin())).json()).toEqual({
+      error: "registration_closed",
+    });
+    expect(email.sent).toEqual([]);
+  });
+
+  test("the admin token registers the signed instance directly, with no terms, code or email", async () => {
+    const { call, record, email } = setup({
+      RELAY_REGISTRATION: "closed",
+      RELAY_ADMIN_TOKEN: ADMIN,
+      // A closed relay needs no terms version.
+      RELAY_TERMS_VERSION: undefined,
+    });
+    const key = await generateInstanceKey();
+    const created = await call(key, "POST", "/v1/instances", {}, admin());
+    expect(created.status).toBe(201);
+    expect(await created.json()).toEqual({
+      instance: key.instance,
+      status: "registered",
+      terms: "none",
+      termsCurrent: true,
+    });
+    expect(record(key)).toMatchObject({ keys: [key.publicKey], terms: "none", contact: null });
+    expect(email.sent).toEqual([]);
+    // Registered: it can be read, and asking again (with or without the token) answers the record.
+    expect((await call(key, "GET", "/v1/instances/me")).status).toBe(200);
+    expect((await call(key, "POST", "/v1/instances", {})).status).toBe(200);
+    expect((await call(key, "POST", "/v1/instances", {}, admin())).status).toBe(200);
+  });
+
+  test("keeps an optional contact, and refuses a malformed one", async () => {
+    const { call, record } = setup({ RELAY_REGISTRATION: "closed", RELAY_ADMIN_TOKEN: ADMIN });
+    const key = await generateInstanceKey();
+    const bad = await call(key, "POST", "/v1/instances", { contact: "not an address" }, admin());
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({ error: "invalid_contact" });
+    const ok = await call(key, "POST", "/v1/instances", { contact: "Ops@Acme.example" }, admin());
+    expect(ok.status).toBe(201);
+    expect(record(key)?.contact).toBe("ops@acme.example");
+  });
+
+  test("a wrong admin token is 401 and registers nothing; an unset one matches nothing", async () => {
+    const key = await generateInstanceKey();
+    const closed = setup({ RELAY_REGISTRATION: "closed", RELAY_ADMIN_TOKEN: ADMIN });
+    const wrong = await closed.call(key, "POST", "/v1/instances", {}, admin("not-the-token"));
+    expect(wrong.status).toBe(401);
+    expect(await wrong.json()).toEqual({ error: "admin_unauthorized" });
+    expect(closed.record(key)).toBeUndefined();
+    // Without RELAY_ADMIN_TOKEN no token is right, an empty one included.
+    const unset = setup({ RELAY_REGISTRATION: "closed" });
+    for (const token of [ADMIN, ""]) {
+      const response = await unset.call(key, "POST", "/v1/instances", {}, admin(token));
+      expect(response.status).toBe(401);
+    }
+    expect(unset.record(key)).toBeUndefined();
+  });
+
+  test("the token never stands in for the instance's signature, and only registers an original key", async () => {
+    const { call, record } = setup({ RELAY_REGISTRATION: "closed", RELAY_ADMIN_TOKEN: ADMIN });
+    const key = await generateInstanceKey();
+    const other = await generateInstanceKey();
+    // Signed by another key for this id: not the original key, so nothing registers.
+    const forged = await call(key, "POST", "/v1/instances", {}, { ...admin(), signer: other });
+    expect(forged.status).toBe(403);
+    expect(await forged.json()).toEqual({ error: "instance_unregistered" });
+    expect(record(key)).toBeUndefined();
+    // Unsigned: refused before the token is looked at.
+    const unsigned = await handleUnsigned(ADMIN);
+    expect(unsigned.status).toBe(401);
+    expect(await unsigned.json()).toEqual({ error: "missing_signature" });
+  });
+
+  test("an open relay ignores the admin token: terms and the emailed code are still required", async () => {
+    const { call, record } = setup({ RELAY_ADMIN_TOKEN: ADMIN });
+    const key = await generateInstanceKey();
+    const response = await call(key, "POST", "/v1/instances", { terms: "draft-2026-11" }, admin());
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "code_expired" });
+    expect(record(key)).toBeUndefined();
   });
 });
+
+/** `POST /v1/instances` with the admin token and no signature at all. */
+async function handleUnsigned(token: string): Promise<Response> {
+  const { env } = setup({ RELAY_REGISTRATION: "closed", RELAY_ADMIN_TOKEN: token });
+  return handle(
+    new Request("https://relay.test/v1/instances", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: "{}",
+    }),
+    env,
+    async () => new Response(null, { status: 500 }),
+  );
+}
 
 describe("signatures and admission", () => {
   test("a bad, stale or missing signature is a 401", async () => {

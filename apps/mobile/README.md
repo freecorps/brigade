@@ -212,6 +212,34 @@ vp run build            # cached expo export of the Android and iOS JS bundles i
 - **Autolinking:** `expo-router`'s optional peers (Reanimated, Worklets, Gesture Handler) are installed by Bun
   but excluded from autolinking until the app uses them.
 
+## Your own app
+
+A company that runs its own relay (`vp run setup:relay`, apps/api README "Push relay") can only page an app it built
+and signed itself: Apple and Google deliver a push only with the publisher's keys. This is what that build needs; the
+publishing (App Store, Google Play, TestFlight, an MDM or an internal store) is the company's. A stub until the store
+app ships (RFC 0015 "Order of work" step 5):
+
+- **Its own identifiers.** The bundle id and Android package (`APP_ID` in `app.config.ts`, `app.freecorps.brigade`)
+  and the App Group the Notification Service Extension and the widget share with the app (`APP_GROUP` in
+  `plugins/notification-service.ts`, `group.app.freecorps.brigade`). Both are constants today, changed in the
+  company's copy (Q32); the extensions' bundle ids follow the app's (`<bundle id>.NotificationService`,
+  `<bundle id>.Widget`). The relay's `APNS_TOPIC` is that bundle id.
+- **Apple:** an Apple Developer account with App IDs for the app and both extensions, the App Group, Push
+  Notifications, VoIP (PushKit, for calls) and, if granted, Critical Alerts (`BRIGADE_CRITICAL_ALERTS=1`); an APNs key
+  (`.p8`) for the relay. Local builds take the team id from `APPLE_TEAM_ID`.
+- **Android:** a Firebase project with an Android app for the package, its `google-services.json` for the build
+  (`GOOGLE_SERVICES_FILE`, "How it is wired" above) and a service account for the relay.
+- **Its instance:** `EXPO_PUBLIC_BRIGADE_URL`, the dashboard's origin the build signs in to.
+- **Its relay:** `EXPO_PUBLIC_BRIGADE_RELAY_URL`, where the app asks for handles, is **not read yet**: the app mints
+  handles with RFC 0015 step 4. Until then the app registers raw tokens, which the instance pages through the relay's
+  `/send` with `RELAY_SEND_TOKEN` (the setup script sets it on both).
+- **Store accounts and EAS:** the `owner`, EAS project id and update URL in `app.config.ts` are Freecorps'; the
+  company's copy points them at its own Expo account (`eas init`), and its own App Store Connect and Google Play
+  accounts for `eas submit`.
+
+Its store link, given to the setup script (`RELAY_APP_URL`), lets the store app send people to it when they add the
+instance (RFC 0015 section 8).
+
 ## Windows
 
 Native Android builds fail on the 260-character path limit with the Android SDK's default CMake (3.22.1, Ninja

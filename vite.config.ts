@@ -35,6 +35,15 @@ export default defineConfig({
     tasks: {
       "mobile:install": { command: "node scripts/mobile-install.mjs", cache: false },
       "mobile:build": { command: "node scripts/mobile-build.mjs", cache: false },
+      // Setup scripts talk to a deployed instance (and wrangler): never cached, or a second run would replay the
+      // first one's output instead of doing anything. Not cached also means every environment variable reaches them.
+      "setup:first-user": { command: "node apps/api/scripts/create-first-user.mjs", cache: false },
+      // RFC 0015 section 8 (apps/api README "Push relay"); TypeScript, so through vpx with the workspace's source.
+      "setup:relay": {
+        command:
+          "NODE_OPTIONS=--conditions=@freecorps/source vpx apps/relay/scripts/setup-relay/index.ts",
+        cache: false,
+      },
     },
   },
 });

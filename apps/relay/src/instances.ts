@@ -1,7 +1,8 @@
 // `/v1/instances*` (RFC 0015 sections 1 and 8): an instance registers its key with the relay after accepting the
 // terms and confirming a contact address by an emailed code (Freecorps' relay). On a company's own relay
-// (`RELAY_REGISTRATION=closed`) the setup script will register its one instance with a relay admin secret, in a later
-// slice; until then closed mode refuses every registration. Every call is signed with the instance key
+// (`RELAY_REGISTRATION=closed`) there are no codes and no terms: `POST /v1/instances` registers only a call that also
+// carries the relay's admin secret (`Authorization: Bearer <RELAY_ADMIN_TOKEN>`), which `vp run setup:relay` makes and
+// uses for the company's instance (scripts/setup-relay). Every call is signed with the instance key
 // (`verifyRequest`); every check-and-change runs inside the instance's Durable Object (src/registry.ts).
 
 import {
@@ -10,6 +11,7 @@ import {
   verifyRequest,
   type VerifiedRequest,
 } from "@freecorps/brigade-push/instance";
+import { bearerMatches } from "./auth.ts";
 import { readBody } from "./body.ts";
 import {
   CODE_TTL_MS,
@@ -33,8 +35,13 @@ export type InstanceEnv = {
   EMAIL_FROM?: string;
   /** The terms version a registration must accept (wrangler.jsonc vars). */
   RELAY_TERMS_VERSION?: string;
-  /** `closed`: a company's own relay, which refuses registration here (module comment). Anything else is open. */
+  /**
+   * `closed`: a company's own relay, which registers only an instance whose `POST /v1/instances` carries
+   * `RELAY_ADMIN_TOKEN` (module comment). Anything else is open.
+   */
   RELAY_REGISTRATION?: string;
+  /** A closed relay's admin secret, as `Authorization: Bearer` on `POST /v1/instances`. Unset: nothing registers. */
+  RELAY_ADMIN_TOKEN?: string;
   /**
    * Workers Rate Limiting, per caller IP, on every `/v1/instances*` route (wrangler.jsonc `ratelimits`). Optional:
    * without it nothing is limited per IP.
@@ -49,6 +56,10 @@ export type InstanceEnv = {
 const EMAIL_ADDRESS =
   // eslint-disable-next-line no-control-regex -- the control characters are what it refuses.
   /^[^\s@<>",;\x00-\x1f\x7f]+@[^\s@<>",;\x00-\x1f\x7f]+\.[^\s@<>",;\x00-\x1f\x7f]+$/;
+
+function validContact(contact: string): boolean {
+  return contact.length <= 254 && EMAIL_ADDRESS.test(contact);
+}
 
 const STATUS: Record<RegistryError, number> = {
   instance_unregistered: 403,
@@ -66,7 +77,12 @@ const STATUS: Record<RegistryError, number> = {
   key_recently_retired: 409,
 };
 
-type Caller = VerifiedRequest & { registry: RegistryNamespace; now: number };
+/** `authorization`: the request's `Authorization` header, for the admin token of a closed relay. */
+type Caller = VerifiedRequest & {
+  registry: RegistryNamespace;
+  now: number;
+  authorization: string | null;
+};
 type Route = (caller: Caller, body: Record<string, unknown>, env: InstanceEnv) => Promise<Response>;
 
 const ROUTES: Record<string, { method: string; run: Route }> = {
@@ -125,7 +141,11 @@ export async function instanceRoutes(
     }
   }
   try {
-    return await route.run({ ...verified, registry, now }, body as Record<string, unknown>, env);
+    return await route.run(
+      { ...verified, registry, now, authorization: request.headers.get("Authorization") },
+      body as Record<string, unknown>,
+      env,
+    );
   } catch (error) {
     // Only a registry call throws here. Every route registers or grants something, so it fails closed.
     console.error(
@@ -143,7 +163,7 @@ async function requestCode(
   if (env.RELAY_REGISTRATION === "closed") return json({ error: "registration_closed" }, 403);
   if (!env.EMAIL || !env.EMAIL_FROM) return json({ error: "not_configured" }, 503);
   const { contact } = body;
-  if (typeof contact !== "string" || contact.length > 254 || !EMAIL_ADDRESS.test(contact)) {
+  if (typeof contact !== "string" || !validContact(contact)) {
     return json({ error: "invalid_contact" }, 400);
   }
   const address = contact.toLowerCase();
@@ -221,15 +241,30 @@ async function register(
   body: Record<string, unknown>,
   env: InstanceEnv,
 ): Promise<Response> {
-  const current = env.RELAY_TERMS_VERSION;
-  if (!current) return json({ error: "not_configured" }, 503);
+  const closed = env.RELAY_REGISTRATION === "closed";
+  // A closed relay takes no terms; an open one cannot register without a version to accept.
+  const current = closed ? "" : env.RELAY_TERMS_VERSION;
+  if (current === undefined || (!closed && !current)) {
+    return json({ error: "not_configured" }, 503);
+  }
+  // On a closed relay, a wrong admin token is refused outright; a missing one falls to `registration_closed` (or the
+  // record, for an instance already registered).
+  let admin = false;
+  if (closed && caller.authorization !== null) {
+    admin = await bearerMatches(caller.authorization, env.RELAY_ADMIN_TOKEN);
+    if (!admin) return json({ error: "admin_unauthorized" }, 401);
+  }
   const { terms, contact, code } = body;
+  if (closed && contact !== undefined && (typeof contact !== "string" || !validContact(contact))) {
+    return json({ error: "invalid_contact" }, 400);
+  }
   const outcome = await instanceStub(caller.registry, caller.instance).register(
     signer(caller),
     {
       terms,
       current,
-      closed: env.RELAY_REGISTRATION === "closed",
+      closed,
+      admin,
       contact: typeof contact === "string" ? contact.toLowerCase() : "",
       hash: typeof code === "string" ? await hashCode(caller.instance, code) : null,
     },
@@ -292,7 +327,8 @@ function answer(
       instance: caller.instance,
       status: record.status,
       terms: record.terms,
-      termsCurrent: record.terms === env.RELAY_TERMS_VERSION,
+      // A closed relay has no terms to fall behind on.
+      termsCurrent: env.RELAY_REGISTRATION === "closed" || record.terms === env.RELAY_TERMS_VERSION,
     },
     status,
   );

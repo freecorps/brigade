@@ -1,4 +1,5 @@
 import type { ApnsEnvironment } from "./apns.ts";
+import { bearerMatches } from "./auth.ts";
 import { readJson } from "./body.ts";
 import { instanceRoutes, type InstanceEnv } from "./instances.ts";
 import {
@@ -46,6 +47,8 @@ export default {
 
 export async function handle(request: Request, env: RelayEnv, send: Send): Promise<Response> {
   const { pathname, searchParams } = new URL(request.url);
+  const authorized = (r: Request, expected: string) =>
+    bearerMatches(r.headers.get("Authorization"), expected);
   if (pathname === "/health" && searchParams.get("deep") === "1") {
     // Says which provider fails, so only the send token's holder (the instance's watchdog) may ask.
     if (!(await authorized(request, env.RELAY_SEND_TOKEN))) {
@@ -90,20 +93,4 @@ export async function handle(request: Request, env: RelayEnv, send: Send): Promi
     env,
     send,
   );
-}
-
-/** Compares SHA-256 digests in constant time, so the check leaks neither the token nor its length. */
-async function authorized(request: Request, expected: string): Promise<boolean> {
-  const header = request.headers.get("Authorization") ?? "";
-  if (!expected || !header.startsWith("Bearer ")) return false;
-  const encoder = new TextEncoder();
-  const [a, b] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(header.slice("Bearer ".length))),
-    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
-  ]);
-  const x = new Uint8Array(a);
-  const y = new Uint8Array(b);
-  let diff = 0;
-  for (let i = 0; i < x.length; i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
-  return diff === 0;
 }

@@ -467,8 +467,100 @@ provisions a namespace of its own. Exports need a bucket too (`wrangler r2 bucke
 lifecycle rule in "Deploying dev" step 6, its name in `r2_buckets`). The production build (`vp run build`) adds two
 bindings the top level leaves out because local runs and the tests use it (vite.config.ts `PRODUCTION_BINDINGS`):
 `RELAY`, the relay Worker `brigade-relay` on the same account, and `AI`. An instance using another relay removes
-`RELAY` there and sets the `RELAY_URL` secret. Then set the secrets ("Deploying dev" lists them), deploy the relay,
-the API and the dashboard, and create the first owner ("First owner").
+`RELAY` there and sets the `RELAY_URL` secret. Then set the secrets ("Deploying dev" lists them), deploy the relay
+(only for your own relay), the API and the dashboard, create the first owner ("First owner"), and choose how phones
+are paged ("Push relay").
+
+## Push relay
+
+Phones are paged through a push relay (RFC 0006, RFC 0015): APNs and FCM accept a push only when it is signed with the
+keys of whoever published the app, so the instance hands every page, sealed for the phone, to a relay that holds them.
+There are two, running the same `apps/relay` code and `/v1` protocol:
+
+- **Freecorps' relay** (recommended). Pages the Brigade app from the App Store and Google Play: no app to build, no
+  Apple or Google account. The instance registers with it once: accept its terms (a preliminary template for now,
+  [docs/legal/relay-terms.md](../../docs/legal/relay-terms.md), version `draft-2026-11`) and confirm a contact
+  address with an emailed code. The relay never reads a page; its limits are 600 sends a minute per instance (RFC 0015
+  D4).
+- **Your company's own relay.** No third party on the paging path, at a price: **only the company's own app build can
+  be paged through it**, never the store app. It needs an Apple Developer account with an APNs key (`.p8`, key id,
+  team id), a Firebase project and its service account JSON, the bundle id of the company's build, and a hostname on a
+  zone of the same Cloudflare account for the relay. Then the app is the company's to build and publish
+  (apps/mobile README "Your own app").
+
+Without either, no phone is paged; pages reach people by email only if the API can send email (`EMAIL_FROM`, see
+"Email"). With Freecorps' relay, phones are paged once they run an app release that asks the relay for handles (RFC
+0015 step 4): the app as released today registers raw device tokens, which Freecorps' relay takes only from Freecorps'
+own instance (`RELAY_SEND_TOKEN`).
+
+`vp run setup:relay` (from the root; `apps/relay/scripts/setup-relay/`) sets either up, and can be run again later.
+Log in to wrangler first (`wrangler login`, or `CLOUDFLARE_API_TOKEN`); `--env dev` or `--env staging` picks the
+Workers of that environment (default production). It asks which relay, then:
+
+- **Freecorps' relay:** shows the terms' address and version and asks to accept them; asks for the contact address and
+  has the relay email it a code (valid 15 minutes, 5 tries, 3 an hour); makes the instance key and saves it **outside
+  the repository** (symlinks resolved), readable only by you (`~/.config/brigade/relay-instance-key-<worker>-<instance
+  id>`, or `--key-out`); asks for the code and registers (`POST /v1/instances`); sets `RELAY_INSTANCE_KEY` and
+  `RELAY_URL` on the API Worker; and runs the relay's signed deep health, which shows only that **Freecorps' relay is
+  reachable and this instance is registered**. **Required afterwards:** the production build binds `RELAY` to
+  `brigade-relay` (vite.config.ts `PRODUCTION_BINDINGS`; dev and staging: `services` in wrangler.jsonc), and the API
+  sends through that binding before `RELAY_URL`, to a relay that does not know this instance: remove it and deploy the
+  API again. The script reads those files and says when the binding is there. **Freecorps' relay has no public address
+  yet** (docs/open-questions.md Q31): pass it with `--relay-url` (or `BRIGADE_RELAY_URL`); without it the script stops
+  and says so.
+- **Your own relay:** says first that only the company's build can be paged, checks the prerequisites (and stops if any
+  is missing; the APNs key must be an EC P-256 key and the service account's an RSA key, checked locally), then:
+  1. reads the relay Worker's secret names. A Worker that exists but was not set up by this script (no
+     `BRIGADE_OWN_RELAY` secret; Freecorps' own relay, say) is refused unless `--take-over-relay`. If wrangler cannot
+     list them for any reason but "this Worker does not exist" (Cloudflare error 10007), the script stops, since new
+     handle keys would void every phone's handle; `--assume-new-relay` goes on anyway;
+  2. builds `apps/relay` and sets its secrets: `BRIGADE_OWN_RELAY`, a new `RELAY_ADMIN_TOKEN`; `APNS_KEY`,
+     `APNS_KEY_ID`, `APNS_TEAM_ID` and `FCM_SERVICE_ACCOUNT` unless the relay has them, which are kept unless
+     `--replace-credentials` (or yes to the question; wrong ones stop every page through it); and `RELAY_HANDLE_KEYS`,
+     `RELAY_TAG_KEY` and `RELAY_SEND_TOKEN` only if the relay has none;
+  3. deploys it as `brigade-relay` (`brigade-relay-dev` for `--env dev`; the relay has no staging) with `APNS_TOPIC`
+     the bundle id, `RELAY_REGISTRATION=closed` and the hostname as its custom domain, and waits for the domain (10 s
+     apart, at most 5 minutes);
+  4. registers the instance with the admin token (no terms, no email);
+  5. then, one right after the other: deletes the admin token from the relay (with the relay's new send token if it
+     needed one), and sets `RELAY_INSTANCE_KEY`, `RELAY_URL`, `RELAY_SEND_TOKEN` (the relay's, for phones that still
+     register raw tokens) and the store link (`RELAY_APP_URL`, optional) on the API.
+
+  **The send token.** Only secret names can be read, so a shared marker, `BRIGADE_SEND_PAIR_<id>`, set on the relay
+  and the API in the same step as their token, is what shows the two tokens are the same. With the same marker on
+  both, the token is kept, so a rerun opens no gap. Otherwise (no marker, different ones, a run that stopped in
+  between, a token set by hand) both get a new token and marker, one right after the other, after the registration.
+  Change `RELAY_SEND_TOKEN` by hand only on both Workers, and delete their markers then. A run that stops before step
+  5 leaves the API as it was. The API reaches the relay through the `RELAY` binding the production build already has
+  (dev: `services` in wrangler.jsonc): build and deploy the API again.
+
+- **Not now:** changes nothing.
+
+**Switching relays**, or setting one up again, gives the instance a new key and id: every handle phones hold stops
+working and **every phone must open the app once** to be paged again; a switch to an own relay also leaves the store
+app unable to page at all. Whenever the API already has `RELAY_INSTANCE_KEY`, the script says so and asks again
+(`--yes` without questions), even with `--instance-key-file`: it can read only secret names, so it cannot prove the
+key is the one set. Whenever it installs a key it also removes `RELAY_INSTANCE_ID`: it registers and checks the key as
+the id the key gives, so a leftover id (from a rotation, or a key deleted by hand) would make the API sign as another
+instance. A switch to Freecorps' relay also removes `RELAY_APP_URL` and, with it (it marks an own relay), the own
+relay's `RELAY_SEND_TOKEN`; an API without `RELAY_APP_URL` keeps its send token. Keep the saved key in a password
+manager and delete the file: a lost key is the same as a switch. `--instance-key-file` reuses a saved key, to finish a
+run that stopped (a code that expired, secrets wrangler could not set) without a new id.
+
+Secret values never appear on the screen, in a command's arguments or in a file in the repository: wrangler gets them
+on stdin (`wrangler secret bulk`). Without a terminal, or with `--non-interactive`, every answer is a flag (`vp run
+setup:relay -- --help`); Freecorps' relay then takes two runs, the first sending the code and the second, with
+`--code` and `--instance-key-file`, finishing:
+
+```bash
+vp run setup:relay -- --relay freecorps --relay-url https://<relay> --accept-terms draft-2026-11 \
+  --contact oncall@example.com
+vp run setup:relay -- --relay freecorps --relay-url https://<relay> --accept-terms draft-2026-11 \
+  --contact oncall@example.com --instance-key-file ~/.config/brigade/relay-instance-key-… --code 123456
+vp run setup:relay -- --relay own --apns-key-file ~/keys/AuthKey_XXXXXXXXXX.p8 --apns-key-id XXXXXXXXXX \
+  --apns-team-id XXXXXXXXXX --bundle-id com.example.brigade --fcm-service-account-file ~/keys/fcm.json \
+  --relay-domain relay.example.com [--app-url https://apps.apple.com/…]
+```
 
 ## First owner
 
@@ -511,7 +603,7 @@ In order, from `apps/api` unless noted:
    | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
    | `BETTER_AUTH_SECRET` | Required: sessions (`openssl rand -base64 32`)                                                                                                                                                                                                                                                                                                                                |
    | `RELAY_SEND_TOKEN`   | Push: the relay's send token (apps/relay); without it every page is recorded as failed                                                                                                                                                                                                                                                                                        |
-   | `RELAY_INSTANCE_KEY` | Optional: the instance's Ed25519 key (PKCS#8, base64url; RFC 0015), for phones registered with relay handles (`/v1/send`) and the signed deep check                                                                                                                                                                                                                           |
+   | `RELAY_INSTANCE_KEY` | Optional: the instance's Ed25519 key (PKCS#8, base64url; RFC 0015), for phones registered with relay handles (`/v1/send`) and the signed deep check; set by `vp run setup:relay` ("Push relay")                                                                                                                                                                               |
    | `RELAY_INSTANCE_ID`  | Optional: the instance's first id on the relay (`ins_…`), set after a key rotation ("Rotating the instance key" above)                                                                                                                                                                                                                                                        |
    | `RELAY_APP_URL`      | Optional: an own app build's store link, given to the app in `GET /config` (`relay.app`, RFC 0015 section 8)                                                                                                                                                                                                                                                                  |
    | `DASHBOARD_URL`      | Links in emails and Slack: `https://brigade-web-dev.<subdomain>.workers.dev`                                                                                                                                                                                                                                                                                                  |

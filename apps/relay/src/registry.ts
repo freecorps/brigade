@@ -14,7 +14,8 @@ import type { VerifiedRequest } from "@freecorps/brigade-push/instance";
 
 /**
  * `keys` are canonical public keys (`canonicalKey`), the original first while it is not retired; `retired` the keys
- * retired in the last 10 minutes, so a replayed add cannot bring one back; `terms` is the terms version accepted;
+ * retired in the last 10 minutes, so a replayed add cannot bring one back; `terms` is the terms version accepted
+ * (`NO_TERMS` on a closed relay);
  * `contact` the address confirmed by email (lowercase).
  */
 export type InstanceRecord = {
@@ -59,6 +60,8 @@ type Done = { ok: true } | Refusal;
 type Signer = { key: string; original: boolean };
 
 export const CODE_TTL_MS = 15 * 60_000;
+/** The `terms` of an instance a closed relay registered with its admin token: it accepted none. */
+export const NO_TERMS = "none";
 const CODE_TRIES = 5;
 const HOUR_MS = 3600_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -154,8 +157,8 @@ export class RegistryDO extends DurableObject {
   }
 
   /**
-   * Registers the signer's original key with the code it was emailed, or, already registered, answers the record
-   * (and records `terms` as accepted when they are the current ones).
+   * Registers the signer's original key with the code it was emailed (or, on a closed relay, with the admin token), or,
+   * already registered, answers the record (and records `terms` as accepted when they are the current ones).
    */
   register(
     signer: Signer,
@@ -163,6 +166,8 @@ export class RegistryDO extends DurableObject {
       terms: unknown;
       current: string;
       closed: boolean;
+      /** The call carried the relay's admin token (`RELAY_ADMIN_TOKEN`); only a closed relay heeds it. */
+      admin: boolean;
       contact: string;
       hash: string | null;
     },
@@ -179,8 +184,20 @@ export class RegistryDO extends DurableObject {
       }
       return { ok: true, record };
     }
-    if (input.closed) return { ok: false, error: "registration_closed" };
+    // A closed relay (a company's own) registers only what its admin token vouches for: no terms, no emailed code.
+    if (input.closed && !input.admin) return { ok: false, error: "registration_closed" };
     if (!signer.original) return { ok: false, error: "instance_unregistered" };
+    if (input.closed) {
+      const created: InstanceRecord = {
+        status: "registered",
+        keys: [signer.key],
+        terms: NO_TERMS,
+        contact: input.contact || null,
+        registeredAt: new Date(now).toISOString(),
+      };
+      this.ctx.storage.kv.put("record", created);
+      return { ok: true, record: created, created: true };
+    }
     if (input.terms !== input.current) return { ok: false, error: "terms_outdated" };
 
     const pending = this.ctx.storage.kv.get<PendingCode>("code");

@@ -129,6 +129,26 @@ relay key rotation to the phone's row. Is the churn acceptable, or should the ap
 and the relay's key id are unchanged, or the instance ignore a new handle with the same tag unless its key id
 differs?
 
+## Q31 — The hosted relay's public address (RFC 0015 section 8)
+
+Owner: Heitor. `vp run setup:relay` registers an instance with Freecorps' relay, but the relay has no public address
+yet (production `brigade-relay` has no workers.dev URL and no custom domain). Until one is chosen,
+`FREECORPS_RELAY_URL` in apps/relay `scripts/setup-relay/flow.ts` is a placeholder (`null`) and the script stops unless
+`--relay-url` gives the address. Pick the hostname (and put it in that constant, the docs and the app's build), add the
+`send_email` binding and `EMAIL_FROM` for the contact code (RFC 0015 "Order of work" step 1), and publish the final
+terms before pointing self-hosters at it (D5).
+
+## Q32 — How a company builds and keeps its own app and relay (RFC 0015 section 8)
+
+The "Your own app" stub (apps/mobile README) lists what a company's build needs, but the bundle id and Android package
+(`APP_ID`, app.config.ts) and the App Group (`APP_GROUP`, plugins/notification-service.ts) are constants, so a company
+must edit its copy. Should they become build variables (say `BRIGADE_APP_ID`, with the App Group derived from it), and
+should `EXPO_PUBLIC_BRIGADE_RELAY_URL` (step 4) default from the instance's `/config`? On the relay side the script
+passes `APNS_TOPIC` and `RELAY_REGISTRATION=closed` as `wrangler deploy --var`, which a later deploy without the flags
+(CI, by hand) silently resets to the store app's topic and open registration; the docs say to keep them in the copy's
+`wrangler.jsonc`. Would a config the deploy always reads (an own-relay environment in wrangler.jsonc, or secrets
+instead of vars) be safer?
+
 # Decided
 
 | #   | Question                       | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |

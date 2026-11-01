@@ -1,6 +1,12 @@
 import { join } from "node:path";
 import { expect, test } from "vite-plus/test";
-import { cameraUsage } from "./camera-usage.ts";
+import { cameraUsage, infoPlistStrings } from "./camera-usage.ts";
+
+test("InfoPlist.strings carries the usage text, escaped", () => {
+  expect(infoPlistStrings('Scan the "Use the app" code')).toContain(
+    '"NSCameraUsageDescription" = "Scan the \\"Use the app\\" code";',
+  );
+});
 
 test("the camera usage text comes from the catalog, in en and pt-BR", () => {
   const usage = cameraUsage(join(import.meta.dirname, "../../../packages/i18n/messages"));

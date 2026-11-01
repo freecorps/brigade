@@ -310,7 +310,8 @@ version 2 for a device registered with `envelope: 2`, version 1 for any other; t
   query is read by hand (React Native's `URL` has no working `searchParams`); a code not shaped like one, or a param
   given twice, is no link. The scanner is expo-camera's `CameraView` with QR barcodes only (the Expo SDK's own; the
   older expo-barcode-scanner is gone), its iOS usage text from packages/i18n (`mobile_camera_usage`, en in Info.plist,
-  pt-BR in InfoPlist.strings via `locales`), no microphone. Any other code says "This QR code isn't from Brigade" and
+  each locale's `InfoPlist.strings` in the app's `<locale>.lproj` folder, `plugins/camera-usage.ts`; not Expo's
+  `locales`, whose own `.lproj` group races that folder in the build), no microphone. Any other code says "This QR code isn't from Brigade" and
   scanning goes on. An instance already signed in on the phone opens instead.
 - **Switching.** The Account tab's first section is the open instance's workspaces (titled by the instance, rows
   "Freecorps · Production" when there are several), then one section per other instance with the workspaces this

@@ -4,7 +4,7 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
 // condition, so the package name would need packages/ui built first.
 import { themes } from "../../packages/ui/src/tokens.ts";
 import { appId } from "./plugins/app-id.ts";
-import { cameraUsage } from "./plugins/camera-usage.ts";
+import { cameraUsage, withCameraUsage } from "./plugins/camera-usage.ts";
 import { googleServicesFile } from "./plugins/google-services.ts";
 import { withIncomingCall } from "./plugins/incoming-call.ts";
 import { withNotificationService } from "./plugins/notification-service.ts";
@@ -34,28 +34,33 @@ const CRITICAL_ALERTS = process.env.BRIGADE_CRITICAL_ALERTS === "1";
 // Without it the app builds with no FCM token and says pages are not set up on the phone.
 const GOOGLE_SERVICES_FILE = googleServicesFile();
 
-export default ({ config, projectRoot }: ConfigContext): ExpoConfig =>
-  // iOS: the Notification Service Extension that decrypts pushes (spike S1), the "I'm on call" widget (after the
-  // extension, whose App Group it shares), and the launch screen pointed at the splash ground, which
-  // expo-splash-screen skips without an image. Both: pages that ring as calls (S6). Android: the queue of unsent
-  // changes kept out of backups (RFC 0004 "Clients").
-  withPendingBackup(
-    withIncomingCall(
-      withWidget(
-        withNotificationService(
-          withSplashGround(appConfig(config, projectRoot), {
-            fallback: themes.light.background,
-          }),
-          { apsEnvironment: APS_ENVIRONMENT, criticalAlerts: CRITICAL_ALERTS },
-        ),
-      ),
-    ),
-  );
-
-const appConfig = (config: ConfigContext["config"], projectRoot: string): ExpoConfig => {
+export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
   // The camera scans the dashboard's "Use the app" QR code (RFC 0015 sections 5 and 6); why, in each locale the app
   // ships, from packages/i18n (plugins/camera-usage.ts).
   const camera = cameraUsage(join(projectRoot, "../../packages/i18n/messages"));
+  // iOS: the Notification Service Extension that decrypts pushes (spike S1), the "I'm on call" widget (after the
+  // extension, whose App Group it shares), and the launch screen pointed at the splash ground, which
+  // expo-splash-screen skips without an image; the camera's usage text per locale in the app's `.lproj` folders the
+  // extension's plugin adds. Both: pages that ring as calls (S6). Android: the queue of unsent changes kept out of
+  // backups (RFC 0004 "Clients").
+  return withCameraUsage(
+    withPendingBackup(
+      withIncomingCall(
+        withWidget(
+          withNotificationService(
+            withSplashGround(appConfig(config, camera.en), {
+              fallback: themes.light.background,
+            }),
+            { apsEnvironment: APS_ENVIRONMENT, criticalAlerts: CRITICAL_ALERTS },
+          ),
+        ),
+      ),
+    ),
+    camera,
+  );
+};
+
+const appConfig = (config: ConfigContext["config"], cameraPermission: string): ExpoConfig => {
   return {
     ...config,
     name: "Brigade",
@@ -97,11 +102,6 @@ const appConfig = (config: ConfigContext["config"], projectRoot: string): ExpoCo
     web: {
       output: "single",
     },
-    // System prompts in the app's languages: the camera's, for scanning the dashboard's QR code.
-    locales: {
-      en: { ios: { NSCameraUsageDescription: camera.en } },
-      "pt-BR": { ios: { NSCameraUsageDescription: camera["pt-BR"] } },
-    },
     plugins: [
       "expo-router",
       // Native device tokens for the relay (`getDevicePushTokenAsync`), not Expo push tokens (RFC 0006).
@@ -118,7 +118,7 @@ const appConfig = (config: ConfigContext["config"], projectRoot: string): ExpoCo
       [
         "expo-camera",
         {
-          cameraPermission: camera.en,
+          cameraPermission,
           microphonePermission: false,
           recordAudioAndroid: false,
           barcodeScannerEnabled: true,

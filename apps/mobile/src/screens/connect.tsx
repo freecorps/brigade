@@ -105,8 +105,11 @@ export function Connect({ link }: { link: ConnectLink | undefined }) {
     await openInstance(added.id);
   };
 
+  // One claim per screen: a second tap would spend nothing but end the first claim's screen as `invalid_code`.
+  const claimed = useRef(false);
   const claim = (origin: string) => {
-    if (!code) return;
+    if (!code || claimed.current) return;
+    claimed.current = true;
     let instanceId: string | undefined;
     void runClaim(
       {

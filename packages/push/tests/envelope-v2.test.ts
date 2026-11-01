@@ -113,6 +113,24 @@ describe("sealPushV2 and openPushV2", () => {
     ).resolves.toBeDefined();
   });
 
+  test("refuses a sealing time the phone would refuse, instead of sealing a page nobody can show", async () => {
+    const { publicKey } = await generateRecipient();
+    const key = toBase64url(publicKey);
+    for (const now of [Number.NaN, Number.POSITIVE_INFINITY, -1000, 2 ** 53 * 1000 + 1e6]) {
+      await expect(sealPushV2(key, content, { ...sender, now })).rejects.toThrow(/sender\.now/);
+    }
+    // An unsafe number of ms can still be a safe number of seconds.
+    const recipient = await generateRecipient();
+    const opened = await openPushV2(
+      recipient,
+      await sealPushV2(toBase64url(recipient.publicKey), content, {
+        ...sender,
+        now: Number.MAX_SAFE_INTEGER,
+      }),
+    );
+    expect(opened.iat).toBe(Math.floor(Number.MAX_SAFE_INTEGER / 1000));
+  });
+
   test("a receipt on another origin than the sealed one is left out, not sealed", async () => {
     const recipient = await generateRecipient();
     const envelope = await sealPushV2(
@@ -375,6 +393,23 @@ describe("openOnPhone: what the phone shows (every refusal is the fallback text,
     expect(
       await openOnPhone(await sealPush(toBase64url(mine.publicKey), content), [], options),
     ).toEqual({ ok: false, reason: "not_opened" });
+  });
+
+  test("a malformed key on the phone is skipped, not in the way of the one the page names", async () => {
+    const { mine, keys } = await phone();
+    const broken: PhoneKey = {
+      origin: ORIGIN,
+      recipient: { ...mine, publicKey: mine.publicKey.subarray(0, 33) },
+    };
+    const opened = await openOnPhone(await sealedFor(mine), [broken, ...keys], {
+      now: NOW,
+      paired: pairedWith(ORIGIN),
+    });
+    expect(opened.ok).toBe(true);
+    // Only broken keys: refused (the fallback text), never a throw.
+    expect(
+      await openOnPhone(await sealedFor(mine), [broken], { now: NOW, paired: pairedWith(ORIGIN) }),
+    ).toEqual({ ok: false, reason: "unknown_key" });
   });
 });
 

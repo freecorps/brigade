@@ -87,6 +87,12 @@ class EnvelopeV2Test {
     )) {
       assertNull(bad.toString(), PushSealed.parse(bad))
     }
+    // Past JavaScript's safe integers (an `exp` that never comes): refused, as packages/push and iOS refuse it.
+    val unsafe = 9_007_199_254_740_992L
+    assertNull(PushSealed.parse(JSONObject(good.toString()).put("iat", unsafe).put("exp", unsafe + 60)))
+    assertNull(PushSealed.parse(JSONObject("""{"iat":$iat,"exp":99999999999999999999,"origin":"$origin","urgency":"page"}""")))
+    val edge = 9_007_199_254_740_991L
+    assertNotNull(PushSealed.parse(JSONObject(good.toString()).put("iat", edge - 60).put("exp", edge)))
     // A v2 plaintext without them does not parse.
     assertThrows(IllegalArgumentException::class.java) {
       PushContent.parse("""{"title":"t","body":"b"}""".toByteArray(), v2 = true)
@@ -130,6 +136,19 @@ class EnvelopeV2Test {
     assertEquals(name, KeySlots.name(origin))
     assertNotEquals(name, KeySlots.name("https://other.example.org"))
     assert(Regex("^[A-Za-z0-9_-]+$").matches(name))
+  }
+
+  @Test
+  fun onlyThePairedInstanceTakesTheOldKey() {
+    val other = "https://other.example.org"
+    // Paired with this origin, or with none (a phone never registered since receipts): it takes the old key.
+    assertEquals(true, KeyChecks.mayTakeLegacy(null, origin, origin))
+    assertEquals(true, KeyChecks.mayTakeLegacy(null, null, other))
+    // Paired with another: a new key, so the paired instance keeps the one it holds.
+    assertEquals(false, KeyChecks.mayTakeLegacy(null, origin, other))
+    // Once claimed, only the claimer, whatever the pairing says.
+    assertEquals(true, KeyChecks.mayTakeLegacy(origin, other, origin))
+    assertEquals(false, KeyChecks.mayTakeLegacy(origin, null, other))
   }
 
   @Test

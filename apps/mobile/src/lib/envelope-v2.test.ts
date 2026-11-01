@@ -120,6 +120,32 @@ describe("what a v2 page decides", () => {
     );
   });
 
+  test("iOS: a call sealed as less than a page is reported first, then ended and shown as the fallback", () => {
+    const receive = callCenter.slice(
+      callCenter.indexOf("private func receive("),
+      callCenter.indexOf("// MARK: - Calls"),
+    );
+    // Reported to CallKit before decrypting (iOS stops VoIP pushes to an app that does not), on every branch.
+    expect(receive.indexOf("case .new: report(call")).toBeLessThan(
+      receive.indexOf("BrigadePushCrypto.open("),
+    );
+    // Only this push's own new call is ended: a repeat never ends a call an earlier page rang.
+    expect(receive).toContain("if case .new = kind { endNotAPage(id) }");
+    // Ended once CallKit has it, from the report's success; refused by CallKit, the fallback text, not a page.
+    expect(callCenter).toMatch(
+      /if self\.calls\[call\.id\]\?\.notAPage == true \{\s*self\.finishNotAPage\(call\.id\)/,
+    );
+    expect(callCenter).toContain(
+      "if tracked.notAPage { self.notifyNotAPage(tracked) } else { self.notifyPage(tracked) }",
+    );
+    expect(callCenter).toMatch(/private func finishNotAPage[\s\S]*?notifyNotAPage\(call\)/);
+    // The page CallKit's fallback posts carries the sealed origin for the Acknowledge.
+    expect(callCenter).toContain("origin: content.sealed?.origin)");
+    expect(callCenter).toContain(
+      "BrigadePage.mark(content, incident: call.incident, workspace: call.workspace, origin: call.origin)",
+    );
+  });
+
   test("signing out forgets the paired instance on the native side", () => {
     const session = read("../components/session.tsx");
     expect(session).toMatch(
@@ -158,6 +184,12 @@ describe("one key per instance, and phones in the field keep theirs", () => {
     ]) {
       expect(deviceKey).toContain(name);
     }
-    expect(deviceKey).toContain("if (claimed == null || claimed == origin) {");
+    // Only the paired instance (or any, when none is) takes it: EnvelopeV2Test.kt runs the rule.
+    expect(deviceKey).toContain(
+      "if (KeyChecks.mayTakeLegacy(claimed, Pages.receiptOrigin(context), origin)) {",
+    );
+    expect(crypto).toContain(
+      "let adopting = mayAdoptLegacy(paired: receiptOrigin(), origin: origin)",
+    );
   });
 });

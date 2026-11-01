@@ -143,6 +143,10 @@ export async function sealPushV2(
     throw new Error(`ttlSeconds must be an integer from 0 to ${PUSH_MAX_TTL_SECONDS}`);
   }
   const iat = Math.floor((sender.now ?? Date.now()) / 1000);
+  // What the phone takes (`parseSealed`): never seal a page every phone would refuse.
+  if (!Number.isSafeInteger(iat) || iat < 0 || !Number.isSafeInteger(iat + ttlSeconds)) {
+    throw new Error("sender.now must be a time in ms since the epoch");
+  }
   const key = parseDevicePublicKey(devicePublicKey);
   const plaintext = contentBytes(content, {
     iat,
@@ -315,7 +319,14 @@ export async function openOnPhone(
   }
   let key: PhoneKey | undefined;
   for (const candidate of keys) {
-    if ((await pushKeyId(candidate.recipient.publicKey)) === parsed.k) {
+    let id: string;
+    try {
+      id = await pushKeyId(candidate.recipient.publicKey);
+    } catch {
+      // A malformed key on the phone never stops the others from being tried.
+      continue;
+    }
+    if (id === parsed.k) {
       key = candidate;
       break;
     }

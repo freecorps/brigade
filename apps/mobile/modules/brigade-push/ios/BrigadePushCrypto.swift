@@ -23,8 +23,9 @@ public enum BrigadePushCrypto {
   static let urgencies: Set<String> = ["low", "high", "page"]
 
   private static let service = "app.freecorps.brigade.push"
-  /// The one key from before keys per instance. The app moves it to the first origin it asks a key for
-  /// (`publicKey(origin:)`), so a phone in the field keeps its key and its device id.
+  /// The one key from before keys per instance. The app moves it to the paired instance's origin when it first asks
+  /// for that key (any first origin when none is paired; `publicKey(origin:)`, `mayAdoptLegacy`), so a phone in the
+  /// field keeps its key and its device id at the instance it was registered with.
   private static let legacyAccount = "device-key-v1"
   /// One key per instance (RFC 0015 section 4): this prefix and the instance's origin.
   private static let instancePrefix = "device-key-v2 "
@@ -182,7 +183,9 @@ public enum BrigadePushCrypto {
   static func publicKey(origin: String? = nil) throws -> String {
     if let origin {
       guard let origin = normalizedOrigin(origin) else { throw Failure.noKey }
-      return base64url(try loadOrCreateKey(account: instancePrefix + origin, adopting: true).publicKey.x963Representation)
+      let adopting = mayAdoptLegacy(paired: receiptOrigin(), origin: origin)
+      return base64url(
+        try loadOrCreateKey(account: instancePrefix + origin, adopting: adopting).publicKey.x963Representation)
     }
     if let paired = receiptOrigin(), let key = try loadKey(account: instancePrefix + paired) {
       return base64url(key.publicKey.x963Representation)
@@ -192,6 +195,13 @@ public enum BrigadePushCrypto {
       if keys.count == 1, let only = keys.first { return base64url(only.key.publicKey.x963Representation) }
     }
     return base64url(try loadOrCreateKey(account: legacyAccount, adopting: false).publicKey.x963Representation)
+  }
+
+  /// Whether the instance at `origin` may take the key from before keys per instance: the one the phone is paired
+  /// with (registered with that key), or any when it is paired with none. Another origin gets a new key, so the
+  /// paired instance keeps the key it holds. Android: `KeyChecks.mayTakeLegacy`.
+  static func mayAdoptLegacy(paired: String?, origin: String) -> Bool {
+    return paired == nil || paired == origin
   }
 
   /// packages/push `pushKeyId`: base64url of the first 6 bytes of SHA-256 over the uncompressed public key.
@@ -286,7 +296,7 @@ public enum BrigadePushCrypto {
   }
 
   /// A JSON integer (not a fraction, not a boolean).
-  private static func integer(_ value: Any?) -> Int64? {
+  static func integer(_ value: Any?) -> Int64? {
     guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
     let double = number.doubleValue
     guard double.rounded() == double, abs(double) < 9_007_199_254_740_992 else { return nil }

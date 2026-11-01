@@ -170,10 +170,16 @@ data class PushSealed(val iat: Long, val exp: Long, val origin: String, val urge
       return PushSealed(iat, exp, origin, urgency)
     }
 
-    /** org.json reads a JSON integer as Int or Long, a fraction as Double (refused). */
+    /** JavaScript's `Number.MAX_SAFE_INTEGER`: packages/push `parseSealed` takes safe integers only. */
+    private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
+
+    /**
+     * org.json reads a JSON integer as Int or Long (a larger one as BigInteger), a fraction as Double: only a safe
+     * integer is taken, as packages/push and iOS do.
+     */
     private fun integer(value: Any?): Long? = when (value) {
       is Int -> value.toLong()
-      is Long -> value
+      is Long -> value.takeIf { it in -MAX_SAFE_INTEGER..MAX_SAFE_INTEGER }
       else -> null
     }
   }

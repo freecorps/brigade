@@ -125,5 +125,14 @@ for (url, expected) in origins {
   check("origin of \(url)", BrigadePushCrypto.normalizedOrigin(url) == expected)
 }
 
+// Only the paired instance (or any, when none is paired) adopts the key from before keys per instance.
+check("paired origin adopts the old key", BrigadePushCrypto.mayAdoptLegacy(paired: origin, origin: origin))
+check("unpaired phone: the first origin adopts it", BrigadePushCrypto.mayAdoptLegacy(paired: nil, origin: other))
+check("another origin gets a new key", !BrigadePushCrypto.mayAdoptLegacy(paired: origin, origin: other))
+
+// Sealed times past JavaScript's safe integers are refused (an `exp` that never comes).
+check("unsafe exp refused", BrigadePushCrypto.integer(NSNumber(value: Int64(9_007_199_254_740_992))) == nil)
+check("largest safe integer taken", BrigadePushCrypto.integer(NSNumber(value: Int64(9_007_199_254_740_991))) == 9_007_199_254_740_991)
+
 print(failures == 0 ? "all passed" : "\(failures) failed")
 exit(failures == 0 ? 0 : 1)

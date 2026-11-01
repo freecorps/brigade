@@ -33,7 +33,9 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   tests). Web Push encryption (RFC 8291) was rejected: no native API on either platform. P-256 rather than X25519 so
   the device key can move into the Secure Enclave or StrongBox later. The APNs payload is
   `{ aps: { alert: <fallback keys>, mutable-content: 1, … }, brigade: { v: 1, enc, ct } }`, with `enc` and `ct`
-  base64url and at most 2048 bytes of plaintext.
+  base64url and at most 2048 bytes of plaintext. Version 2 (RFC 0015 section 4) is `brigade: { v: 2, k, enc, ct }`:
+  `k` the device key's id in clear, HPKE `info` `"app.freecorps.brigade push v2"`, and `iat`, `exp`, `origin` and
+  `urgency` sealed in the plaintext; the app opens both.
 - **Device key:** one per instance the phone is paired with, keyed by its origin (RFC 0015 section 4; the key from
   before is kept as the configured instance's), created by the app on first use; on iOS a Keychain item in the App Group
   `group.app.freecorps.brigade` (which is also its Keychain access group), readable after first unlock, this device
@@ -100,7 +102,7 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   OAuth2 access token (the JWT bearer flow), cached per isolate until 5 minutes before it expires and fetched again
   when FCM answers 401 (the send is tried once more); neither is ever logged. Every message is **data only** (no
   `notification`, so FCM never shows anything the app did not decrypt): `data` is `{ v, enc, ct, kind, urgency,
-  callId?, tag? }`, all strings, at most 4 KB (the 2 KB plaintext seals to about 2.8 KB), with `android.priority:
+  callId?, tag? }` (version 2 adds `k`, the key id, which the app needs to open it), all strings, at most 4 KB (the 2 KB plaintext seals to about 2.8 KB), with `android.priority:
   HIGH` (`NORMAL` for `low`) and `android.ttl` from the same expirations as APNs (pages 15 minutes, calls 60 s).
   `tag` is the APNs collapse id's role: the app's notification tag, so a repeat replaces it. FCM's refusals are
   answered like APNs' (`502` with FCM's `status` and its error code as `reason`): `UNREGISTERED` and an

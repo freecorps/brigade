@@ -23,6 +23,10 @@ struct IncomingCall {
   var incident: String?
   /// The incident's workspace, for the Acknowledge action on the page posted when CallKit refuses the call.
   var workspace: String?
+  /// The instance a version 2 page sealed (RFC 0015 section 4): the Acknowledge on that page goes only there.
+  var origin: String?
+  /// A version 2 push sealed as less than a page: reported (iOS requires it), then ended at once, never rung.
+  var notAPage = false
   var answered = false
   /// When CallKit confirmed the call (it started ringing); nil until then.
   var ringingSince: Date?
@@ -191,21 +195,25 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
   private func receive(_ id: UUID, envelope: Any?, completion: @escaping () -> Void) {
     let call = IncomingCall(id: id, title: Self.fallbackTitle, body: Self.fallbackBody)
     // Repeats of one page share its id. Every branch reports to CallKit before anything else.
-    switch known(id) {
+    let kind = known(id)
+    switch kind {
     case .new: report(call, completion: completion)
     case .active: reportRepeat(call, completion: completion)
     case .ended: reportEnded(call, completion: completion)
     }
     do {
       let content = try BrigadePushCrypto.open(envelope: envelope)
-      // Only a page rings (RFC 0010); a version 2 envelope says so sealed (RFC 0015 section 4). Anything else keeps
-      // the fallback name: the call is already reported, as Apple requires.
+      // Only a page rings (RFC 0010); a version 2 envelope says so sealed (RFC 0015 section 4). Anything else is
+      // reported (above, as Apple requires), then ended as soon as CallKit has it, and shown as the fallback text at
+      // its urgency. Only this push's own new call: a repeat never ends the call an earlier page rang.
       if let sealed = content.sealed, sealed.urgency != "page" {
-        log.error("voip push not a sealed page: fallback name")
+        log.error("voip push not a sealed page: reported, then ended")
+        if case .new = kind { endNotAPage(id) }
         return
       }
       update(
-        id, title: content.title, body: content.body, incident: content.incident, workspace: content.workspace)
+        id, title: content.title, body: content.body, incident: content.incident, workspace: content.workspace,
+        origin: content.sealed?.origin)
       log.info("voip push decrypted")
     } catch {
       log.error("voip push not decrypted: \(String(describing: error), privacy: .public)")
@@ -281,7 +289,12 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
             self.notifyPage(call)
             return
           }
-          self.notifyPage(tracked)
+          // Sealed as less than a page: the fallback text at that urgency, not a page.
+          if tracked.notAPage { self.notifyNotAPage(tracked) } else { self.notifyPage(tracked) }
+          return
+        }
+        if self.calls[call.id]?.notAPage == true {
+          self.finishNotAPage(call.id)
           return
         }
         self.calls[call.id]?.ringingSince = Date()
@@ -293,12 +306,31 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
     }
   }
 
-  private func update(_ id: UUID, title: String, body: String, incident: String?, workspace: String?) {
+  /// A new call whose push was sealed as less than a page: ended as soon as CallKit has it (`report` checks the flag
+  /// when CallKit answers; at once if it already has). Never left ringing until `ringTimeout`.
+  private func endNotAPage(_ id: UUID) {
+    guard calls[id] != nil else { return }
+    calls[id]?.notAPage = true
+    if calls[id]?.ringingSince != nil { finishNotAPage(id) }
+  }
+
+  /// Ends it as a declined call (a repeat of the same push is reported and ended at once, `reportEnded`), and shows
+  /// the fallback text without the urgency of a page: never silence.
+  private func finishNotAPage(_ id: UUID) {
+    guard let call = calls[id] else { return }
+    finish(id, reason: .remoteEnded, event: "declined")
+    notifyNotAPage(call)
+  }
+
+  private func update(
+    _ id: UUID, title: String, body: String, incident: String?, workspace: String?, origin: String?
+  ) {
     guard calls[id] != nil else { return }
     calls[id]?.title = title
     calls[id]?.body = body
     calls[id]?.incident = incident
     calls[id]?.workspace = workspace
+    calls[id]?.origin = origin
     let update = CXCallUpdate()
     update.localizedCallerName = title
     provider.reportCall(with: id, updated: update)
@@ -469,12 +501,26 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
     content.body = call.body
     content.sound = .default
     content.interruptionLevel = .timeSensitive
-    BrigadePage.mark(content, incident: call.incident, workspace: call.workspace)
+    BrigadePage.mark(content, incident: call.incident, workspace: call.workspace, origin: call.origin)
     let request = UNNotificationRequest(identifier: call.id.uuidString, content: content, trigger: nil)
     UNUserNotificationCenter.current().add(request) { [weak self] error in
       if let error { self?.log.error("page notification failed: \(String(describing: error), privacy: .public)") }
     }
     log.info("page notification instead of a call")
+  }
+
+  /// A call push sealed as less than a page (RFC 0015 section 4): the fallback text, `active`, without the Acknowledge
+  /// action (the fallback has nothing to acknowledge by), as the Android service shows it.
+  private func notifyNotAPage(_ call: IncomingCall) {
+    let content = UNMutableNotificationContent()
+    content.title = Self.fallbackTitle
+    content.body = Self.fallbackBody
+    content.sound = .default
+    content.interruptionLevel = .active
+    let request = UNNotificationRequest(identifier: call.id.uuidString, content: content, trigger: nil)
+    UNUserNotificationCenter.current().add(request) { [weak self] error in
+      if let error { self?.log.error("fallback notification failed: \(String(describing: error), privacy: .public)") }
+    }
   }
 
   // From Localizable.strings, generated from packages/i18n (plugins/notification-service.ts).

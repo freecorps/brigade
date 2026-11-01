@@ -35,9 +35,10 @@ import javax.crypto.spec.GCMParameterSpec
  *   the app's no-backup directory: it is decrypted in memory only to open a page. The closest safe option, recorded
  *   in RFC 0006.
  *
- * The one key from before keys per instance stays where it is (a Keystore alias cannot be renamed): the first origin
- * the app asks a key for claims it (`legacy-key-origin` in the app's private preferences), so a phone in the field
- * keeps its key and its device id at the instance it was registered with.
+ * The one key from before keys per instance stays where it is (a Keystore alias cannot be renamed): the paired
+ * instance claims it when the app first asks for that instance's key (any first origin when none is paired;
+ * `legacy-key-origin` in the app's private preferences, [KeyChecks.mayTakeLegacy]), so a phone in the field keeps its
+ * key and its device id at the instance it was registered with.
  *
  * A phone that moves from 11 to 12 keeps the key it has (a new key is a new device id). Neither key is in a backup.
  * A Keystore key is kept only once it has done one ECDH; a wrapped key that no longer opens is dropped
@@ -93,7 +94,7 @@ object DeviceKey {
     existing(context, slot)?.let { return it }
     val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     val claimed = prefs.getString(LEGACY_ORIGIN, null)
-    if (claimed == null || claimed == origin) {
+    if (KeyChecks.mayTakeLegacy(claimed, Pages.receiptOrigin(context), origin)) {
       existing(context, LEGACY)?.let { key ->
         if (claimed == null) prefs.edit().putString(LEGACY_ORIGIN, origin).commit()
         return key

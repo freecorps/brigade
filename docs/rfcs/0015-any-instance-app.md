@@ -168,19 +168,23 @@ version 1; the app opens both.
   time-sensitive and keeps a Critical Alert, anything less is `active` with the default sound (Android: the updates
   channel). A push that does not open (unknown key, AEAD failure, malformed) or opened expired keeps the level the
   relay set in clear: loud, so a phone clock running ahead never quiets a page, and the relay still decides those.
-  A call push whose sealed urgency is not a page does not ring (iOS keeps the fallback name, Android shows the
-  fallback text at the sealed urgency). The receipt goes only to the sealed origin, and the Acknowledge action only
-  there (`page.origin` in the notification, checked by `page-action.ts` against the app's instance). Origins compare
+  A call push whose sealed urgency is not a page does not ring: iOS still reports it to CallKit first (iOS stops
+  delivering VoIP pushes to an app that does not), ends it as soon as CallKit has it and shows the fallback text,
+  `active`; Android shows the fallback text at the sealed urgency. The receipt goes only to the sealed origin, and the
+  Acknowledge action only there (`page.origin` in the notification, the page CallKit's fallback posts included,
+  checked by `page-action.ts` against the app's instance). Origins compare
   as `URL.origin` writes them on every side (an IPv6 host keeps its brackets; Android reads the authority itself, so a
   host with `_` works), and an origin the native side refuses falls back to the key from before.
 - **Keys per instance.** The app asks for the key of its instance's origin (`getInstancePublicKey`, `devicePublicKey`
   in `src/lib/device.ts`). iOS keeps one Keychain item per origin (account `device-key-v2 <origin>`, App Group,
-  after first unlock, this device only); the key from before (`device-key-v1`) is moved to the first origin asked
-  for in one `SecItemUpdate`, so it is the same key and the same device id (an update that fails is an error, never
-  a new key that would change the device id). Android cannot rename a Keystore alias:
-  each origin gets its own slot (alias `…device-key.v2.<slot>`, or the wrapped file, `<slot>` from SHA-256 of the
-  origin), and the first origin asked for claims the old key (`legacy-key-origin` in the app's preferences). Either
-  way phones in the field keep paging, and the device id still comes from the key.
+  after first unlock, this device only); the key from before (`device-key-v1`) is moved to the paired instance's
+  origin (any first origin asked for when none is paired) in one `SecItemUpdate`, so it is the same key and the same
+  device id (an update that fails is an error, never a new key that would change the device id). Android cannot
+  rename a Keystore alias: each origin gets its own slot (alias `…device-key.v2.<slot>`, or the wrapped file,
+  `<slot>` from SHA-256 of the origin), and the paired instance (any first origin when none is paired) claims the
+  old key (`legacy-key-origin` in the app's preferences). Another origin gets a new key, so the instance the phone is
+  registered with keeps the key it holds. Either way phones in the field keep paging, and the device id still comes
+  from the key.
 - **Tests:** packages/push `tests/envelope-v2.test.ts` (round trip, tampering, versions not crossing, expired, wrong
   origin, not paired, unknown key, how loud each fallback is, the key id); the Kotlin on the JVM
   (`EnvelopeV2Test.kt`, a page sealed by packages/push, the channel rule, origins). **The Swift is not tested in

@@ -42,6 +42,14 @@ internal object KeyChecks {
    */
   fun unwrapLost(error: Throwable): Boolean =
     generateSequence(error) { it.cause }.take(8).any { it is AEADBadTagException || it is InvalidKeySpecException }
+
+  /**
+   * Whether the instance at [origin] may take the key from before keys per instance: the origin that claimed it, or,
+   * while unclaimed, the instance the phone is paired with ([paired], registered with that key), or any origin when
+   * it is paired with none. Another origin gets a new key, so the paired instance keeps the key it holds.
+   */
+  fun mayTakeLegacy(claimed: String?, paired: String?, origin: String): Boolean =
+    if (claimed != null) claimed == origin else paired == null || paired == origin
 }
 
 /**

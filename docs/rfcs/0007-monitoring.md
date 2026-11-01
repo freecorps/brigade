@@ -437,7 +437,9 @@ results (a new monitor is up on its first success).
   stopped coming through, or come through late from a backed-up Queue); the last proof took over 2 minutes
   (`pipeline_slow`, which is also why it pinged nothing, so the dashboard and the external check agree); or the relay
   refused the token (`relay_unauthorized`), did not answer (`relay_unreachable`) or is not configured
-  (`relay_not_configured`) on the last proof; or its deeper checks failed as above (at once, or on the 3rd beat in a
+  (`relay_not_configured`) on the last proof, or, for an instance with a relay key (RFC 0015 section 7), its signed
+  deep check refused the instance (`relay_bad_signature`, `relay_instance_unregistered`, `relay_instance_revoked`,
+  `relay_rate_limited`) or the relay cannot open handles (`relay_handles_unavailable`); or its deeper checks failed as above (at once, or on the 3rd beat in a
   row): APNs (`apns_failing`), FCM (`fcm_failing`) or the D1 read (`d1_failing`). `unknown` is before the first proof (a new deployment; local runs, where
   the cron only fires by hand). The watchdog itself unreachable is a 503, which the dashboard shows as "couldn't
   check". Each change of status or reasons on a beat or a proof is a `brigade.status_changed` event in the watchdog's

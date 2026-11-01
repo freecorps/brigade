@@ -83,7 +83,7 @@ import {
   type ReminderPlan,
   type RotationPlan,
 } from "./mailer.ts";
-import { notifyPush, type NotifyEnv, type PageShard } from "./notify.ts";
+import { notifyPush, type NotifyEnv, type PageShard, type PushAgain } from "./notify.ts";
 import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
 import {
   asksForPage,
@@ -2027,12 +2027,13 @@ export class WorkspaceDO extends DurableObject<Env> {
       incident: event.subject,
       tries,
     });
-    let again: boolean;
+    // The shard tries again a minute later, whatever the relay's `Retry-After`.
+    let again: false | PushAgain;
     try {
       again = await notifyPush(event, tries, this.pageSender.env(), this.pageSender.send, shard);
     } catch (error) {
       this.log("sending a page from the shard failed", { event: event.id, error });
-      again = true;
+      again = {};
     }
     try {
       // Still leased otherwise: it comes back a minute later.

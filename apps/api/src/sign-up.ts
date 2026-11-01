@@ -6,6 +6,7 @@
 // Kept free of Workers imports, like src/auth.ts: the database comes in as an argument.
 
 import { emailConfigured, type EmailEnv } from "./email.ts";
+import { BRIGADE_API_VERSION, MIN_APP_VERSION } from "./relay-instance.ts";
 
 /**
  * - `open`: anyone may sign up (the `dev` environment, local runs and the tests).
@@ -112,9 +113,16 @@ function tell(setting: "sign-up" | "verification", value: string): void {
  * `GET /config`: what the clients need before anyone signs in. No session, nothing about any account or workspace;
  * cached a minute, as it only changes with a deploy. `signUp` is the mode in force; `signUpClosedBy: "no_email"` says
  * `SIGNUP` asked for more but the instance cannot send email; `requireVerifiedEmail` says sign-in waits for a verified
- * address.
+ * address. For the app (RFC 0015 sections 5 and 7): `brigade` (`api`, the version of what apps rely on, and
+ * `minApp`, the oldest app version supported) and, when phones can be paged through the relay with handles, `relay`
+ * (`origin`, where the app mints handles; `instance`, this instance's id there; `app`, the own app build's store link
+ * when there is one). Nothing secret.
  */
-export function serveConfig(request: Request, access: InstanceAccess): Response {
+export function serveConfig(
+  request: Request,
+  access: InstanceAccess,
+  relay?: { origin: string; instance: string; app?: string },
+): Response {
   if (request.method !== "GET") {
     return Response.json(
       { error: "method_not_allowed" },
@@ -126,6 +134,8 @@ export function serveConfig(request: Request, access: InstanceAccess): Response 
       signUp: access.signUp,
       ...(access.signUp !== access.configured ? { signUpClosedBy: "no_email" } : {}),
       requireVerifiedEmail: access.requireVerifiedEmail,
+      brigade: { api: BRIGADE_API_VERSION, minApp: MIN_APP_VERSION },
+      ...(relay ? { relay } : {}),
     },
     { headers: { "Cache-Control": "public, max-age=60" } },
   );

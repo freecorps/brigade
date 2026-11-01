@@ -85,7 +85,7 @@ export const ACCOUNT_ACTOR: Actor = { kind: "system", id: "sys_account", role: "
 export function deviceSummary(
   device: Pick<
     DeviceRow,
-    "id" | "userId" | "platform" | "environment" | "voipToken" | "registeredAt"
+    "id" | "userId" | "platform" | "environment" | "voipToken" | "handle" | "voip" | "registeredAt"
   >,
   seenAt: number,
   previous?: DeviceSummaryRow,
@@ -95,10 +95,30 @@ export function deviceSummary(
     userId: device.userId,
     platform: device.platform,
     environment: device.environment,
-    voip: device.voipToken !== null,
+    voip: canRing(device),
     registeredAt: device.registeredAt,
     lastSeenAt: Math.max(seenAt, previous?.lastSeenAt ?? 0),
   };
+}
+
+/**
+ * Whether a device can ring as a call (RFC 0010): its handle says so (`voip`, RFC 0015) when it has one, else it has a
+ * PushKit (or, on Android, call) token.
+ */
+export function canRing(device: Pick<DeviceRow, "voipToken" | "handle" | "voip">): boolean {
+  return device.handle ? device.voip === true : device.voipToken !== null;
+}
+
+/**
+ * Whether two devices are the same phone's push token: their relay tags when both have one (RFC 0015 section 2), else
+ * their raw tokens. A device with only a tag and one with only a raw token never match: the instance cannot tell.
+ */
+export function samePushToken(
+  a: Pick<DeviceRow, "pushToken" | "tag">,
+  b: Pick<DeviceRow, "pushToken" | "tag">,
+): boolean {
+  if (a.tag && b.tag) return a.tag === b.tag;
+  return a.pushToken !== null && a.pushToken === b.pushToken;
 }
 
 /** Deletes a device and the summary the workspace sees of it. */
@@ -148,11 +168,31 @@ const publicKey: Validator<string> = (input, path = "") =>
     : { ok: false, issues: [{ path, message: "Expected an uncompressed P-256 public key" }] };
 
 /**
- * Registers the actor's device, or refreshes it (a rotated token or key). The id is made by the app; the same push
- * token registered under another id by the same member (a reinstall) replaces that device, so one phone is never
- * paged twice. A device belongs to whoever registered it: another member's id is `forbidden`. No change is a
- * `conflict`, as for every mutation (RFC 0005). A new device over the member's limit replaces their least recently
- * alive ones (registered, or confirmed a page; `replaced`): only ever the member's own, so the limit still bounds a page's fan-out.
+ * A relay handle as `POST /v1/handles` answers it (apps/relay src/handles.ts): `<key id>.<base64url sealed tokens>`.
+ * Opaque here; the relay opens it on each send.
+ */
+const handle: Validator<string> = (input, path = "") =>
+  typeof input === "string" && /^[A-Za-z0-9]{1,16}\.[A-Za-z0-9_-]{16,2048}$/.test(input)
+    ? { ok: true, value: input }
+    : { ok: false, issues: [{ path, message: "Expected a relay handle" }] };
+
+/** A relay tag: base64url of an HMAC-SHA-256, 43 characters. */
+const tag: Validator<string> = (input, path = "") =>
+  typeof input === "string" && /^[A-Za-z0-9_-]{43}$/.test(input)
+    ? { ok: true, value: input }
+    : { ok: false, issues: [{ path, message: "Expected a relay tag" }] };
+
+/**
+ * Registers the actor's device, or refreshes it (a rotated token or key). The phone is named to the relay by raw
+ * tokens (`pushToken`, `voipToken`: apps that pair with an instance holding the relay's send token, RFC 0006) or by
+ * a relay handle and its tag (`handle`, `tag`, `voip`: RFC 0015 section 7, the instance never seeing a token), or
+ * both while an instance moves (RFC 0015 section 9); at least one. `envelope: 2` says the app opens envelope version
+ * 2 (RFC 0015 section 4, Q29); left out by older apps, which then get version 1. The id is made by the app; the same
+ * push token (the same tag, for handles) registered under another id by the same member (a reinstall) replaces that
+ * device, so one phone is never paged twice. A device belongs to whoever registered it: another member's id is
+ * `forbidden`. No change is a `conflict`, as for every mutation (RFC 0005). A new device over the member's limit
+ * replaces their least recently alive ones (registered, or confirmed a page; `replaced`): only ever the member's own,
+ * so the limit still bounds a page's fan-out.
  */
 export const registerDevice = defineMutation({
   name: "device.register",
@@ -160,9 +200,15 @@ export const registerDevice = defineMutation({
     id: v.id("dev"),
     platform: v.picklist(DEVICE_PLATFORMS),
     environment: v.picklist(PUSH_ENVIRONMENTS),
-    pushToken,
-    // PushKit's token for calls (RFC 0010, spike S6); null without one.
-    voipToken: v.nullable(pushToken),
+    // Left out by an app that registers with a handle alone.
+    pushToken: v.optional(v.nullable(pushToken)),
+    // PushKit's token for calls (RFC 0010, spike S6); null or left out without one.
+    voipToken: v.optional(v.nullable(pushToken)),
+    handle: v.optional(v.nullable(handle)),
+    tag: v.optional(v.nullable(tag)),
+    // Whether the handle can ring as a call; only with a handle.
+    voip: v.omittable(v.boolean()),
+    envelope: v.omittable(v.literal(2)),
     publicKey,
     // Whether Critical Alerts are allowed (RFC 0006 "Critical Alerts"). Optional, so apps from before it still
     // register; left out reads as not allowed.
@@ -176,18 +222,50 @@ export const registerDevice = defineMutation({
         { path: "id", message: "Id time is too far in the future" },
       ]);
     }
+    if (args.pushToken === null && args.handle === null) {
+      return fail("invalid_args", "A device needs a push token or a relay handle", [
+        { path: "pushToken", message: "Expected a push token or a relay handle" },
+      ]);
+    }
+    if ((args.handle === null) !== (args.tag === null)) {
+      return fail("invalid_args", "A relay handle comes with its tag", [
+        { path: args.handle === null ? "handle" : "tag", message: "Expected both or neither" },
+      ]);
+    }
+    if (args.pushToken === null && args.voipToken !== null) {
+      return fail("invalid_args", "A VoIP token comes with its push token", [
+        { path: "voipToken", message: "Expected no VoIP token without a push token" },
+      ]);
+    }
+    if (args.handle === null && args.voip !== undefined) {
+      return fail("invalid_args", "voip says whether a relay handle can ring", [
+        { path: "voip", message: "Expected no voip without a relay handle" },
+      ]);
+    }
     const userId = ctx.actor.id;
     const events: (DeviceRegistered | DeviceUnregistered)[] = [];
+    const ringable = canRing(args);
     // The table is server-only: a client's optimistic run only emits the event.
     if (ctx.server) {
       const current = store.get("devices", args.id);
       if (current && current.userId !== userId) {
         return fail("forbidden", "Device belongs to another member");
       }
+      // Every field written, null when not given: `update` merges, so a phone that moved from raw tokens to a handle
+      // (or back) keeps nothing of the other.
       const row: DeviceRow = {
-        ...args,
-        criticalAlerts: args.criticalAlerts === true,
+        id: args.id,
         userId,
+        platform: args.platform,
+        environment: args.environment,
+        pushToken: args.pushToken,
+        voipToken: args.voipToken,
+        handle: args.handle,
+        tag: args.tag,
+        voip: args.handle !== null && args.voip === true,
+        envelope: args.envelope ?? null,
+        publicKey: args.publicKey,
+        criticalAlerts: args.criticalAlerts === true,
         registeredAt: current?.registeredAt ?? ctx.now,
         updatedAt: ctx.now,
         ...(current?.sessionId !== undefined ? { sessionId: current.sessionId } : {}),
@@ -199,6 +277,10 @@ export const registerDevice = defineMutation({
         current.environment === row.environment &&
         current.pushToken === row.pushToken &&
         current.voipToken === row.voipToken &&
+        (current.handle ?? null) === row.handle &&
+        (current.tag ?? null) === row.tag &&
+        (current.voip ?? false) === row.voip &&
+        (current.envelope ?? null) === row.envelope &&
         (current.criticalAlerts ?? false) === row.criticalAlerts &&
         current.publicKey === row.publicKey
       ) {
@@ -213,13 +295,13 @@ export const registerDevice = defineMutation({
             userId,
             platform: current.platform,
             environment: current.environment,
-            voip: current.voipToken !== null,
+            voip: canRing(current),
           },
         } satisfies DeviceRegistered);
       }
       const mine = store.scan("devices").filter((device) => device.userId === userId);
       for (const other of mine) {
-        if (other.id === args.id || other.pushToken !== args.pushToken) continue;
+        if (other.id === args.id || !samePushToken(other, row)) continue;
         forgetDevice(store, other.id);
         events.push({
           type: "device.unregistered",
@@ -234,7 +316,7 @@ export const registerDevice = defineMutation({
         const alive = (device: DeviceRow) =>
           Math.max(device.updatedAt, store.get("member_devices", device.id)?.lastSeenAt ?? 0);
         const kept = mine
-          .filter((device) => device.pushToken !== args.pushToken)
+          .filter((device) => !samePushToken(device, row))
           .sort((a, b) => alive(a) - alive(b) || a.id.localeCompare(b.id));
         const over = Math.max(0, kept.length - (MAX_DEVICES_PER_MEMBER - 1));
         for (const stale of kept.slice(0, over)) {
@@ -258,7 +340,7 @@ export const registerDevice = defineMutation({
         userId,
         platform: args.platform,
         environment: args.environment,
-        voip: args.voipToken !== null,
+        voip: ringable,
       },
     });
     return ok(...events);
@@ -328,20 +410,25 @@ export const unregisterDevice = defineMutation({
 
 /**
  * Server only, as the notifier: drops a device whose push service said its token is gone (APNs `BadDeviceToken`,
- * `Unregistered`), so later pages do not count it. The app registers again with a fresh token when it next runs.
- * `pushToken` is the token the push went to: a device registered again with a new token while the push was out
+ * `Unregistered`), or whose relay handle is no longer good for this instance (`403 handle_not_yours` after a lost
+ * instance key, `400 bad_handle`: RFC 0015 "Dead ends"), so later pages do not count it. The app registers again
+ * with a fresh token (and handle) when it next runs. `pushToken` is the token the push went to, or `tag` the relay
+ * tag of the handle it went to (exactly one): a device registered again with another token while the push was out
  * is kept (`conflict`), since its new token was never tried.
  */
 export const expireDevice = defineMutation({
   name: "device.expire",
-  args: v.object({ id: v.id("dev"), pushToken }),
+  args: v.object({ id: v.id("dev"), pushToken: v.omittable(pushToken), tag: v.omittable(tag) }),
   permission: "incident:update",
   apply(store, args) {
+    if ((args.pushToken === undefined) === (args.tag === undefined)) {
+      return fail("invalid_args", "Expected the push token or the relay tag the push went to");
+    }
     const current = store.get("devices", args.id);
     if (!current) return fail("not_found", "Device not found");
-    if (current.pushToken !== args.pushToken) {
-      return fail("conflict", "Device was registered again with another token");
-    }
+    const same =
+      args.tag !== undefined ? current.tag === args.tag : current.pushToken === args.pushToken;
+    if (!same) return fail("conflict", "Device was registered again with another token");
     forgetDevice(store, args.id);
     const event: DeviceUnregistered = {
       type: "device.unregistered",
@@ -355,21 +442,37 @@ export const expireDevice = defineMutation({
 /**
  * Server only, as the notifier: clears a device's PushKit token after APNs refused a call to it as gone
  * (`BadDeviceToken`, `Unregistered`, `DeviceTokenNotForTopic`), so later pages do not keep calling a dead token. The
- * device stays, and so does its alert token: its pages keep coming as pushes. `voipToken` is the token the call went
- * to: a device registered again with another one meanwhile is kept as it is (`conflict`); so is a device whose token
- * is already cleared. The app gives PushKit's token again when it next registers (RFC 0010).
+ * device stays, and so does its alert token: its pages keep coming as pushes. `voipToken` is the PushKit token the
+ * call went to (cleared), or `handle` the relay handle it went to (its `voip` turned off, RFC 0015; the handle, not
+ * the tag, since a registration with a new PushKit token keeps the tag): a device registered again with another one
+ * meanwhile is kept as it is (`conflict`); so is a device that already does not ring. The app gives PushKit's token
+ * again when it next registers (RFC 0010).
  */
 export const expireVoipToken = defineMutation({
   name: "device.expireVoip",
-  args: v.object({ id: v.id("dev"), voipToken: pushToken }),
+  args: v.object({
+    id: v.id("dev"),
+    voipToken: v.omittable(pushToken),
+    handle: v.omittable(handle),
+  }),
   permission: "incident:update",
   apply(store, args) {
+    if ((args.voipToken === undefined) === (args.handle === undefined)) {
+      return fail("invalid_args", "Expected the VoIP token or the relay handle the call went to");
+    }
     const current = store.get("devices", args.id);
     if (!current) return fail("not_found", "Device not found");
-    if (current.voipToken !== args.voipToken) {
-      return fail("conflict", "Device was registered again with another VoIP token");
+    if (args.handle !== undefined) {
+      if (current.handle !== args.handle || current.voip !== true) {
+        return fail("conflict", "Device was registered again with another handle");
+      }
+      store.update("devices", args.id, { voip: false });
+    } else {
+      if (current.voipToken !== args.voipToken) {
+        return fail("conflict", "Device was registered again with another VoIP token");
+      }
+      store.update("devices", args.id, { voipToken: null });
     }
-    store.update("devices", args.id, { voipToken: null });
     const summary = store.get("member_devices", args.id);
     if (summary) store.update("member_devices", args.id, { voip: false });
     const event: DeviceVoipCleared = {

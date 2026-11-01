@@ -93,16 +93,15 @@ Object?
 ## Q29 — What is left of the sealed page (RFC 0015 section 4, RFC 0006)
 
 Envelope version 2 is built on the phone (step 2): it seals `iat`, `exp`, `origin` and `urgency`, names its key
-(`k`), and the app keeps one device key per instance. Left open:
+(`k`), and the app keeps one device key per instance. How an instance knows a phone opens it is decided and built
+(step 3): `device.register` takes `envelope: 2` (left out by older apps, as `criticalAlerts` is), and the notifier
+seals v2 only to devices that sent it (and only with `DASHBOARD_URL` set, its sealed origin). Left open:
 
 - **When the app stops opening version 1.** While it opens v1, anyone holding a device public key (the instance it
   was given to, or whoever that instance leaked it to) can send a page with no expiry, origin or urgency sealed, and
-  the relay can replay one for as long as APNs keeps it. Proposal: the API seals v2 from step 3 on, and the app drops
-  v1 in the release that adds several instances (step 4), once `/config` `brigade.minApp` says every supported app
-  opens v2. Is that the right moment, or later?
-- **How an instance knows a phone opens version 2** (step 3): an app from before it shows the fallback text for every
-  v2 page. Proposal: `device.register` gains `envelope: 2` (left out by older apps, as `criticalAlerts` is), and the
-  notifier seals v2 only to devices that sent it.
+  the relay can replay one for as long as APNs keeps it. Proposal: the app drops v1 in the release that adds several
+  instances (step 4), once `/config` `brigade.minApp` says every supported app opens v2. Is that the right moment,
+  or later?
 - **The sealed urgency only binds a push that opens.** For one that opens (shown, or refused for another origin or
   pairing) a Critical Alert is kept only on a sealed `page`, and a `low` one never rings as a page. A push that does
   not open (unknown key, AEAD failure, malformed) or opened expired shows the fallback at the level the relay set in
@@ -115,6 +114,16 @@ Envelope version 2 is built on the phone (step 2): it seals `iat`, `exp`, `origi
 - **Sender authentication** (HPKE auth mode, or the instance's Ed25519 signature over the envelope, RFC 0006): with a
   key per instance, a page that opens is from whoever holds that instance's copy of the device public key. Worth the
   extra bytes and a signature check in the extension?
+
+## Q30 — A new handle on every registration (RFC 0015 sections 2 and 7)
+
+The app asks the relay for a handle each time it registers (launch, foreground, new token), and every sealing uses a
+fresh nonce, so the handle differs each time even for the same tokens. The instance stores the handle it was given,
+so each of those registrations changes the device row and emits `device.registered` (the tag is the same; a
+registration with raw tokens that changed nothing is a `conflict`). Keeping the newest handle is what carries a
+relay key rotation to the phone's row. Is the churn acceptable, or should the app keep its handle while its tokens
+and the relay's key id are unchanged, or the instance ignore a new handle with the same tag unless its key id
+differs?
 
 # Decided
 

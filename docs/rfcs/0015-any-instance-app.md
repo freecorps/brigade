@@ -1,7 +1,8 @@
 # RFC 0015 — One store app for every instance
 
 - Status: Accepted (decisions D1–D5 below); the relay side and envelope version 2 on the phone (steps 1 and 2 of
-  "Order of work") are built, the rest is not
+  "Order of work") are built, and the API side of step 3 (handles in `device.register`, the notifier on `/v1/send`,
+  `/config`, the watchdog's signed check); the rest is not
 - Builds on: RFC 0006 (push relay), RFC 0002 (auth, environments), RFC 0010 (calls)
 
 ## Problem
@@ -143,8 +144,8 @@ moment, and it is what makes several instances on one phone safe:
   of the payload names which key (`brigade.k`, a short key id) so the extension tries one key. Since the device id
   comes from the key, the phone is a different device at each instance, which is what they should see.
 
-**Built (step 2): envelope version 2 and keys per instance on the phone.** The instance side (step 3) still seals
-version 1; the app opens both.
+**Built (step 2): envelope version 2 and keys per instance on the phone.** The instance (step 3, section 7) seals
+version 2 for a device registered with `envelope: 2`, version 1 for any other; the app opens both.
 
 - **The envelope.** `{ v: 2, k, enc, ct }` (packages/push `sealPushV2`, `PushEnvelopeV2`): the same HPKE suite under
   its own `info`, `"app.freecorps.brigade push v2"`, so a v2 ciphertext relabelled v1 (or the other way round) does
@@ -286,6 +287,38 @@ The address-only QR (`brigade://connect?server=<origin>`) stays for an instance 
   `vp run setup:relay` (section 8).
 - The watchdog (RFC 0007) treats `instance_registration_pending`, `instance_unregistered`, `instance_revoked`, `bad_signature`
   and `rate_limited` from the relay's deep health as `degraded`, with the reason, so the operators are emailed.
+
+**Built (step 3, the API side).** apps/api `src/relay-instance.ts`, `src/notify.ts`, `src/watchdog.ts`; packages/schema
+`src/devices.ts`; `importInstanceKey` in packages/push `src/instance.ts`. As built:
+
+- **`device.register`** takes `handle`, `tag`, `voip` and `envelope: 2` (Q29) next to the raw tokens, which stay
+  accepted (our instance's phones in the field). At least one of `pushToken` and `handle`; a handle with its tag;
+  `voip` only with a handle, a VoIP token only with a push token. Both at once are accepted, for an instance moving
+  (section 9). Every field is written on each registration (null when not given), so a phone moving from raw tokens
+  to a handle keeps nothing of its tokens. Rows are JSON documents in the shard (apps/api `src/store.ts`), so the new
+  fields need no migration; `pushToken` is null for a handle alone. The same tag under a new id replaces the old
+  device; a raw token never matches a tag. `device.expire` takes the `tag` of the handle the push went to (or the
+  token, as before); `device.expireVoip` the `handle` a call went to, since a registration with a new PushKit token
+  keeps the tag, and turns `voip` off.
+- **The notifier** sends a handle device to `/v1/send`, signed with `RELAY_INSTANCE_KEY` (through the `RELAY`
+  binding or at `RELAY_URL`), and a raw-token device to `/send` with `RELAY_SEND_TOKEN`. A device with both goes
+  through `/send` when `/v1/send` refuses the instance itself, so a broken instance key never costs a page `/send`
+  can still deliver. A handle device on an instance without the key is `not_configured`. For `envelope: 2` it seals
+  v2 with the dashboard's origin (`DASHBOARD_URL`; v1 without it) and sends the relay the TTL it sealed (15 minutes
+  for a page, an hour for less, 60 s for a call). Answers: `403 handle_not_yours` and `400 bad_handle` expire the
+  device by its tag; `401`, any other `403` and `503` are the instance's, not the phone's: retried within the page's
+  attempts, never expiring anything, then recorded as not paged (`notification.failed`), so the email notifier and
+  the rest of the ladder go on; `429` is retried no sooner than its `Retry-After` (at most 300 s).
+- **`GET /config`** adds `brigade: { api, minApp }` (`api` 1, `minApp` the oldest app version supported, `0.1.0`)
+  and, with the instance key and a public `RELAY_URL` (https), `relay: { origin, instance, app? }`, `app` from
+  `RELAY_APP_URL`. With the `RELAY` binding, `RELAY_URL` is only that address.
+- **The watchdog** asks the signed `GET /v1/health?deep=1` when the instance key is set: `relay_bad_signature` (also
+  for a key that does not read), `relay_instance_unregistered`, `relay_instance_revoked`, `relay_rate_limited` and
+  `relay_handles_unavailable` (the relay answers `handles: false`), each degrading at once; a relay without `/v1`
+  falls back to the send token's check. The relay has no pending state to answer (registration completes with the
+  emailed code), so `instance_registration_pending` is not a reason: an instance not registered yet is
+  `instance_unregistered`.
+- Open: Q30 (a new handle, so a changed row, on every registration).
 
 ### 8. Which relay: Freecorps' or your own
 
@@ -430,7 +463,8 @@ does it.
 3. Instance: `device.register` with `handle`/`tag`, the notifier on `/v1/send`, `/config` additions, watchdog
    reasons, `vp run setup:relay` (both relays), the dashboard's "Phones and pages". The notifier switches to
    `sealPushV2` (origin: the dashboard's, TTL: the one it gives the relay) only for apps that open v2: an older app
-   shows the fallback text for every v2 page.
+   shows the fallback text for every v2 page. Built: the API side (`device.register`, the notifier, `/config`, the
+   watchdog; section 7). Still to do: `vp run setup:relay` and the dashboard's "Phones and pages".
 4. App: handles and per-instance keys and storage; the instance switcher, address field, QR and link, address
    checks, which relay; QR sign-in (with its API routes and the dashboard's approval).
 5. Our instance moves (section 9); then the docs for self-hosters ("Your own app" included) and the terms.

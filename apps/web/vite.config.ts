@@ -37,6 +37,8 @@ function localSecrets(): Record<string, string> {
     "DEAD_MAN_URL",
     "RELAY_URL",
     "RELAY_SEND_TOKEN",
+    "RELAY_INSTANCE_KEY",
+    "RELAY_APP_URL",
     "EMAIL_FROM",
     "DASHBOARD_URL",
     "WEBHOOK_SECRET_KEY",

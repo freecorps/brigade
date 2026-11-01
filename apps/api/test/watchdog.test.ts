@@ -9,7 +9,8 @@ import {
   getQueueResult,
   runInDurableObject,
 } from "cloudflare:test";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vite-plus/test";
+import { generateInstanceKey, verifyRequest } from "@freecorps/brigade-push/instance";
 import worker from "../src/index.ts";
 import { withEmailCeiling } from "../src/email-ceiling.ts";
 import type { EmailResult, EmailSender, OutgoingEmail } from "../src/email.ts";
@@ -784,6 +785,119 @@ describe("the heartbeat, end to end", () => {
     const result = await deliver([event], notifyEnv(), up.send);
     expect(result.explicitAcks).toEqual(["msg-0"]);
     expect(up.urls).toEqual([]);
+  });
+});
+
+// With an instance key (RFC 0015 sections 3 and 7) the deep check is the relay's signed `GET /v1/health?deep=1`, and
+// the instance's own state on the relay is a reason of its own.
+describe("the signed deep check (RFC 0015)", () => {
+  let key: Awaited<ReturnType<typeof generateInstanceKey>>;
+  beforeAll(async () => {
+    key = await generateInstanceKey();
+  });
+  const PROVIDERS = { apns: { status: "ok" }, fcm: { status: "not_configured" } };
+
+  /** A relay answering the signed deep check with `answer` (a 404 for anything else, as a relay without `/v1`). */
+  function signedRelay(answer: () => Response) {
+    const calls: { url: string; auth: string | null; signed: boolean }[] = [];
+    const send: Fetch = async (request) => {
+      const url = new URL(request.url);
+      const verified = await verifyRequest({
+        method: request.method,
+        path: url.pathname + url.search,
+        headers: request.headers,
+        body: await request.text(),
+        now: Date.now(),
+      });
+      calls.push({
+        url: `${request.method} ${request.url}`,
+        auth: request.headers.get("Authorization"),
+        signed: verified.ok && verified.instance === key.instance,
+      });
+      return answer();
+    };
+    return { calls, send };
+  }
+
+  test("an admitted instance: signed, no send token, the providers recorded, and a ping", async () => {
+    const { stub, heartbeats, notifyEnv } = watchdog();
+    const { beat } = deepBeats(stub, heartbeats, notifyEnv);
+    const up = signedRelay(() =>
+      Response.json({ ok: true, ...PROVIDERS, handles: true, instance: key.instance }),
+    );
+    await beat(up.send, { RELAY_INSTANCE_KEY: key.privateKey, DB: env.DB });
+    expect(up.calls).toEqual([
+      { url: "GET https://relay.test/v1/health?deep=1", auth: null, signed: true },
+    ]);
+    expect(await stub.health()).toMatchObject({ status: "ok", reasons: [] });
+    await pinged(stub, true);
+  });
+
+  test("each refusal of the instance degrades with its reason, and pings nothing", async () => {
+    const { stub, heartbeats, notifyEnv } = watchdog();
+    const { beat } = deepBeats(stub, heartbeats, notifyEnv);
+    for (const [answer, reason] of [
+      [() => Response.json({ error: "bad_signature" }, { status: 401 }), "relay_bad_signature"],
+      [() => Response.json({ error: "stale_timestamp" }, { status: 401 }), "relay_bad_signature"],
+      [
+        () => Response.json({ error: "instance_unregistered" }, { status: 403 }),
+        "relay_instance_unregistered",
+      ],
+      [
+        () => Response.json({ error: "instance_revoked" }, { status: 403 }),
+        "relay_instance_revoked",
+      ],
+      [
+        () =>
+          Response.json(
+            { error: "rate_limited", limit: "ip" },
+            { status: 429, headers: { "Retry-After": "60" } },
+          ),
+        "relay_rate_limited",
+      ],
+      [
+        () =>
+          Response.json(
+            { ok: false, ...PROVIDERS, handles: false, instance: key.instance },
+            { status: 503 },
+          ),
+        "relay_handles_unavailable",
+      ],
+      [
+        () => Response.json({ error: "registry_unavailable" }, { status: 503 }),
+        "relay_unreachable",
+      ],
+    ] as const) {
+      await beat(signedRelay(answer).send, { RELAY_INSTANCE_KEY: key.privateKey, DB: env.DB });
+      expect((await stub.health()).reasons, reason).toEqual([reason]);
+    }
+    expect(pings()).toEqual([]);
+  });
+
+  test("a key that does not read is a bad signature, asked of no relay", async () => {
+    const { stub, heartbeats, notifyEnv } = watchdog();
+    const { beat } = deepBeats(stub, heartbeats, notifyEnv);
+    const none = signedRelay(() => Response.json({ ok: true, ...PROVIDERS, handles: true }));
+    await beat(none.send, { RELAY_INSTANCE_KEY: "not-a-key", DB: env.DB });
+    expect(none.calls).toEqual([]);
+    expect((await stub.health()).reasons).toEqual(["relay_bad_signature"]);
+  });
+
+  test("a relay without /v1 falls back to the send token's check, and is unreachable without one", async () => {
+    const { stub, heartbeats, notifyEnv } = watchdog();
+    const { beat } = deepBeats(stub, heartbeats, notifyEnv);
+    const old: Fetch = async (request) =>
+      new URL(request.url).pathname.startsWith("/v1/")
+        ? Response.json({ error: "not_found" }, { status: 404 })
+        : Response.json({ ok: true, ...PROVIDERS });
+    await beat(old, { RELAY_INSTANCE_KEY: key.privateKey, DB: env.DB });
+    expect(await stub.health()).toMatchObject({ status: "ok", reasons: [] });
+    await beat(old, {
+      RELAY_INSTANCE_KEY: key.privateKey,
+      RELAY_SEND_TOKEN: undefined,
+      DB: env.DB,
+    });
+    expect((await stub.health()).reasons).toEqual(["relay_unreachable"]);
   });
 });
 

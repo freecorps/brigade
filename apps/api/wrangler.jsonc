@@ -141,6 +141,10 @@
   // RELAY_SEND_TOKEN (src/notify.ts) is optional: paging needs it and the relay, reached through the `RELAY` service
   // binding (per environment, below) or, unbound, at the RELAY_URL secret (a self-hosted instance using Freecorps'
   // hosted relay, RFC 0006). Without them every page is recorded as failed.
+  // RELAY_INSTANCE_KEY (src/relay-instance.ts) is optional: the instance's Ed25519 key (PKCS#8, base64url) for phones
+  // registered with relay handles (`POST /v1/send`, RFC 0015) and the signed deep health check; with a public
+  // RELAY_URL, `GET /config` gives the app the relay and this instance's id. RELAY_APP_URL (optional) is an own app
+  // build's store link, given there as `relay.app`.
   // DEAD_MAN_URL (src/watchdog.ts) is optional too: the external check's ping URL; without it nothing is pinged.
   // OPERATOR_EMAILS (src/notify-operators.ts) is optional: comma-separated addresses emailed when the paging
   // self-check changes status (`brigade.status_changed`); without it (or without EMAIL_FROM) nobody is.

@@ -9,14 +9,18 @@ import {
   runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 import {
   generateRecipient,
   openPush,
+  openPushV2,
   parsePushEnvelope,
+  pushKeyId,
   toBase64url,
   type HpkeRecipient,
+  type PushEnvelopeV2,
 } from "@freecorps/brigade-push";
+import { generateInstanceKey, verifyRequest } from "@freecorps/brigade-push/instance";
 import {
   callDeliveryId,
   createMemoryStore,
@@ -42,6 +46,7 @@ import {
   type Fetch,
   type NotifyEnv,
 } from "../src/notify.ts";
+import { asksForEmail } from "../src/mailer.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import {
   asksForPage,
@@ -2383,6 +2388,320 @@ describe("a heartbeat in the same batch as a page", () => {
     expect(ping).toHaveBeenCalledTimes(1);
     expect(result.explicitAcks.sort()).toEqual(["beat", "page"]);
     expect(fake.pages).toEqual([phone.pushToken]);
+  });
+});
+
+// Phones registered with a relay handle (RFC 0015 sections 2, 3, 4 and 7): paged through `/v1/send`, signed with the
+// instance key; sealed v2 for apps that open it; expired by tag; never expired for an instance-wide refusal.
+describe("relay handles (RFC 0015)", () => {
+  const DASHBOARD = "https://brigade.example.com";
+  let key: Awaited<ReturnType<typeof generateInstanceKey>>;
+  beforeAll(async () => {
+    key = await generateInstanceKey();
+  });
+  const handleEnv = () =>
+    ({
+      ...relayEnv,
+      RELAY_INSTANCE_KEY: key.privateKey,
+      DASHBOARD_URL: DASHBOARD,
+    }) as Parameters<typeof consumeEvents>[1];
+
+  type V1Request = {
+    url: string;
+    auth: string | null;
+    /** Whether the `Brigade-*` headers verify for this instance over the request as sent. */
+    signed: boolean;
+    body: RelayBody & { handle?: string; ttlSeconds?: number };
+  };
+  /** A relay with `/v1/send` and `/send`: checks each signed call's signature, answers with `answer`. */
+  function v1Relay(
+    answer: (request: V1Request) => Response | Promise<Response> = () =>
+      Response.json({ status: 200 }),
+  ) {
+    const requests: V1Request[] = [];
+    const send: Fetch = async (request) => {
+      const raw = await request.text();
+      const url = new URL(request.url);
+      const verified = await verifyRequest({
+        method: request.method,
+        path: url.pathname + url.search,
+        headers: request.headers,
+        body: raw,
+        now: Date.now(),
+      });
+      const one: V1Request = {
+        url: request.url,
+        auth: request.headers.get("Authorization"),
+        signed: verified.ok && verified.instance === key.instance,
+        body: JSON.parse(raw) as V1Request["body"],
+      };
+      requests.push(one);
+      return answer(one);
+    };
+    return { requests, send };
+  }
+
+  /** Registers a phone for `actor` with a relay handle (and with `token`, its raw token as well). */
+  async function handlePhone(
+    ws: Awaited<ReturnType<typeof workspace>>,
+    actor: Actor,
+    options: { voip?: boolean; envelope?: 2; token?: boolean; id?: string; tag?: string } = {},
+  ) {
+    const recipient = await generateRecipient();
+    const deviceId = options.id ?? newId("dev", Date.now(), random);
+    const handle = `k1.${toBase64url(random(96))}`;
+    const tag = options.tag ?? toBase64url(random(32));
+    const pushToken = options.token ? toBase64url(random(32)).replace(/[-_]/g, "a") : undefined;
+    await ws.run(actor, "device.register", {
+      id: deviceId,
+      platform: "ios",
+      environment: "production",
+      handle,
+      tag,
+      ...(options.voip === undefined ? {} : { voip: options.voip }),
+      ...(options.envelope === undefined ? {} : { envelope: options.envelope }),
+      ...(pushToken === undefined ? {} : { pushToken }),
+      publicKey: toBase64url(recipient.publicKey),
+    });
+    return { deviceId, handle, tag, pushToken, recipient, userId: actor.id };
+  }
+  const stored = (ws: Awaited<ReturnType<typeof workspace>>, id: string) =>
+    ws.withShard((shard) => shard.store.get("devices", id));
+
+  test("a phone with a handle goes to /v1/send, signed with the instance key; one with a raw token to /send", async () => {
+    const ws = await workspace();
+    const anaPhone = await handlePhone(ws, ana);
+    const biaPhone = await ws.device(bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR, "sev2");
+    const fake = v1Relay();
+
+    expect(await deliver(event, fake.send, { environment: handleEnv() })).toEqual({
+      acked: ["msg-0"],
+      retried: [],
+    });
+    const viaHandle = fake.requests.find((r) => r.body.handle === anaPhone.handle)!;
+    expect(viaHandle.url).toBe("https://relay.test/v1/send");
+    expect(viaHandle.signed).toBe(true);
+    // No send token, and nothing of the phone but its handle.
+    expect(viaHandle.auth).toBeNull();
+    expect(viaHandle.body).not.toHaveProperty("deviceToken");
+    expect(viaHandle.body).not.toHaveProperty("environment");
+    expect(viaHandle.body).toMatchObject({ urgency: "page", collapseId: incident });
+    // An app that did not say it opens version 2 gets version 1, and no TTL of ours.
+    expect(viaHandle.body).not.toHaveProperty("ttlSeconds");
+    expect(await opened(anaPhone.recipient, viaHandle.body.envelope)).toMatchObject({
+      title: "SEV2 · INC-1",
+      incident,
+    });
+    const viaToken = fake.requests.find((r) => r.body.deviceToken === biaPhone.pushToken)!;
+    expect(viaToken.url).toBe("https://relay.test/send");
+    expect(viaToken.auth).toBe("Bearer test-token");
+    expect(viaToken.signed).toBe(false);
+    expect(fake.requests).toHaveLength(2);
+  });
+
+  test("an app that opens version 2 gets its page sealed v2: the dashboard's origin, the urgency, and the TTL the relay is given", async () => {
+    const ws = await workspace();
+    const phone = await handlePhone(ws, bia, { envelope: 2 });
+    const { incident, event } = await ws.declare(MONITOR_ACTOR, "sev3");
+    const fake = v1Relay();
+    await deliver(event, fake.send, { environment: handleEnv() });
+    const [request] = fake.requests;
+    const envelope = parsePushEnvelope(request!.body.envelope);
+    expect(envelope).toMatchObject({ v: 2, k: await pushKeyId(phone.recipient.publicKey) });
+    const sealed = await openPushV2(phone.recipient, envelope as PushEnvelopeV2);
+    expect(sealed).toMatchObject({
+      title: "SEV3 · INC-1",
+      incident,
+      origin: DASHBOARD,
+      urgency: "high",
+    });
+    expect(sealed.exp - sealed.iat).toBe(60 * 60);
+    expect(request!.body.ttlSeconds).toBe(60 * 60);
+    expect(request!.body.urgency).toBe("high");
+    // Without the dashboard's origin to seal, it falls back to version 1, which the app still opens.
+    const again = await ws.declare(MONITOR_ACTOR, "sev3");
+    const plain = v1Relay();
+    await deliver(again.event, plain.send, {
+      environment: { ...handleEnv(), DASHBOARD_URL: undefined },
+    });
+    expect(parsePushEnvelope(plain.requests[0]!.body.envelope)).toMatchObject({ v: 1 });
+  });
+
+  test("handle_not_yours and bad_handle expire the device by its tag, like a token gone", async () => {
+    for (const refused of [
+      Response.json({ error: "handle_not_yours" }, { status: 403 }),
+      Response.json({ error: "bad_handle" }, { status: 400 }),
+    ]) {
+      const ws = await workspace();
+      const phone = await handlePhone(ws, bia);
+      const { incident, event } = await ws.declare(MONITOR_ACTOR);
+      const fake = v1Relay(() => refused.clone());
+      expect((await deliver(event, fake.send, { environment: handleEnv() })).retried).toHaveLength(
+        1,
+      );
+      expect(await stored(ws, phone.deviceId)).toBeUndefined();
+      expect(await deliver(event, fake.send, { attempts: 2, environment: handleEnv() })).toEqual({
+        acked: ["msg-0"],
+        retried: [],
+      });
+      expect(await ws.timeline(incident)).toContainEqual(
+        expect.objectContaining({
+          kind: "page_failed",
+          userId: "usr_bia",
+          reason: "token_invalid",
+        }),
+      );
+    }
+  });
+
+  test("a device registered again with another tag while its push was out is kept", async () => {
+    const ws = await workspace();
+    const phone = await handlePhone(ws, bia);
+    const { event } = await ws.declare(MONITOR_ACTOR);
+    const fake = v1Relay(async () => {
+      // The phone registers again (a new token, so a new tag) while the relay answers.
+      await handlePhone(ws, bia, { id: phone.deviceId });
+      return Response.json({ error: "handle_not_yours" }, { status: 403 });
+    });
+    await deliver(event, fake.send, { environment: handleEnv() });
+    expect(await stored(ws, phone.deviceId)).toBeDefined();
+  });
+
+  test("a relay that refuses the instance (401, 403 revoked, 503) is retried and expires nothing; spent, the member is not paged and emailed", async () => {
+    for (const refused of [
+      Response.json({ error: "bad_signature" }, { status: 401 }),
+      Response.json({ error: "instance_revoked" }, { status: 403 }),
+      Response.json({ error: "registry_unavailable" }, { status: 503 }),
+    ]) {
+      const ws = await workspace();
+      const phone = await handlePhone(ws, bia);
+      const { incident, event } = await ws.declare(MONITOR_ACTOR);
+      const fake = v1Relay(() => refused.clone());
+      for (let attempt = 1; attempt < MAX_PAGE_ATTEMPTS; attempt++) {
+        expect(
+          await deliver(event, fake.send, { attempts: attempt, environment: handleEnv() }),
+        ).toEqual({ acked: [], retried: [{ msgId: "msg-0", delaySeconds: retryDelay(attempt) }] });
+      }
+      expect(
+        await deliver(event, fake.send, { attempts: MAX_PAGE_ATTEMPTS, environment: handleEnv() }),
+      ).toEqual({ acked: ["msg-0"], retried: [] });
+      // The phone is fine; the instance is not. It stays, to be paged once the instance is.
+      expect(await stored(ws, phone.deviceId)).toBeDefined();
+      expect((await ws.events()).map((e) => e.type)).not.toContain("device.unregistered");
+      // The page's fallback: `notification.failed` on the push channel, which the email notifier sends on.
+      const failed = (await ws.events(incident)).filter((e) => e.type === "notification.failed");
+      expect(failed.map((e) => e.data)).toContainEqual(
+        expect.objectContaining({ channel: "push", userId: "usr_bia", reason: "undelivered" }),
+      );
+      expect(
+        asksForEmail(failed.find((e) => (e.data as { userId: string }).userId === "usr_bia")!),
+      ).toBe(true);
+      expect(logged()).toContainEqual(
+        expect.objectContaining({ message: "relay refused this instance" }),
+      );
+    }
+  });
+
+  test("a phone with a handle and a raw token is paged through /send when /v1/send refuses the instance", async () => {
+    const ws = await workspace();
+    const phone = await handlePhone(ws, bia, { token: true });
+    const { event } = await ws.declare(MONITOR_ACTOR);
+    const fake = v1Relay((request) =>
+      request.url.endsWith("/v1/send")
+        ? Response.json({ error: "instance_revoked" }, { status: 403 })
+        : Response.json({ status: 200 }),
+    );
+    expect(await deliver(event, fake.send, { environment: handleEnv() })).toEqual({
+      acked: ["msg-0"],
+      retried: [],
+    });
+    expect(fake.requests.map((r) => new URL(r.url).pathname)).toEqual(["/v1/send", "/send"]);
+    expect(fake.requests[1]!.body.deviceToken).toBe(phone.pushToken);
+    // With a working instance key the handle is used, and the raw token never leaves.
+    const next = await ws.declare(MONITOR_ACTOR);
+    const working = v1Relay();
+    await deliver(next.event, working.send, { environment: handleEnv() });
+    expect(working.requests.map((r) => new URL(r.url).pathname)).toEqual(["/v1/send"]);
+    expect(working.requests[0]!.body).not.toHaveProperty("deviceToken");
+  });
+
+  test("429 rate_limited is retried no sooner than Retry-After, and expires nothing", async () => {
+    const ws = await workspace();
+    const phone = await handlePhone(ws, bia);
+    const { event } = await ws.declare(MONITOR_ACTOR);
+    const fake = v1Relay(() =>
+      Response.json(
+        { error: "rate_limited", limit: "phone" },
+        { status: 429, headers: { "Retry-After": "60" } },
+      ),
+    );
+    expect(await deliver(event, fake.send, { environment: handleEnv() })).toEqual({
+      acked: [],
+      retried: [{ msgId: "msg-0", delaySeconds: 60 }],
+    });
+    expect(await stored(ws, phone.deviceId)).toBeDefined();
+  });
+
+  test("a phone with a handle but no instance key is not configured; raw-token phones still go to /send", async () => {
+    const ws = await workspace();
+    await handlePhone(ws, ana);
+    const biaPhone = await ws.device(bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    const fake = v1Relay();
+    expect(await deliver(event, fake.send)).toEqual({ acked: ["msg-0"], retried: [] });
+    expect(fake.requests.map((r) => r.body.deviceToken)).toEqual([biaPhone.pushToken]);
+    expect(await ws.timeline(incident)).toContainEqual(
+      expect.objectContaining({ kind: "page_failed", userId: "usr_ana", reason: "not_configured" }),
+    );
+  });
+
+  test("a SEV1 page rings a handle that can ring, through /v1/send; a call refused as gone stops it ringing", async () => {
+    const ws = await workspace();
+    const ringing = await handlePhone(ws, ana, { voip: true, envelope: 2 });
+    const silent = await handlePhone(ws, bia, { voip: false });
+    const { event } = await ws.declare(MONITOR_ACTOR, "sev1");
+    const fake = v1Relay((request) =>
+      request.body.kind === "call"
+        ? Response.json({ status: 410, reason: "Unregistered" }, { status: 502 })
+        : Response.json({ status: 200 }),
+    );
+    expect(await deliver(event, fake.send, { environment: handleEnv() })).toEqual({
+      acked: ["msg-0"],
+      retried: [],
+    });
+    const calls = fake.requests.filter((r) => r.body.kind === "call");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.signed).toBe(true);
+    expect(calls[0]!.body).toMatchObject({
+      handle: ringing.handle,
+      urgency: "page",
+      callId: await callIdOf(event.id),
+      ttlSeconds: 60,
+    });
+    expect(calls[0]!.body).not.toHaveProperty("deviceToken");
+    expect(fake.requests.filter((r) => r.body.handle === silent.handle)).toHaveLength(1);
+    // The call's token is gone: the phone stays, and stops ringing until it registers again.
+    expect(await stored(ws, ringing.deviceId)).toMatchObject({ voip: false });
+    const summary = await ws.withShard((shard) =>
+      shard.store.get("member_devices", ringing.deviceId),
+    );
+    expect(summary?.voip).toBe(false);
+  });
+
+  test("the same tag under a new id (a reinstall) replaces the old device; another tag does not", async () => {
+    const ws = await workspace();
+    const first = await handlePhone(ws, bia);
+    const other = await handlePhone(ws, bia);
+    const again = await handlePhone(ws, bia, { tag: first.tag });
+    const ids = await ws.withShard((shard) =>
+      shard.store
+        .scan("devices")
+        .filter((d) => d.userId === "usr_bia")
+        .map((d) => d.id)
+        .sort(),
+    );
+    expect(ids).toEqual([other.deviceId, again.deviceId].sort());
   });
 });
 

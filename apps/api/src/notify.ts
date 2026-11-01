@@ -7,7 +7,15 @@
 // ledger, keyed by `event.id`, makes a redelivery page nobody twice. What the Queue gives up on lands in
 // `brigade-events-dlq`, whose consumer (`consumeDeadLetters`) records it on the incident's timeline.
 
-import { sealPush, type PushContent, type PushReceipt } from "@freecorps/brigade-push";
+import {
+  parseOrigin,
+  sealPush,
+  sealPushV2,
+  type PushContent,
+  type PushEnvelope,
+  type PushReceipt,
+} from "@freecorps/brigade-push";
+import type { InstanceKey } from "@freecorps/brigade-push/instance";
 import { formatIncidentNumber, type DeliveryError } from "@freecorps/brigade-schema";
 import { within } from "./deadline.ts";
 import { emailSender, type EmailEnv, type EmailSender } from "./email.ts";
@@ -28,6 +36,14 @@ import {
   type WebhookNotifyEnv,
 } from "./notify-webhooks.ts";
 import type { BrigadeEvent } from "./outbox.ts";
+import {
+  instanceKey,
+  relayReachable,
+  RELAY_V1_DEEP_HEALTH_PATH,
+  RELAY_V1_SEND_PATH,
+  signedRelayCall,
+  type RelayInstanceEnv,
+} from "./relay-instance.ts";
 import {
   asksForPage,
   type CallOutcome,
@@ -115,7 +131,8 @@ export type NotifyEnv = EmailEnv &
   EmailNotifyEnv &
   SlackNotifyEnv &
   StatusNotifyEnv &
-  WebhookNotifyEnv & {
+  WebhookNotifyEnv &
+  RelayInstanceEnv & {
     WORKSPACE: Env["WORKSPACE"];
     /** The status pages' snapshots and custom hostname lookups (src/status-domain.ts `syncStatusHost`). */
     STATUS?: Env["STATUS"];
@@ -124,8 +141,8 @@ export type NotifyEnv = EmailEnv &
     WATCHDOG?: Env["WATCHDOG"];
     /**
      * The relay Worker on this account, as a service binding: when bound, every relay call goes through it and
-     * `RELAY_URL` is not used. A Worker's subrequest to another workers.dev Worker on the same account is answered 404,
-     * so a relay deployed next to the API must be reached this way.
+     * `RELAY_URL` is only the address `GET /config` gives the app. A Worker's subrequest to another workers.dev Worker
+     * on the same account is answered 404, so a relay deployed next to the API must be reached this way.
      */
     RELAY?: Env["RELAY"];
     /**
@@ -133,7 +150,11 @@ export type NotifyEnv = EmailEnv &
      * secret, so hostnames stay out of the repo.
      */
     RELAY_URL?: string;
-    /** Bearer token for the relay's `POST /send`. */
+    /**
+     * Bearer token for the relay's `POST /send`, which pages devices registered with raw tokens (RFC 0006). Devices
+     * registered with a relay handle are paged through `POST /v1/send`, signed with `RELAY_INSTANCE_KEY` instead (RFC
+     * 0015).
+     */
     RELAY_SEND_TOKEN?: string;
   };
 
@@ -279,9 +300,10 @@ export async function consumeEvents(
                     ? await notifyReminder(event, message.attempts, env, mail)
                     : rotation
                       ? await notifyRotation(event, message.attempts, env, mail)
-                      : (await notifyPush(event, message.attempts, env, send))
-                        ? retryDelay(message.attempts)
-                        : undefined;
+                      : pushRetryDelay(
+                          await notifyPush(event, message.attempts, env, send),
+                          message.attempts,
+                        );
         // Slack's and the webhooks' work always finishes (within its budget) before the message is settled. A page's
         // own retry comes first: never put off behind their backoff, and an early retry only finds their work held.
         const [slackSeconds, webhookSeconds] = await sides;
@@ -382,14 +404,18 @@ export async function consumeDeadLetters(
 }
 
 /**
- * A `brigade.heartbeat` came through the outbox and the Queue: checks the relay is up and takes the send token, and
- * tells the watchdog, which pings the external check. Never throws, and the message is acked either way: a lost heartbeat is a minute of
- * silence, and the next one is already on its way. With it go the beat's deeper checks (Q19): the push providers,
- * through the relay's `GET /health?deep=1`, and one cheap D1 read, side by side.
+ * A `brigade.heartbeat` came through the outbox and the Queue: checks the relay is up and takes this instance (its
+ * signature, or its send token), and tells the watchdog, which pings the external check. Never throws, and the
+ * message is acked either way: a lost heartbeat is a minute of silence, and the next one is already on its way. With
+ * it go the beat's deeper checks (Q19): the push providers, through the relay's deep health, and one cheap D1 read,
+ * side by side.
  */
 export async function proveHeartbeat(
   event: BrigadeEvent,
-  env: Pick<NotifyEnv, "WATCHDOG" | "RELAY" | "RELAY_URL" | "RELAY_SEND_TOKEN" | "DB">,
+  env: Pick<
+    NotifyEnv,
+    "WATCHDOG" | "RELAY" | "RELAY_URL" | "RELAY_SEND_TOKEN" | "RELAY_INSTANCE_KEY" | "DB"
+  >,
   send: Fetch,
 ): Promise<void> {
   if (event.type !== HEARTBEAT_EVENT) return;
@@ -410,21 +436,56 @@ export async function proveHeartbeat(
   }
 }
 
+type RelayCheck = { relay: RelayHealth; apns: BeatCheck; fcm: BeatCheck };
+const UNKNOWN_PROVIDERS = { apns: "unknown", fcm: "unknown" } as const;
+
 /**
- * Whether a page could get past this Worker right now, and on to the push providers: `GET /health?deep=1` with the
- * send token (apps/relay src/deep-health.ts). `401` is a refused token (a rotated or mistyped `RELAY_SEND_TOKEN`); an
- * answer naming `apns` means the relay took the token, and says whether APNs took the relay's provider token and FCM
- * gave it an access token, without a push to anyone. Anything else is a relay not answering as one. A relay from
- * before the deep check answers its plain `/health` there (no `apns`): then the token is proved as before
- * (`relayTokenHealth`), and the providers are `unknown`.
+ * What the relay's deep health says of APNs and FCM (`{ apns: { status, transient? }, fcm }`), or undefined when the
+ * answer names no `apns` (not a deep health answer).
+ */
+function providersOf(body: unknown): { apns: BeatCheck; fcm: BeatCheck } | undefined {
+  const provider = (key: string): BeatCheck | undefined => {
+    const check = Object(Reflect.get(Object(body), key));
+    const status = Reflect.get(check, "status");
+    // An error that may pass by itself (a timeout, a 5xx): the watchdog waits for a few in a row.
+    if (status === "error" && Reflect.get(check, "transient") === true) return "transient";
+    return status === "ok" || status === "error" || status === "not_configured"
+      ? status
+      : undefined;
+  };
+  const apns = provider("apns");
+  if (apns === undefined) return undefined;
+  const fcm = provider("fcm") ?? "unknown";
+  if ([apns, fcm].some((check) => check === "error" || check === "transient")) {
+    log("push provider check failed", { apns, fcm });
+  }
+  return { apns, fcm };
+}
+
+/**
+ * Whether a page could get past this Worker right now, and on to the push providers. With an instance key
+ * (`RELAY_INSTANCE_KEY`, RFC 0015) the signed `GET /v1/health?deep=1` (`signedRelayHealth`); a relay without `/v1`
+ * falls back to the send token's check when there is one. Otherwise `GET /health?deep=1` with the send token
+ * (apps/relay src/deep-health.ts): `401` is a refused token (a rotated or mistyped `RELAY_SEND_TOKEN`); an answer
+ * naming `apns` means the relay took the token, and says whether APNs took the relay's provider token and FCM gave it
+ * an access token, without a push to anyone. Anything else is a relay not answering as one. A relay from before the
+ * deep check answers its plain `/health` there (no `apns`): then the token is proved as before (`relayTokenHealth`),
+ * and the providers are `unknown`.
  */
 async function relayHealth(
-  env: Pick<NotifyEnv, "RELAY" | "RELAY_URL" | "RELAY_SEND_TOKEN">,
+  env: Pick<NotifyEnv, "RELAY" | "RELAY_URL" | "RELAY_SEND_TOKEN" | "RELAY_INSTANCE_KEY">,
   send: Fetch,
-): Promise<{ relay: RelayHealth; apns: BeatCheck; fcm: BeatCheck }> {
-  const unknown = { apns: "unknown", fcm: "unknown" } as const;
-  if (!env.RELAY_SEND_TOKEN || (!env.RELAY && !env.RELAY_URL)) {
-    return { relay: "not_configured", ...unknown };
+): Promise<RelayCheck> {
+  if (relayReachable(env) && env.RELAY_INSTANCE_KEY?.trim()) {
+    const key = await instanceKey(env);
+    // A key that does not read signs nothing: every handle's page fails as a refused signature would.
+    if (!key) return { relay: "bad_signature", ...UNKNOWN_PROVIDERS };
+    const signed = await signedRelayHealth(env, send, key);
+    if (signed !== "no_v1") return signed;
+    if (!env.RELAY_SEND_TOKEN) return { relay: "unreachable", ...UNKNOWN_PROVIDERS };
+  }
+  if (!env.RELAY_SEND_TOKEN || !relayReachable(env)) {
+    return { relay: "not_configured", ...UNKNOWN_PROVIDERS };
   }
   const init: RequestInit = {
     method: "GET",
@@ -440,31 +501,64 @@ async function relayHealth(
     if (response.status === 401) {
       await response.body?.cancel();
       log("relay refused the send token", { status: 401 });
-      return { relay: "unauthorized", ...unknown };
+      return { relay: "unauthorized", ...UNKNOWN_PROVIDERS };
     }
-    const body: unknown = await response.json().catch(() => null);
-    const provider = (key: string): BeatCheck | undefined => {
-      const check = Object(Reflect.get(Object(body), key));
-      const status = Reflect.get(check, "status");
-      // An error that may pass by itself (a timeout, a 5xx): the watchdog waits for a few in a row.
-      if (status === "error" && Reflect.get(check, "transient") === true) return "transient";
-      return status === "ok" || status === "error" || status === "not_configured"
-        ? status
-        : undefined;
-    };
-    const apns = provider("apns");
-    if (apns !== undefined) {
-      const fcm = provider("fcm") ?? "unknown";
-      if ([apns, fcm].some((check) => check === "error" || check === "transient")) {
-        log("push provider check failed", { apns, fcm });
-      }
-      return { relay: "ok", apns, fcm };
-    }
+    const providers = providersOf(await response.json().catch(() => null));
+    if (providers) return { relay: "ok", ...providers };
   } catch (error) {
     log("relay deep health unreachable", { error: String(error) });
-    return { relay: "unreachable", ...unknown };
+    return { relay: "unreachable", ...UNKNOWN_PROVIDERS };
   }
-  return { relay: await relayTokenHealth(env, send), ...unknown };
+  return { relay: await relayTokenHealth(env, send), ...UNKNOWN_PROVIDERS };
+}
+
+/**
+ * The relay's signed deep health (RFC 0015 sections 3 and 7): the instance's own state first, then the providers'.
+ * `401` (`bad_signature`, `missing_signature`, `stale_timestamp`) is a key the relay does not take; `403
+ * instance_unregistered` or `instance_revoked` an instance it will not page for; `429` its limits (per IP or per
+ * instance); an answer naming `apns` says the instance is admitted, with the providers' state and whether the relay
+ * can open handles (`handles`). `404` is a relay without `/v1` (`no_v1`); anything else (`503 registry_unavailable`
+ * included) a relay not answering as one.
+ */
+async function signedRelayHealth(
+  env: Pick<NotifyEnv, "RELAY" | "RELAY_URL">,
+  send: Fetch,
+  key: InstanceKey,
+): Promise<RelayCheck | "no_v1"> {
+  let response: Response;
+  try {
+    response = await signedRelayCall(env, send, key, {
+      method: "GET",
+      path: RELAY_V1_DEEP_HEALTH_PATH,
+      signal: AbortSignal.timeout(RELAY_HEALTH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    log("relay deep health unreachable", { error: String(error) });
+    return { relay: "unreachable", ...UNKNOWN_PROVIDERS };
+  }
+  const body: unknown = await response.json().catch(() => null);
+  const error = Reflect.get(Object(body), "error");
+  const refused = (relay: RelayHealth): RelayCheck => {
+    log("relay refused this instance", { status: response.status, error, instance: key.instance });
+    return { relay, ...UNKNOWN_PROVIDERS };
+  };
+  if (response.status === 401) return refused("bad_signature");
+  if (response.status === 403 && error === "instance_revoked") return refused("instance_revoked");
+  if (response.status === 403 && error === "instance_unregistered") {
+    return refused("instance_unregistered");
+  }
+  if (response.status === 429) return refused("rate_limited");
+  const providers = providersOf(body);
+  if (providers) {
+    if (Reflect.get(Object(body), "handles") === false) {
+      log("relay cannot open handles", { instance: key.instance });
+      return { relay: "handles_unavailable", ...providers };
+    }
+    return { relay: "ok", ...providers };
+  }
+  if (response.status === 404) return "no_v1";
+  log("relay signed deep health failed", { status: response.status, error });
+  return { relay: "unreachable", ...UNKNOWN_PROVIDERS };
 }
 
 /**
@@ -534,6 +628,22 @@ export function retryDelay(attempts: number): number {
   );
 }
 
+/** The longest `Retry-After` a page waits out (the relay says 60 s): past it, the page's own backoff decides. */
+export const RETRY_AFTER_MAX_SECONDS = 300;
+
+/**
+ * A page to try again (`notifyPush`): `retryAfter` is the longest `Retry-After` the relay gave one of its devices (a
+ * `429 rate_limited`), which the retry waits out.
+ */
+export type PushAgain = { retryAfter?: number };
+
+/** Seconds before a page is tried again: its backoff, or the relay's `Retry-After` when longer. None when done. */
+export function pushRetryDelay(again: false | PushAgain, attempts: number): number | undefined {
+  if (!again) return undefined;
+  const after = Math.min(RETRY_AFTER_MAX_SECONDS, again.retryAfter ?? 0);
+  return Math.max(retryDelay(attempts), after);
+}
+
 /** The shard's side of a page: its plan, and what each device did. */
 export type PageShard = {
   planPage(event: BrigadeEvent): Promise<PagePlan>;
@@ -546,10 +656,9 @@ export type PageShard = {
 };
 
 /**
- * The push notifier for one event. Returns true when the page should be tried again later (some device failed in
- * a way that may pass and attempts remain); the outcomes so far are recorded either way. `shard` is the event's
- * workspace shard by RPC; the shard passes itself when it sends a page the Queue has not brought
- * (`WorkspaceDO.pageLocally`).
+ * The push notifier for one event. Returns what to try again later (some device failed in a way that may pass and
+ * attempts remain), or false; the outcomes so far are recorded either way. `shard` is the event's workspace shard by
+ * RPC; the shard passes itself when it sends a page the Queue has not brought (`WorkspaceDO.pageLocally`).
  */
 export async function notifyPush(
   event: BrigadeEvent,
@@ -557,7 +666,7 @@ export async function notifyPush(
   env: NotifyEnv,
   send: Fetch,
   shard?: PageShard,
-): Promise<boolean> {
+): Promise<false | PushAgain> {
   // Most events page nobody (the delivery rows' own `notification.*` among them): no shard call for those.
   if (!asksForPage(event)) return false;
   const workspace: PageShard = shard ?? env.WORKSPACE.getByName(event.workspaceId);
@@ -566,9 +675,11 @@ export async function notifyPush(
   const receipts = receiptUrl(env.DASHBOARD_URL);
   // Every redelivery of this event rings under the same call id, so a phone rings for it once (RFC 0010).
   const callId = plan.call && plan.urgency === "page" ? await callIdOf(event.id) : undefined;
+  const routes = await relayRoutes(env, send);
+  const origin = env.DASHBOARD_URL ? parseOrigin(env.DASHBOARD_URL) : undefined;
   const sent = await Promise.all(
     plan.targets.map((target) =>
-      pushOne(event.workspaceId, plan, target, env, send, receipts, callId),
+      pushOne(event.workspaceId, plan, target, routes, origin, receipts, callId),
     ),
   );
   const final = !sent.some((one) => one.retry) || attempts >= MAX_PAGE_ATTEMPTS;
@@ -584,7 +695,9 @@ export async function notifyPush(
     SHARD_CALL_TIMEOUT_MS,
     "recordPage",
   );
-  return !final;
+  if (final) return false;
+  const after = Math.max(0, ...sent.map((one) => one.retryAfter ?? 0));
+  return after > 0 ? { retryAfter: after } : {};
 }
 
 /**
@@ -687,45 +800,192 @@ function refusal(
   return { error, ...reason, gone: false, permanent };
 }
 
-/** One device's outcome, and whether trying again may help. */
-type Sent = { outcome: DeviceOutcome; retry: boolean };
+/**
+ * One device's outcome, whether trying again may help, and how long the relay asked to wait first (`Retry-After` of a
+ * `429 rate_limited`).
+ */
+type Sent = { outcome: DeviceOutcome; retry: boolean; retryAfter?: number };
 
 /**
- * Seals and sends one device's push; classifies the relay's answer. Once the relay took the alert, rings the device
- * as well when `callId` is given and the plan rings it (`ringOne`), and reports the call with the alert's outcome
- * without letting it change it. Never throws.
+ * One way to the relay: `token` is `POST /send` with the send token and a device's raw tokens (RFC 0006), `handle`
+ * is `POST /v1/send` with a device's relay handle, signed with the instance key (RFC 0015). `post` takes the JSON body.
+ */
+type RelayRoute = {
+  kind: "token" | "handle";
+  post: (body: Record<string, unknown>) => Promise<Response>;
+};
+type RelayRoutes = { token?: RelayRoute; handle?: RelayRoute };
+
+/**
+ * The ways to the relay this instance has: `/send` with `RELAY_SEND_TOKEN`, `/v1/send` with `RELAY_INSTANCE_KEY`,
+ * either through the `RELAY` binding or at `RELAY_URL`. Neither without a relay.
+ */
+async function relayRoutes(env: NotifyEnv, send: Fetch): Promise<RelayRoutes> {
+  const post = relayPost(env, send);
+  const key = relayReachable(env) ? await instanceKey(env) : undefined;
+  return {
+    ...(post && {
+      token: {
+        kind: "token",
+        post: (body) =>
+          post({
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${env.RELAY_SEND_TOKEN}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
+          }),
+      },
+    }),
+    ...(key && {
+      handle: {
+        kind: "handle",
+        post: (body) =>
+          signedRelayCall(env, send, key, {
+            method: "POST",
+            path: RELAY_V1_SEND_PATH,
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
+          }),
+      },
+    }),
+  };
+}
+
+/**
+ * How long a push may wait for an offline phone, by urgency, as the relay defaults it (apps/relay src/send.ts): the
+ * instance says it outright for a version 2 envelope, whose sealed `exp` is `iat` plus this (RFC 0015 section 4).
+ */
+export const PUSH_TTL_SECONDS: Record<Urgency, number> = { page: 15 * 60, high: 60 * 60 };
+/** A call rings now or not at all (apps/relay `CALL_TTL_SECONDS`). */
+export const CALL_TTL_SECONDS = 60;
+
+/** The relay's answer to one send, read once: whether it took it, and if not what it said. */
+type RelayResult = { ok: boolean; status: number; answer: RelayAnswer; retryAfter?: number };
+
+async function settle(response: Response): Promise<RelayResult> {
+  if (response.ok) {
+    await response.body?.cancel();
+    return { ok: true, status: response.status, answer: {} };
+  }
+  const answer = (await response.json().catch(() => ({}))) as RelayAnswer;
+  const header = Number(response.headers.get("Retry-After"));
+  return {
+    ok: false,
+    status: response.status,
+    answer: typeof answer === "object" && answer !== null ? answer : {},
+    ...(Number.isFinite(header) && header > 0 ? { retryAfter: Math.ceil(header) } : {}),
+  };
+}
+
+/**
+ * Whether `/v1/send` refused this instance, not the device (RFC 0015 section 3): a signature the relay does not take
+ * (`401 bad_signature`, `missing_signature`, `stale_timestamp`), an instance revoked or unknown (`403`, anything but
+ * `handle_not_yours`), or a relay that cannot check (`503 registry_unavailable`, `not_configured`). Every device fails
+ * the same way: retried, never expired, and the watchdog's signed deep check says why.
+ */
+function refusedInstance(result: RelayResult): boolean {
+  return (
+    result.status === 401 ||
+    (result.status === 403 && result.answer.error !== "handle_not_yours") ||
+    result.status === 503
+  );
+}
+
+/**
+ * Whether `/v1/send` says the handle will never work for this instance: sealed for another (`403 handle_not_yours`,
+ * after a lost instance key) or not one this relay opens (`400 bad_handle`). The device is expired like a token gone
+ * (RFC 0015 "Dead ends"); the app registers again with a new handle when it next opens.
+ */
+function handleGone(result: RelayResult): boolean {
+  return (
+    (result.status === 403 && result.answer.error === "handle_not_yours") ||
+    (result.status === 400 && result.answer.error === "bad_handle")
+  );
+}
+
+/**
+ * How one device's pages are sealed: version 2 (RFC 0015 section 4) when its app opens it (`envelope: 2`) and this
+ * instance knows its own origin (`DASHBOARD_URL`), else version 1, which every app opens. Throws like `sealPush` for a
+ * key WebCrypto refuses.
+ */
+function sealerFor(
+  target: PageTarget,
+  origin: string | undefined,
+): {
+  v2: boolean;
+  seal: (content: PushContent, ttlSeconds: number, urgency: Urgency) => Promise<PushEnvelope>;
+} {
+  if (target.envelope === 2 && origin !== undefined) {
+    return {
+      v2: true,
+      seal: (content, ttlSeconds, urgency) =>
+        sealPushV2(target.publicKey, content, { origin, urgency, ttlSeconds }),
+    };
+  }
+  if (target.envelope === 2) {
+    log("sealing version 1 for an app that opens version 2: DASHBOARD_URL is not set", {
+      device: target.deviceId,
+    });
+  }
+  return { v2: false, seal: (content) => sealPush(target.publicKey, content) };
+}
+
+/**
+ * Seals and sends one device's push; classifies the relay's answer. A device with a relay handle goes to `/v1/send`
+ * when the instance key is set; one with a raw token to `/send` when the send token is; a device with both (an
+ * instance moving, RFC 0015 section 9) goes through `/send` when `/v1/send` refuses the instance itself, so a revoked
+ * or mistyped instance key never costs a page `/send` can still deliver. Once the relay took the alert, rings the
+ * device as well when `callId` is given and the plan rings it (`ringOne`), the same way the alert went, and reports
+ * the call with the alert's outcome without letting it change it. Never throws.
  */
 async function pushOne(
   workspaceId: string,
   plan: Extract<PagePlan, { send: true }>,
   target: PageTarget,
-  env: NotifyEnv,
-  send: Fetch,
+  routes: RelayRoutes,
+  origin: string | undefined,
   receipts: string | undefined,
   callId: string | undefined,
 ): Promise<Sent> {
   const { deviceId, userId } = target;
   let ms: number | undefined;
+  const viaHandle = target.handle !== undefined ? routes.handle : undefined;
+  const viaToken = target.pushToken !== null ? routes.token : undefined;
+  let route = viaHandle ?? viaToken;
   const failed = (
     reason: SendFailure,
     error: DeliveryError,
-    more: { retry?: boolean; expired?: boolean; apnsReason?: string } = {},
+    more: { retry?: boolean; expired?: boolean; apnsReason?: string; retryAfter?: number } = {},
   ): Sent => ({
     outcome: {
       deviceId,
       userId,
       ok: false,
       reason,
-      // The token this push went to, so a device registered again meanwhile is not dropped.
-      ...(more.expired ? { expiredToken: target.pushToken } : {}),
+      // The token this push went to (or its handle's tag), so a device registered again meanwhile is not dropped.
+      ...(more.expired && route?.kind === "handle" && target.tag !== undefined
+        ? { expiredTag: target.tag }
+        : more.expired && target.pushToken !== null
+          ? { expiredToken: target.pushToken }
+          : {}),
       error,
       ...(more.apnsReason === undefined ? {} : { apnsReason: more.apnsReason }),
       ...(ms === undefined ? {} : { ms }),
     },
     retry: more.retry ?? false,
+    ...(more.retryAfter === undefined ? {} : { retryAfter: more.retryAfter }),
   });
-  const post = relayPost(env, send);
-  if (!post) return failed("not_configured", "not_configured");
+  if (!route) {
+    if (target.handle !== undefined && !routes.handle) {
+      log("device registered with a relay handle, but RELAY_INSTANCE_KEY is not set", {
+        device: deviceId,
+      });
+    }
+    return failed("not_configured", "not_configured");
+  }
 
   const { incident } = plan;
   const content: PushContent = {
@@ -740,14 +1000,20 @@ async function pushOne(
   };
   const receipt: PushReceipt | undefined =
     receipts && target.receipt ? { url: receipts, token: target.receipt } : undefined;
-  let envelope;
+  const sealer = sealerFor(target, origin);
+  const ttlSeconds = PUSH_TTL_SECONDS[plan.urgency];
+  let envelope: PushEnvelope;
   try {
-    envelope = await sealPush(target.publicKey, receipt ? { ...content, receipt } : content);
+    envelope = await sealer.seal(
+      receipt ? { ...content, receipt } : content,
+      ttlSeconds,
+      plan.urgency,
+    );
   } catch (error) {
     try {
       // The receipt must never cost the page: a title too long to fit both goes without it.
       if (!receipt) throw error;
-      envelope = await sealPush(target.publicKey, content);
+      envelope = await sealer.seal(content, ttlSeconds, plan.urgency);
     } catch (again) {
       // A key `device.register` accepted but WebCrypto refuses (not on the curve): retrying cannot help.
       log("sealing a push failed", { device: deviceId, error: String(again) });
@@ -755,52 +1021,63 @@ async function pushOne(
     }
   }
 
-  let response: Response;
-  const started = Date.now();
-  const alert = (critical: boolean) =>
-    post({
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.RELAY_SEND_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        deviceToken: target.pushToken,
-        // The relay sends an Android device's push through FCM, an iPhone's through APNs (RFC 0006).
-        ...platformOf(target),
+  const alert = async (via: RelayRoute, critical: boolean) =>
+    settle(
+      await via.post({
+        ...(via.kind === "handle"
+          ? { handle: target.handle }
+          : {
+              deviceToken: target.pushToken,
+              // The relay sends an Android device's push through FCM, an iPhone's through APNs (RFC 0006).
+              ...platformOf(target),
+              environment: target.environment,
+            }),
         envelope,
         urgency: plan.urgency,
-        environment: target.environment,
         // A redelivered page replaces the one on screen instead of stacking; a lower-urgency push never replaces a
         // page (RFC 0006 "Offline phones"; the shard also holds it back while the page may be undelivered).
         collapseId: collapseIdOf(incident.id, plan.urgency),
         // Rings through silent mode (RFC 0006 "Critical Alerts"); only sent when true.
         ...(critical ? { critical: true } : {}),
+        // What a version 2 envelope sealed as its `exp`; the relay's default otherwise.
+        ...(sealer.v2 ? { ttlSeconds } : {}),
       }),
-      signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
-    });
-  try {
+    );
+  const attempt = async (via: RelayRoute): Promise<RelayResult> => {
     const critical = sendsCritical(plan, target);
-    response = await alert(critical);
+    let result = await alert(via, critical);
     // The fallback: a Critical Alert the relay (400) or APNs (its 400, in a 502) refuses as a request goes out at
     // once as the time-sensitive page every phone gets, so asking for more never costs the page. A token APNs says
-    // is gone is handled below, as for any push.
-    if (critical && !response.ok) {
-      const answer = (await response.json().catch(() => ({}))) as {
-        status?: unknown;
-        reason?: unknown;
-      };
-      const refused = response.status === 400 || answer.status === 400;
-      if (refused && !TOKEN_GONE.includes(answer.reason as string)) {
+    // is gone, or a handle the relay cannot open, is handled below, as for any push.
+    if (critical && !result.ok) {
+      const refused =
+        (result.status === 400 && result.answer.error !== "bad_handle") ||
+        result.answer.status === 400;
+      if (refused && !TOKEN_GONE.includes(result.answer.reason as string)) {
         log("relay refused a critical push, sending it time-sensitive", {
           device: deviceId,
-          status: response.status,
-          reason: typeof answer.reason === "string" ? answer.reason : undefined,
+          status: result.status,
+          reason: typeof result.answer.reason === "string" ? result.answer.reason : undefined,
         });
-        response = await alert(false);
-      } else {
-        response = Response.json(answer, { status: response.status });
+        result = await alert(via, false);
       }
+    }
+    return result;
+  };
+
+  let result: RelayResult;
+  const started = Date.now();
+  try {
+    result = await attempt(route);
+    if (route.kind === "handle" && !result.ok && refusedInstance(result) && viaToken) {
+      // Never the token, the handle or the envelope.
+      log("relay refused this instance, paging the device through /send", {
+        device: deviceId,
+        status: result.status,
+        error: result.answer.error,
+      });
+      route = viaToken;
+      result = await attempt(route);
     }
   } catch (error) {
     ms = Date.now() - started;
@@ -809,30 +1086,49 @@ async function pushOne(
     return failed("undelivered", "relay_unreachable", { retry: true });
   }
   ms = Date.now() - started;
-  if (response.ok) {
-    await response.body?.cancel();
+  if (result.ok) {
     // Step 2 of the ladder (RFC 0010): the alert is out, so the phone can ring. Whatever the call does, the alert's
     // outcome stands.
     // A shard from before the member's choice of calls leaves `call` out: its plan's `call` decides.
     const call =
       callId !== undefined && target.call !== false
-        ? await ringOne(callId, target, content, env, post)
+        ? await ringOne(callId, target, content, sealer, route)
         : undefined;
     return {
       outcome: { deviceId, userId, ok: true, ms, ...(call === undefined ? {} : { call }) },
       retry: false,
     };
   }
-  const answer = (await response.json().catch(() => ({}))) as RelayAnswer;
-  // Never the token or the envelope.
+  const { answer } = result;
+  // Never the token, the handle or the envelope.
   log("relay refused a push", {
     device: deviceId,
-    status: response.status,
+    route: route.kind,
+    status: result.status,
     error: answer.error,
     apnsStatus: answer.status,
     reason: answer.reason,
   });
-  const { error, apnsReason, gone, permanent } = refusal(response.status, answer);
+  if (route.kind === "handle") {
+    // The handle is not this instance's (a lost instance key) or does not open: dropped like a token gone, and the
+    // page retried so the next plan sees this member without that device.
+    if (handleGone(result))
+      return failed("token_invalid", "token_invalid", { expired: true, retry: true });
+    if (refusedInstance(result)) {
+      log("relay refused this instance", { status: result.status, error: answer.error });
+      return failed("undelivered", result.status === 503 ? "relay_unreachable" : "relay_refused", {
+        retry: true,
+      });
+    }
+  }
+  if (result.status === 429) {
+    // The relay's limits (RFC 0015 section 3): tried again once its window has passed.
+    return failed("undelivered", "relay_refused", {
+      retry: true,
+      ...(result.retryAfter === undefined ? {} : { retryAfter: result.retryAfter }),
+    });
+  }
+  const { error, apnsReason, gone, permanent } = refusal(result.status, answer);
   // APNs says the token is gone: drop the device, and retry the page while attempts remain, so the next plan sees
   // this member without that device (a commander's page then falls back to everyone who can respond).
   if (gone) {
@@ -851,73 +1147,73 @@ function platformOf(target: Pick<PageTarget, "platform">): { platform?: "android
 }
 
 /**
- * Rings one device as a call (RFC 0010) through the relay (`kind: "call"`): on iOS a VoIP push to its PushKit token,
- * on Android a data message to its FCM token, which the app registers as its call token when it can ring (the
- * ConnectionService). Only a device with a call token: PushKit requires the app to report every VoIP push to
- * CallKit, which the app does for every push it gets (a malformed one included), so a call goes only to a token the
- * app itself registered. The
- * call carries no receipt token (the extension, which reports receipts, never sees it). Best effort: never throws;
- * what the relay answered goes on the call's own delivery row (and a token APNs says is gone is cleared), while the
- * page is retried, escalated and recorded on the alert's outcome alone. Undefined when no call was sent.
+ * Rings one device as a call (RFC 0010) through the relay (`kind: "call"`), the way its alert went (`route`): on iOS
+ * a VoIP push to its PushKit token, on Android a data message to its FCM token, which the app registers as its call
+ * token when it can ring (the ConnectionService); with a relay handle, the handle when it says it can ring (`voip`).
+ * Only a device that can ring: PushKit requires the app to report every VoIP push to CallKit, which the app does for
+ * every push it gets (a malformed one included), so a call goes only to a token the app itself registered. The call
+ * carries no receipt token (the extension, which reports receipts, never sees it). Best effort: never throws; what
+ * the relay answered goes on the call's own delivery row (and a token APNs says is gone is cleared), while the page
+ * is retried, escalated and recorded on the alert's outcome alone. Undefined when no call was sent.
  */
 async function ringOne(
   callId: string,
   target: PageTarget,
   content: PushContent,
-  env: NotifyEnv,
-  post: (init: RequestInit) => Promise<Response>,
+  sealer: ReturnType<typeof sealerFor>,
+  route: RelayRoute,
 ): Promise<CallOutcome | undefined> {
-  const { deviceId, voipToken } = target;
-  if (!voipToken) return undefined;
+  const { deviceId, voipToken, handle } = target;
+  const viaHandle = route.kind === "handle";
+  if (viaHandle ? target.voip !== true : !voipToken) return undefined;
   let envelope;
   try {
-    envelope = await sealPush(target.publicKey, content);
+    envelope = await sealer.seal(content, CALL_TTL_SECONDS, "page");
   } catch (error) {
     log("sealing a call failed", { device: deviceId, error: String(error) });
     return { ok: false, error: "seal_failed" };
   }
   const started = Date.now();
   try {
-    const response = await post({
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.RELAY_SEND_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    const result = await settle(
+      await route.post({
         kind: "call",
         callId,
-        deviceToken: voipToken,
-        ...platformOf(target),
+        ...(viaHandle
+          ? { handle }
+          : { deviceToken: voipToken, ...platformOf(target), environment: target.environment }),
         envelope,
         urgency: "page",
-        environment: target.environment,
+        ...(sealer.v2 ? { ttlSeconds: CALL_TTL_SECONDS } : {}),
       }),
-      signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
-    });
+    );
     const ms = Date.now() - started;
-    if (response.ok) {
-      await response.body?.cancel();
+    if (result.ok) {
       log("call sent", { device: deviceId });
       return { ok: true, ms };
     }
-    const answer = (await response.json().catch(() => ({}))) as RelayAnswer;
-    // Never the token or the envelope.
+    const { answer } = result;
+    // Never the token, the handle or the envelope.
     log("relay refused a call", {
       device: deviceId,
-      status: response.status,
+      route: route.kind,
+      status: result.status,
       error: answer.error,
       apnsStatus: answer.status,
       reason: answer.reason,
     });
-    const { error, apnsReason, gone } = refusal(response.status, answer);
+    const { error, apnsReason, gone } = refusal(result.status, answer);
     return {
       ok: false,
       error,
       ms,
       ...(apnsReason === undefined ? {} : { apnsReason }),
-      // The token the call went to, so a device that registered a new one meanwhile keeps it.
-      ...(gone ? { expiredVoipToken: voipToken } : {}),
+      // The token (or handle) the call went to, so a device that registered a new one meanwhile keeps it.
+      ...(gone
+        ? viaHandle
+          ? { expiredVoipHandle: handle! }
+          : { expiredVoipToken: voipToken! }
+        : {}),
     };
   } catch (error) {
     log("call not sent", { device: deviceId, error: String(error) });

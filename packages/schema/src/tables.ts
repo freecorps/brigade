@@ -700,10 +700,29 @@ export type DeviceRow = {
   userId: string;
   platform: DevicePlatform;
   environment: PushEnvironment;
-  /** APNs device token (hex) or FCM registration token. */
-  pushToken: string;
-  /** PushKit token for calls (RFC 0010); null without one. */
+  /**
+   * APNs device token (hex) or FCM registration token; null for a device registered with a relay handle alone (RFC
+   * 0015), whose tokens this instance never sees.
+   */
+  pushToken: string | null;
+  /** PushKit token for calls (RFC 0010); null without one (always, for a device with a handle alone). */
   voipToken: string | null;
+  /**
+   * The relay's handle for the phone's tokens, sealed for this instance (RFC 0015 section 2): pages go to `/v1/send`
+   * with it, signed with the instance key. Absent or null on a device registered with raw tokens.
+   */
+  handle?: string | null;
+  /**
+   * The relay's tag for the phone's push token at this instance (the same for one token however often it is sealed):
+   * compared where raw tokens are compared ("the same token under a new id replaces the old device", `device.expire`).
+   */
+  tag?: string | null;
+  /** Whether the handle can ring as a call (RFC 0010): an iPhone's holds a PushKit token, an Android's the FCM one. */
+  voip?: boolean;
+  /**
+   * The newest push envelope the app opens: 2 for version 2 (RFC 0015 section 4), absent or null for version 1 only.
+   */
+  envelope?: 2 | null;
   /**
    * The member allowed Critical Alerts on this phone, in an app build that has the entitlement (RFC 0006 "Critical
    * Alerts"): a SEV1 page then rings through silent mode and Do Not Disturb. Absent on devices registered before it.

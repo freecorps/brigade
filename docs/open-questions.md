@@ -119,35 +119,16 @@ seals v2 only to devices that sent it (and only with `DASHBOARD_URL` set, its se
   key per instance, a page that opens is from whoever holds that instance's copy of the device public key. Worth the
   extra bytes and a signature check in the extension?
 
-## Q30 — A new handle on every registration (RFC 0015 sections 2 and 7)
+## Q31 — What is left of the hosted relay's public address (RFC 0015 section 8)
 
-The app asks the relay for a handle each time it registers (launch, foreground, new token), and every sealing uses a
-fresh nonce, so the handle differs each time even for the same tokens. The instance stores the handle it was given,
-so each of those registrations changes the device row and emits `device.registered` (the tag is the same; a
-registration with raw tokens that changed nothing is a `conflict`). Keeping the newest handle is what carries a
-relay key rotation to the phone's row. Is the churn acceptable, or should the app keep its handle while its tokens
-and the relay's key id are unchanged, or the instance ignore a new handle with the same tag unless its key id
-differs?
+Owner: Heitor. Decided (see the table below): `https://relay.brigade.freecorps.com.br`, the setup script's default.
+Still open before pointing self-hosters at it:
 
-## Q31 — The hosted relay's public address (RFC 0015 section 8)
-
-Owner: Heitor. `vp run setup:relay` registers an instance with Freecorps' relay, but the relay has no public address
-yet (production `brigade-relay` has no workers.dev URL and no custom domain). Until one is chosen,
-`FREECORPS_RELAY_URL` in apps/relay `scripts/setup-relay/flow.ts` is a placeholder (`null`) and the script stops unless
-`--relay-url` gives the address. Pick the hostname (and put it in that constant, the docs and the app's build), add the
-`send_email` binding and `EMAIL_FROM` for the contact code (RFC 0015 "Order of work" step 1), and publish the final
-terms before pointing self-hosters at it (D5).
-
-## Q32 — How a company builds and keeps its own app and relay (RFC 0015 section 8)
-
-The "Your own app" stub (apps/mobile README) lists what a company's build needs, but the bundle id and Android package
-(`APP_ID`, app.config.ts) and the App Group (`APP_GROUP`, plugins/notification-service.ts) are constants, so a company
-must edit its copy. Should they become build variables (say `BRIGADE_APP_ID`, with the App Group derived from it), and
-should `EXPO_PUBLIC_BRIGADE_RELAY_URL` (step 4) default from the instance's `/config`? On the relay side the script
-passes `APNS_TOPIC` and `RELAY_REGISTRATION=closed` as `wrangler deploy --var`, which a later deploy without the flags
-(CI, by hand) silently resets to the store app's topic and open registration; the docs say to keep them in the copy's
-`wrangler.jsonc`. Would a config the deploy always reads (an own-relay environment in wrangler.jsonc, or secrets
-instead of vars) be safer?
+- **Attach the domain:** the Custom Domain on `brigade-relay`, added in the Cloudflare dashboard by the operator (not
+  in wrangler.jsonc, so a deploy creates no route).
+- **The contact code's email:** the `send_email` binding and `EMAIL_FROM` on the relay (RFC 0015 "Order of work"
+  step 1).
+- **The final terms,** reviewed by counsel, published in place of the template (D5).
 
 # Decided
 
@@ -177,3 +158,6 @@ instead of vars) be safer?
 | Q24 | Follow-ups and postmortems     | Keep the last 20 postmortem revisions, restored from the dashboard. Owners can turn AI drafts off per workspace. The draft follows the workspace locale (Q15, built). Reminders stay at 09:00 and stop once a follow-up is 14 days overdue. Exports stay owners and admins only. A still-blank postmortem follows its incident's new type; one with text keeps its sections (RFC 0013). Built. Rest still open above.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | Q25 | API tokens                     | No hand-over: mint a new token. The token list becomes owners and admins only. The 300 a minute per token stays fixed (RFC 0014). Built.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | Q26 | One app, every instance        | Several instances on one phone. QR sign-in as a device approval (2-minute single-use code, the number the phone shows typed on the dashboard). Registration on the hosted relay required (terms, contact confirmed by email). 600 sends a minute per instance, 60 calls, 30 per phone (tag). Own relay offered by the setup script, for the company's own app build (RFC 0015).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Q30 | A handle per registration      | The app keeps its handle per instance and asks the relay for a new one only when its push tokens or the relay's handle key id change, so an unchanged registration changes no row and emits no `device.registered`; the instance keeps storing the handle it is given (RFC 0015 sections 2 and 7). To build with the app (step 4).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Q31 | Hosted relay address           | `https://relay.brigade.freecorps.com.br`, `FREECORPS_RELAY_URL` in apps/relay `scripts/setup-relay/flow.ts` (the default; `--relay-url` overrides it). The operator attaches the Custom Domain in the Cloudflare dashboard, not in wrangler.jsonc (RFC 0015 section 8). Rest still open above.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Q32 | Own app and relay              | The bundle id and Android package are the build variable `BRIGADE_APP_ID` (default `app.freecorps.brigade`), the App Group is `group.<BRIGADE_APP_ID>`, written into each target's Info.plist for the Swift code (apps/mobile `plugins/app-id.ts`). `EXPO_PUBLIC_BRIGADE_RELAY_URL` defaults from the instance's `/config` (step 4). `vp run setup:relay` sets an own relay's topic and closed registration as secrets, `RELAY_APNS_TOPIC` (over the `APNS_TOPIC` var) and `RELAY_CLOSED=1` (an older relay's var `RELAY_REGISTRATION=closed` still counts), which every deploy keeps; no `--var` (RFC 0015 section 8). Built, except the relay URL default (step 4).                                                                                                                                                                                                                                                                                                                                                                                            |

@@ -11,12 +11,13 @@ import {
   addBuildFile,
   addFileReference,
   addToMainGroup,
-  APP_GROUP,
   escapeStrings,
-  EXTENSION_ENTITLEMENTS,
+  extensionEntitlements,
   NATIVE_LOCALES,
   readMessages,
+  setTargetBundleId,
 } from "./notification-service.ts";
+import { APP_GROUP_PLIST_KEY, appGroup } from "./app-id.ts";
 
 // The iOS "I'm on call" widget (roadmap Phase 2). It adds a `BrigadeWidget` WidgetKit extension target, embedded in
 // the app, compiling modules/brigade-widget/widget/*.swift, with the App Group entitlement (where the app keeps the
@@ -67,13 +68,18 @@ export function widgetStrings(messages: Record<string, unknown>): string {
   return `/* Generated from packages/i18n by plugins/widget.ts. */\n${lines.join("\n")}\n`;
 }
 
-/** The widget extension's Info.plist, with the app's versions (App Store Connect rejects a mismatch). */
-export function widgetInfoPlist(version: string, buildNumber: string): string {
+/**
+ * The widget extension's Info.plist, with the app's versions (App Store Connect rejects a mismatch) and its App
+ * Group, read by WidgetState.swift.
+ */
+export function widgetInfoPlist(version: string, buildNumber: string, group: string): string {
   const locales = NATIVE_LOCALES.map((locale) => `\t\t<string>${locale}</string>`).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+\t<key>${APP_GROUP_PLIST_KEY}</key>
+\t<string>${group}</string>
 \t<key>CFBundleDevelopmentRegion</key>
 \t<string>en</string>
 \t<key>CFBundleDisplayName</key>
@@ -110,12 +116,16 @@ interface Objects {
   [section: string]: Record<string, unknown> | undefined;
 }
 
-/** Adds the widget target to the Xcode project, embedded in the app. Does nothing if it exists. */
+/**
+ * Adds the widget target to the Xcode project, embedded in the app. If it exists (prebuild without `--clean`), only its
+ * bundle id is brought up to date.
+ */
 export function applyWidget(
   project: XcodeProject,
   options: { bundleIdentifier: string; teamId: string | undefined },
 ): XcodeProject {
-  if (project.pbxTargetByName(WIDGET_TARGET)) return project;
+  if (setTargetBundleId(project, WIDGET_TARGET, `${options.bundleIdentifier}.Widget`))
+    return project;
   const objects = project.hash.project.objects as Objects;
   objects.PBXTargetDependency ??= {};
   objects.PBXContainerItemProxy ??= {};
@@ -176,6 +186,7 @@ export function applyWidget(
 export const withWidget: ConfigPlugin = (config) => {
   const bundleIdentifier = config.ios?.bundleIdentifier;
   if (!bundleIdentifier) throw new Error("withWidget needs ios.bundleIdentifier");
+  const group = appGroup(bundleIdentifier);
 
   config = withXcodeProject(config, (mod) => {
     mod.modResults = applyWidget(mod.modResults, {
@@ -195,9 +206,9 @@ export const withWidget: ConfigPlugin = (config) => {
       }
       writeFileSync(
         join(dir, "Info.plist"),
-        widgetInfoPlist(mod.version ?? "1.0.0", mod.ios?.buildNumber ?? "1"),
+        widgetInfoPlist(mod.version ?? "1.0.0", mod.ios?.buildNumber ?? "1", group),
       );
-      writeFileSync(join(dir, `${WIDGET_TARGET}.entitlements`), EXTENSION_ENTITLEMENTS);
+      writeFileSync(join(dir, `${WIDGET_TARGET}.entitlements`), extensionEntitlements(group));
       for (const locale of NATIVE_LOCALES) {
         mkdirSync(join(dir, `${locale}.lproj`), { recursive: true });
         writeFileSync(
@@ -213,7 +224,7 @@ export const withWidget: ConfigPlugin = (config) => {
   return withAppExtension(config, {
     targetName: WIDGET_TARGET,
     bundleIdentifier: `${bundleIdentifier}.Widget`,
-    entitlements: { "com.apple.security.application-groups": [APP_GROUP] },
+    entitlements: { "com.apple.security.application-groups": [group] },
   });
 };
 

@@ -1,9 +1,10 @@
 // `/v1/instances*` (RFC 0015 sections 1 and 8): an instance registers its key with the relay after accepting the
 // terms and confirming a contact address by an emailed code (Freecorps' relay). On a company's own relay
-// (`RELAY_REGISTRATION=closed`) there are no codes and no terms: `POST /v1/instances` registers only a call that also
-// carries the relay's admin secret (`Authorization: Bearer <RELAY_ADMIN_TOKEN>`), which `vp run setup:relay` makes and
-// uses for the company's instance (scripts/setup-relay). Every call is signed with the instance key
-// (`verifyRequest`); every check-and-change runs inside the instance's Durable Object (src/registry.ts).
+// (`registrationClosed`: the secret `RELAY_CLOSED=1`, or an older relay's var `RELAY_REGISTRATION=closed`) there are
+// no codes and no terms: `POST /v1/instances` registers only a call that also carries the relay's admin secret
+// (`Authorization: Bearer <RELAY_ADMIN_TOKEN>`), which `vp run setup:relay` makes and uses for the company's instance
+// (scripts/setup-relay). Every call is signed with the instance key (`verifyRequest`); every check-and-change runs
+// inside the instance's Durable Object (src/registry.ts).
 
 import {
   canonicalKey,
@@ -36,8 +37,14 @@ export type InstanceEnv = {
   /** The terms version a registration must accept (wrangler.jsonc vars). */
   RELAY_TERMS_VERSION?: string;
   /**
-   * `closed`: a company's own relay, which registers only an instance whose `POST /v1/instances` carries
-   * `RELAY_ADMIN_TOKEN` (module comment). Anything else is open.
+   * `1`: a company's own relay, which registers only an instance whose `POST /v1/instances` carries
+   * `RELAY_ADMIN_TOKEN` (module comment). A secret `vp run setup:relay` sets, so every deploy keeps it; its name was
+   * never a var, so it cannot collide with one an older relay was deployed with.
+   */
+  RELAY_CLOSED?: string;
+  /**
+   * `closed` closes registration too: the `--var` an older `vp run setup:relay` deployed with, honoured until that
+   * relay is deployed again (when `RELAY_CLOSED` keeps it closed).
    */
   RELAY_REGISTRATION?: string;
   /** A closed relay's admin secret, as `Authorization: Bearer` on `POST /v1/instances`. Unset: nothing registers. */
@@ -48,6 +55,13 @@ export type InstanceEnv = {
    */
   CODE_LIMIT?: { limit(options: { key: string }): Promise<{ success: boolean }> };
 };
+
+/** Whether this is a company's own relay with closed registration: either flag says so, anything else is open. */
+export function registrationClosed(
+  env: Pick<InstanceEnv, "RELAY_CLOSED" | "RELAY_REGISTRATION">,
+): boolean {
+  return env.RELAY_CLOSED === "1" || env.RELAY_REGISTRATION === "closed";
+}
 
 /**
  * Pragmatic, not RFC 5322: one @, a dot in the domain, and nothing that could break out of a header or a list
@@ -160,7 +174,7 @@ async function requestCode(
   body: Record<string, unknown>,
   env: InstanceEnv,
 ): Promise<Response> {
-  if (env.RELAY_REGISTRATION === "closed") return json({ error: "registration_closed" }, 403);
+  if (registrationClosed(env)) return json({ error: "registration_closed" }, 403);
   if (!env.EMAIL || !env.EMAIL_FROM) return json({ error: "not_configured" }, 503);
   const { contact } = body;
   if (typeof contact !== "string" || !validContact(contact)) {
@@ -241,7 +255,7 @@ async function register(
   body: Record<string, unknown>,
   env: InstanceEnv,
 ): Promise<Response> {
-  const closed = env.RELAY_REGISTRATION === "closed";
+  const closed = registrationClosed(env);
   // A closed relay takes no terms; an open one cannot register without a version to accept.
   const current = closed ? "" : env.RELAY_TERMS_VERSION;
   if (current === undefined || (!closed && !current)) {
@@ -328,7 +342,7 @@ function answer(
       status: record.status,
       terms: record.terms,
       // A closed relay has no terms to fall behind on.
-      termsCurrent: env.RELAY_REGISTRATION === "closed" || record.terms === env.RELAY_TERMS_VERSION,
+      termsCurrent: registrationClosed(env) || record.terms === env.RELAY_TERMS_VERSION,
     },
     status,
   );

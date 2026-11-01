@@ -16,8 +16,10 @@
   // Production APNs; the app's build sets `aps-environment` to match. RELAY_TERMS_VERSION is the hosted relay's terms
   // version a registration must accept (RFC 0015, decision D5). The contact code's email (`EMAIL`, `EMAIL_FROM`) is
   // optional and not bound yet: without it `/v1/instances/contact` answers 503 (README "Instance registration"). A
-  // company's own relay adds `RELAY_REGISTRATION: "closed"` and its own `APNS_TOPIC` (`vp run setup:relay` passes both
-  // as `--var`; README "Closed registration").
+  // company's own relay keeps these vars: `vp run setup:relay` sets its topic and closed registration as the secrets
+  // `RELAY_APNS_TOPIC` (which wins over `APNS_TOPIC`) and `RELAY_CLOSED=1`, kept by every deploy (README "Closed
+  // registration"). Never add a var with either name: a secret may not share a var's name. The hosted relay's Custom Domain (relay.brigade.freecorps.com.br) is attached in the dashboard,
+  // not here, so a deploy creates no route.
   "vars": {
     "APNS_ENVIRONMENT": "production",
     "APNS_TOPIC": "app.freecorps.brigade",

@@ -1,5 +1,6 @@
 import ExpoModulesCore
 import WidgetKit
+import os
 
 /// Keeps the "I'm on call" widget's snapshot (src/lib/widget.ts) in the App Group's shared defaults, where the widget
 /// extension reads it, and reloads the widget's timelines. Only the snapshot (times, a locale, a count) goes there:
@@ -27,7 +28,16 @@ public class BrigadeWidgetModule: Module {
 
 /// The App Group keys; the widget's copy is in ../widget/WidgetState.swift.
 enum WidgetStore {
-  static let appGroup = "group.app.freecorps.brigade"
+  /// `group.<bundle id>`, from the app's Info.plist (plugins/notification-service.ts); the store app's group without
+  /// it, with a warning.
+  static let appGroup: String = {
+    if let group = Bundle.main.object(forInfoDictionaryKey: "BrigadeAppGroup") as? String, !group.isEmpty {
+      return group
+    }
+    Logger(subsystem: "app.freecorps.brigade", category: "app-group").warning(
+      "BrigadeAppGroup is missing from Info.plist: using the store app's group.app.freecorps.brigade")
+    return "group.app.freecorps.brigade"
+  }()
   static let snapshotKey = "widget.snapshot"
   static let localeKey = "widget.locale"
   static var defaults: UserDefaults? { UserDefaults(suiteName: appGroup) }

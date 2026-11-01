@@ -305,6 +305,25 @@ describe("POST /send", () => {
     expect(apns.sent[0]?.headers.get("apns-push-type")).toBe("alert");
   });
 
+  test("an own relay's RELAY_APNS_TOPIC secret wins over the APNS_TOPIC var, for alerts and calls", async () => {
+    const own = { ...env, RELAY_APNS_TOPIC: "com.acme.brigade" };
+    const apns = fakeApns();
+    await handle(post(await sendBody()), own, apns.send);
+    const callId = "6f1c2a4e-9b3d-4c5e-8f70-1a2b3c4d5e6f";
+    await handle(
+      post(await sendBody({ kind: "call", callId, urgency: undefined })),
+      own,
+      apns.send,
+    );
+    // Empty is unset: the var's topic.
+    await handle(post(await sendBody()), { ...env, RELAY_APNS_TOPIC: "" }, apns.send);
+    expect(apns.sent.map((request) => request.headers.get("apns-topic"))).toEqual([
+      "com.acme.brigade",
+      "com.acme.brigade.voip",
+      "app.freecorps.brigade",
+    ]);
+  });
+
   test("a broken APNs key is the relay's error, not the caller's", async () => {
     const apns = fakeApns();
     const response = await handle(post(await sendBody()), { ...env, APNS_KEY: "nope" }, apns.send);

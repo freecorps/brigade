@@ -35,8 +35,8 @@ alert is a pair of localization keys, the fallback the app shows when it cannot 
 environment.
 
 **Calls** (`kind: "call"`, spike S6, [write-up](../../docs/spikes/s6-voip-call-screen.md)) are PushKit VoIP pushes:
-topic `<APNS_TOPIC>.voip`, `apns-push-type: voip`, body `{ call: { id }, brigade: <envelope> }` and nothing else.
-`callId` is a lowercase UUID shared by repeats of one page; `urgency` must be `page` (the default for a call);
+topic `<topic>.voip` (the topic is `RELAY_APNS_TOPIC`, else `APNS_TOPIC`), `apns-push-type: voip`, body
+`{ call: { id }, brigade: <envelope> }` and nothing else. `callId` is a lowercase UUID shared by repeats of one page; `urgency` must be `page` (the default for a call);
 `ttlSeconds` defaults to 60 and may not exceed 300. iOS terminates an app that gets a VoIP push and reports no
 call, so the relay refuses anything the app could not ring for. The App ID needs the VoIP Services capability; the
 same `.p8` token key signs for the `.voip` topic.
@@ -120,7 +120,8 @@ treats it as optional and then limits nothing per IP. For the hosted relay's con
 Sending (as `apps/api`), are still to be added; until then `/v1/instances/contact` answers `503 not_configured`.
 `RELAY_TERMS_VERSION` is a var (`draft-2026-11`, RFC 0015 decision D5).
 
-**Closed registration** (`RELAY_REGISTRATION=closed`, a company's own relay, RFC 0015 section 8): no terms, no
+**Closed registration** (the secret `RELAY_CLOSED=1`, a company's own relay, RFC 0015 section 8; an older relay's var
+`RELAY_REGISTRATION=closed` closes it too, `src/instances.ts` `registrationClosed`): no terms, no
 emailed codes. `/v1/instances/contact` answers `403 registration_closed`. `POST /v1/instances`, still signed with the
 instance key, registers the signer's original key only when it also carries the relay's admin secret,
 `Authorization: Bearer <RELAY_ADMIN_TOKEN>` (compared in constant time, `src/auth.ts`): `201 { instance, status,
@@ -129,7 +130,9 @@ terms: "none", termsCurrent: true }`, with `contact` optional (`400 invalid_cont
 `RELAY_ADMIN_TOKEN` is unset, `401 admin_unauthorized`; a key that is not the instance id's original one `403
 instance_unregistered`. A registered instance gets its record (`200`) with or without the token. A closed relay does
 not need `RELAY_TERMS_VERSION`. An open relay ignores the header. `vp run setup:relay` (choice "your own relay",
-apps/api README "Push relay") deploys the relay with `RELAY_REGISTRATION=closed`, makes the admin token and
+apps/api README "Push relay") sets `RELAY_CLOSED=1` as a secret (so every later deploy keeps it; a relay deployed by
+an older script with `--var RELAY_REGISTRATION:closed` stays closed by that var until this deploy drops it, and by the
+secret after), makes the admin token and
 registers the instance with it, then deletes it (`RELAY_ADMIN_TOKEN` unset: nothing more registers); running it again
 makes a new one. It also sets `BRIGADE_OWN_RELAY`, a marker with nothing secret in it: a relay Worker without it was
 not set up by the script, and the script does not deploy over it without `--take-over-relay`.
@@ -195,8 +198,11 @@ tag, and the instance would take every phone for a new one). Without either secr
 ## Configuration
 
 `wrangler.jsonc`: production is the top-level config (`brigade-relay`, no workers.dev URL, production APNs); `dev`
-is `brigade-relay-dev` on workers.dev with the APNs sandbox. Secrets, from files outside the repository, never in
-the config:
+is `brigade-relay-dev` on workers.dev with the APNs sandbox. Freecorps' relay answers at
+`https://relay.brigade.freecorps.com.br` (the setup script's `FREECORPS_RELAY_URL`): the operator attaches that
+Custom Domain to `brigade-relay` in the Cloudflare dashboard (Workers & Pages → `brigade-relay` → Settings → Domains &
+Routes). It is not a `routes` entry in wrangler.jsonc, so a deploy (a company's own relay's included) creates no
+route or domain. Secrets, from files outside the repository, never in the config:
 
 | Secret             | What                                   |
 | ------------------ | -------------------------------------- |
@@ -211,10 +217,13 @@ Optional, for Android: `FCM_SERVICE_ACCOUNT`, the Google service account's JSON 
 Optional, for handles and `/v1/send` (see "Handles and /v1/send"): `RELAY_HANDLE_KEYS` (the keyring) and
 `RELAY_TAG_KEY`. Not in `secrets.required` either, so `/send` keeps deploying without them.
 
-Optional, for a company's own relay: `RELAY_ADMIN_TOKEN` (the secret that authorizes closed registration) and the var
-`RELAY_REGISTRATION=closed` (see "Closed registration" above). `vp run setup:relay` sets both, with `APNS_TOPIC` as the
-company's bundle id, passing the two vars as `wrangler deploy --var`; keep them in a copy's `wrangler.jsonc` `vars` so
-a later deploy does not put the defaults back. Make each key with
+Optional, for a company's own relay: `RELAY_ADMIN_TOKEN` (the secret that authorizes closed registration),
+`RELAY_CLOSED=1` (see "Closed registration" above) and `RELAY_APNS_TOPIC`, the company's bundle id, which takes
+precedence over the `APNS_TOPIC` var when set. `vp run setup:relay` sets all three as secrets, so a later `wrangler
+deploy` with no flags keeps them; wrangler.jsonc stays as it is. A secret may not share a deployed var's name, so
+none of them is named like a var any version of the script deployed: a relay set up by an earlier version (the
+topic and `RELAY_REGISTRATION=closed` as `deploy --var`) gets the secrets on the script's next run, then the deploy
+drops the old vars. Make each key with
 `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='` (32 random bytes in base64url) into the secrets file outside
 the repository, never into this repository or a shell history.
 

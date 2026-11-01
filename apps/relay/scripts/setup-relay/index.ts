@@ -3,7 +3,7 @@
 // The flow is in flow.ts; this file reads the flags and wires the terminal, wrangler, files and fetch to it.
 //
 //   vp run setup:relay                                   # asks everything
-//   vp run setup:relay -- --relay freecorps --relay-url https://… --accept-terms draft-2026-11 \
+//   vp run setup:relay -- --relay freecorps --accept-terms draft-2026-11 \
 //     --contact oncall@acme.example [--code 123456 --instance-key-file <path>]   # no questions (CI, scripts)
 //   vp run setup:relay -- --relay own --apns-key-file ~/keys/AuthKey.p8 --apns-key-id … --apns-team-id … \
 //     --bundle-id com.acme.brigade --fcm-service-account-file ~/keys/fcm.json --relay-domain relay.acme.example

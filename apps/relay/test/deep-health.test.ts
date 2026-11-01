@@ -73,6 +73,18 @@ describe("GET /health?deep=1", () => {
       `https://api.sandbox.push.apple.com/3/device/${NO_DEVICE_TOKEN}`,
     ]);
     expect(calls.sent[0]!.headers.get("authorization")).toMatch(/^bearer ey/);
+    expect(calls.sent[0]!.headers.get("apns-topic")).toBe("app.freecorps.brigade");
+  });
+
+  test("asks APNs for an own relay's RELAY_APNS_TOPIC, not the APNS_TOPIC var", async () => {
+    const calls = providers({ status: 400, reason: "BadDeviceToken" });
+    const response = await handle(
+      deep(),
+      { ...env, RELAY_APNS_TOPIC: "com.acme.brigade" },
+      calls.send,
+    );
+    expect(response.status).toBe(200);
+    expect(calls.sent[0]!.headers.get("apns-topic")).toBe("com.acme.brigade");
   });
 
   test("a revoked APNs key, or APNs not answering, is an error by reason (503); only the second may pass", async () => {

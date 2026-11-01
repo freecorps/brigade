@@ -12,7 +12,26 @@ import { parseArgs } from "node:util";
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const mobile = join(root, "apps/mobile");
-export const appId = "app.freecorps.brigade";
+/**
+ * The bundle id rule both stores accept: `APP_ID_PATTERN` in apps/mobile/plugins/app-id.ts, copied rather than imported
+ * (Node would warn on every run: apps/mobile is not `"type": "module"`); a test there keeps the two the same.
+ */
+export const APP_ID_PATTERN = /^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)+$/;
+/**
+ * The build's bundle id and Android package: `BRIGADE_APP_ID`, else the store app's. Called after the options are
+ * parsed, so `--help` works whatever the environment; an id either store would refuse stops the script.
+ */
+export function appId(env = process.env) {
+  const value = env.BRIGADE_APP_ID?.trim();
+  if (!value) return "app.freecorps.brigade";
+  if (!APP_ID_PATTERN.test(value)) {
+    console.error(
+      `BRIGADE_APP_ID ${JSON.stringify(value)} is not a bundle id both stores accept (com.acme.brigade: letters and digits, each part starting with a letter, no - or _).`,
+    );
+    process.exit(1);
+  }
+  return value;
+}
 const windows = process.platform === "win32";
 
 /**

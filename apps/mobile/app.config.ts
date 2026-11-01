@@ -2,6 +2,7 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
 // By path, not "@freecorps/brigade-ui": Expo's config loader does not use the @freecorps/source
 // condition, so the package name would need packages/ui built first.
 import { themes } from "../../packages/ui/src/tokens.ts";
+import { appId } from "./plugins/app-id.ts";
 import { googleServicesFile } from "./plugins/google-services.ts";
 import { withIncomingCall } from "./plugins/incoming-call.ts";
 import { withNotificationService } from "./plugins/notification-service.ts";
@@ -9,9 +10,9 @@ import { withPendingBackup } from "./plugins/pending-backup.ts";
 import { withSplashGround } from "./plugins/splash-ground.ts";
 import { withWidget } from "./plugins/widget.ts";
 
-// One id on both stores, registered under the Freecorps Apple team. Same `app.freecorps.*` prefix as
-// Freecorps' other apps.
-const APP_ID = "app.freecorps.brigade";
+// One id on both stores: the store app's `app.freecorps.brigade` (registered under the Freecorps Apple team) unless
+// `BRIGADE_APP_ID` names a company's own build. The App Group follows it (plugins/app-id.ts).
+const APP_ID = appId();
 
 // APNs environment the build's signing matches. Local Xcode builds use a development profile (sandbox device
 // tokens); every EAS build is ad hoc or App Store signed, whose profiles carry `production`. The release workflow

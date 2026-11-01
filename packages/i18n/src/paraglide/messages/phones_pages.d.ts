@@ -34,7 +34,8 @@ export type Phones_PagesInputs = {
 * | "hint_bad_signature" | "The relay doesn't accept this instance's key (RELAY_INSTANCE_KEY or RELAY_INSTANCE_ID), or this server's clock is more than 5 minutes off. Run setup again wi..." |
 * | "hint_revoked_freecorps" | "Freecorps revoked this instance on its relay. Write to Freecorps to find out why before you register again." |
 * | "hint_revoked_own" | "This instance was revoked on your relay. Register it again:" |
-* | "hint_unauthorized" | "The relay refused the send token (RELAY_SEND_TOKEN), so phones registered before relay handles aren't paged. Run setup again to set a matching token:" |
+* | "hint_unauthorized_freecorps" | "The relay refused the send token (RELAY_SEND_TOKEN), so phones registered before relay handles aren't paged. Set the same RELAY_SEND_TOKEN on the relay and o..." |
+* | "hint_unauthorized_own" | "The relay refused the send token (RELAY_SEND_TOKEN), so phones registered before relay handles aren't paged. Run setup again to set a matching token:" |
 * | "state_unreachable" | "Unreachable" |
 * | "hint_unreachable_freecorps" | "Freecorps' relay isn't answering. Check RELAY_URL on the API; if it's right, the relay may be down, and pages go out by email meanwhile." |
 * | "hint_unreachable_own" | "Your relay isn't answering. Check that it's deployed and that the API reaches it (the RELAY binding, or RELAY_URL)." |
@@ -50,6 +51,7 @@ export type Phones_PagesInputs = {
 * | "hint_pipeline" | "Pages are held up before they reach the relay, so it can't be checked. The paging notice on the overview says why." |
 * | "state_no_answer" | "Couldn't check" |
 * | "hint_no_answer" | "Brigade didn't answer the paging check. It tries again every minute." |
+* | "hint_no_details" | "Brigade answered the paging check without saying why it isn't working: your session may have expired. Reload the page, and sign in again if it asks." |
 * | * | "Phones and pages" |
 *
 * @param {Phones_PagesInputs} inputs

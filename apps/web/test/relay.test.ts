@@ -12,23 +12,19 @@ import { appAdvice, relayState, SETUP_RELAY, stateView, type RelayState } from "
 const health = (
   status: PagingHealth["status"],
   reasons: DegradedReason[] = [],
-  relay: PagingHealth["relay"] = { kind: "freecorps", host: null, app: null },
+  relay: PagingHealth["relay"] = { kind: "freecorps" },
 ): PagingHealth => ({ status, reasons, lastOkAt: null, relay });
 
 describe("parseRelay", () => {
   test("reads the three kinds", () => {
     expect(parseRelay({ kind: "none" })).toEqual({ kind: "none" });
-    expect(parseRelay({ kind: "freecorps", host: "relay.example.com", app: null })).toEqual({
-      kind: "freecorps",
-      host: "relay.example.com",
-      app: null,
-    });
+    expect(parseRelay({ kind: "freecorps" })).toEqual({ kind: "freecorps" });
     expect(
       parseRelay({ kind: "own", host: "relay.acme.example", app: "https://apps.example.com/x" }),
     ).toEqual({ kind: "own", host: "relay.acme.example", app: "https://apps.example.com/x" });
   });
 
-  test("a link is https or nothing, and only an own relay has one", () => {
+  test("a link is https or nothing, and only an own relay has a host or a link", () => {
     for (const app of ["javascript:alert(1)", "http://apps.example.com", "not a url", 7]) {
       expect(parseRelay({ kind: "own", host: null, app }), String(app)).toEqual({
         kind: "own",
@@ -36,11 +32,9 @@ describe("parseRelay", () => {
         app: null,
       });
     }
-    expect(parseRelay({ kind: "freecorps", app: "https://apps.example.com" })).toEqual({
-      kind: "freecorps",
-      host: null,
-      app: null,
-    });
+    expect(
+      parseRelay({ kind: "freecorps", host: "relay.example.com", app: "https://apps.example.com" }),
+    ).toEqual({ kind: "freecorps" });
   });
 
   test("anything else is not said, never shown as a relay", () => {
@@ -84,7 +78,7 @@ describe("relayState", () => {
     ]);
   });
 
-  test("a refusal wins over limits and a slow pipeline; degraded with no reason given is no answer", () => {
+  test("a refusal wins over limits and a slow pipeline; degraded with no reason given is an answer without details", () => {
     expect(
       relayState(
         health("degraded", ["relay_rate_limited", "pipeline_slow", "relay_bad_signature"]),
@@ -96,8 +90,9 @@ describe("relayState", () => {
     expect(relayState(health("degraded", ["relay_unreachable", "fcm_failing"]))).toBe(
       "unreachable",
     );
-    expect(relayState(health("degraded"))).toBe("no_answer");
-    expect(relayState(health("degraded", ["relay_not_configured"]))).toBe("no_answer");
+    // Brigade answered (without the session's details): not "didn't answer".
+    expect(relayState(health("degraded", [], null))).toBe("no_details");
+    expect(relayState(health("degraded", ["relay_not_configured"]))).toBe("no_details");
   });
 });
 
@@ -129,6 +124,22 @@ describe("stateView", () => {
     expect(stateView("unreachable", "own")).toMatchObject({
       label: "state_unreachable",
       hint: "hint_unreachable_own",
+    });
+    // A refused send token: only the own-relay flow sets one (on both Workers), so only there is the script the fix.
+    expect(stateView("unauthorized", "own")).toMatchObject({
+      label: "state_refused",
+      hint: "hint_unauthorized_own",
+      command: SETUP_RELAY,
+    });
+    expect(stateView("unauthorized", "freecorps")).toMatchObject({
+      label: "state_refused",
+      hint: "hint_unauthorized_freecorps",
+      command: null,
+    });
+    expect(stateView("no_details", "freecorps")).toMatchObject({
+      label: "state_no_answer",
+      hint: "hint_no_details",
+      command: null,
     });
     expect(stateView("providers", "own").command).toBe(`${SETUP_RELAY} --replace-credentials`);
     expect(stateView("providers", "freecorps").command).toBeNull();

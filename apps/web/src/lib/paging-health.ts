@@ -30,7 +30,8 @@ export type DegradedReason = (typeof DEGRADED_REASONS)[number];
  */
 export type RelaySetup =
   | { kind: "none" }
-  | { kind: "freecorps" | "own"; host: string | null; app: string | null };
+  | { kind: "freecorps" }
+  | { kind: "own"; host: string | null; app: string | null };
 
 export type PagingHealth = {
   status: "ok" | "degraded" | "unknown";
@@ -77,13 +78,13 @@ export function parsePagingHealth(body: unknown): PagingHealth | undefined {
 export function parseRelay(body: unknown): RelaySetup | null {
   if (typeof body !== "object" || body === null) return null;
   const { kind, host, app } = body as Record<string, unknown>;
-  if (kind === "none") return { kind };
-  if (kind !== "freecorps" && kind !== "own") return null;
+  if (kind === "none" || kind === "freecorps") return { kind };
+  if (kind !== "own") return null;
   return {
     kind,
     host: typeof host === "string" && host.trim() !== "" ? host : null,
     // A link is shown and followed: https only, so a `javascript:` URL can never reach an href.
-    app: kind === "own" && typeof app === "string" && isHttps(app) ? app : null,
+    app: typeof app === "string" && isHttps(app) ? app : null,
   };
 }
 

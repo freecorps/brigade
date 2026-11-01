@@ -36,7 +36,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "hint_bad_signature" | "The relay doesn't accept this instance's key (RELAY_INSTANCE_KEY or RELAY_INSTANCE_ID), or this server's clock is more than 5 minutes off. Run setup again wi..." |
 * | "hint_revoked_freecorps" | "Freecorps revoked this instance on its relay. Write to Freecorps to find out why before you register again." |
 * | "hint_revoked_own" | "This instance was revoked on your relay. Register it again:" |
-* | "hint_unauthorized" | "The relay refused the send token (RELAY_SEND_TOKEN), so phones registered before relay handles aren't paged. Run setup again to set a matching token:" |
+* | "hint_unauthorized_freecorps" | "The relay refused the send token (RELAY_SEND_TOKEN), so phones registered before relay handles aren't paged. Set the same RELAY_SEND_TOKEN on the relay and o..." |
+* | "hint_unauthorized_own" | "The relay refused the send token (RELAY_SEND_TOKEN), so phones registered before relay handles aren't paged. Run setup again to set a matching token:" |
 * | "state_unreachable" | "Unreachable" |
 * | "hint_unreachable_freecorps" | "Freecorps' relay isn't answering. Check RELAY_URL on the API; if it's right, the relay may be down, and pages go out by email meanwhile." |
 * | "hint_unreachable_own" | "Your relay isn't answering. Check that it's deployed and that the API reaches it (the RELAY binding, or RELAY_URL)." |
@@ -52,6 +53,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "hint_pipeline" | "Pages are held up before they reach the relay, so it can't be checked. The paging notice on the overview says why." |
 * | "state_no_answer" | "Couldn't check" |
 * | "hint_no_answer" | "Brigade didn't answer the paging check. It tries again every minute." |
+* | "hint_no_details" | "Brigade answered the paging check without saying why it isn't working: your session may have expired. Reload the page, and sign in again if it asks." |
 * | * | "Phones and pages" |
 *
 * @param {Phones_PagesInputs} inputs
@@ -87,7 +89,8 @@ export const phones_pages = /** @type {((inputs: Phones_PagesInputs, options?: {
 		if (i?.part === "hint_bad_signature") return /** @type {LocalizedString} */ (`O relay não aceita a chave desta instância (RELAY_INSTANCE_KEY ou RELAY_INSTANCE_ID), ou o relógio deste servidor está mais de 5 minutos fora. Rode a configuração de novo com o arquivo da chave que você guardou:`);
 		if (i?.part === "hint_revoked_freecorps") return /** @type {LocalizedString} */ (`A Freecorps revogou esta instância no relay dela. Escreva para a Freecorps para saber o motivo antes de registrar de novo.`);
 		if (i?.part === "hint_revoked_own") return /** @type {LocalizedString} */ (`Esta instância foi revogada no seu relay. Registre-a de novo:`);
-		if (i?.part === "hint_unauthorized") return /** @type {LocalizedString} */ (`O relay recusou o token de envio (RELAY_SEND_TOKEN), então celulares registrados antes dos identificadores do relay não são acionados. Rode a configuração de novo para definir um token igual nos dois:`);
+		if (i?.part === "hint_unauthorized_freecorps") return /** @type {LocalizedString} */ (`O relay recusou o token de envio (RELAY_SEND_TOKEN), então celulares registrados antes dos identificadores do relay não são acionados. Defina o mesmo RELAY_SEND_TOKEN no relay e na API.`);
+		if (i?.part === "hint_unauthorized_own") return /** @type {LocalizedString} */ (`O relay recusou o token de envio (RELAY_SEND_TOKEN), então celulares registrados antes dos identificadores do relay não são acionados. Rode a configuração de novo para definir um token igual nos dois:`);
 		if (i?.part === "state_unreachable") return /** @type {LocalizedString} */ (`Inacessível`);
 		if (i?.part === "hint_unreachable_freecorps") return /** @type {LocalizedString} */ (`O relay da Freecorps não está respondendo. Confira o RELAY_URL na API; se estiver certo, o relay pode estar fora do ar, e enquanto isso os acionamentos saem por email.`);
 		if (i?.part === "hint_unreachable_own") return /** @type {LocalizedString} */ (`Seu relay não está respondendo. Confira se ele está no ar e se a API chega até ele (o binding RELAY, ou o RELAY_URL).`);
@@ -103,6 +106,7 @@ export const phones_pages = /** @type {((inputs: Phones_PagesInputs, options?: {
 		if (i?.part === "hint_pipeline") return /** @type {LocalizedString} */ (`Os acionamentos estão parados antes de chegar ao relay, então ele não pode ser verificado. O aviso de acionamentos na visão geral diz o motivo.`);
 		if (i?.part === "state_no_answer") return /** @type {LocalizedString} */ (`Não foi possível verificar`);
 		if (i?.part === "hint_no_answer") return /** @type {LocalizedString} */ (`O Brigade não respondeu à verificação dos acionamentos. Ele tenta de novo a cada minuto.`);
+		if (i?.part === "hint_no_details") return /** @type {LocalizedString} */ (`O Brigade respondeu à verificação dos acionamentos sem dizer por que não está funcionando: sua sessão pode ter expirado. Recarregue a página e entre de novo se ela pedir.`);
 		return /** @type {LocalizedString} */ (`Celulares e acionamentos`)
 	}
 	{
@@ -132,7 +136,8 @@ export const phones_pages = /** @type {((inputs: Phones_PagesInputs, options?: {
 		if (i?.part === "hint_bad_signature") return /** @type {LocalizedString} */ (`The relay doesn't accept this instance's key (RELAY_INSTANCE_KEY or RELAY_INSTANCE_ID), or this server's clock is more than 5 minutes off. Run setup again with the key file you saved:`);
 		if (i?.part === "hint_revoked_freecorps") return /** @type {LocalizedString} */ (`Freecorps revoked this instance on its relay. Write to Freecorps to find out why before you register again.`);
 		if (i?.part === "hint_revoked_own") return /** @type {LocalizedString} */ (`This instance was revoked on your relay. Register it again:`);
-		if (i?.part === "hint_unauthorized") return /** @type {LocalizedString} */ (`The relay refused the send token (RELAY_SEND_TOKEN), so phones registered before relay handles aren't paged. Run setup again to set a matching token:`);
+		if (i?.part === "hint_unauthorized_freecorps") return /** @type {LocalizedString} */ (`The relay refused the send token (RELAY_SEND_TOKEN), so phones registered before relay handles aren't paged. Set the same RELAY_SEND_TOKEN on the relay and on the API.`);
+		if (i?.part === "hint_unauthorized_own") return /** @type {LocalizedString} */ (`The relay refused the send token (RELAY_SEND_TOKEN), so phones registered before relay handles aren't paged. Run setup again to set a matching token:`);
 		if (i?.part === "state_unreachable") return /** @type {LocalizedString} */ (`Unreachable`);
 		if (i?.part === "hint_unreachable_freecorps") return /** @type {LocalizedString} */ (`Freecorps' relay isn't answering. Check RELAY_URL on the API; if it's right, the relay may be down, and pages go out by email meanwhile.`);
 		if (i?.part === "hint_unreachable_own") return /** @type {LocalizedString} */ (`Your relay isn't answering. Check that it's deployed and that the API reaches it (the RELAY binding, or RELAY_URL).`);
@@ -148,6 +153,7 @@ export const phones_pages = /** @type {((inputs: Phones_PagesInputs, options?: {
 		if (i?.part === "hint_pipeline") return /** @type {LocalizedString} */ (`Pages are held up before they reach the relay, so it can't be checked. The paging notice on the overview says why.`);
 		if (i?.part === "state_no_answer") return /** @type {LocalizedString} */ (`Couldn't check`);
 		if (i?.part === "hint_no_answer") return /** @type {LocalizedString} */ (`Brigade didn't answer the paging check. It tries again every minute.`);
+		if (i?.part === "hint_no_details") return /** @type {LocalizedString} */ (`Brigade answered the paging check without saying why it isn't working: your session may have expired. Reload the page, and sign in again if it asks.`);
 		return /** @type {LocalizedString} */ (`Phones and pages`)
 	}
 });

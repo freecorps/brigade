@@ -28,7 +28,7 @@ const health = (
   lastOkAt: status === "ok" ? null : new Date("2026-10-31T09:15:00.000Z"),
   relay,
 });
-const freecorps: RelaySetup = { kind: "freecorps", host: "relay.example.com", app: null };
+const freecorps: RelaySetup = { kind: "freecorps" };
 const own = (app: string | null = APP, host: string | null = "relay.acme.example"): RelaySetup => ({
   kind: "own",
   host,
@@ -119,6 +119,21 @@ describe("PhonesPagesPanel", () => {
     act(() => root?.unmount());
     container.remove();
 
+    // A refused send token on Freecorps' relay: its setup flow never sets one, so no command, the token by hand.
+    const token = await panel(health(freecorps, "degraded", ["relay_unauthorized"]));
+    expect(token.textContent).toContain(
+      "Set the same RELAY_SEND_TOKEN on the relay and on the API.",
+    );
+    expect(token.querySelector("code")).toBeNull();
+    act(() => root?.unmount());
+    container.remove();
+    // On an own relay the script sets a matching pair on both Workers.
+    const ownToken = await panel(health(own(), "degraded", ["relay_unauthorized"]));
+    expect(ownToken.textContent).toContain("Run setup again to set a matching token");
+    expect(ownToken.querySelector("code")?.textContent).toBe("vp run setup:relay");
+    act(() => root?.unmount());
+    container.remove();
+
     const revoked = await panel(health(freecorps, "degraded", ["relay_instance_revoked"]));
     expect(revoked.textContent).toContain("Write to Freecorps");
     expect(revoked.querySelector("code")).toBeNull();
@@ -161,10 +176,19 @@ describe("PhonesPagesPanel", () => {
     expect(older.textContent).toContain("Working");
   });
 
-  test("a very long host wraps instead of overflowing", async () => {
+  test("degraded without the session's details: Brigade answered, so it says that, not 'didn't answer'", async () => {
+    const shown = await panel({ status: "degraded", reasons: [], lastOkAt: null, relay: null });
+    expect(shown.textContent).toContain("answered the paging check without saying why");
+    expect(shown.textContent).not.toContain("didn't answer");
+  });
+
+  test("a very long host is shown whole, never cut, and marked to wrap anywhere", async () => {
+    // happy-dom has no layout: that it wraps inside the card at 320px is checked in the worst-case screenshots.
     const shown = await panel(health(own(APP, LONG_HOST)));
     const relay = [...shown.querySelectorAll("p")].find((p) => p.textContent?.includes(LONG_HOST));
+    expect(relay?.textContent).toBe(`Pages go through your company's own relay (${LONG_HOST})`);
     expect(relay?.className).toContain("[overflow-wrap:anywhere]");
+    expect(relay?.className).not.toMatch(/truncate|line-clamp/);
   });
 
   test("in pt-BR", async () => {
@@ -221,6 +245,27 @@ describe("UseAppPanel", () => {
       "Install the Brigade app from the App Store or Google Play",
     );
     expect(shown.textContent).toContain("allow notifications");
+  });
+
+  test("only the advice sentence is live, and it stays the same element when the check lands", async () => {
+    const shown = await card(undefined);
+    const live = shown.querySelectorAll("[aria-live]");
+    expect(live).toHaveLength(1);
+    expect(live[0]?.tagName).toBe("P");
+    const before = live[0];
+    await act(async () => {
+      root!.render(
+        <PreferencesProvider initialLocale="en">
+          <UseAppPanel health={health(own())} />
+        </PreferencesProvider>,
+      );
+    });
+    const after = shown.querySelector("[aria-live]");
+    expect(after).toBe(before);
+    expect(after?.textContent).toContain("your company's own build");
+    // The heading, description and link are not in the live region.
+    expect(after?.querySelector("a")).toBeNull();
+    expect(after?.textContent).not.toContain("Use the app");
   });
 
   test("an own relay: the company's build, with its link", async () => {

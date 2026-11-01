@@ -1820,8 +1820,8 @@ const SCHEMAS: Record<string, JsonSchema> = {
         type: "object",
         description:
           "Members only. Which relay pages go through: `none` (phones are not paged), `freecorps` (Freecorps' " +
-          "relay, for the store app) or `own` (the company's own relay, for its own app build). `host` is the " +
-          "relay's host when the instance has its address; `app` the own build's link, when set.",
+          "relay, for the store app) or `own` (the company's own relay, for its own app build). For `own` only: " +
+          "`host`, the relay's host when the instance has its address, and `app`, the own build's link when set.",
         properties: {
           kind: { type: "string", enum: ["none", "freecorps", "own"] },
           host: { type: ["string", "null"] },

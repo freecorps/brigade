@@ -18,7 +18,8 @@ export type RelayState =
   | "providers"
   | "rate_limited"
   | "pipeline"
-  | "no_answer";
+  | "no_answer"
+  | "no_details";
 
 /** How a state reads at a glance: green, grey, amber or red. */
 export type RelayTone = "ok" | "neutral" | "warning" | "error";
@@ -36,6 +37,7 @@ export const STATE_TONE: Record<RelayState, RelayTone> = {
   rate_limited: "warning",
   pipeline: "warning",
   no_answer: "warning",
+  no_details: "warning",
 };
 
 /**
@@ -69,8 +71,9 @@ export function relayState(
   for (const [reasons, state] of BY_REASON) {
     if (reasons.some((reason) => health.reasons.includes(reason))) return state;
   }
-  // Degraded with no reason given (an answer without the session's details) or only `relay_not_configured`.
-  return "no_answer";
+  // Degraded with no reason given: the API answered without the session's details (it expired, or its lookup failed),
+  // or with only `relay_not_configured` while the relay says otherwise (a deploy in between). Brigade did answer.
+  return "no_details";
 }
 
 /** What a hint says differs between Freecorps' relay and an own one where the fix is the operator's. */
@@ -82,7 +85,8 @@ export type HintKey =
   | "hint_bad_signature"
   | "hint_revoked_freecorps"
   | "hint_revoked_own"
-  | "hint_unauthorized"
+  | "hint_unauthorized_freecorps"
+  | "hint_unauthorized_own"
   | "hint_unreachable_freecorps"
   | "hint_unreachable_own"
   | "hint_rate_limited"
@@ -91,7 +95,8 @@ export type HintKey =
   | "hint_providers_freecorps"
   | "hint_providers_own"
   | "hint_pipeline"
-  | "hint_no_answer";
+  | "hint_no_answer"
+  | "hint_no_details";
 
 export type LabelKey =
   | "state_working"
@@ -146,7 +151,11 @@ export function stateView(state: RelayState, kind: "freecorps" | "own"): StateVi
         ? view("state_refused", "hint_revoked_own", SETUP_RELAY)
         : view("state_refused", "hint_revoked_freecorps");
     case "unauthorized":
-      return view("state_refused", "hint_unauthorized", SETUP_RELAY);
+      // Only the own-relay flow sets a send token (both Workers, one pair); Freecorps' flow never does, so on
+      // Freecorps' relay (our instance) the fix is the same token on both, by hand.
+      return own
+        ? view("state_refused", "hint_unauthorized_own", SETUP_RELAY)
+        : view("state_refused", "hint_unauthorized_freecorps");
     case "unreachable":
       return view("state_unreachable", own ? "hint_unreachable_own" : "hint_unreachable_freecorps");
     case "handles_unavailable":
@@ -163,6 +172,8 @@ export function stateView(state: RelayState, kind: "freecorps" | "own"): StateVi
       return view("state_pipeline", "hint_pipeline");
     case "no_answer":
       return view("state_no_answer", "hint_no_answer");
+    case "no_details":
+      return view("state_no_answer", "hint_no_details");
   }
 }
 

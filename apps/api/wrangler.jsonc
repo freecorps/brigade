@@ -146,7 +146,7 @@
   // RELAY_URL, `GET /config` gives the app the relay and this instance's id. RELAY_APP_URL (optional) is an own app
   // build's store link, given there as `relay.app`. RELAY_INSTANCE_ID (optional) is the instance's first id, set after
   // a key rotation so it keeps signing as the id its handles were sealed for (apps/api/README.md). RELAY_KIND
-  // (optional, `own`) marks the company's own relay, so the dashboard says so; `vp run setup:relay` sets it.
+  // (optional: `own` or unset) marks the company's own relay, so the dashboard says so; `vp run setup:relay` sets it.
   // DEAD_MAN_URL (src/watchdog.ts) is optional too: the external check's ping URL; without it nothing is pinged.
   // OPERATOR_EMAILS (src/notify-operators.ts) is optional: comma-separated addresses emailed when the paging
   // self-check changes status (`brigade.status_changed`); without it (or without EMAIL_FROM) nobody is.

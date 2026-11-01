@@ -445,20 +445,25 @@ built:
 
 - **Which relay** comes from the server, not from the relay's origin: Freecorps' relay has no public address yet (Q31),
   so no constant could tell the two apart. `GET /health/paging`, which the dashboard already asks every minute, gives
-  members `relay: { kind: "none" | "freecorps" | "own", host, app }`. `none` when phones cannot be paged at all (no
-  relay to reach, or neither `RELAY_SEND_TOKEN` nor an instance key that reads; unlike `/config`'s `relay` it counts the
-  send token, which pages raw-token phones today). `own` when `RELAY_KIND=own` or `RELAY_APP_URL` is set: the link is
-  optional, so `vp run setup:relay` now marks an own relay with `RELAY_KIND=own`, and its switch to Freecorps' relay
-  removes it with the link and the own relay's send token. Anything else is Freecorps'. `host` is `RELAY_URL`'s (none
-  with the binding alone), `app` the https link (never one with credentials). Not sent without a session or to a user
-  in no workspace, like the reasons.
+  members `relay: { kind: "none" | "freecorps" | "own", host?, app? }`. `none` when phones cannot be paged at all (no
+  relay to reach, or neither `RELAY_SEND_TOKEN` nor `RELAY_INSTANCE_KEY`; unlike `/config`'s `relay` it counts the send
+  token, which pages raw-token phones today). A key that does not read still counts, so the card shows the watchdog's
+  "refused" rather than "set one up", whose new key would orphan every handle. `own` when `RELAY_KIND` (`own` or unset,
+  nothing else) or `RELAY_APP_URL` is set: the link is optional, so `vp run setup:relay` now marks an own relay with
+  `RELAY_KIND=own`, and its switch to Freecorps' relay removes it with the link and the own relay's send token. The
+  script reads only secret names, so any `RELAY_KIND` counts as own there, and the API agrees. An own relay set up
+  before the marker, with no link, shows as Freecorps' until `RELAY_KIND=own` is set (apps/api README "Push relay").
+  Anything else is Freecorps'. Only an own relay has `host` (`RELAY_URL`'s; none with the binding alone) and `app` (the
+  https link, never one with credentials). Not sent without a session or to a user in no workspace, like the reasons.
 - **"Phones and pages"** (workspace settings, owners and admins): the relay ("Pages go through Freecorps' relay", "…
   your company's own relay (host)", or "No relay: phones aren't paged" with email as the fallback and the command to
   set one up), its state, and for an own relay the app link or how to add one. The state is one per card, from the
   watchdog's reasons, most telling first: refused (`relay_bad_signature`, `relay_instance_revoked`,
-  `relay_unauthorized`), not registered, unreachable, handles unavailable, push service failing (`apns_failing`,
+  `relay_unauthorized`: on Freecorps' relay, which a self-hosted instance never has a send token for, the fix is the
+  same token on the relay and the API, not the setup script), not registered, unreachable, handles unavailable, push service failing (`apns_failing`,
   `fcm_failing`), rate limited, then held up in Brigade (the pipeline's reasons); `ok` is working, `unknown` not checked
-  yet, an API that does not answer "Couldn't check". Each has a hint that differs where the fix is the operator's (an
+  yet, an API that does not answer "Couldn't check", and an answer without the session's details (an expired session)
+  says so. Each has a hint that differs where the fix is the operator's (an
   own relay) or Freecorps' (a revoked instance: write to Freecorps rather than register again), and the command when
   one fixes it (`vp run setup:relay`, with `--instance-key-file` or `--replace-credentials`). Registration pending is
   "not registered": the relay has no pending state (section 7).

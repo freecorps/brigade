@@ -550,6 +550,13 @@ own relay), the own relay's `RELAY_SEND_TOKEN`; an API with neither keeps its se
 manager and delete the file: a lost key is the same as a switch. `--instance-key-file` reuses a saved key, to finish a
 run that stopped (a code that expired, secrets wrangler could not set) without a new id.
 
+**`RELAY_KIND`** is `own` or unset, nothing else: the script can read only secret names, so it takes any value as an
+own relay (and a switch to Freecorps' relay then drops the API's send token), and the API agrees. **An own relay set
+up before the script set `RELAY_KIND`** (and with no app link) shows on the dashboard as Freecorps' relay, and its
+members are told to install the store app, which it cannot page: set it by hand, `wrangler secret put RELAY_KIND`
+(value `own`) in apps/api, which changes nothing else; or run `vp run setup:relay` again (choice "your own relay")
+with `--instance-key-file` and the key you saved, so the instance keeps its id and phones their handles.
+
 Secret values never appear on the screen, in a command's arguments or in a file in the repository: wrangler gets them
 on stdin (`wrangler secret bulk`). Without a terminal, or with `--non-interactive`, every answer is a flag (`vp run
 setup:relay -- --help`); Freecorps' relay then takes two runs, the first sending the code and the second, with
@@ -609,7 +616,7 @@ In order, from `apps/api` unless noted:
    | `RELAY_INSTANCE_KEY` | Optional: the instance's Ed25519 key (PKCS#8, base64url; RFC 0015), for phones registered with relay handles (`/v1/send`) and the signed deep check; set by `vp run setup:relay` ("Push relay")                                                                                                                                                                               |
    | `RELAY_INSTANCE_ID`  | Optional: the instance's first id on the relay (`ins_…`), set after a key rotation ("Rotating the instance key" above)                                                                                                                                                                                                                                                        |
    | `RELAY_APP_URL`      | Optional: an own app build's store link, given to the app in `GET /config` (`relay.app`, RFC 0015 section 8)                                                                                                                                                                                                                                                                  |
-   | `RELAY_KIND`         | Optional: `own` on an own relay (set by `vp run setup:relay`), so the dashboard says so; unset is Freecorps' relay                                                                                                                                                                                                                                                            |
+   | `RELAY_KIND`         | Optional: `own` on an own relay (set by `vp run setup:relay`), so the dashboard says so; unset otherwise ("Push relay")                                                                                                                                                                                                                                                       |
    | `DASHBOARD_URL`      | Links in emails and Slack: `https://brigade-web-dev.<subdomain>.workers.dev`                                                                                                                                                                                                                                                                                                  |
    | `EMAIL_FROM`         | Optional: the email sender ("Email" above); without it no email goes out, so addresses cannot be verified or passwords reset                                                                                                                                                                                                                                                  |
    | `SLACK_TOKEN_KEY`    | Optional until Slack: seals bot tokens ("Slack" below)                                                                                                                                                                                                                                                                                                                        |

@@ -23,30 +23,35 @@ export function UseAppPanel({ health }: { health: PagingHealth | "unreachable" |
   return (
     <Card id="use-the-app" aria-labelledby="use-app-title">
       <CardHeader id="use-app-title" title={text("title")} description={text("description")} />
-      <CardContent className="flex flex-col items-start gap-3" aria-live="polite">
-        {advice.kind === "checking" ? (
-          <p className="text-muted-foreground">{text("checking")}</p>
-        ) : advice.kind === "unknown" ? (
-          <p className="text-muted-foreground">{text("failed")}</p>
-        ) : advice.kind === "own" ? (
-          <>
-            <p className="max-w-prose">{text("own")}</p>
-            {advice.app ? (
-              <a
-                href={advice.app}
-                target="_blank"
-                rel="noreferrer noopener"
-                className={buttonVariants({ variant: "outline", className: "max-w-full" })}
-              >
-                <ExternalLinkIcon aria-hidden />
-                <span className="truncate">{text("own_link")}</span>
-              </a>
-            ) : (
-              <p className="max-w-prose text-muted-foreground">{text("own_no_link")}</p>
-            )}
-          </>
+      <CardContent className="flex flex-col items-start gap-3">
+        {/* One sentence that changes in place, the only live part: when the check lands, a screen reader hears which
+            app to install, not the whole card again. */}
+        <p
+          aria-live="polite"
+          className={
+            advice.kind === "checking" || advice.kind === "unknown"
+              ? "text-muted-foreground"
+              : "max-w-prose"
+          }
+        >
+          {advice.kind === "checking"
+            ? text("checking")
+            : advice.kind === "unknown"
+              ? text("failed")
+              : text(advice.kind)}
+        </p>
+        {advice.kind !== "own" ? null : advice.app ? (
+          <a
+            href={advice.app}
+            target="_blank"
+            rel="noreferrer noopener"
+            className={buttonVariants({ variant: "outline", className: "max-w-full" })}
+          >
+            <ExternalLinkIcon aria-hidden />
+            <span className="truncate">{text("own_link")}</span>
+          </a>
         ) : (
-          <p className="max-w-prose">{text(advice.kind)}</p>
+          <p className="max-w-prose text-muted-foreground">{text("own_no_link")}</p>
         )}
       </CardContent>
     </Card>

@@ -3911,7 +3911,8 @@
         "part=hint_bad_signature": "O relay não aceita a chave desta instância (RELAY_INSTANCE_KEY ou RELAY_INSTANCE_ID), ou o relógio deste servidor está mais de 5 minutos fora. Rode a configuração de novo com o arquivo da chave que você guardou:",
         "part=hint_revoked_freecorps": "A Freecorps revogou esta instância no relay dela. Escreva para a Freecorps para saber o motivo antes de registrar de novo.",
         "part=hint_revoked_own": "Esta instância foi revogada no seu relay. Registre-a de novo:",
-        "part=hint_unauthorized": "O relay recusou o token de envio (RELAY_SEND_TOKEN), então celulares registrados antes dos identificadores do relay não são acionados. Rode a configuração de novo para definir um token igual nos dois:",
+        "part=hint_unauthorized_freecorps": "O relay recusou o token de envio (RELAY_SEND_TOKEN), então celulares registrados antes dos identificadores do relay não são acionados. Defina o mesmo RELAY_SEND_TOKEN no relay e na API.",
+        "part=hint_unauthorized_own": "O relay recusou o token de envio (RELAY_SEND_TOKEN), então celulares registrados antes dos identificadores do relay não são acionados. Rode a configuração de novo para definir um token igual nos dois:",
         "part=state_unreachable": "Inacessível",
         "part=hint_unreachable_freecorps": "O relay da Freecorps não está respondendo. Confira o RELAY_URL na API; se estiver certo, o relay pode estar fora do ar, e enquanto isso os acionamentos saem por email.",
         "part=hint_unreachable_own": "Seu relay não está respondendo. Confira se ele está no ar e se a API chega até ele (o binding RELAY, ou o RELAY_URL).",
@@ -3927,6 +3928,7 @@
         "part=hint_pipeline": "Os acionamentos estão parados antes de chegar ao relay, então ele não pode ser verificado. O aviso de acionamentos na visão geral diz o motivo.",
         "part=state_no_answer": "Não foi possível verificar",
         "part=hint_no_answer": "O Brigade não respondeu à verificação dos acionamentos. Ele tenta de novo a cada minuto.",
+        "part=hint_no_details": "O Brigade respondeu à verificação dos acionamentos sem dizer por que não está funcionando: sua sessão pode ter expirado. Recarregue a página e entre de novo se ela pedir.",
         "part=*": "Celulares e acionamentos"
       }
     }

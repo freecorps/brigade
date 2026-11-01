@@ -408,7 +408,7 @@ export async function pagingHealth(
     );
   }
   // Which relay pages go through (RFC 0015 section 8), only for members: nothing is read for anyone else.
-  const relay = roles.length > 0 ? await relaySetup(env as SetupEnv) : undefined;
+  const relay = roles.length > 0 ? relaySetup(env as SetupEnv) : undefined;
   return json(pagingHealthFor(health, roles, relay), 200, {
     // Varies by the session's cookie, so no shared cache may keep it.
     "Cache-Control": "private, no-store",
@@ -421,8 +421,9 @@ export async function pagingHealth(
  * - no session, or no workspace: `{ status }` only, like `/health`; why and since when would tell an outsider when
  *   pages stop going out;
  * - any member: the reasons and times too, since a responder needs to know they may not be paged, and `relay`, which
- *   relay pages go through (RFC 0015 section 8: the dashboard's "Phones and pages" and which app to install). Its host
- *   is no secret: `GET /config` gives the relay's origin to anyone once phones mint handles there.
+ *   relay pages go through (RFC 0015 section 8: the dashboard's "Phones and pages" and which app to install). Only an
+ *   own relay's host is given, which its phones (the company's own app) reach anyway; `GET /config` also gives the
+ *   relay's origin to anyone, with the instance key and a public `RELAY_URL`.
  * `external` (whether the dead-man check is set up and answering) is never sent: it is the instance operator's
  * business, and with open sign-up any user can own a workspace, so no workspace role can stand in for that operator
  * (Q19). Operators read it in the logs.

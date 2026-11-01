@@ -52,6 +52,18 @@ test("one device key per instance, keyed by its origin (RFC 0015 section 4); an 
   expect(
     await devicePublicKey({ getPublicKey: async () => "old" }, "https://brigade.example.com"),
   ).toBe("old");
+  // A native side that refuses the origin never stops registration.
+  expect(
+    await devicePublicKey(
+      {
+        getPublicKey: async () => "old",
+        getInstancePublicKey: async () => {
+          throw new Error("not an http(s) origin");
+        },
+      },
+      "https://my_host.internal/api/auth",
+    ),
+  ).toBe("old");
 });
 const ANA: Actor = { kind: "user", id: "usr_ana", role: "responder" };
 const BIA: Actor = { kind: "user", id: "usr_bia", role: "responder" };

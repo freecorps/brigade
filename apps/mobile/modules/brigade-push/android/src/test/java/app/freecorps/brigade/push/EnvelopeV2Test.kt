@@ -131,4 +131,46 @@ class EnvelopeV2Test {
     assertNotEquals(name, KeySlots.name("https://other.example.org"))
     assert(Regex("^[A-Za-z0-9_-]+$").matches(name))
   }
+
+  @Test
+  fun theChannelFollowsTheSealedUrgencyOnlyOnceItOpened() {
+    val low = PushSealed(iat, iat + 900, origin, "low")
+    val page = PushSealed(iat, iat + 900, origin, "page")
+    // Every call is a page in clear: a call sealed `low` (shown or refused) is not.
+    assertEquals(false, PushChecks.isPage(true, low, null))
+    assertEquals(false, PushChecks.isPage(true, low, "wrong_origin"))
+    assertEquals(false, PushChecks.isPage(true, low, "not_paired"))
+    assertEquals(true, PushChecks.isPage(false, page, null))
+    // Expired stays loud: a phone clock running ahead never quiets a page.
+    assertEquals(true, PushChecks.isPage(true, low, "expired"))
+    // Nothing opened (unknown key, AEAD failure) or v1: the clear urgency.
+    assertEquals(true, PushChecks.isPage(true, null, null))
+    assertEquals(false, PushChecks.isPage(false, null, null))
+  }
+
+  @Test
+  fun originsAsJavaScriptWritesThem() {
+    for ((url, expected) in listOf(
+      "https://Brigade.Example.com/api/auth" to "https://brigade.example.com",
+      "https://brigade.example.com:443/x" to "https://brigade.example.com",
+      "http://localhost:8787/api" to "http://localhost:8787",
+      "http://[::1]:8787/api" to "http://[::1]:8787",
+      "https://[2001:db8::1]/" to "https://[2001:db8::1]",
+      // java.net.URI has no host for these; JavaScript's URL does.
+      "https://my_host.internal/api/auth" to "https://my_host.internal",
+      "http://dev_box:8787" to "http://dev_box:8787",
+      "https://user@brigade.example.com/" to "https://brigade.example.com",
+      "ftp://brigade.example.com" to null,
+      "https://brigade.example.com:99999/" to null,
+      "not a url" to null,
+    )) {
+      assertEquals(url, expected, PushReceipt.originOf(url))
+    }
+    // A receipt on such a host is taken; one with user info is not.
+    val json = { url: String -> JSONObject().put("url", url).put("token", "tok") }
+    assertNotNull(PushReceipt.parse(json("https://my_host.internal/api/receipts")))
+    assertNull(PushReceipt.parse(json("https://user@brigade.example.com/api/receipts")))
+    assertNull(PushReceipt.parse(json("http://brigade.example.com/api/receipts")))
+    assertNotNull(PushReceipt.parse(json("http://localhost:8787/api/receipts")))
+  }
 }

@@ -44,19 +44,25 @@ object Pages {
 
   fun handle(context: Context, data: Map<String, String>) {
     val message = PushMessage.parse(data)
-    val content = message?.let { open(context, it) }
-    // Version 2: only a sealed page rings (RFC 0015 section 4); a call push sealed as anything less is not one.
-    val sealedNotPage = message != null && message.isCall && content?.sealed?.isPage == false
-    if (message == null || content == null || sealedNotPage) {
-      // Malformed, another version, not for this key (rotated, a reinstall), or a v2 page refused (expired, another
-      // origin, an instance this phone is not paired with): the fallback, on the channel its urgency (in clear) asks
-      // for, or the pages channel when even that is unreadable. Never silent.
-      Log.w(TAG, "push not opened: fallback text")
-      notify(context, null, message?.tag, message == null || message.isPage)
+    if (message == null) {
+      // Malformed or another version: the fallback on the pages channel. Never silent.
+      Log.w(TAG, "push not readable: fallback text")
+      notify(context, null, null, true)
       return
     }
-    // A version 2 page's sealed urgency picks the channel, not the clear one the relay wrote.
-    val page = content.sealed?.isPage ?: message.isPage
+    val opened = open(context, message)
+    val content = opened.content
+    // The sealed urgency picks the channel once the push opened (shown, or refused for another origin or pairing);
+    // the clear one when it did not open or was expired, so those stay as loud as the relay asked.
+    val page = PushChecks.isPage(message.isPage, opened.sealed, opened.refusal)
+    // Version 2: only a sealed page rings (RFC 0015 section 4); a call push sealed as anything less is not one.
+    val sealedNotPage = message.isCall && content?.sealed?.isPage == false
+    if (content == null || sealedNotPage) {
+      // Not for this key (rotated, a reinstall), or a v2 push refused: the fallback text. Never silent.
+      Log.w(TAG, "push not opened: fallback text")
+      notify(context, null, message.tag, page)
+      return
+    }
     if (message.isCall) {
       ring(context, IncomingCall(message.callId!!, content.title, content.body, content.incident))
     } else {
@@ -72,11 +78,17 @@ object Pages {
   }
 
   /**
+   * What opening a push gave: the content to show (null: the fallback text), and for a v2 push that opened, what it
+   * sealed and why it was refused, if it was.
+   */
+  private class Opened(val content: PushContent?, val sealed: PushSealed? = null, val refusal: String? = null)
+
+  /**
    * Opens [message] with this phone's keys (packages/push `openOnPhone`): v1 with each key, the paired instance's
    * first; v2 with the key its id names only, then refused when expired, sealed for another origin than its key's, or
-   * from an instance this phone is not paired with. Null for anything refused: the caller shows the fallback text.
+   * from an instance this phone is not paired with. No content for anything refused: the caller shows the fallback.
    */
-  private fun open(context: Context, message: PushMessage): PushContent? =
+  private fun open(context: Context, message: PushMessage): Opened =
     try {
       val keys = DeviceKey.keys(context)
       val paired = receiptOrigin(context)
@@ -93,7 +105,7 @@ object Pages {
             last = error
           }
         }
-        opened ?: throw last
+        Opened(opened ?: throw last)
       } else {
         val key = keys.firstOrNull { PushKeyId.of(it.publicKey) == message.keyId }
           ?: throw IllegalStateException("unknown key id")
@@ -107,15 +119,15 @@ object Pages {
         )
         if (refusal != null) {
           Log.w(TAG, "push refused: $refusal")
-          null
+          Opened(null, sealed, refusal)
         } else {
-          content
+          Opened(content, sealed)
         }
       }
     } catch (error: Exception) {
       // Never the content or the key.
       Log.w(TAG, "decryption failed: ${error.javaClass.simpleName}")
-      null
+      Opened(null)
     }
 
   private fun openWith(context: Context, key: DeviceKey.Key, message: PushMessage, info: ByteArray): ByteArray =
@@ -210,6 +222,11 @@ object Pages {
     val origin = PushReceipt.originOf(value) ?: return false
     context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(RECEIPT_ORIGIN, origin).apply()
     return true
+  }
+
+  /** Forgets the paired instance (the member signed out): its pages show the fallback text until it registers again. */
+  fun clearReceiptOrigin(context: Context) {
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(RECEIPT_ORIGIN).apply()
   }
 
   /** The key tap proofs are made with ([PageTap]), created on first use, in the app's private preferences. */

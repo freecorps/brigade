@@ -4,9 +4,11 @@
 // fails it shows the fallback, never nothing, and without the action: there is nothing to acknowledge by. Both are
 // copies of the delivered content, so they keep its sound and interruption level as APNs set them: a SEV1 page sent
 // as a Critical Alert (RFC 0006 "Critical Alerts") stays critical, decrypted or not. A version 2 envelope (RFC 0015
-// section 4) also seals its urgency, which then sets the level (`applyUrgency`); one expired, sealed for another
-// origin than its key's, from an instance this phone is not paired with, or naming a key it does not have is the
-// fallback too.
+// section 4) also seals its urgency, which then sets the level (`applyUrgency`) of a push that opens: shown, or
+// refused for another origin than its key's or an instance this phone is not paired with (the fallback, no louder
+// than sealed). Only for a push that opens: one naming a key this phone does not have, failing the AEAD, or expired
+// is the fallback at the delivered level, so the relay still sets that level (and a phone clock running ahead never
+// quiets a page).
 import os
 import UserNotifications
 
@@ -44,6 +46,14 @@ final class NotificationService: UNNotificationServiceExtension {
     } catch {
       // The error names the step (no key, malformed envelope, AEAD failure), never content.
       log.error("push not decrypted: \(String(describing: error), privacy: .public)")
+      // A page that opened and was refused (another origin, not paired) is no louder than it sealed. Anything else,
+      // expired included, keeps the delivered level: loud.
+      if let urgency = BrigadePushCrypto.fallbackUrgency(for: error),
+        let capped = fallback.mutableCopy() as? UNMutableNotificationContent
+      {
+        Self.applyUrgency(urgency, to: capped)
+        return deliver(capped)
+      }
       deliver(fallback)
     }
   }

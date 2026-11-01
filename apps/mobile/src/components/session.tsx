@@ -52,6 +52,7 @@ import {
 import { knownWorkspace, memberActor, settledRole, WORKSPACE_KEY, type Server } from "@/lib/sync";
 import { createWorkspaceSync, setCurrentSync, type WorkspaceSync } from "@/lib/sync-client";
 import { clearWidget, WidgetSnapshot } from "@/components/widget";
+import { BrigadePush } from "../../modules/brigade-push";
 import { BrigadeCall } from "../../modules/brigade-call";
 
 /** The signed-in member in their active workspace: what every signed-in screen reads. */
@@ -308,9 +309,18 @@ const draining = drainer<Drainable & { sync: WorkspaceSync }>({
   now: Date.now,
 });
 
-/** Nothing of the member who leaves is sent or registered again: their draining clients and their workspaces. */
+/**
+ * Nothing of the member who leaves is sent or registered again: their draining clients and their workspaces. The
+ * native side forgets the instance too, so its version 2 pages show the fallback text and send no receipt until the
+ * next registration there (RFC 0015 section 4). Only on an explicit sign-out: a session that merely ended keeps it.
+ */
 async function forgetMember(): Promise<void> {
   draining.closeAll();
+  try {
+    BrigadePush?.clearReceiptOrigin?.();
+  } catch {
+    // Never in sign-out's way.
+  }
   await phoneWorkspaces.clear();
 }
 

@@ -26,6 +26,11 @@ public class BrigadePushModule: Module {
       return BrigadePushCrypto.setReceiptOrigin(origin)
     }
 
+    /// Forgets the paired instance (the member signed out): its pages show the fallback text until it registers again.
+    Function("clearReceiptOrigin") {
+      BrigadePushCrypto.clearReceiptOrigin()
+    }
+
     /// Whether this OS can decrypt pushes in the extension (HPKE needs iOS 17).
     Constant("canDecrypt") { () -> Bool in
       if #available(iOS 17.0, *) { return true }

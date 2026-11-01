@@ -39,10 +39,21 @@ public enum BrigadePushCrypto {
     case unknownKey
     /// v2: opened after its sealed `exp` (and the clock skew).
     case expired
-    /// v2: sealed for another origin than the one its key belongs to.
-    case wrongOrigin
-    /// v2: this phone is not paired with the sealed origin.
-    case notPaired
+    /// v2: sealed for another origin than the one its key belongs to; with the sealed urgency.
+    case wrongOrigin(urgency: String)
+    /// v2: this phone is not paired with the sealed origin; with the sealed urgency.
+    case notPaired(urgency: String)
+  }
+
+  /// How loud the fallback for `error` may be: the sealed urgency of a page that opened and was refused
+  /// (`wrongOrigin`, `notPaired`), so the relay cannot make a refused `low` push ring as a page or a Critical Alert.
+  /// Nil keeps the delivered (clear) level: nothing opened (`unknownKey`, an AEAD failure, a malformed envelope), or
+  /// `expired`, which stays loud so a phone clock running ahead never quiets a page. packages/push `fallbackUrgency`.
+  public static func fallbackUrgency(for error: Error) -> String? {
+    switch error as? Failure {
+    case .wrongOrigin(let urgency), .notPaired(let urgency): return urgency
+    default: return nil
+    }
   }
 
   /// What a version 2 envelope seals besides the content (packages/push `PushSealed`).
@@ -102,12 +113,14 @@ public enum BrigadePushCrypto {
       self.token = token
     }
 
-    /// `scheme://host[:port]`, lowercased, as JavaScript's `URL.origin` says it (the default port left out); nil
-    /// without a scheme or host.
+    /// `scheme://host[:port]`, lowercased, as JavaScript's `URL.origin` says it (the default port left out, an IPv6
+    /// host in brackets); nil without a scheme or host.
     static func origin(of url: URL) -> String? {
-      guard let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased(), !host.isEmpty else {
+      guard let scheme = url.scheme?.lowercased(), var host = url.host?.lowercased(), !host.isEmpty else {
         return nil
       }
+      // `URL.host` drops an IPv6 literal's brackets; `URL.origin` keeps them.
+      if host.contains(":") && !host.hasPrefix("[") { host = "[\(host)]" }
       let defaultPort = scheme == "https" ? 443 : scheme == "http" ? 80 : nil
       guard let port = url.port, port != defaultPort else { return "\(scheme)://\(host)" }
       return "\(scheme)://\(host):\(port)"
@@ -135,6 +148,12 @@ public enum BrigadePushCrypto {
     else { return false }
     defaults.set(origin, forKey: receiptOriginKey)
     return true
+  }
+
+  /// Forgets the paired instance: the member signed out on this phone. Its v2 pages then show the fallback text and
+  /// send no receipt until the app registers the phone there again.
+  public static func clearReceiptOrigin() {
+    UserDefaults(suiteName: appGroup)?.removeObject(forKey: receiptOriginKey)
   }
 
   /// The registered instance's origin; nil until the app registered the phone since it learned to keep it.
@@ -226,8 +245,8 @@ public enum BrigadePushCrypto {
     let opened = try content(json, sealed: sealed)
     if Int64(now.timeIntervalSince1970) > sealed.exp + clockSkew { throw Failure.expired }
     // The unclaimed key from before keys per instance counts as the paired instance's.
-    if let origin = entry.origin, origin != sealed.origin { throw Failure.wrongOrigin }
-    guard paired == sealed.origin else { throw Failure.notPaired }
+    if let origin = entry.origin, origin != sealed.origin { throw Failure.wrongOrigin(urgency: sealed.urgency) }
+    guard paired == sealed.origin else { throw Failure.notPaired(urgency: sealed.urgency) }
     return opened
   }
 
@@ -298,42 +317,59 @@ public enum BrigadePushCrypto {
   }
 
   /// Every device key on this phone and its instance's origin (nil for the unclaimed key from before keys per
-  /// instance). Attributes first, then each key on its own: one unreadable item never hides the others.
+  /// instance). Attributes first, then each key on its own: one unreadable item never hides the others. An item gone
+  /// between the two (the app moving the old key to its origin at that moment) lists them all again, once.
   private static func allKeys() throws -> [(origin: String?, key: P256.KeyAgreement.PrivateKey)] {
-    var query = baseQuery()
-    query[kSecReturnAttributes as String] = true
-    query[kSecMatchLimit as String] = kSecMatchLimitAll
-    var items: CFTypeRef?
-    let status = SecItemCopyMatching(query as CFDictionary, &items)
-    if status == errSecItemNotFound { return [] }
-    guard status == errSecSuccess, let list = items as? [[String: Any]] else { throw Failure.keychain(status) }
-    var keys: [(origin: String?, key: P256.KeyAgreement.PrivateKey)] = []
-    for attributes in list {
-      guard let account = attributes[kSecAttrAccount as String] as? String else { continue }
-      let origin: String?
-      if account == legacyAccount {
-        origin = nil
-      } else if account.hasPrefix(instancePrefix) {
-        origin = String(account.dropFirst(instancePrefix.count))
-      } else {
-        continue
+    for attempt in 0..<2 {
+      var query = baseQuery()
+      query[kSecReturnAttributes as String] = true
+      query[kSecMatchLimit as String] = kSecMatchLimitAll
+      var items: CFTypeRef?
+      let status = SecItemCopyMatching(query as CFDictionary, &items)
+      if status == errSecItemNotFound { return [] }
+      guard status == errSecSuccess, let list = items as? [[String: Any]] else { throw Failure.keychain(status) }
+      var keys: [(origin: String?, key: P256.KeyAgreement.PrivateKey)] = []
+      var moved = false
+      for attributes in list {
+        guard let account = attributes[kSecAttrAccount as String] as? String else { continue }
+        let origin: String?
+        if account == legacyAccount {
+          origin = nil
+        } else if account.hasPrefix(instancePrefix) {
+          origin = String(account.dropFirst(instancePrefix.count))
+        } else {
+          continue
+        }
+        do {
+          if let key = try loadKey(account: account) { keys.append((origin, key)) } else { moved = true }
+        } catch {
+          // Unreadable: left out, never in the way of the others.
+        }
       }
-      if let key = try? loadKey(account: account) { keys.append((origin, key)) }
+      if !moved || attempt == 1 { return keys }
     }
-    return keys
+    return []
   }
 
   /// The key under `account`, made if there is none. `adopting`: the key from before keys per instance moves to
   /// `account` instead (the same key, so the same device id), in one Keychain update the extension never sees half
-  /// done.
+  /// done. An update that fails throws rather than making a new key, which would silently change the device id.
   private static func loadOrCreateKey(account: String, adopting: Bool) throws -> P256.KeyAgreement.PrivateKey {
     if let key = try loadKey(account: account) { return key }
     if adopting, try loadKey(account: legacyAccount) != nil {
       let status = SecItemUpdate(
         baseQuery(account: legacyAccount) as CFDictionary,
         [kSecAttrAccount as String: account] as CFDictionary)
-      if status == errSecSuccess || status == errSecDuplicateItem, let key = try loadKey(account: account) {
+      switch status {
+      case errSecSuccess, errSecDuplicateItem:
+        // Moved, or another call moved it (or made this origin's key) first.
+        guard let key = try loadKey(account: account) else { throw Failure.keychain(status) }
         return key
+      case errSecItemNotFound:
+        // Moved elsewhere meanwhile: this origin's, if it was moved here; else a new key below.
+        if let key = try loadKey(account: account) { return key }
+      default:
+        throw Failure.keychain(status)
       }
     }
     let key = P256.KeyAgreement.PrivateKey()

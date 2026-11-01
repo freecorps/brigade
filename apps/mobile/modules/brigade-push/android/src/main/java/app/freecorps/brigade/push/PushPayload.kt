@@ -193,6 +193,15 @@ object PushChecks {
     return null
   }
 
+  /**
+   * Whether a push (shown, or the fallback text) goes on the pages channel: its sealed urgency whenever it opened and
+   * was not refused as expired ([refusal]), so the relay cannot make a refused or a sealed `low` push (a call
+   * included: every call is a page in clear) ring as a page; else the urgency in clear ([clearIsPage]), so a push that
+   * does not open, or a phone clock running ahead, never quiets a page. packages/push `fallbackUrgency`.
+   */
+  fun isPage(clearIsPage: Boolean, sealed: PushSealed?, refusal: String?): Boolean =
+    if (sealed != null && refusal != "expired") sealed.isPage else clearIsPage
+
   /** The receipt to post, if any: v1 to the registered instance (as before), v2 only to its sealed, paired origin. */
   fun receiptToSend(content: PushContent, paired: String?): PushReceipt? {
     val receipt = content.receipt ?: return null
@@ -231,20 +240,38 @@ data class PushReceipt(val url: String, val token: String) {
       val url = value?.opt("url") as? String ?: return null
       val token = value.opt("token") as? String ?: return null
       if (url.length > MAX_LENGTH || token.length > MAX_LENGTH || !TOKEN.matches(token)) return null
-      val uri = try {
-        URI(url)
-      } catch (_: Exception) {
-        return null
-      }
-      val host = uri.host ?: return null
-      if (uri.rawUserInfo != null) return null
-      val loopback = host == "localhost" || host == "127.0.0.1"
-      if (uri.scheme != "https" && !(uri.scheme == "http" && loopback)) return null
+      val authority = Authority.of(url) ?: return null
+      if (authority.userInfo) return null
+      val loopback = authority.host == "localhost" || authority.host == "127.0.0.1"
+      if (authority.scheme != "https" && !(authority.scheme == "http" && loopback)) return null
       return PushReceipt(url, token)
     }
 
-    /** The origin of an http(s) URL, or null. */
+    /**
+     * The origin of an http(s) URL as JavaScript's `URL.origin` writes it (lowercase, the default port left out, an
+     * IPv6 host in brackets), or null.
+     */
     fun originOf(url: String): String? {
+      val authority = Authority.of(url) ?: return null
+      val defaultPort = if (authority.scheme == "https") 443 else 80
+      val port = authority.port
+      return if (port == -1 || port == defaultPort) {
+        "${authority.scheme}://${authority.host}"
+      } else {
+        "${authority.scheme}://${authority.host}:$port"
+      }
+    }
+  }
+}
+
+/**
+ * The scheme and authority of an http(s) URL, read leniently: `java.net.URI` has no host for a name it does not take
+ * as a server name (`my_host.internal`, with an underscore), where JavaScript's URL and iOS's do. [port] is -1 when
+ * there is none. Plain, tested on the JVM.
+ */
+data class Authority(val scheme: String, val host: String, val port: Int, val userInfo: Boolean) {
+  companion object {
+    fun of(url: String): Authority? {
       val uri = try {
         URI(url)
       } catch (_: Exception) {
@@ -252,9 +279,39 @@ data class PushReceipt(val url: String, val token: String) {
       }
       val scheme = uri.scheme?.lowercase() ?: return null
       if (scheme != "https" && scheme != "http") return null
-      val host = uri.host?.lowercase()?.takeIf { it.isNotEmpty() } ?: return null
-      val defaultPort = if (scheme == "https") 443 else 80
-      return if (uri.port == -1 || uri.port == defaultPort) "$scheme://$host" else "$scheme://$host:${uri.port}"
+      var rest = uri.rawAuthority ?: return null
+      val at = rest.lastIndexOf('@')
+      val userInfo = at >= 0
+      if (userInfo) rest = rest.substring(at + 1)
+      val host: String
+      var port = -1
+      if (rest.startsWith("[")) {
+        val end = rest.indexOf(']')
+        if (end < 0) return null
+        host = rest.substring(0, end + 1)
+        val after = rest.substring(end + 1)
+        if (after.isNotEmpty()) {
+          if (!after.startsWith(":")) return null
+          port = port(after.substring(1)) ?: return null
+        }
+      } else {
+        val colon = rest.lastIndexOf(':')
+        if (colon >= 0) {
+          host = rest.substring(0, colon)
+          port = port(rest.substring(colon + 1)) ?: return null
+        } else {
+          host = rest
+        }
+      }
+      if (host.isEmpty() || host == "[]") return null
+      return Authority(scheme, host.lowercase(), port, userInfo)
+    }
+
+    /** -1 for an empty port (`http://host:/`, as JavaScript reads it), null for one that is not a port. */
+    private fun port(value: String): Int? {
+      if (value.isEmpty()) return -1
+      if (value.length > 5 || !value.all { it in '0'..'9' }) return null
+      return value.toInt().takeIf { it <= 65535 }
     }
   }
 }

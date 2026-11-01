@@ -154,30 +154,41 @@ version 1; the app opens both.
   takes both versions; FCM's `data` gains `k`).
 - **The key id** (`pushKeyId`): base64url of the first 6 bytes of SHA-256 over the uncompressed device public key
   (65 bytes), 8 characters. Only a hint (the AEAD decides), so 48 bits are plenty among a phone's few keys; not the
-  device id (the key's x coordinate), so the relay cannot tie a push to a device row. One test vector is pinned in
-  packages/push, Kotlin and Swift.
+  device id (the key's x coordinate), so the relay cannot tie a push to a device row. One test vector is checked by
+  packages/push's and the Kotlin tests (in CI) and by the Swift script below (by hand, on a Mac).
 - **What the phone does** (packages/push `openOnPhone` is the reference; `BrigadePushCrypto.swift`,
   `PushPayload.kt`/`Pages.kt` follow it): v1 is tried with each key, the paired instance's first, as before. v2 is
   tried with the key `k` names only; then refused if opened more than 5 minutes (clock skew) past its `exp`, if
   sealed for another origin than its key's, or if the phone is not paired with that origin (today: the instance the
-  app registered with, `setReceiptOrigin`; a list with step 4). **Every refusal, an unknown key id included, shows
-  the fallback text, never silence**; a VoIP call already reported to CallKit keeps its fallback name. An opened v2
-  page takes its interruption level (iOS) or channel (Android) from the sealed urgency: a page is time-sensitive and
-  keeps a Critical Alert, anything less is `active` with the default sound. A call push whose sealed urgency is not
-  a page does not ring with content (iOS keeps the fallback name, Android shows the fallback text). The receipt goes
-  only to the sealed origin, and the Acknowledge action only there (`page.origin` in the notification, checked by
-  `page-action.ts` against the app's instance).
+  app registered with, `setReceiptOrigin`, which the app forgets on an explicit sign-out, `clearReceiptOrigin`; a
+  list with step 4). **Every refusal, an unknown key id included, shows the fallback text, never silence**; a VoIP
+  call already reported to CallKit keeps its fallback name. The sealed urgency sets the interruption level (iOS) or
+  channel (Android) of **a push that opens**: shown, or refused for another origin or pairing (the fallback, then no
+  louder than sealed, so the relay cannot make a refused `low` push ring as a page or a Critical Alert). A page is
+  time-sensitive and keeps a Critical Alert, anything less is `active` with the default sound (Android: the updates
+  channel). A push that does not open (unknown key, AEAD failure, malformed) or opened expired keeps the level the
+  relay set in clear: loud, so a phone clock running ahead never quiets a page, and the relay still decides those.
+  A call push whose sealed urgency is not a page does not ring (iOS keeps the fallback name, Android shows the
+  fallback text at the sealed urgency). The receipt goes only to the sealed origin, and the Acknowledge action only
+  there (`page.origin` in the notification, checked by `page-action.ts` against the app's instance). Origins compare
+  as `URL.origin` writes them on every side (an IPv6 host keeps its brackets; Android reads the authority itself, so a
+  host with `_` works), and an origin the native side refuses falls back to the key from before.
 - **Keys per instance.** The app asks for the key of its instance's origin (`getInstancePublicKey`, `devicePublicKey`
   in `src/lib/device.ts`). iOS keeps one Keychain item per origin (account `device-key-v2 <origin>`, App Group,
   after first unlock, this device only); the key from before (`device-key-v1`) is moved to the first origin asked
-  for in one `SecItemUpdate`, so it is the same key and the same device id. Android cannot rename a Keystore alias:
+  for in one `SecItemUpdate`, so it is the same key and the same device id (an update that fails is an error, never
+  a new key that would change the device id). Android cannot rename a Keystore alias:
   each origin gets its own slot (alias `…device-key.v2.<slot>`, or the wrapped file, `<slot>` from SHA-256 of the
   origin), and the first origin asked for claims the old key (`legacy-key-origin` in the app's preferences). Either
   way phones in the field keep paging, and the device id still comes from the key.
 - **Tests:** packages/push `tests/envelope-v2.test.ts` (round trip, tampering, versions not crossing, expired, wrong
-  origin, not paired, unknown key, the key id); the Kotlin on the JVM (`EnvelopeV2Test.kt`, a page sealed by
-  packages/push); the Swift was run on macOS against envelopes sealed by packages/push while building, and is pinned
-  to packages/push by `apps/mobile/src/lib/envelope-v2.test.ts` (no Swift tests in CI). Open points: Q29.
+  origin, not paired, unknown key, how loud each fallback is, the key id); the Kotlin on the JVM
+  (`EnvelopeV2Test.kt`, a page sealed by packages/push, the channel rule, origins). **The Swift is not tested in
+  CI** (CryptoKit's HPKE needs an Apple OS): `apps/mobile/modules/brigade-push/ios/tests/main.swift` opens the same
+  sealed page and covers each refusal, the fallback's level, the key id and origins, run by hand on a Mac (the
+  commands are in the file; the pod compiles `ios/*.swift` only, so it stays out of the app). In CI,
+  `apps/mobile/src/lib/envelope-v2.test.ts` only checks the Swift and Kotlin sources against packages/push (constants,
+  each refusal leading to the fallback). Open points: Q29.
 
 ### 5. Instances in the app
 

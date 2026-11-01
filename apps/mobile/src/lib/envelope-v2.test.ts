@@ -69,17 +69,21 @@ describe("every refusal is the fallback text, never silence", () => {
       "throw Failure.notPaired",
     ].map((s) => crypto.indexOf(s));
     expect(order).toEqual([...order].sort((a, b) => a - b));
-    expect(extension).toMatch(/\} catch \{[^}]*deliver\(fallback\)/);
+    // Every throw ends in a fallback: capped (`deliver(capped)`) or as delivered (`deliver(fallback)`).
+    const caught = /\} catch \{([\s\S]*?)\n {4}\}\n {2}\}/.exec(extension)?.[1] ?? "";
+    expect(caught).toContain("return deliver(capped)");
+    expect(caught.trimEnd().endsWith("deliver(fallback)")).toBe(true);
     // A call already reported to CallKit keeps its fallback name when refused.
     expect(callCenter).toMatch(/\} catch \{\s*log\.error\("voip push not decrypted/);
   });
 
-  test("Android: a refused v2 page opens to null, and null is the fallback notification", () => {
+  test("Android: a refused v2 page opens to no content, and no content is the fallback notification", () => {
     expect(pages).toContain("val refusal = PushChecks.refusal(");
-    expect(pages).toMatch(/if \(refusal != null\) \{[^}]*null\s*\}/);
+    expect(pages).toMatch(/if \(refusal != null\) \{[^}]*Opened\(null, sealed, refusal\)\s*\}/);
     expect(pages).toContain('?: throw IllegalStateException("unknown key id")');
+    expect(pages).toMatch(/if \(message == null\) \{[\s\S]*?notify\(context, null, null, true\)/);
     expect(pages).toMatch(
-      /if \(message == null \|\| content == null \|\| sealedNotPage\) \{[\s\S]*?notify\(context, null,/,
+      /if \(content == null \|\| sealedNotPage\) \{[\s\S]*?notify\(context, null, message\.tag, page\)/,
     );
     for (const refusal of ["expired", "wrong_origin", "not_paired"]) {
       expect(payload).toContain(`return "${refusal}"`);
@@ -92,7 +96,39 @@ describe("what a v2 page decides", () => {
     expect(extension).toContain(
       "if let sealed = decrypted.sealed { Self.applyUrgency(sealed.urgency, to: content) }",
     );
-    expect(pages).toContain("val page = content.sealed?.isPage ?: message.isPage");
+    expect(pages).toContain(
+      "val page = PushChecks.isPage(message.isPage, opened.sealed, opened.refusal)",
+    );
+  });
+
+  test("a refused push that opened is no louder than sealed; expired and unopened stay loud", () => {
+    // iOS: only the two refusals after the AEAD carry the sealed urgency, and only they cap the fallback.
+    expect(crypto).toContain(
+      "case .wrongOrigin(let urgency), .notPaired(let urgency): return urgency",
+    );
+    expect(crypto).toContain("throw Failure.wrongOrigin(urgency: sealed.urgency)");
+    expect(crypto).toContain("throw Failure.notPaired(urgency: sealed.urgency)");
+    expect(crypto).toMatch(
+      /if Int64\(now\.timeIntervalSince1970\) > sealed\.exp \+ clockSkew \{ throw Failure\.expired \}/,
+    );
+    expect(extension).toMatch(
+      /if let urgency = BrigadePushCrypto\.fallbackUrgency\(for: error\),[\s\S]*?Self\.applyUrgency\(urgency, to: capped\)/,
+    );
+    // Android: the same rule in one place (EnvelopeV2Test.kt runs it).
+    expect(payload).toContain(
+      'if (sealed != null && refusal != "expired") sealed.isPage else clearIsPage',
+    );
+  });
+
+  test("signing out forgets the paired instance on the native side", () => {
+    const session = read("../components/session.tsx");
+    expect(session).toMatch(
+      /async function forgetMember[\s\S]*?BrigadePush\?\.clearReceiptOrigin\?\.\(\)/,
+    );
+    expect(read("../../modules/brigade-push/ios/BrigadePushModule.swift")).toContain(
+      'Function("clearReceiptOrigin")',
+    );
+    expect(read(`${android}BrigadePushModule.kt`)).toContain('Function("clearReceiptOrigin")');
   });
 
   test("receipts only to the sealed origin, only when paired with it", () => {

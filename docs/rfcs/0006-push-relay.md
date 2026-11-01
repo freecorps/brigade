@@ -56,7 +56,8 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   plaintext, let the extension take the interruption level from the decrypted urgency and fall back on stale
   pushes, then authenticate the sender (HPKE auth mode or the instance's Ed25519 signature). **Built on the phone
   as envelope version 2** (RFC 0015 section 4: `iat`, `exp`, the instance's `origin` and `urgency` sealed, a key id
-  `k` in clear, one device key per instance, every refusal the fallback text); the API still seals version 1 until
+  `k` in clear, one device key per instance, every refusal the fallback text; the sealed urgency binds only a push
+  that opens, so a fallback for one that does not keeps the clear level); the API still seals version 1 until
   RFC 0015 step 3 switches it, and the app opens both. Sender authentication and sealing `critical` and `kind`:
   open question Q29.
 - **Offline phones:** pushes carry an `apns-expiration` by urgency (pages 15 minutes; the relay refuses "try once"

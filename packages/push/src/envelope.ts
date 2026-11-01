@@ -240,7 +240,10 @@ export type PushRefusal =
   | "expired"
   /** v2: sealed for another origin than the one the key that opened it belongs to. */
   | "wrong_origin"
-  /** v2: the phone is not paired with the sealed origin (signed out of it, or it was removed). */
+  /**
+   * v2: the phone is not paired with the sealed origin: it never registered with that instance, or the member signed
+   * out on it (the app clears the pairing when they do; RFC 0015 section 4).
+   */
   | "not_paired";
 
 /**
@@ -255,7 +258,26 @@ export interface PhoneKey {
 export type PhoneOpened =
   | { ok: true; version: 1; content: PushContent }
   | { ok: true; version: 2; content: PushContent & PushSealed }
-  | { ok: false; reason: PushRefusal };
+  | {
+      ok: false;
+      reason: PushRefusal;
+      /**
+       * How loud the fallback text may be: the sealed urgency, for a refusal of a page that opened (`wrong_origin`,
+       * `not_paired`), so the relay cannot make a `low` push it got refused ring as a page. Absent where nothing
+       * sealed can be trusted or where it must stay loud (`malformed`, `unknown_key`, `not_opened`, and `expired`, so
+       * a phone clock running ahead never quiets a page): the clear urgency then decides, as before.
+       */
+      urgency?: PushUrgency;
+    };
+
+/**
+ * The urgency a phone shows a push at, its content or the fallback text: the sealed one whenever the push opened (a
+ * call sealed as anything less than a page is shown at that urgency, not rung), else the clear one (`clear`).
+ */
+export function fallbackUrgency(opened: PhoneOpened, clear: PushUrgency): PushUrgency {
+  if (opened.ok) return opened.version === 2 ? opened.content.urgency : clear;
+  return opened.urgency ?? clear;
+}
 
 /**
  * What a phone does with a push's envelope (RFC 0015 section 4), the reference the iOS extension
@@ -265,9 +287,10 @@ export type PhoneOpened =
  * - **v2**: tries only the key whose id is `k`; then refuses one past its sealed `exp` (plus the clock skew), sealed
  *   for an origin other than its key's, or for an origin the phone is not paired with.
  *
- * Every refusal is the fallback text on the phone, never silence (RFC 0006). Taking the interruption level from the
- * sealed urgency and posting the receipt only to the sealed origin are the caller's (`content.urgency`,
- * `content.origin`).
+ * Every refusal is the fallback text on the phone, never silence (RFC 0006). The sealed urgency only lowers what the
+ * phone does for a push that opened (refused or not, `urgency`); one that does not open, or opened expired, keeps the
+ * clear urgency. Taking the interruption level from the sealed urgency and posting the receipt only to the sealed
+ * origin are the caller's (`content.urgency`, `content.origin`; `fallbackUrgency`).
  */
 export async function openOnPhone(
   envelope: unknown,
@@ -309,9 +332,11 @@ export async function openOnPhone(
   }
   // The key from before keys per instance, not yet claimed by the app, belongs to the one paired instance.
   if (key.origin !== null && key.origin !== content.origin) {
-    return { ok: false, reason: "wrong_origin" };
+    return { ok: false, reason: "wrong_origin", urgency: content.urgency };
   }
-  if (!phone.paired(content.origin)) return { ok: false, reason: "not_paired" };
+  if (!phone.paired(content.origin)) {
+    return { ok: false, reason: "not_paired", urgency: content.urgency };
+  }
   return { ok: true, version: 2, content };
 }
 

@@ -40,6 +40,9 @@ class BrigadePushModule : Module() {
 
     Function("setReceiptOrigin") { origin: String -> Pages.setReceiptOrigin(context, origin) }
 
+    /** Forgets the paired instance (the member signed out). */
+    Function("clearReceiptOrigin") { Pages.clearReceiptOrigin(context) }
+
     /** iOS holds background time for the Acknowledge action; Android has no action yet, so nothing to finish. */
     Function("finishPageAction") { _: String -> }
 

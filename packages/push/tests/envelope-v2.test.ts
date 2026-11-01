@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vite-plus/test";
 import { fromBase64url, toBase64url } from "../src/base64url.ts";
 import {
+  fallbackUrgency,
   openOnPhone,
   openPush,
   openPushV2,
@@ -270,14 +271,14 @@ describe("openOnPhone: what the phone shows (every refusal is the fallback text,
     const forged = await sealPushV2(toBase64url(other.publicKey), content, sender);
     expect(
       await openOnPhone(forged, keys, { now: NOW, paired: pairedWith(ORIGIN, OTHER) }),
-    ).toEqual({ ok: false, reason: "wrong_origin" });
+    ).toEqual({ ok: false, reason: "wrong_origin", urgency: "page" });
   });
 
-  test("not paired: the phone left that instance (signed out, removed)", async () => {
+  test("not paired: the phone never registered there, or the member signed out on it", async () => {
     const { mine, keys } = await phone();
     expect(
       await openOnPhone(await sealedFor(mine), keys, { now: NOW, paired: pairedWith(OTHER) }),
-    ).toEqual({ ok: false, reason: "not_paired" });
+    ).toEqual({ ok: false, reason: "not_paired", urgency: "page" });
     // The unclaimed key counts as the paired instance's, and only that.
     const legacy = await generateRecipient();
     const envelope = await sealedFor(legacy);
@@ -290,7 +291,45 @@ describe("openOnPhone: what the phone shows (every refusal is the fallback text,
     ).toEqual({
       ok: false,
       reason: "not_paired",
+      urgency: "page",
     });
+  });
+
+  test("the fallback of a push that opened is no louder than its sealed urgency; one that did not keeps the clear one", async () => {
+    const { mine, other, keys } = await phone();
+    const low = await sealedFor(mine, { urgency: "low" });
+    // The relay says "page" in clear (and could set aps to critical); the refusal says how loud it may be.
+    const notPaired = await openOnPhone(low, keys, { now: NOW, paired: pairedWith(OTHER) });
+    expect(notPaired).toEqual({ ok: false, reason: "not_paired", urgency: "low" });
+    expect(fallbackUrgency(notPaired, "page")).toBe("low");
+    const forged = await sealPushV2(toBase64url(other.publicKey), content, {
+      ...sender,
+      urgency: "low",
+    });
+    const wrong = await openOnPhone(forged, keys, { now: NOW, paired: pairedWith(ORIGIN, OTHER) });
+    expect(fallbackUrgency(wrong, "page")).toBe("low");
+    // Opened and shown: the sealed urgency, whatever the clear one says (a call sealed `low` is not rung).
+    const shown = await openOnPhone(low, keys, { now: NOW, paired: pairedWith(ORIGIN) });
+    expect(fallbackUrgency(shown, "page")).toBe("low");
+    // Loud where nothing sealed counts: expired (a phone clock ahead must never quiet pages), unknown key, not opened.
+    const expired = await openOnPhone(low, keys, {
+      now: NOW + 3_600_000,
+      paired: pairedWith(ORIGIN),
+    });
+    expect(expired).toEqual({ ok: false, reason: "expired" });
+    expect(fallbackUrgency(expired, "page")).toBe("page");
+    const stranger = await sealedFor(await generateRecipient(), { urgency: "low" });
+    const unknown = await openOnPhone(stranger, keys, { now: NOW, paired: pairedWith(ORIGIN) });
+    expect(fallbackUrgency(unknown, "page")).toBe("page");
+    const relabelled = { ...low, k: await pushKeyId(other.publicKey) };
+    const notOpened = await openOnPhone(relabelled, keys, { now: NOW, paired: pairedWith(ORIGIN) });
+    expect(fallbackUrgency(notOpened, "page")).toBe("page");
+    // Version 1 seals no urgency: the clear one.
+    const v1 = await openOnPhone(await sealPush(toBase64url(mine.publicKey), content), keys, {
+      now: NOW,
+      paired: pairedWith(ORIGIN),
+    });
+    expect(fallbackUrgency(v1, "high")).toBe("high");
   });
 
   test("unknown key id: no key on the phone has it (an app from before keys per instance, a reinstall)", async () => {

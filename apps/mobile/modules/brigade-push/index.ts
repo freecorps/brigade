@@ -30,6 +30,12 @@ interface BrigadePushModule {
    * not read. Absent from an app binary built before receipts.
    */
   setReceiptOrigin?(origin: string): boolean;
+  /**
+   * Forgets the instance kept by `setReceiptOrigin`: the member signed out on this phone. Its version 2 pages then
+   * show the fallback text and send no receipt until the app registers the phone there again (RFC 0015 section 4).
+   * Absent from an app binary from before it.
+   */
+  clearReceiptOrigin?(): void;
   /** Whether pages can be opened on this OS (HPKE needs iOS 17; every supported Android version). */
   readonly canDecrypt: boolean;
   /**

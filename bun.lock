@@ -249,6 +249,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "@cloudflare/vitest-plugin@1.4.7": "patches/@cloudflare%2Fvitest-plugin@1.4.7.patch",
+  },
   "overrides": {
     "react": "19.3.0",
     "react-dom": "19.3.0",

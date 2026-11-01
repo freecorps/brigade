@@ -43,5 +43,8 @@
   "catalog": {
     "vite": "npm:@voidzero-dev/vite-plus-core@1.4.0",
     "vite-plus": "1.4.0"
+  },
+  "patchedDependencies": {
+    "@cloudflare/vitest-plugin@1.4.7": "patches/@cloudflare%2Fvitest-plugin@1.4.7.patch"
   }
 }

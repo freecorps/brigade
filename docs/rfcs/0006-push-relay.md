@@ -34,7 +34,8 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   the device key can move into the Secure Enclave or StrongBox later. The APNs payload is
   `{ aps: { alert: <fallback keys>, mutable-content: 1, … }, brigade: { v: 1, enc, ct } }`, with `enc` and `ct`
   base64url and at most 2048 bytes of plaintext.
-- **Device key:** created by the app on first use; on iOS a Keychain item in the App Group
+- **Device key:** one per instance the phone is paired with, keyed by its origin (RFC 0015 section 4; the key from
+  before is kept as the configured instance's), created by the app on first use; on iOS a Keychain item in the App Group
   `group.app.freecorps.brigade` (which is also its Keychain access group), readable after first unlock, this device
   only, so the extension can read it while the phone is locked. On Android (decided with FCM, `DeviceKey.kt`), the
   same P-256 key: from Android 12 (API 31) it is made inside the Android Keystore with `PURPOSE_AGREE_KEY` and the
@@ -53,7 +54,11 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   an old push or raise its urgency (`interruption-level` is in clear), and anyone with a device public key and
   relay access could forge one. Before production: seal `iat`, the instance id and the urgency inside the
   plaintext, let the extension take the interruption level from the decrypted urgency and fall back on stale
-  pushes, then authenticate the sender (HPKE auth mode or the instance's Ed25519 signature).
+  pushes, then authenticate the sender (HPKE auth mode or the instance's Ed25519 signature). **Built on the phone
+  as envelope version 2** (RFC 0015 section 4: `iat`, `exp`, the instance's `origin` and `urgency` sealed, a key id
+  `k` in clear, one device key per instance, every refusal the fallback text); the API still seals version 1 until
+  RFC 0015 step 3 switches it, and the app opens both. Sender authentication and sealing `critical` and `kind`:
+  open question Q29.
 - **Offline phones:** pushes carry an `apns-expiration` by urgency (pages 15 minutes; the relay refuses "try once"
   for a page). APNs keeps only the latest undelivered push per app and device, so a later push (even a `low`
   status update) replaces a stored page. Decided for the same incident: a page's `apns-collapse-id` is the incident

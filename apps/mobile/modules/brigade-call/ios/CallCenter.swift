@@ -198,6 +198,12 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
     }
     do {
       let content = try BrigadePushCrypto.open(envelope: envelope)
+      // Only a page rings (RFC 0010); a version 2 envelope says so sealed (RFC 0015 section 4). Anything else keeps
+      // the fallback name: the call is already reported, as Apple requires.
+      if let sealed = content.sealed, sealed.urgency != "page" {
+        log.error("voip push not a sealed page: fallback name")
+        return
+      }
       update(
         id, title: content.title, body: content.body, incident: content.incident, workspace: content.workspace)
       log.info("voip push decrypted")

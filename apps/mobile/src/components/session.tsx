@@ -284,7 +284,7 @@ async function signOutHere(): Promise<boolean> {
     async () => {
       // Named, so the server takes this phone off the member's other workspaces too (RFC 0006 "Device
       // registration").
-      const device = await phoneDeviceId();
+      const device = await phoneDeviceId(server?.auth);
       return !(
         await authClient.signOut(
           device ? { fetchOptions: { headers: { [DEVICE_HEADER]: device } } } : undefined,
@@ -534,7 +534,7 @@ function ActiveWorkspace({
       {
         cookie: () => authClient.getCookie(),
         // Stop paging this phone first, while the session can still say whose device it is.
-        unregister: sync ? () => unregisterPhone(phoneDeps(sync)) : null,
+        unregister: sync ? () => unregisterPhone(phoneDeps(sync, server)) : null,
         signOut: signOutHere,
         forget: () => forgetSession(authClient),
         add: keptSignOuts.add,
@@ -633,7 +633,7 @@ function RemovalWatch({
   const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
   useEffect(() => {
     let live = true;
-    void phoneDeviceId().then((id) => {
+    void phoneDeviceId(server?.auth).then((id) => {
       if (live) setDeviceId(id);
     });
     return () => {

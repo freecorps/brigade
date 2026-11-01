@@ -3,7 +3,10 @@
 // and body, with the Acknowledge action when it names an incident and its workspace (BrigadePage). If anything
 // fails it shows the fallback, never nothing, and without the action: there is nothing to acknowledge by. Both are
 // copies of the delivered content, so they keep its sound and interruption level as APNs set them: a SEV1 page sent
-// as a Critical Alert (RFC 0006 "Critical Alerts") stays critical, decrypted or not.
+// as a Critical Alert (RFC 0006 "Critical Alerts") stays critical, decrypted or not. A version 2 envelope (RFC 0015
+// section 4) also seals its urgency, which then sets the level (`applyUrgency`); one expired, sealed for another
+// origin than its key's, from an instance this phone is not paired with, or naming a key it does not have is the
+// fallback too.
 import os
 import UserNotifications
 
@@ -27,15 +30,35 @@ final class NotificationService: UNNotificationServiceExtension {
       }
       content.title = decrypted.title
       content.body = decrypted.body
-      BrigadePage.mark(content, incident: decrypted.incident, workspace: decrypted.workspace)
+      if let sealed = decrypted.sealed { Self.applyUrgency(sealed.urgency, to: content) }
+      BrigadePage.mark(
+        content, incident: decrypted.incident, workspace: decrypted.workspace, origin: decrypted.sealed?.origin)
       log.info("push decrypted")
       // Started before the page shows and never waited on: the page is what matters (RFC 0006 "Delivery receipts").
-      if let receipt = decrypted.receipt { Self.sendReceipt(receipt, log: log) }
+      if let receipt = decrypted.receiptToSend {
+        Self.sendReceipt(receipt, log: log)
+      } else if decrypted.receipt != nil {
+        log.error("receipt not sent: not the paired instance")
+      }
       deliver(content)
     } catch {
       // The error names the step (no key, malformed envelope, AEAD failure), never content.
       log.error("push not decrypted: \(String(describing: error), privacy: .public)")
       deliver(fallback)
+    }
+  }
+
+  /// A version 2 page's interruption level and sound come from its sealed urgency, as the relay would set them
+  /// (apps/relay `apnsPayload`), not from the clear `aps` the relay wrote: a page is time-sensitive, anything less
+  /// `active` with the default sound. A Critical Alert stays critical only on a sealed page, so the relay can no
+  /// longer raise a low push to one. Never quieter than a page asks for, never louder than it says.
+  static func applyUrgency(_ urgency: String, to content: UNMutableNotificationContent) {
+    if urgency == "page" {
+      if content.interruptionLevel != .critical { content.interruptionLevel = .timeSensitive }
+      if content.sound == nil { content.sound = .default }
+    } else {
+      content.interruptionLevel = .active
+      content.sound = .default
     }
   }
 
@@ -68,11 +91,7 @@ extension NotificationService {
   /// instance the app registered with; the token sealed in the page for this device alone, so no session is needed or sent. Fire and forget: no retry, no cookies, no cache, and a
   /// failure is only logged (the page is shown either way). The token is never logged.
   static func sendReceipt(_ receipt: BrigadePushCrypto.Receipt, log: Logger) {
-    // Only to the instance the app registered with: a page naming any other origin gets no receipt.
-    guard receipt.isForRegisteredInstance else {
-      log.error("receipt not sent: not the registered instance")
-      return
-    }
+    // Only to the paired instance (`Content.receiptToSend`): a page naming any other origin gets no receipt.
     guard let body = try? JSONSerialization.data(withJSONObject: ["token": receipt.token]) else { return }
     var request = URLRequest(url: receipt.url, timeoutInterval: receiptTimeout)
     request.httpMethod = "POST"

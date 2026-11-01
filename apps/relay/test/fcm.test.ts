@@ -1,5 +1,11 @@
 import { createVerify, generateKeyPairSync } from "node:crypto";
-import { fromBase64url, generateRecipient, sealPush, toBase64url } from "@freecorps/brigade-push";
+import {
+  fromBase64url,
+  generateRecipient,
+  sealPush,
+  sealPushV2,
+  toBase64url,
+} from "@freecorps/brigade-push";
 import { describe, expect, test } from "vite-plus/test";
 import {
   ACCESS_TOKEN_MARGIN_MS,
@@ -227,6 +233,23 @@ describe("the FCM message", () => {
     });
     // No `notification`: FCM never shows anything the app did not decrypt.
     expect(body.message.notification).toBeUndefined();
+  });
+
+  test("a version 2 envelope carries its key id, in clear (RFC 0015 section 4)", async () => {
+    const recipient = await generateRecipient();
+    const sealed = await sealPushV2(
+      toBase64url(recipient.publicKey),
+      { title: "SEV1", body: "Checkout down" },
+      { origin: "https://brigade.example.com", urgency: "page", ttlSeconds: 900 },
+    );
+    expect(fcmData({ kind: "alert", envelope: sealed, urgency: "page" })).toEqual({
+      v: "2",
+      k: sealed.k,
+      enc: sealed.enc,
+      ct: sealed.ct,
+      kind: "alert",
+      urgency: "page",
+    });
   });
 
   test("low urgency is normal priority; a call carries its id", async () => {

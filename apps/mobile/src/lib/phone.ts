@@ -5,7 +5,13 @@
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
-import { deviceId, unregisterPhone, type DeviceDeps, type RegisterAnswer } from "@/lib/device";
+import {
+  deviceId,
+  devicePublicKey,
+  unregisterPhone,
+  type DeviceDeps,
+  type RegisterAnswer,
+} from "@/lib/device";
 import { DEVICE_HEADER, SESSION_LIFETIME_S } from "@freecorps/brigade-schema";
 import { PHONE_WORKSPACES_KEY, phoneWorkspacesStore } from "@/lib/phone-workspaces";
 import {
@@ -89,8 +95,8 @@ export function phoneDeps(
   return {
     platform: process.env.EXPO_OS === "ios" ? "ios" : "android",
     apsEnvironment: Constants.expoConfig?.extra?.apsEnvironment,
-    // In the Keychain on iOS, the Android Keystore on Android (modules/brigade-push).
-    publicKey: pageable ? () => keys.getPublicKey() : null,
+    // In the Keychain on iOS, the Android Keystore on Android (modules/brigade-push): one per instance (RFC 0015).
+    publicKey: pageable ? () => devicePublicKey(keys, server?.auth) : null,
     permission: async () => {
       // Android shows its permission screen for every request, even one granted already: asked only when it is not.
       // iOS asks again for Critical Alerts, which a phone granted notifications before the entitlement never was.
@@ -134,12 +140,12 @@ export function phoneDeps(
  * not only the one the app has open. Undefined without a device key (an Android build without Firebase), which
  * registers nowhere.
  */
-export async function phoneDeviceId(): Promise<string | undefined> {
+export async function phoneDeviceId(origin?: string): Promise<string | undefined> {
   try {
     if (!BrigadePush || (process.env.EXPO_OS === "android" && BrigadePush.fcmAvailable !== true)) {
       return undefined;
     }
-    return deviceId(await BrigadePush.getPublicKey());
+    return deviceId(await devicePublicKey(BrigadePush, origin));
   } catch {
     return undefined;
   }
@@ -202,7 +208,7 @@ export function finishDeps(server: Server): FinishDeps {
       // nothing else can take the device off as them (RFC 0006 "A handed-over phone").
       const refused = neverOpened(sync.client, sync.shard);
       try {
-        return await unregisterPhone(phoneDeps(sync), 10_000, refused.promise);
+        return await unregisterPhone(phoneDeps(sync, server), 10_000, refused.promise);
       } finally {
         refused.dispose();
         sync.client.close();
@@ -211,7 +217,7 @@ export function finishDeps(server: Server): FinishDeps {
     signOut: (cookie) =>
       inTime(
         async () => {
-          const device = await phoneDeviceId();
+          const device = await phoneDeviceId(server.auth);
           const response = await fetch(`${server.auth}/sign-out`, {
             method: "POST",
             headers: {

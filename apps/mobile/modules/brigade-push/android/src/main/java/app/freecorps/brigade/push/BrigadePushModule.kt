@@ -32,6 +32,12 @@ class BrigadePushModule : Module() {
 
     AsyncFunction("getPublicKey") { Base64url.encode(DeviceKey.publicKey(context)) }
 
+    /** The key for the instance at `origin` (RFC 0015 section 4: one per instance); the old single key is claimed. */
+    AsyncFunction("getInstancePublicKey") { origin: String ->
+      val normalized = PushReceipt.originOf(origin) ?: throw IllegalArgumentException("not an http(s) origin")
+      Base64url.encode(DeviceKey.publicKey(context, normalized))
+    }
+
     Function("setReceiptOrigin") { origin: String -> Pages.setReceiptOrigin(context, origin) }
 
     /** iOS holds background time for the Acknowledge action; Android has no action yet, so nothing to finish. */

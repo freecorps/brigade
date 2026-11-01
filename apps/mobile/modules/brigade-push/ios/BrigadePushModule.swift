@@ -9,6 +9,12 @@ public class BrigadePushModule: Module {
       return try BrigadePushCrypto.publicKey()
     }
 
+    /// The device public key for the instance at `origin` (RFC 0015 section 4: one key per instance), created on
+    /// first call; the key from before keys per instance becomes the first origin's, so its device id is kept.
+    AsyncFunction("getInstancePublicKey") { (origin: String) throws -> String in
+      return try BrigadePushCrypto.publicKey(origin: origin)
+    }
+
     /// The app's handler is done with the Acknowledge action on notification `id`: ends the background time held for
     /// it (PageActions).
     Function("finishPageAction") { (id: String) in

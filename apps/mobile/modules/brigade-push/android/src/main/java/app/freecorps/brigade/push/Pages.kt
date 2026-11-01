@@ -45,34 +45,81 @@ object Pages {
   fun handle(context: Context, data: Map<String, String>) {
     val message = PushMessage.parse(data)
     val content = message?.let { open(context, it) }
-    if (message == null || content == null) {
-      // Malformed, another version, or not for this key (rotated, a reinstall): the fallback, on the channel its
-      // urgency (in clear) asks for, or the pages channel when even that is unreadable.
+    // Version 2: only a sealed page rings (RFC 0015 section 4); a call push sealed as anything less is not one.
+    val sealedNotPage = message != null && message.isCall && content?.sealed?.isPage == false
+    if (message == null || content == null || sealedNotPage) {
+      // Malformed, another version, not for this key (rotated, a reinstall), or a v2 page refused (expired, another
+      // origin, an instance this phone is not paired with): the fallback, on the channel its urgency (in clear) asks
+      // for, or the pages channel when even that is unreadable. Never silent.
       Log.w(TAG, "push not opened: fallback text")
       notify(context, null, message?.tag, message == null || message.isPage)
       return
     }
+    // A version 2 page's sealed urgency picks the channel, not the clear one the relay wrote.
+    val page = content.sealed?.isPage ?: message.isPage
     if (message.isCall) {
       ring(context, IncomingCall(message.callId!!, content.title, content.body, content.incident))
     } else {
-      notify(context, content, message.tag ?: content.incident, message.isPage)
+      notify(context, content, message.tag ?: content.incident, page)
     }
-    // Only for a page it opened: the fallback has no token. Calls carry none (RFC 0006).
-    content.receipt?.let { sendReceipt(context, it) }
+    // Only for a page it opened: the fallback has no token. Calls carry none (RFC 0006). Only to the paired instance.
+    val receipt = PushChecks.receiptToSend(content, receiptOrigin(context))
+    if (receipt != null) {
+      sendReceipt(receipt)
+    } else if (content.receipt != null) {
+      Log.w(TAG, "receipt not sent: not the paired instance")
+    }
   }
 
+  /**
+   * Opens [message] with this phone's keys (packages/push `openOnPhone`): v1 with each key, the paired instance's
+   * first; v2 with the key its id names only, then refused when expired, sealed for another origin than its key's, or
+   * from an instance this phone is not paired with. Null for anything refused: the caller shows the fallback text.
+   */
   private fun open(context: Context, message: PushMessage): PushContent? =
     try {
-      val recipient = DeviceKey.existingPublicKey(context) ?: throw IllegalStateException("no device key")
-      val plaintext = Hpke.open(message.enc, message.ct, PUSH_HPKE_INFO, recipient) { ephemeral ->
-        DeviceKey.agree(context, ephemeral)
+      val keys = DeviceKey.keys(context)
+      val paired = receiptOrigin(context)
+      if (message.version == 1) {
+        if (keys.isEmpty()) throw IllegalStateException("no device key")
+        val ordered = keys.sortedBy { if (paired != null && it.originFor(paired) == paired) 0 else 1 }
+        var last: Exception = IllegalStateException("no device key")
+        var opened: PushContent? = null
+        for (key in ordered) {
+          try {
+            opened = PushContent.parse(openWith(context, key, message, PUSH_HPKE_INFO))
+            break
+          } catch (error: Exception) {
+            last = error
+          }
+        }
+        opened ?: throw last
+      } else {
+        val key = keys.firstOrNull { PushKeyId.of(it.publicKey) == message.keyId }
+          ?: throw IllegalStateException("unknown key id")
+        val content = PushContent.parse(openWith(context, key, message, PUSH_HPKE_INFO_V2), v2 = true)
+        val sealed = content.sealed!!
+        val refusal = PushChecks.refusal(
+          sealed,
+          key.originFor(sealed.origin),
+          paired,
+          System.currentTimeMillis() / 1000,
+        )
+        if (refusal != null) {
+          Log.w(TAG, "push refused: $refusal")
+          null
+        } else {
+          content
+        }
       }
-      PushContent.parse(plaintext)
     } catch (error: Exception) {
       // Never the content or the key.
       Log.w(TAG, "decryption failed: ${error.javaClass.simpleName}")
       null
     }
+
+  private fun openWith(context: Context, key: DeviceKey.Key, message: PushMessage, info: ByteArray): ByteArray =
+    Hpke.open(message.enc, message.ct, info, key.publicKey) { ephemeral -> key.agree(context, ephemeral) }
 
   /** Calls lives on the main thread; the service waits (a few seconds at most) so the ring starts before it returns. */
   private fun ring(context: Context, call: IncomingCall) {
@@ -175,19 +222,16 @@ object Pages {
     return key
   }
 
-  private fun receiptOrigin(context: Context): String? =
+  /** The instance this phone is paired with (registered with): one per build until several instances (RFC 0015). */
+  internal fun receiptOrigin(context: Context): String? =
     context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(RECEIPT_ORIGIN, null)
 
   /**
-   * `POST { token }` to the page's receipt URL, only on the instance the app registered with: anyone holding the device
-   * public key could seal a page naming another (RFC 0006 "Delivery receipts"). Best effort: 5 s, no retry, no
-   * cookies, the token never logged.
+   * `POST { token }` to the page's receipt URL, which [PushChecks.receiptToSend] already checked is on the paired
+   * instance: anyone holding the device public key could seal a page naming another (RFC 0006 "Delivery receipts").
+   * Best effort: 5 s, no retry, no cookies, the token never logged.
    */
-  private fun sendReceipt(context: Context, receipt: PushReceipt) {
-    if (!receipt.isFor(receiptOrigin(context))) {
-      Log.w(TAG, "receipt not sent: not the registered instance")
-      return
-    }
+  private fun sendReceipt(receipt: PushReceipt) {
     try {
       val connection = URL(receipt.url).openConnection() as HttpURLConnection
       try {
@@ -208,9 +252,6 @@ object Pages {
     }
   }
 }
-
-/** HPKE `info`, packages/push `PUSH_HPKE_INFO`: binds every page to this protocol and version. */
-val PUSH_HPKE_INFO = "app.freecorps.brigade push v1".toByteArray()
 
 /** A string from the app's resources, which plugins/incoming-call.ts generates from packages/i18n. */
 internal fun Context.brigadeString(name: String): String {

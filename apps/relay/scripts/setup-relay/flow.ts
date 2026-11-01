@@ -333,20 +333,29 @@ async function freecorps(options: Options, deps: Deps): Promise<number> {
 
   await deepHealth(deps, relay, key, "Freecorps' relay");
   const binding = await relayBinding(options, deps);
+  const hostedBinding =
+    typeof binding === "string" && (await bindsFreecorpsRelay(options, deps, binding));
   io.print(
     [
       "",
       "Done. Next:",
       ...(binding === false
         ? []
-        : [
-            binding === true
-              ? `- REQUIRED, or no phone is paged: remove the API's RELAY service binding (it is in ${bindingSource(options.env)}),`
-              : `- REQUIRED, or no phone is paged: make sure the API has no RELAY service binding (${bindingSource(options.env)}),`,
-            `  then build and deploy ${API_WORKER[options.env]} again. The API sends through that binding, to a relay Worker`,
-            "  on this account, before RELAY_URL, and that relay does not know this instance. The check above asked",
-            '  Freecorps\' relay directly, so it does not cover this (apps/api README "Push relay").',
-          ]),
+        : hostedBinding
+          ? [
+              `- The API's RELAY service binding goes to ${binding} on this account, which this script did not set up:`,
+              "  on Freecorps' account that is Freecorps' relay itself, which now knows this instance, so the binding",
+              '  stays (RFC 0015 "What stays as it is"). On any other account it is another relay: remove it',
+              `  (${bindingSource(options.env)}) and deploy ${API_WORKER[options.env]} again, or no phone is paged.`,
+            ]
+          : [
+              typeof binding === "string"
+                ? `- REQUIRED, or no phone is paged: remove the API's RELAY service binding (it is in ${bindingSource(options.env)}),`
+                : `- REQUIRED, or no phone is paged: make sure the API has no RELAY service binding (${bindingSource(options.env)}),`,
+              `  then build and deploy ${API_WORKER[options.env]} again. The API sends through that binding, to a relay Worker`,
+              "  on this account, before RELAY_URL, and that relay does not know this instance. The check above asked",
+              '  Freecorps\' relay directly, so it does not cover this (apps/api README "Push relay").',
+            ]),
       `- Keep the instance key (${key.file}) in a password manager, then delete the file. If it is lost, this`,
       "  instance gets a new id and every phone must open the app once to be paged again.",
       "- Phones on the app as released today are NOT paged through Freecorps' relay: they register raw device",
@@ -980,26 +989,55 @@ function bindingSource(env: Environment): string {
 }
 
 /**
- * Whether the API's build for `env` binds `RELAY`: the production build adds it from vite.config.ts
- * `PRODUCTION_BINDINGS`, the other environments have it in wrangler.jsonc. `null` when the files cannot be read.
+ * The Worker the API's build for `env` binds as `RELAY` (`""` when the binding names none this can read), or `false`
+ * when it binds none: the production build adds it from vite.config.ts `PRODUCTION_BINDINGS`, the other
+ * environments have it in wrangler.jsonc. `null` when the files cannot be read.
  */
-async function relayBinding(options: Options, deps: Deps): Promise<boolean | null> {
+async function relayBinding(options: Options, deps: Deps): Promise<string | false | null> {
   try {
     if (options.env === "production") {
       const config = await deps.readText(join(deps.repoRoot, "apps/api/vite.config.ts"));
       const start = config.indexOf("const PRODUCTION_BINDINGS");
       if (start === -1) return null;
       const block = config.slice(start, config.indexOf("\n};", start));
-      return /binding:\s*["']RELAY["']/.test(block);
+      const entry = /\{[^{}]*binding:\s*["']RELAY["'][^{}]*\}/.exec(block)?.[0];
+      if (entry === undefined) return false;
+      return /service:\s*["']([^"']+)["']/.exec(entry)?.[1] ?? "";
     }
     const config = JSON.parse(
       stripJsonc(await deps.readText(join(deps.repoRoot, "apps/api/wrangler.jsonc"))),
-    ) as { env?: Record<string, { services?: { binding?: unknown }[] }> };
+    ) as { env?: Record<string, { services?: { binding?: unknown; service?: unknown }[] }> };
     const environment = config.env?.[options.env];
     if (!environment) return null;
-    return (environment.services ?? []).some((s) => s.binding === "RELAY");
+    const entry = (environment.services ?? []).find((s) => s.binding === "RELAY");
+    if (entry === undefined) return false;
+    return typeof entry.service === "string" ? entry.service : "";
   } catch {
     return null;
+  }
+}
+
+/**
+ * Whether the API's `RELAY` binding (to `service`) is Freecorps' own relay: it names the hosted relay's Worker for
+ * `env` (`brigade-relay`, `brigade-relay-dev`), and that Worker exists on the account wrangler is logged in to
+ * without the secret this script sets on a company's own relay. Every copy of the repository binds `brigade-relay`
+ * in production, so the name alone would say this for any self-hosted instance too, whose `brigade-relay` (if any)
+ * does not know the instance. Anything unclear (wrangler failing, say) is `false`: the warning stays.
+ */
+async function bindsFreecorpsRelay(
+  options: Options,
+  deps: Deps,
+  service: string,
+): Promise<boolean> {
+  if (service === "" || service !== RELAY_WORKER[options.env]) return false;
+  try {
+    const secrets = await listSecrets(deps, service, join(deps.repoRoot, "apps/relay"), {
+      assumeNew: false,
+    });
+    return secrets !== null && !secrets.has(OWN_RELAY_MARKER);
+  } catch (error) {
+    if (error instanceof Stop) return false;
+    throw error;
   }
 }
 

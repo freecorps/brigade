@@ -812,6 +812,83 @@ describe("the API's RELAY binding (Freecorps' relay)", () => {
     );
   });
 
+  const BOUND = VITE_CONFIG(
+    '  services: [{ binding: "RELAY", service: "brigade-relay" }],\n  ai: { binding: "AI" },',
+  );
+  /** brigade-relay as Freecorps' account has it: deployed by hand, so without the own-relay marker. */
+  const HOSTED_RELAY_SECRETS = ["APNS_KEY", "RELAY_SEND_TOKEN", "RELAY_HANDLE_KEYS", "EMAIL_FROM"];
+
+  test("to Freecorps' relay itself (Freecorps' own instance), the binding stays", async () => {
+    const h = harness({
+      files: { [`${REPO}/apps/api/vite.config.ts`]: BOUND },
+      secrets: { "brigade-relay": HOSTED_RELAY_SECRETS },
+    });
+    expect(await h.run(FREECORPS)).toBe(0);
+    expect(await h.run({ ...FREECORPS, code: h.code(), instanceKeyFile: h.keyFiles()[0] })).toBe(0);
+    expect(h.out()).not.toMatch(/REQUIRED/);
+    expect(h.out()).not.toMatch(/remove the API's RELAY service binding \(it is in/);
+    expect(h.out()).toMatch(
+      /The API's RELAY service binding goes to brigade-relay on this account, which this script did not set up:\n {2}on Freecorps' account that is Freecorps' relay itself, which now knows this instance, so the binding\n {2}stays/,
+    );
+    // Read from the account (names only), never changed.
+    const relayCommands = h.commands.filter((c) => c.args.includes("brigade-relay"));
+    expect(relayCommands.map((c) => c.args)).toEqual([
+      ["secret", "list", "--name", "brigade-relay", "--format", "json"],
+    ]);
+    expect(h.secrets.get("brigade-relay")?.size).toBe(HOSTED_RELAY_SECRETS.length);
+  });
+
+  test("dev: brigade-relay-dev on this account, set up by hand, is Freecorps' dev relay", async () => {
+    const jsonc = `{ "env": { "dev": { "services": [{ "binding": "RELAY", "service": "brigade-relay-dev" }] } } }`;
+    const h = harness({
+      files: { [`${REPO}/apps/api/wrangler.jsonc`]: jsonc },
+      secrets: { "brigade-relay-dev": HOSTED_RELAY_SECRETS },
+    });
+    const dev = { ...FREECORPS, env: "dev" as const };
+    expect(await h.run(dev)).toBe(0);
+    expect(await h.run({ ...dev, code: h.code(), instanceKeyFile: h.keyFiles()[0] })).toBe(0);
+    expect(h.out()).not.toMatch(/REQUIRED/);
+    expect(h.out()).toMatch(/binding goes to brigade-relay-dev on this account/);
+  });
+
+  test("a company's own relay, another Worker, none at all or an unreadable account: still required", async () => {
+    const cases: Parameters<typeof harness>[0][] = [
+      // The relay this script deployed for the company: it does not know an instance registered with Freecorps'.
+      {
+        files: { [`${REPO}/apps/api/vite.config.ts`]: BOUND },
+        secrets: { "brigade-relay": [...HOSTED_RELAY_SECRETS, "BRIGADE_OWN_RELAY"] },
+      },
+      // Not the hosted relay's Worker name, even though it exists without the marker.
+      {
+        files: {
+          [`${REPO}/apps/api/vite.config.ts`]: VITE_CONFIG(
+            '  services: [{ binding: "RELAY", service: "acme-relay" }],',
+          ),
+        },
+        secrets: { "acme-relay": HOSTED_RELAY_SECRETS },
+      },
+      // A self-hosted copy's default binding, with no relay Worker on the account.
+      { files: { [`${REPO}/apps/api/vite.config.ts`]: BOUND } },
+      // wrangler cannot say.
+      {
+        files: { [`${REPO}/apps/api/vite.config.ts`]: BOUND },
+        secrets: { "brigade-relay": HOSTED_RELAY_SECRETS },
+        listFails: "brigade-relay",
+      },
+    ];
+    for (const setup of cases) {
+      const h = harness(setup);
+      expect(await h.run(FREECORPS)).toBe(0);
+      expect(await h.run({ ...FREECORPS, code: h.code(), instanceKeyFile: h.keyFiles()[0] })).toBe(
+        0,
+      );
+      expect(h.out()).toMatch(
+        /REQUIRED, or no phone is paged: remove the API's RELAY service binding \(it is in apps\/api\/vite.config.ts PRODUCTION_BINDINGS\)/,
+      );
+      expect(h.out()).not.toMatch(/Freecorps' relay itself/);
+    }
+  });
+
   test("not there, no such step", async () => {
     const h = harness({
       files: { [`${REPO}/apps/api/vite.config.ts`]: VITE_CONFIG('  ai: { binding: "AI" },') },

@@ -1,5 +1,5 @@
 // What BrigadePushCrypto.swift accepts and refuses (RFC 0015 section 4), against envelopes sealed by packages/push.
-// macOS only (CryptoKit's HPKE, no Keychain: the keys and the paired origin are given), run by hand, never in CI:
+// macOS only (CryptoKit's HPKE, no Keychain: the keys and the paired origins are given), run by hand, never in CI:
 //
 //   xcrun swiftc -o /tmp/brigade-push-tests \
 //     apps/mobile/modules/brigade-push/ios/tests/main.swift apps/mobile/modules/brigade-push/ios/BrigadePushCrypto.swift
@@ -53,7 +53,7 @@ let mine: Keys = [(other, stranger), (origin, device)]
 
 /// The content, or the error `open` threw.
 func open(
-  _ envelope: Any?, at offset: TimeInterval = 60, keys: Keys = mine, paired: String? = origin
+  _ envelope: Any?, at offset: TimeInterval = 60, keys: Keys = mine, paired: [String] = [origin]
 ) -> Result<BrigadePushCrypto.Content, Error> {
   Result {
     try BrigadePushCrypto.open(
@@ -85,8 +85,15 @@ if case .wrongOrigin(let urgency) = refusal(open(page, keys: [(other, device)]))
 } else {
   check("wrong origin, with the sealed urgency", false)
 }
-if case .notPaired = refusal(open(page, paired: other)) { check("not paired", true) } else { check("not paired", false) }
-if case .notPaired = refusal(open(page, paired: nil)) { check("not paired at all", true) } else { check("not paired at all", false) }
+if case .notPaired = refusal(open(page, paired: [other])) { check("not paired", true) } else { check("not paired", false) }
+if case .notPaired = refusal(open(page, paired: [])) { check("not paired at all", true) } else { check("not paired at all", false) }
+// Several instances paired at once (RFC 0015 section 5): a page from any of them opens.
+check("paired among several", (try? open(page, paired: [other, origin]).get()) != nil)
+if case .notPaired = refusal(open(page, paired: [other, "https://third.example.net"])) {
+  check("several paired, not this one", true)
+} else {
+  check("several paired, not this one", false)
+}
 if case .unknownKey = refusal(open(page, keys: [(origin, stranger)])) { check("unknown key", true) } else { check("unknown key", false) }
 if case .unknownKey = refusal(open(page, keys: [])) { check("no keys", true) } else { check("no keys", false) }
 var relabelled = page
@@ -101,7 +108,7 @@ func urgency(_ result: Result<BrigadePushCrypto.Content, Error>) -> String? {
   if case .failure(let error) = result { return BrigadePushCrypto.fallbackUrgency(for: error) }
   return nil
 }
-check("not paired low: no louder than low", urgency(open(low, paired: other)) == "low")
+check("not paired low: no louder than low", urgency(open(low, paired: [other])) == "low")
 check("wrong origin low: no louder than low", urgency(open(low, keys: [(other, device)])) == "low")
 check("expired low: loud (delivered level)", urgency(open(low, at: 3600)) == nil)
 check("unknown key: loud (delivered level)", urgency(open(low, keys: [(origin, stranger)])) == nil)
@@ -129,6 +136,15 @@ for (url, expected) in origins {
 check("paired origin adopts the old key", BrigadePushCrypto.mayAdoptLegacy(paired: origin, origin: origin))
 check("unpaired phone: the first origin adopts it", BrigadePushCrypto.mayAdoptLegacy(paired: nil, origin: other))
 check("another origin gets a new key", !BrigadePushCrypto.mayAdoptLegacy(paired: origin, origin: other))
+
+// The paired list: the one from before several instances stays first, each origin once.
+check("old origin alone", BrigadePushCrypto.decodeOrigins(list: nil, legacy: origin) == [origin])
+let paired = BrigadePushCrypto.withOrigin(BrigadePushCrypto.decodeOrigins(list: nil, legacy: origin), other)
+check("added after the old one", paired == [origin, other])
+check("added once", BrigadePushCrypto.withOrigin(paired, other) == paired)
+check("old one merged in front", BrigadePushCrypto.decodeOrigins(list: [other, origin], legacy: origin) == [origin, other])
+check("one removed, the other kept", BrigadePushCrypto.withoutOrigin(paired, origin) == [other])
+check("nothing kept", BrigadePushCrypto.decodeOrigins(list: nil, legacy: nil).isEmpty)
 
 // Sealed times past JavaScript's safe integers are refused (an `exp` that never comes).
 check("unsafe exp refused", BrigadePushCrypto.integer(NSNumber(value: Int64(9_007_199_254_740_992))) == nil)

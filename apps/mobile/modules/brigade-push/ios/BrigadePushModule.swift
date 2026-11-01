@@ -21,14 +21,21 @@ public class BrigadePushModule: Module {
       PageActions.shared.finish(id)
     }
 
-    /// Keeps the registered instance's origin for the extension, which sends delivery receipts only there.
+    /// Adds the registered instance's origin to the paired ones, for the extension, which sends delivery receipts and
+    /// opens version 2 pages only for them (RFC 0015 section 5).
     Function("setReceiptOrigin") { (origin: String) -> Bool in
       return BrigadePushCrypto.setReceiptOrigin(origin)
     }
 
-    /// Forgets the paired instance (the member signed out): its pages show the fallback text until it registers again.
-    Function("clearReceiptOrigin") {
-      BrigadePushCrypto.clearReceiptOrigin()
+    /// Forgets the instance at `origin` (the member signed out there), or every one when JavaScript names none: its
+    /// pages show the fallback text until it registers again.
+    Function("clearReceiptOrigin") { (origin: String?) in
+      BrigadePushCrypto.clearReceiptOrigin(origin)
+    }
+
+    /// Paired instances are a list (`setReceiptOrigin` adds, `clearReceiptOrigin` takes an origin).
+    Constant("receiptOriginList") { () -> Bool in
+      return true
     }
 
     /// Whether this OS can decrypt pushes in the extension (HPKE needs iOS 17).

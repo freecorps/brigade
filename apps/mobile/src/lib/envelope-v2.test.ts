@@ -150,26 +150,31 @@ describe("what a v2 page decides", () => {
     );
   });
 
-  test("signing out forgets the paired instance on the native side", () => {
+  test("signing out of an instance forgets only that one on the native side", () => {
     const session = read("../components/session.tsx");
     expect(session).toMatch(
-      /async function forgetMember[\s\S]*?BrigadePush\?\.clearReceiptOrigin\?\.\(\)/,
+      /async function forgetMember[\s\S]*?BrigadePush\?\.clearReceiptOrigin\?\.\(clients\.instance\.origin\)/,
     );
     expect(read("../../modules/brigade-push/ios/BrigadePushModule.swift")).toContain(
-      'Function("clearReceiptOrigin")',
+      'Function("clearReceiptOrigin") { (origin: String?) in',
     );
-    expect(read(`${android}BrigadePushModule.kt`)).toContain('Function("clearReceiptOrigin")');
+    expect(read(`${android}BrigadePushModule.kt`)).toContain(
+      'Function("clearReceiptOrigin") { origin: String? ->',
+    );
   });
 
-  test("receipts only to the sealed origin, only when paired with it", () => {
+  test("receipts only to the sealed origin, only when paired with it (one of several)", () => {
     expect(extension).toContain("if let receipt = decrypted.receiptToSend {");
     expect(crypto).toMatch(
       /Receipt\.origin\(of: receipt\.url\) == sealed\.origin && BrigadePushCrypto\.isPaired\(sealed\.origin\)/,
     );
-    expect(pages).toContain("PushChecks.receiptToSend(content, receiptOrigin(context))");
+    expect(crypto).toContain("return receiptOrigins().contains(origin)");
+    expect(crypto).toContain("guard paired.contains(sealed.origin) else");
+    expect(pages).toContain("PushChecks.receiptToSend(content, receiptOrigins(context))");
     expect(payload).toContain(
-      "receipt.takeIf { it.origin == sealed.origin && paired == sealed.origin }",
+      "receipt.takeIf { it.origin == sealed.origin && sealed.origin in paired }",
     );
+    expect(payload).toContain('if (sealed.origin !in paired) return "not_paired"');
   });
 });
 

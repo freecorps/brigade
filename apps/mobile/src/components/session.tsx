@@ -16,10 +16,13 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { InstanceContext } from "@/hooks/use-instance";
 import { useUserLocale } from "@/hooks/use-user-locale";
-import { authClient, forgetSession, server } from "@/lib/auth-client";
+import { forgetSession } from "@/lib/auth-client";
 import { registerEverywhere, unregisterPhone, type Paging, type Registrations } from "@/lib/device";
 import { drainer, type Drainable } from "@/lib/drain";
+import { clientsFor, instances, relayDeps, type InstanceClients } from "@/lib/instance-clients";
+import { activeInstance } from "@/lib/instances";
 import {
   devicePresent,
   pagingCycle,
@@ -29,14 +32,13 @@ import {
   type RemovalWatch as Watch,
 } from "@/lib/paging";
 import { dropQueues, openQueue } from "@/lib/pending";
-import { pendingFiles } from "@/lib/pending-files";
 import {
   finishDeps,
   keptSignOuts,
+  oneShotMutate,
   permissions,
   phoneDeps,
   phoneDeviceId,
-  phoneWorkspaces,
   pushTokens,
   registerAllWith,
   SESSION_LIFETIME_MS,
@@ -49,7 +51,7 @@ import {
   signOutPhone,
   type FinishResult,
 } from "@/lib/sign-out";
-import { knownWorkspace, memberActor, settledRole, WORKSPACE_KEY, type Server } from "@/lib/sync";
+import { knownWorkspace, memberActor, settledRole, type Server } from "@/lib/sync";
 import { createWorkspaceSync, setCurrentSync, type WorkspaceSync } from "@/lib/sync-client";
 import { clearWidget, WidgetSnapshot } from "@/components/widget";
 import { BrigadePush } from "../../modules/brigade-push";
@@ -119,24 +121,33 @@ function useLatest<T>(value: T): { readonly current: T } {
   return ref;
 }
 
-let finishing: Promise<FinishResult> | null = null;
+const finishing = new Map<string, Promise<FinishResult>>();
 
-/** One try at finishing the sign-outs kept from offline (src/lib/sign-out.ts), shared by everyone who asks meanwhile. */
+/**
+ * One try at finishing the sign-outs kept from offline at `target` (src/lib/sign-out.ts), shared by everyone who asks
+ * meanwhile. Each instance finishes only its own (the record names its origin).
+ */
 function finishLeftover(target: Server): Promise<FinishResult> {
-  finishing ??= finishSignOut(finishDeps(target))
-    .catch(() => "pending" as const)
-    .finally(() => {
-      finishing = null;
-    });
-  return finishing;
+  let running = finishing.get(target.auth);
+  if (!running) {
+    running = finishSignOut(finishDeps(target))
+      .catch(() => "pending" as const)
+      .finally(() => {
+        finishing.delete(target.auth);
+      });
+    finishing.set(target.auth, running);
+  }
+  return running;
 }
 
 /**
  * Finishing kept sign-outs, then registering the phone with `register` (src/lib/paging.ts), while `enabled`: again on
  * a backoff while something is left undone, and soon (`MIN_TRY_GAP_MS` at most) when the phone is back online, the
- * app comes back to the foreground or a token is new. A new `register` starts over.
+ * app comes back to the foreground or a token is new. A new `register` starts over. One per instance, each on its own
+ * backoff (RFC 0015 section 5): a failing instance never holds back another.
  */
 function usePaging(
+  target: Server,
   enabled: boolean,
   online: boolean,
   register: ((proceed: () => boolean) => Promise<Registrations>) | null,
@@ -149,8 +160,7 @@ function usePaging(
   const [paging, setPaging] = useState<Registrations>({});
   const cycle = useRef<ReturnType<typeof pagingCycle> | null>(null);
   useEffect(() => {
-    const target = server;
-    if (!enabled || !target) return;
+    if (!enabled) return;
     setPaging({});
     const made = pagingCycle({
       finish: () => finishLeftover(target),
@@ -185,7 +195,7 @@ function usePaging(
       void made.stop();
       if (cycle.current === made) cycle.current = null;
     };
-  }, [enabled, register]);
+  }, [target, enabled, register]);
   // Back online: no waiting out the backoff. The first run is the cycle's own.
   const wasOnline = useRef(online);
   useEffect(() => {
@@ -210,13 +220,91 @@ function usePaging(
 }
 
 /**
- * Who is signed in, from Better Auth's session (kept in secure storage, so the app opens signed in offline). With a
- * session and an active workspace it opens the workspace's shard as the member and registers the phone for pages;
- * `children` gets whether a member is ready, for the signed-in screens' guard. At launch, whenever the phone is
- * back online and until it is done, it finishes a sign-out that could not reach the shard, so a phone signed out
- * offline stops paging the person who left before the next one registers it.
+ * The instances this phone signs in to (RFC 0015 section 5): the active one is shown (`InstanceSession`), and every
+ * other keeps the phone registered and its kept sign-outs finished in the background (`BackgroundInstance`), so
+ * looking at one never stops another's pages. An install from before several instances has the build's default
+ * instance alone, with the session it had.
  */
 export function Session({ children }: { children: (ready: boolean) => ReactNode }) {
+  const list = useSyncExternalStore(instances.subscribe, instances.current);
+  useEffect(() => {
+    void instances.load();
+  }, []);
+  const active = activeInstance(list);
+  const clients = active ? clientsFor(active) : undefined;
+  return (
+    <InstanceContext value={clients}>
+      {list.instances
+        .filter((instance) => instance.id !== active?.id)
+        .map((instance) => (
+          <BackgroundInstance key={instance.id} clients={clientsFor(instance)} />
+        ))}
+      {clients ? (
+        // Keyed: switching instances opens the other from scratch, as switching workspaces does.
+        <InstanceSession
+          key={`${clients.instance.id} ${clients.instance.origin}`}
+          clients={clients}
+        >
+          {children}
+        </InstanceSession>
+      ) : (
+        <SessionContext value={{ kind: "no-server" }}>{children(false)}</SessionContext>
+      )}
+    </InstanceContext>
+  );
+}
+
+/**
+ * An instance the app does not show: while its member is signed in, the phone stays registered in every workspace it
+ * was opened in there (`POST /devices/register`, or the open workspace's shard for an instance from before it), on its
+ * own backoff; and its kept sign-outs are finished either way.
+ */
+function BackgroundInstance({ clients }: { clients: InstanceClients }) {
+  const session = clients.authClient.useSession();
+  const online = useOnline();
+  const userId = session.data?.user.id;
+  const workspaceId = session.data?.session.activeOrganizationId ?? undefined;
+  const store = clients.phoneWorkspaces;
+  const listed = useSyncExternalStore(store.subscribe, () =>
+    userId ? store.current(userId) : null,
+  );
+  useEffect(() => {
+    if (userId) void store.read(userId);
+  }, [store, userId]);
+  const ids = listed ? listed.workspaces.map((workspace) => workspace.id).join(",") : null;
+  const register = useMemo(() => {
+    if (!userId || !workspaceId || ids === null) return null;
+    const cookie = () => clients.authClient.getCookie();
+    const deps = phoneDeps(
+      { mutate: oneShotMutate(clients.server, workspaceId, userId, cookie) },
+      clients.server,
+      registerAllWith(clients.server, cookie),
+      relayDeps(clients),
+    );
+    return (proceed: () => boolean) =>
+      registerEverywhere(deps, ids ? ids.split(",") : [], workspaceId, proceed, (gone) => {
+        void store.update(userId, (list) => withoutWorkspaces(list, gone));
+      });
+  }, [clients, store, userId, workspaceId, ids]);
+  usePaging(clients.server, true, online, register);
+  return null;
+}
+
+/**
+ * Who is signed in to the active instance, from Better Auth's session (kept in secure storage, so the app opens signed
+ * in offline). With a session and an active workspace it opens the workspace's shard as the member and registers the
+ * phone for pages; `children` gets whether a member is ready, for the signed-in screens' guard. At launch, whenever
+ * the phone is back online and until it is done, it finishes a sign-out that could not reach the shard, so a phone
+ * signed out offline stops paging the person who left before the next one registers it.
+ */
+function InstanceSession({
+  clients,
+  children,
+}: {
+  clients: InstanceClients;
+  children: (ready: boolean) => ReactNode;
+}) {
+  const { authClient, server } = clients;
   const session = authClient.useSession();
   const online = useOnline();
   // Better Auth does not ask again by itself: a session it could not read is read again on reconnect.
@@ -229,17 +317,17 @@ export function Session({ children }: { children: (ready: boolean) => ReactNode 
   const data = session.data;
   const workspaceId = data?.session.activeOrganizationId;
   // Emails to them come in the phone's language (RFC 0008).
-  useUserLocale(data?.user);
+  useUserLocale(authClient, data?.user);
   // With nobody in a workspace to register for, kept sign-outs are still finished; ActiveWorkspace does both.
-  usePaging(!(data && workspaceId), online, null);
+  usePaging(server, !(data && workspaceId), online, null);
   let view: SessionView;
-  if (!server) view = { kind: "no-server" };
-  else if (data && workspaceId) {
+  if (data && workspaceId) {
     return (
       // Keyed: switching workspaces opens the new one from scratch (its own socket, queue of unsent changes and
       // registration), while the old one's registration stays, so its pages still arrive (RFC 0006).
       <ActiveWorkspace
         key={`${data.user.id}:${workspaceId}`}
+        clients={clients}
         userId={data.user.id}
         name={data.user.name}
         email={data.user.email}
@@ -250,7 +338,7 @@ export function Session({ children }: { children: (ready: boolean) => ReactNode 
         {children}
       </ActiveWorkspace>
     );
-  } else if (data) view = { kind: "no-workspace", signOut };
+  } else if (data) view = { kind: "no-workspace", signOut: () => signOut(clients) };
   else if (session.isPending) view = { kind: "loading" };
   else if (session.error) view = { kind: "unavailable", retry: () => void session.refetch() };
   else view = { kind: "signed-out" };
@@ -278,14 +366,14 @@ function ClearWidgetWhen({ signedOut }: { signedOut: boolean }) {
  * before the request goes out, so offline the phone is signed out too and the server's session lasts until it
  * expires. True when the server answered.
  */
-async function signOutHere(): Promise<boolean> {
+async function signOutHere({ authClient, server }: InstanceClients): Promise<boolean> {
   // Never longer than `SIGN_OUT_TIMEOUT_MS`: unanswered by then, it is kept and finished later (src/lib/sign-out.ts),
   // and the server finishes what it started on its own.
   return inTime(
     async () => {
       // Named, so the server takes this phone off the member's other workspaces too (RFC 0006 "Device
       // registration").
-      const device = await phoneDeviceId(server?.auth);
+      const device = await phoneDeviceId(server.auth);
       return !(
         await authClient.signOut(
           device ? { fetchOptions: { headers: { [DEVICE_HEADER]: device } } } : undefined,
@@ -299,7 +387,7 @@ async function signOutHere(): Promise<boolean> {
 
 /**
  * The sync clients of workspaces switched away from with changes not sent yet, kept open until the shard confirmed
- * them (src/lib/drain.ts), by member and workspace.
+ * them (src/lib/drain.ts), by instance, member and workspace (`drainKey`).
  */
 const draining = drainer<Drainable & { sync: WorkspaceSync }>({
   setTimer: (run, ms) => {
@@ -309,28 +397,33 @@ const draining = drainer<Drainable & { sync: WorkspaceSync }>({
   now: Date.now,
 });
 
+function drainKey(instanceId: string, userId: string, workspaceId: string): string {
+  return `${instanceId} ${userId}:${workspaceId}`;
+}
+
 /**
- * Nothing of the member who leaves is sent or registered again: their draining clients and their workspaces. The
- * native side forgets the instance too, so its version 2 pages show the fallback text and send no receipt until the
- * next registration there (RFC 0015 section 4). Only on an explicit sign-out: a session that merely ended keeps it.
+ * Nothing of the member who leaves an instance is sent or registered again: their draining clients and their
+ * workspaces there. The native side forgets that instance too, so its version 2 pages show the fallback text and send
+ * no receipt until the next registration there (RFC 0015 section 4); the other instances are untouched. Only on an
+ * explicit sign-out: a session that merely ended keeps it.
  */
-async function forgetMember(): Promise<void> {
-  draining.closeAll();
+async function forgetMember(clients: InstanceClients): Promise<void> {
+  draining.closeAll(`${clients.instance.id} `);
   try {
-    BrigadePush?.clearReceiptOrigin?.();
+    BrigadePush?.clearReceiptOrigin?.(clients.instance.origin);
   } catch {
     // Never in sign-out's way.
   }
-  await phoneWorkspaces.clear();
+  await clients.phoneWorkspaces.clear();
 }
 
 /** Signing out without a workspace: nothing pages this phone for it. */
-async function signOut(): Promise<void> {
-  await signOutHere();
-  await forgetMember();
+async function signOut(clients: InstanceClients): Promise<void> {
+  await signOutHere(clients);
+  await forgetMember(clients);
   clearWidget();
-  await SecureStore.deleteItemAsync(WORKSPACE_KEY).catch(() => {});
-  await dropQueues(pendingFiles).catch(() => {});
+  await SecureStore.deleteItemAsync(clients.storage.workspace).catch(() => {});
+  await dropQueues(clients.pendingFiles).catch(() => {});
 }
 
 /**
@@ -348,6 +441,7 @@ function leaveBehind(key: string, sync: WorkspaceSync): void {
 }
 
 function ActiveWorkspace({
+  clients,
   userId,
   name,
   email,
@@ -356,6 +450,7 @@ function ActiveWorkspace({
   online,
   children,
 }: {
+  clients: InstanceClients;
   userId: string;
   name: string;
   email: string;
@@ -364,6 +459,8 @@ function ActiveWorkspace({
   online: boolean;
   children: (ready: boolean) => ReactNode;
 }) {
+  const { authClient, server, phoneWorkspaces, pendingFiles } = clients;
+  const knownKey = clients.storage.workspace;
   const workspace = authClient.useActiveOrganization();
   const member = authClient.useActiveMember();
 
@@ -371,7 +468,7 @@ function ActiveWorkspace({
   const [known, setKnown] = useState<{ name: string; role: Role } | null | undefined>(undefined);
   useEffect(() => {
     let live = true;
-    void SecureStore.getItemAsync(WORKSPACE_KEY)
+    void SecureStore.getItemAsync(knownKey)
       .catch(() => null)
       .then((raw) => {
         if (live) setKnown(knownWorkspace(raw, userId, workspaceId));
@@ -379,17 +476,17 @@ function ActiveWorkspace({
     return () => {
       live = false;
     };
-  }, [userId, workspaceId]);
+  }, [knownKey, userId, workspaceId]);
   const liveName = workspace.data?.name;
   const liveRole = member.data?.role;
   useEffect(() => {
     if (liveName === undefined || liveRole === undefined) return;
     const role = memberActor(userId, liveRole).role;
     void SecureStore.setItemAsync(
-      WORKSPACE_KEY,
+      knownKey,
       JSON.stringify({ userId, workspaceId, name: liveName, role }),
     ).catch(() => {});
-  }, [userId, workspaceId, liveName, liveRole]);
+  }, [knownKey, userId, workspaceId, liveName, liveRole]);
   const refetchWorkspace = useLatest(workspace.refetch);
   const refetchMember = useLatest(member.refetch);
   // Back online: read them again, so a remembered name or role does not linger.
@@ -419,13 +516,12 @@ function ActiveWorkspace({
       },
       () => {},
     );
-  }, [sessionToken]);
+  }, [authClient, sessionToken]);
 
   const [sync, setSync] = useState<WorkspaceSync | null>(null);
   useEffect(() => {
     const target = server;
-    if (!target) return;
-    const key = `${userId}:${workspaceId}`;
+    const key = drainKey(clients.instance.id, userId, workspaceId);
     let made: WorkspaceSync | null = null;
     let live = true;
     // Switched back while its changes were still going out: the same client, with them.
@@ -474,7 +570,7 @@ function ActiveWorkspace({
       setSync(null);
       if (made) leaveBehind(key, made);
     };
-  }, [userId, workspaceId]);
+  }, [clients, authClient, server, pendingFiles, userId, workspaceId]);
 
   // Changes kept from before a restart are applied as the member's role, so they go back only once it is known:
   // run as the `viewer` a role still loading reads as, they would drop out of the view until the shard answered
@@ -494,7 +590,7 @@ function ActiveWorkspace({
   );
   useEffect(() => {
     void phoneWorkspaces.update(userId, (list) => withWorkspace(list, workspaceId, liveName));
-  }, [userId, workspaceId, liveName]);
+  }, [phoneWorkspaces, userId, workspaceId, liveName]);
   const ids = listed?.workspaces.some((workspace) => workspace.id === workspaceId)
     ? listed.workspaces.map((workspace) => workspace.id).join(",")
     : null;
@@ -502,24 +598,24 @@ function ActiveWorkspace({
   // Someone who signed out offline first: their device has to come off the shard before this one can take it.
   // Then the phone registers in every workspace it was opened in, so a new token reaches all of them.
   const register = useMemo(() => {
-    const target = server;
-    if (!sync || !target || ids === null) return null;
+    if (!sync || ids === null) return null;
     const deps = phoneDeps(
       sync,
-      target,
-      registerAllWith(target, () => authClient.getCookie()),
+      server,
+      registerAllWith(server, () => authClient.getCookie()),
+      relayDeps(clients),
     );
     return (proceed: () => boolean) =>
       registerEverywhere(deps, ids.split(","), workspaceId, proceed, (gone) => {
         void phoneWorkspaces.update(userId, (list) => withoutWorkspaces(list, gone));
       });
-  }, [sync, ids, workspaceId, userId]);
+  }, [clients, authClient, server, phoneWorkspaces, sync, ids, workspaceId, userId]);
   const {
     paging: registrations,
     retry,
     stop: stopPaging,
     removed,
-  } = usePaging(register !== null, online, register);
+  } = usePaging(server, register !== null, online, register);
   // One per member and workspace; Try again starts its count over.
   const watch = useMemo(() => removalWatch(Date.now), [userId, workspaceId]);
   const retryPaging = useCallback(() => {
@@ -545,23 +641,23 @@ function ActiveWorkspace({
         cookie: () => authClient.getCookie(),
         // Stop paging this phone first, while the session can still say whose device it is.
         unregister: sync ? () => unregisterPhone(phoneDeps(sync, server)) : null,
-        signOut: signOutHere,
+        signOut: () => signOutHere(clients),
         forget: () => forgetSession(authClient),
         add: keptSignOuts.add,
-        origin: server?.auth ?? "",
+        origin: server.auth,
         now: Date.now,
         lifetime: SESSION_LIFETIME_MS,
       },
     );
-    await SecureStore.deleteItemAsync(WORKSPACE_KEY).catch(() => {});
+    await SecureStore.deleteItemAsync(knownKey).catch(() => {});
     // Their shifts leave the home and lock screens with them.
     clearWidget();
     // Nothing they queued is sent or shown after they leave, whoever signs in next, nor registered for them again.
     await sync?.queue?.drop().catch(() => {});
-    await forgetMember();
+    await forgetMember(clients);
     await dropQueues(pendingFiles).catch(() => {});
     return result;
-  }, [sync, userId, workspaceId, stopPaging]);
+  }, [clients, authClient, server, knownKey, pendingFiles, sync, userId, workspaceId, stopPaging]);
 
   const ready = Boolean(sync && restored === sync && workspaceName !== undefined);
   const value = useMemo<SessionView>(() => {
@@ -617,6 +713,7 @@ function ActiveWorkspace({
       <WidgetSnapshot userId={userId} workspaceId={workspaceId} workspaceName={workspaceName!} />
       <RemovalWatch
         key={`${userId}:${workspaceId}`}
+        origin={server.auth}
         watch={watch}
         registered={paging === "on"}
         onRemoved={(verdict) => removed(workspaceId, verdict)}
@@ -632,10 +729,13 @@ function ActiveWorkspace({
  * section does not say "Paged on this phone" until the next launch (src/lib/paging.ts `removalWatch`).
  */
 function RemovalWatch({
+  origin,
   watch,
   registered,
   onRemoved,
 }: {
+  /** The instance's Better Auth URL: the device key is its own. */
+  origin: string;
   watch: Watch;
   registered: boolean;
   onRemoved: (verdict: Exclude<RemovalVerdict, undefined>) => void;
@@ -643,13 +743,13 @@ function RemovalWatch({
   const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
   useEffect(() => {
     let live = true;
-    void phoneDeviceId(server?.auth).then((id) => {
+    void phoneDeviceId(origin).then((id) => {
       if (live) setDeviceId(id);
     });
     return () => {
       live = false;
     };
-  }, [registered]);
+  }, [origin, registered]);
   const devices = useQuery("devices.all", {});
   const latest = useLatest(onRemoved);
   const present = devicePresent(deviceId, devices);

@@ -130,6 +130,40 @@ class EnvelopeV2Test {
   }
 
   @Test
+  fun severalInstancesArePairedAtOnce() {
+    val other = "https://other.example.org"
+    val third = "https://third.example.net"
+    val sealed = PushSealed(iat, iat + 900, origin, "page")
+    // Paired with this instance among others: it opens; with only others, it is the fallback.
+    assertNull(PushChecks.refusal(sealed, origin, listOf(other, origin), iat))
+    assertEquals("not_paired", PushChecks.refusal(sealed, origin, listOf(other, third), iat))
+    assertEquals("not_paired", PushChecks.refusal(sealed, origin, emptyList<String>(), iat))
+    val receipt = PushReceipt("$origin/api/receipts", "tok")
+    val v2 = PushContent("t", "b", null, null, receipt, sealed)
+    assertEquals(receipt, PushChecks.receiptToSend(v2, listOf(other, origin)))
+    assertNull(PushChecks.receiptToSend(v2, listOf(other)))
+    // A v2 page sealed by one paired instance naming another paired instance's receipt URL sends nothing.
+    val crossed = v2.copy(receipt = PushReceipt("$other/api/receipts", "tok"))
+    assertNull(PushChecks.receiptToSend(crossed, listOf(other, origin)))
+    // Version 1 goes to any paired instance its URL is on.
+    assertEquals(receipt, PushChecks.receiptToSend(v2.copy(sealed = null), listOf(other, origin)))
+  }
+
+  @Test
+  fun receiptOriginsKeepTheOldOneFirst() {
+    val other = "https://other.example.org"
+    // Before several instances: only the one origin, which stays first once more are added.
+    assertEquals(listOf(origin), ReceiptOrigins.decode(null, origin))
+    val added = ReceiptOrigins.with(ReceiptOrigins.decode(null, origin), other)
+    assertEquals(listOf(origin, other), added)
+    assertEquals(added, ReceiptOrigins.with(added, other))
+    assertEquals(added, ReceiptOrigins.decode(ReceiptOrigins.encode(added), origin))
+    assertEquals(listOf(other), ReceiptOrigins.without(added, origin))
+    assertEquals(emptyList<String>(), ReceiptOrigins.decode("", null))
+    assertEquals(emptyList<String>(), ReceiptOrigins.decode(null, null))
+  }
+
+  @Test
   fun keySlotsAreShortAndPerOrigin() {
     val name = KeySlots.name(origin)
     assertEquals(16, name.length)

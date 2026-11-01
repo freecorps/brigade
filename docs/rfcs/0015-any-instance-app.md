@@ -3,7 +3,7 @@
 - Status: Accepted (decisions D1–D5 below); the relay side and envelope version 2 on the phone (steps 1 and 2 of
   "Order of work") are built, and of step 3 the API side (handles in `device.register`, the notifier on `/v1/send`,
   `/config`, the watchdog's signed check) and `vp run setup:relay` with the relay's closed registration (section 8);
-  the rest is not
+  of step 4 the app's data layer (instances, storage per instance, handles, page routing; section 5); the rest is not
 - Builds on: RFC 0006 (push relay), RFC 0002 (auth, environments), RFC 0010 (calls)
 
 ## Problem
@@ -99,18 +99,21 @@ signed deep health are built too (sections 2 and 3, `src/handles.ts`, `src/v1.ts
   device", and `device.expire` "only if its token is still the one the push went to".
 - **Who asks for it.** The app, straight to the relay. Never through the instance, which must not see the token. The
   relay learns the phone's IP address when it does; the terms say so.
-- **When (decided, Q30).** The app keeps the handle it was given, per instance, and asks the relay for a new one only
-  when its push tokens (APNs, PushKit or FCM) or the relay's handle key id change. So a new token always comes with a
-  new handle, a VoIP token that arrives later gets a new handle with both tokens, and a key rotation reaches the phone
-  on its next registration; a registration with nothing changed (launch, foreground, Try again) sends the handle it
-  has, the same row, and emits no `device.registered`. The handle's key id is its prefix; how the app learns the
-  relay's current one is part of building this with the app (step 4).
+- **When (decided, Q30).** The app keeps the handle it was given, per instance, with the tokens it was sealed for and
+  when it got it, and asks the relay for a new one only when its push or VoIP token changed (APNs, PushKit or FCM; the
+  APNs environment too), the instance's relay origin or instance id changed (`/config`), or the kept handle is older
+  than 30 days. So a new token always comes with a new handle, a VoIP token that arrives later gets a new handle with
+  both tokens, and a relay key rotation reaches every phone within 30 days of its next registrations without the app
+  knowing the key id (the relay keeps old keys at least 13 months); a registration with nothing changed (launch,
+  foreground, Try again) sends the handle it has, the same row, and emits no `device.registered`. When
+  `device.register` refuses a handle (`invalid_args`, `bad_handle`, `handle_not_yours`), the app drops it, registers
+  the raw tokens in the same try and asks for a new handle on the next registration.
 - **Abuse of minting.** Anyone may ask for a handle for any token, for their own instance only. That is harmless
   without a real token, which only the phone and the relay ever see (and our own instance until migration, below).
   Rate limited per IP.
 - **Rotating the relay's key.** Handles carry the key id; the relay keeps old keys to open handles for at least 13
-  months (a phone opened once a year still works), and a registration after a rotation (the key id changed) re-seals
-  with the current key. Only a leaked
+  months (a phone opened once a year still works), and the phone asks for a handle again once its own is 30 days old
+  (Q30), which the current key seals. Only a leaked
   key is retired early, and then every phone needs opening once (the same as a lost instance key).
 
 ### 3. Sending
@@ -239,6 +242,44 @@ version 2 for a device registered with `envelope: 2`, version 1 for any other; t
   in the App Group and Android preferences instead of one), the Acknowledge, "Forgot your password?"
   (`brigadeServer`) all take the instance's origin instead of the build's.
 
+**Built (step 4, first slice): the data layer.** apps/mobile `src/lib/instances.ts`, `src/lib/instance-clients.ts`,
+`src/lib/relay.ts`, `src/components/session.tsx`; the native lists in `BrigadePushCrypto.swift` and `Pages.kt`/
+`PushPayload.kt`. The screens to add, switch and remove instances, the address checks and QR sign-in come next; until
+then the app shows the build's default instance. As built:
+
+- **The list** (`brigade.instances` in secure storage): at most 5, one active. With nothing stored (every install from
+  before), it is the build's default instance alone (id `default`, origin `EXPO_PUBLIC_BRIGADE_URL`, or the dev
+  server), and reading it writes nothing. The default instance keeps the keys from before (`brigade` as Better Auth's
+  prefix, `brigade.workspaces`, `brigade_workspace`, the pending-change folder), so an existing install stays signed
+  in with its workspaces, queue and device key; every other instance has `brigade:<id>` and keys and a folder of its
+  own. The default instance's origin follows the build, as before. A list that cannot be read is never overwritten.
+- **Sessions.** The active instance is shown (its own Better Auth client, sync clients, queue, kept workspace).
+  Every other instance with a signed-in member registers in the background: its own `POST /devices/register` (or the
+  open workspace's shard over a socket of its own, for an instance from before the route), its own registration cycle
+  and backoff, and the kept sign-outs of its origin finished. Signing out of one forgets only its workspaces, queue,
+  draining clients and receipt origin.
+- **Handles** (`src/lib/relay.ts`). Each registration reads the instance's `/config`: no `relay` (or an instance from
+  before step 3) gets the raw tokens, as before, with `envelope: 2` when `/config` has `brigade`; `relay.origin` this
+  build's relay gets `handle`, `tag`, `voip` and `envelope: 2`, no raw token; another relay is `foreign`: nothing is
+  registered and the paging state says "This instance pages through its own app" (the build's default instance is never
+  foreign). A relay that refuses or does not answer gets the raw tokens; a `/config` that does not answer keeps the
+  handle that still serves. Refused forms fall back in the same try: the raw tokens instead of a handle, then without
+  `criticalAlerts` and `envelope` for an older instance.
+- **This build's relay** (Q32): `EXPO_PUBLIC_BRIGADE_RELAY_URL`; unset, the store build (default instance
+  `https://brigade.freecorps.com.br`, or none) uses `https://relay.brigade.freecorps.com.br`, any other build its
+  default instance's `/config` `relay.origin`, asked again while it does not answer (meanwhile another instance with a
+  relay gets the raw tokens).
+- **Opening a page.** The native side keeps the paired origins as a list (`receipt-origins-v2`, the origin from before
+  first, so it alone may claim the key from before keys per instance); `setReceiptOrigin` adds, `clearReceiptOrigin`
+  removes one. A v2 page opens and sends its receipt only for a paired origin. The Acknowledge goes to the instance at
+  the sealed origin with its session (nothing when the phone has none there); an answered call's ack goes over the
+  socket for the shown instance and workspace, else over HTTPS to its own (the call carries `workspace` and `origin`
+  now); an Android tap switches to the sealed instance, then the workspace (the tap's proof signs the origin).
+- **Tests:** apps/mobile `instances.test.ts`, `relay.test.ts` (each handle trigger, the fallbacks, `foreign`, the
+  build's relay), `registration.test.ts` (handles against the real `device.register`, refusals, backoff per instance),
+  `page-routing.test.ts`, `page-taps.test.ts`, `auth-client.test.ts` (the default instance's session, prefixes);
+  `EnvelopeV2Test.kt`/`PageTapTest.kt` and `ios/tests/main.swift` for several paired origins.
+
 ### 6. Signing in with a QR code (decided, D2)
 
 A signed-in member opens "Use the app" on the dashboard and gets a QR code that adds the instance **and** signs the
@@ -337,8 +378,9 @@ The address-only QR (`brigade://connect?server=<origin>`) stays for an instance 
   emailed code), so `instance_registration_pending` is not a reason: an instance not registered yet is
   `instance_unregistered`.
 - Decided, Q30: the instance keeps storing the handle it is given (the newest carries a relay key rotation); the
-  churn is avoided on the phone, which asks for a new handle only when its tokens or the relay's key id change
-  (section 2, step 4).
+  churn is avoided on the phone, which asks for a new handle only when its push or VoIP token changed, the instance's
+  relay origin or instance id changed, or its handle is older than 30 days, and drops a handle `device.register`
+  refuses (section 2; built with step 4, section 5).
 
 ### 8. Which relay: Freecorps' or your own
 
@@ -375,8 +417,9 @@ asks which, and can be run again later:
      TestFlight, an MDM or an internal store). The bundle id and Android package are the build variable
      `BRIGADE_APP_ID` (default `app.freecorps.brigade`, apps/mobile `plugins/app-id.ts`), and the App Group is derived
      from it, `group.<BRIGADE_APP_ID>`, written into each target's Info.plist for the Swift code (Q32). The relay
-     address, `EXPO_PUBLIC_BRIGADE_RELAY_URL`, will default from the instance's `/config` (`relay.origin`), decided
-     (Q32) and built with step 4; until then the app does not read it and registers raw tokens.
+     address is `EXPO_PUBLIC_BRIGADE_RELAY_URL` when set; unset, a build whose default instance
+     (`EXPO_PUBLIC_BRIGADE_URL`) is not Freecorps' hosted Brigade takes that instance's `/config` `relay.origin`, and
+     the store build Freecorps' relay (Q32, built with step 4, section 5).
    - Asks for the build's store link (optional, `RELAY_APP_URL`), so the store app can send people there (below).
 3. **Not now.** No push; the email notifier still pages, and the dashboard says phones are not paged.
 
@@ -590,7 +633,8 @@ built:
    shows the fallback text for every v2 page. Built: the API side (`device.register`, the notifier, `/config`, the
    watchdog; section 7), `vp run setup:relay` and the dashboard's "Phones and pages" and "Use the app" (section 8).
 4. App: handles and per-instance keys and storage; the instance switcher, address field, QR and link, address
-   checks, which relay; QR sign-in (with its API routes and the dashboard's approval).
+   checks, which relay; QR sign-in (with its API routes and the dashboard's approval). Built: handles, storage per
+   instance, background registration and page routing (section 5).
 5. Our instance moves (section 9); then the docs for self-hosters ("Your own app" included) and the terms.
 
 Each step is a paging path: it keeps the old path working until the next one ships, and comes with its tests

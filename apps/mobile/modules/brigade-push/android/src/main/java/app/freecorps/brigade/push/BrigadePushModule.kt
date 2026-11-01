@@ -38,10 +38,14 @@ class BrigadePushModule : Module() {
       Base64url.encode(DeviceKey.publicKey(context, normalized))
     }
 
+    /** Adds the instance to the paired ones (RFC 0015 section 5: one per instance the phone is registered with). */
     Function("setReceiptOrigin") { origin: String -> Pages.setReceiptOrigin(context, origin) }
 
-    /** Forgets the paired instance (the member signed out). */
-    Function("clearReceiptOrigin") { Pages.clearReceiptOrigin(context) }
+    /** Forgets the instance at `origin` (the member signed out there), or every one when JavaScript names none. */
+    Function("clearReceiptOrigin") { origin: String? -> Pages.clearReceiptOrigin(context, origin) }
+
+    /** Paired instances are a list (`setReceiptOrigin` adds, `clearReceiptOrigin` takes an origin). */
+    Constant("receiptOriginList") { true }
 
     /** iOS holds background time for the Acknowledge action; Android has no action yet, so nothing to finish. */
     Function("finishPageAction") { _: String -> }
@@ -62,12 +66,21 @@ class BrigadePushModule : Module() {
     val workspace = intent.getStringExtra(Pages.EXTRA_WORKSPACE)
     val issuedAt = intent.getLongExtra(Pages.EXTRA_ISSUED_AT, -1)
     val proof = intent.getStringExtra(Pages.EXTRA_PROOF)
-    for (extra in listOf(Pages.EXTRA_INCIDENT, Pages.EXTRA_WORKSPACE, Pages.EXTRA_ISSUED_AT, Pages.EXTRA_PROOF)) {
+    val origin = intent.getStringExtra(Pages.EXTRA_ORIGIN)
+    for (
+      extra in listOf(
+        Pages.EXTRA_INCIDENT,
+        Pages.EXTRA_WORKSPACE,
+        Pages.EXTRA_ISSUED_AT,
+        Pages.EXTRA_PROOF,
+        Pages.EXTRA_ORIGIN,
+      )
+    ) {
       intent.removeExtra(extra)
     }
     if (incident == null || workspace == null) return null
     val key = Pages.tapKey(context)
-    if (!PageTap.verify(key, incident, workspace, issuedAt, proof, System.currentTimeMillis())) return null
-    return mapOf("incident" to incident, "workspace" to workspace)
+    if (!PageTap.verify(key, incident, workspace, issuedAt, proof, System.currentTimeMillis(), origin)) return null
+    return mapOf("incident" to incident, "workspace" to workspace) + (origin?.let { mapOf("origin" to it) } ?: emptyMap())
   }
 }

@@ -51,6 +51,33 @@ test("signing out offline forgets the stored session before the request fails", 
   expect(client.$store.atoms.session?.get().data ?? null).toBeNull();
 });
 
+test("the build's default instance keeps the session from before several instances; others keep their own", async () => {
+  const { instanceStorage, DEFAULT_INSTANCE } = await import("./instances");
+  const storage = memoryStore();
+  // An install from before several instances: its session under `brigade_cookie`.
+  storage.items.set("brigade_cookie", SIGNED_IN);
+  vi.stubGlobal("fetch", vi.fn());
+  const before = brigadeAuthClient(
+    "https://brigade.test/api/auth",
+    storage,
+    instanceStorage(DEFAULT_INSTANCE).auth,
+  );
+  expect(await before.getCookie()).toContain("token.sig");
+  // Another instance on the same phone: nothing of the first one's session.
+  const acme = brigadeAuthClient(
+    "https://brigade.acme.test/api/auth",
+    storage,
+    instanceStorage("acme1").auth,
+  );
+  expect(await acme.getCookie()).toBe("");
+  storage.items.set("brigade_acme1_cookie", SIGNED_IN.replace("token.sig", "acme.sig"));
+  expect(await acme.getCookie()).toContain("acme.sig");
+  // Forgetting one session leaves the other.
+  await forgetSession(acme);
+  expect(await acme.getCookie()).toBe("");
+  expect(await before.getCookie()).toContain("token.sig");
+});
+
 test("forgetting the session signs out here without telling the server", async () => {
   const storage = memoryStore();
   storage.items.set("brigade_cookie", SIGNED_IN);

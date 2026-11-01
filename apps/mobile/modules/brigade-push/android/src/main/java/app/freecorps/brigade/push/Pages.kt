@@ -34,8 +34,12 @@ object Pages {
   const val EXTRA_WORKSPACE = "app.freecorps.brigade.push.WORKSPACE"
   const val EXTRA_ISSUED_AT = "app.freecorps.brigade.push.ISSUED_AT"
   const val EXTRA_PROOF = "app.freecorps.brigade.push.PROOF"
+  /** The instance a version 2 page sealed: the tap opens it there (RFC 0015 section 5). */
+  const val EXTRA_ORIGIN = "app.freecorps.brigade.push.ORIGIN"
   private const val PREFS = "brigade_push"
+  /** The one paired instance from before several instances; merged into [RECEIPT_ORIGINS] on the next change. */
   private const val RECEIPT_ORIGIN = "receipt-origin-v1"
+  private const val RECEIPT_ORIGINS = "receipt-origins-v2"
   private const val TAP_KEY = "tap-key-v1"
   /** How long a receipt may take; the page is already on screen. Matches the iOS extension. */
   private const val RECEIPT_TIMEOUT_MS = 5_000
@@ -64,12 +68,22 @@ object Pages {
       return
     }
     if (message.isCall) {
-      ring(context, IncomingCall(message.callId!!, content.title, content.body, content.incident))
+      ring(
+        context,
+        IncomingCall(
+          message.callId!!,
+          content.title,
+          content.body,
+          content.incident,
+          content.workspace,
+          content.sealed?.origin,
+        ),
+      )
     } else {
       notify(context, content, message.tag ?: content.incident, page)
     }
-    // Only for a page it opened: the fallback has no token. Calls carry none (RFC 0006). Only to the paired instance.
-    val receipt = PushChecks.receiptToSend(content, receiptOrigin(context))
+    // Only for a page it opened: the fallback has no token. Calls carry none (RFC 0006). Only to a paired instance.
+    val receipt = PushChecks.receiptToSend(content, receiptOrigins(context))
     if (receipt != null) {
       sendReceipt(receipt)
     } else if (content.receipt != null) {
@@ -91,10 +105,10 @@ object Pages {
   private fun open(context: Context, message: PushMessage): Opened =
     try {
       val keys = DeviceKey.keys(context)
-      val paired = receiptOrigin(context)
+      val paired = receiptOrigins(context)
       if (message.version == 1) {
         if (keys.isEmpty()) throw IllegalStateException("no device key")
-        val ordered = keys.sortedBy { if (paired != null && it.originFor(paired) == paired) 0 else 1 }
+        val ordered = keys.sortedBy { key -> if (paired.any { key.originFor(it) == it }) 0 else 1 }
         var last: Exception = IllegalStateException("no device key")
         var opened: PushContent? = null
         for (key in ordered) {
@@ -159,11 +173,16 @@ object Pages {
       // Tapping opens this incident (the app reads them, src/hooks/use-page-taps.ts).
       if (content?.incident != null && content.workspace != null) {
         val issuedAt = System.currentTimeMillis()
+        val origin = content.sealed?.origin
         putExtra(EXTRA_INCIDENT, content.incident)
         putExtra(EXTRA_WORKSPACE, content.workspace)
+        if (origin != null) putExtra(EXTRA_ORIGIN, origin)
         // The launcher activity is exported: the proof says this notification put them there (PageTap).
         putExtra(EXTRA_ISSUED_AT, issuedAt)
-        putExtra(EXTRA_PROOF, PageTap.sign(tapKey(context), content.incident, content.workspace, issuedAt))
+        putExtra(
+          EXTRA_PROOF,
+          PageTap.sign(tapKey(context), content.incident, content.workspace, issuedAt, origin),
+        )
       }
     }
     val key = tag ?: "brigade"
@@ -218,15 +237,34 @@ object Pages {
     }
   }
 
+  /** Adds the instance at [value] to the paired ones (the app registered the phone there). False for a bad origin. */
+  @Synchronized
   fun setReceiptOrigin(context: Context, value: String): Boolean {
     val origin = PushReceipt.originOf(value) ?: return false
-    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(RECEIPT_ORIGIN, origin).apply()
+    writeReceiptOrigins(context, ReceiptOrigins.with(receiptOrigins(context), origin))
     return true
   }
 
-  /** Forgets the paired instance (the member signed out): its pages show the fallback text until it registers again. */
-  fun clearReceiptOrigin(context: Context) {
-    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(RECEIPT_ORIGIN).apply()
+  /**
+   * Forgets the instance at [value] (the member signed out there), or every one without it: its pages show the
+   * fallback text and send nothing until it registers again. The others stay paired.
+   */
+  @Synchronized
+  fun clearReceiptOrigin(context: Context, value: String?) {
+    val origin = value?.let(PushReceipt::originOf)
+    if (value != null && origin == null) return
+    writeReceiptOrigins(
+      context,
+      if (origin == null) emptyList() else ReceiptOrigins.without(receiptOrigins(context), origin),
+    )
+  }
+
+  /** Written as the list alone: the one from before several instances is in it, first, from the first change. */
+  private fun writeReceiptOrigins(context: Context, origins: List<String>) {
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+      .remove(RECEIPT_ORIGIN)
+      .putString(RECEIPT_ORIGINS, ReceiptOrigins.encode(origins))
+      .commit()
   }
 
   /** The key tap proofs are made with ([PageTap]), created on first use, in the app's private preferences. */
@@ -239,12 +277,20 @@ object Pages {
     return key
   }
 
-  /** The instance this phone is paired with (registered with): one per build until several instances (RFC 0015). */
-  internal fun receiptOrigin(context: Context): String? =
-    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(RECEIPT_ORIGIN, null)
+  /** The instances this phone is paired with (registered with), the one from before several instances first. */
+  internal fun receiptOrigins(context: Context): List<String> {
+    val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    return ReceiptOrigins.decode(prefs.getString(RECEIPT_ORIGINS, null), prefs.getString(RECEIPT_ORIGIN, null))
+  }
 
   /**
-   * `POST { token }` to the page's receipt URL, which [PushChecks.receiptToSend] already checked is on the paired
+   * The first paired instance: the one that may claim the key from before keys per instance ([DeviceKey],
+   * [KeyChecks.mayTakeLegacy]), and the key JavaScript that names no origin gets.
+   */
+  internal fun receiptOrigin(context: Context): String? = receiptOrigins(context).firstOrNull()
+
+  /**
+   * `POST { token }` to the page's receipt URL, which [PushChecks.receiptToSend] already checked is on a paired
    * instance: anyone holding the device public key could seal a page naming another (RFC 0006 "Delivery receipts").
    * Best effort: 5 s, no retry, no cookies, the token never logged.
    */

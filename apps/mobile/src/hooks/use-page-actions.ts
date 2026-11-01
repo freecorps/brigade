@@ -3,8 +3,8 @@ import { randomUUID } from "expo-crypto";
 import * as Notifications from "expo-notifications";
 import { useEffect } from "react";
 import { BrigadePush } from "../../modules/brigade-push";
-import { authClient, server } from "@/lib/auth-client";
-import { instanceOrigin } from "@/lib/device";
+import { clientsFor, instances } from "@/lib/instance-clients";
+import { activeInstance } from "@/lib/instances";
 import {
   ACK_ACTION,
   ackFeedback,
@@ -13,6 +13,7 @@ import {
   PAGE_CATEGORY,
   pageAction,
   pageCategoryActions,
+  pageInstance,
   type AckMessages,
   type ActionResponse,
 } from "@/lib/page-action";
@@ -45,10 +46,15 @@ async function handle(response: ActionResponse): Promise<void> {
   }
   if (!firstTime(action.notificationId)) return;
   try {
+    // Read from storage first: a tap that launched the app comes before the session has read the list.
+    const list = await instances.load();
+    const target = pageInstance(action, list.instances, activeInstance(list));
+    const clients = target ? clientsFor(target) : undefined;
     const outcome = await acknowledgeFromNotification(action, {
-      url: (workspaceId, incidentId) => server?.ack(workspaceId, incidentId),
-      ...(server ? { origin: instanceOrigin(server.auth) } : {}),
-      cookie: () => authClient.getCookie(),
+      url: (workspaceId, incidentId) => clients?.server.ack(workspaceId, incidentId),
+      ...(clients ? { origin: clients.instance.origin } : {}),
+      // No instance at the page's origin: nobody to acknowledge as, and nothing is sent.
+      cookie: async () => (clients ? clients.authClient.getCookie() : ""),
       fetch: (url, init) => fetch(url, init),
       key: () => `ack-${randomUUID()}`,
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),

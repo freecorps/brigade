@@ -4,10 +4,14 @@
 import * as SecureStore from "expo-secure-store";
 import { useEffect } from "react";
 import { useLocale } from "@/hooks/use-locale";
-import { authClient } from "@/lib/auth-client";
+import type { AuthClient } from "@/lib/auth-client";
 import { localeAction, sentLocaleKey } from "@/lib/locale";
 
-export function useUserLocale(user: { id: string; locale?: string | null } | undefined): void {
+/** `authClient`: the instance the user is signed in to. */
+export function useUserLocale(
+  authClient: AuthClient,
+  user: { id: string; locale?: string | null } | undefined,
+): void {
   const { locale } = useLocale();
   const userId = user?.id;
   const userLocale = user?.locale;
@@ -33,5 +37,5 @@ export function useUserLocale(user: { id: string; locale?: string | null } | und
     return () => {
       cancelled = true;
     };
-  }, [userId, userLocale, locale]);
+  }, [authClient, userId, userLocale, locale]);
 }

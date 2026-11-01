@@ -3,7 +3,7 @@ import { WORKSPACE_NAME_MAX, workspaceName } from "@freecorps/brigade-schema";
 import { useRef, useState } from "react";
 import { AccessibilityInfo } from "react-native";
 import { NativeForm, type NativeFormProps } from "@/components/native-form";
-import { authClient, server } from "@/lib/auth-client";
+import { useActiveInstance } from "@/hooks/use-instance";
 import { createWorkspace } from "@/lib/workspaces";
 
 /** Why a workspace name would be refused, in the words the dashboard uses; undefined when it is fine. */
@@ -42,6 +42,7 @@ export function NewWorkspaceForm({
   const [busy, setBusy] = useState(false);
   // State lags a render behind, so two quick taps would both pass a `busy` check.
   const sending = useRef(false);
+  const instance = useActiveInstance();
 
   const fail = (message: string) => {
     setFailure(message);
@@ -52,7 +53,8 @@ export function NewWorkspaceForm({
   };
 
   const submit = async () => {
-    if (sending.current || !server) return;
+    if (sending.current || !instance) return;
+    const { authClient, server } = instance;
     const found = workspaceNameError(name);
     setError(found);
     if (found) {

@@ -1,15 +1,16 @@
-// The app's Better Auth client (RFC 0002): email and password against the dashboard's `/api/auth`, the session
-// kept in the Keychain or Android Keystore (expo-secure-store) by `@better-auth/expo`, which sends it back as a
-// `Cookie` header and the app's scheme as `expo-origin` (apps/api/src/auth.ts, `APP_ORIGIN`).
+// The app's Better Auth clients (RFC 0002): email and password against an instance's `/api/auth`, the session kept in
+// the Keychain or Android Keystore (expo-secure-store) by `@better-auth/expo`, which sends it back as a `Cookie` header
+// and the app's scheme as `expo-origin` (apps/api/src/auth.ts, `APP_ORIGIN`). One per instance (RFC 0015 section 5),
+// each under its own storage prefix (src/lib/instances.ts `instanceStorage`); src/lib/instance-clients.ts makes them.
 import { expoClient } from "@better-auth/expo/client";
 import { inferAdditionalFields, organizationClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 import Constants from "expo-constants";
-import * as SecureStore from "expo-secure-store";
-import { brigadeServer } from "@/lib/sync";
+import type * as SecureStore from "expo-secure-store";
+import { buildOrigin } from "@/lib/sync";
 
-/** Where this build signs in and syncs; undefined for a release build without EXPO_PUBLIC_BRIGADE_URL. */
-export const server = brigadeServer({
+/** The origin of the build's default instance; undefined for a release build without EXPO_PUBLIC_BRIGADE_URL. */
+export const defaultOrigin = buildOrigin({
   override: process.env.EXPO_PUBLIC_BRIGADE_URL,
   hostUri: Constants.expoConfig?.hostUri,
   dev: __DEV__,
@@ -21,16 +22,24 @@ export type SessionStorage = Pick<
   "getItem" | "getItemAsync" | "setItem" | "setItemAsync"
 >;
 
-/** Made by a function so src/lib/auth-client.test.ts can run it in Node against fake storage and network. */
-export function brigadeAuthClient(baseURL: string, storage: SessionStorage) {
+/**
+ * Made by a function so src/lib/auth-client.test.ts can run it in Node against fake storage and network.
+ * `storagePrefix`: `brigade` for the build's default instance (the keys from before several instances, so an existing
+ * install stays signed in), `brigade:<instance id>` for every other.
+ */
+export function brigadeAuthClient(
+  baseURL: string,
+  storage: SessionStorage,
+  storagePrefix = "brigade",
+) {
   return createAuthClient({
     baseURL,
     plugins: [
       expoClient({
         scheme: "brigade",
-        // Keys in secure storage: `brigade_cookie` (the session) and `brigade_session_data` (the last session
-        // read, so the app opens signed in without the network).
-        storagePrefix: "brigade",
+        // Keys in secure storage: `<prefix>_cookie` (the session) and `<prefix>_session_data` (the last session
+        // read, so the app opens signed in without the network); `:` is written `_`.
+        storagePrefix,
         storage,
       }),
       organizationClient(),
@@ -40,17 +49,13 @@ export function brigadeAuthClient(baseURL: string, storage: SessionStorage) {
   });
 }
 
-// Without a server every request fails as a network error, and sign-in says the build has no server.
-export const authClient = brigadeAuthClient(
-  server?.auth ?? "http://localhost.invalid/api/auth",
-  SecureStore,
-);
+export type AuthClient = ReturnType<typeof brigadeAuthClient>;
 
 /**
  * Signs out here only: `@better-auth/expo` forgets the stored session before a `/sign-out` request goes out, and
  * this one never does, so the server keeps the session (src/lib/sign-out.ts keeps it aside to finish with).
  */
-export async function forgetSession(client: Pick<typeof authClient, "signOut">): Promise<void> {
+export async function forgetSession(client: Pick<AuthClient, "signOut">): Promise<void> {
   try {
     await client.signOut({
       fetchOptions: {

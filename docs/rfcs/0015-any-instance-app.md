@@ -368,7 +368,7 @@ asks which, and can be run again later:
      build.
    - Deploys `apps/relay` to the same Cloudflare account, sets its secrets (`APNS_KEY`, `APNS_KEY_ID`, `APNS_TEAM_ID`,
      `RELAY_APNS_TOPIC`, `FCM_SERVICE_ACCOUNT`, `RELAY_HANDLE_KEYS`) and turns its registration to this instance only
-     (`RELAY_REGISTRATION=closed`, also a secret; the instance registered directly by the script, no terms or email).
+     (`RELAY_CLOSED=1`, also a secret; the instance registered directly by the script, no terms or email).
    - Binds the relay to the API as `RELAY` (no hop over the internet, as on our instance) and sets the instance key.
    - Points to "Your own app" in the docs (apps/mobile README): the EAS build with the company's bundle id, App
      Group, relay address and store accounts. That build is the company's to publish (or to hand out through
@@ -388,7 +388,8 @@ does it.
 `scripts/setup-relay/`, a root task in vite.config.ts; apps/api README "Push relay"); closed registration in apps/relay
 `src/instances.ts` and `src/registry.ts` (README "Closed registration"). As built:
 
-- **Closed registration.** With `RELAY_REGISTRATION=closed`, `POST /v1/instances`, still signed, registers the
+- **Closed registration.** With the secret `RELAY_CLOSED=1` (or an older relay's var `RELAY_REGISTRATION=closed`),
+  `POST /v1/instances`, still signed, registers the
   signer's original key only with `Authorization: Bearer <RELAY_ADMIN_TOKEN>` (constant-time compare), with no terms
   (`terms: "none"`) and no code; codes are refused (`403 registration_closed`), a wrong token is `401
   admin_unauthorized`. An open relay ignores the header.
@@ -426,10 +427,12 @@ does it.
   step (build, secrets, deploy, the domain, the registration) leaves the API as it was, and the next run puts tokens
   that drifted apart right. The admin token
   is deleted once the instance is registered. The topic and closed registration are secrets set before the deploy,
-  `RELAY_APNS_TOPIC` (the company's bundle id; it takes precedence over the `APNS_TOPIC` var, since a secret cannot
-  share a var's name) and `RELAY_REGISTRATION=closed`, so every later deploy without flags (CI, by hand) keeps them (Q32); the
-  deploy passes no `--var`. A relay set up by an earlier version of the script, with the two as `--var`, gets the
-  secrets on its next run. It does not deploy the API: the production build already binds
+  `RELAY_APNS_TOPIC` (the company's bundle id; it takes precedence over the `APNS_TOPIC` var) and `RELAY_CLOSED=1`,
+  so every later deploy without flags (CI, by hand) keeps them (Q32); the deploy passes no `--var`. A secret may not
+  share a deployed var's name, so neither is named like the vars the script used to deploy (`APNS_TOPIC`,
+  `RELAY_REGISTRATION`): a relay set up that way gets the secrets on its next run, stays closed by its old var until
+  the deploy drops it, and by the secret after. The bundle id must suit both stores (letters and digits, each part
+  starting with a letter), the same rule as the app's `BRIGADE_APP_ID`. It does not deploy the API: the production build already binds
   `RELAY` to `brigade-relay`, so the operator builds and deploys the API again.
 - **Tests:** apps/relay `test/registry.test.ts` (closed registration) and `test/setup-relay.test.ts`, which runs every
   flow against the relay's own `handle` and a fake wrangler: the terms refused, a wrong code, codes rate limited, the

@@ -2,10 +2,11 @@
 
 The push relay (RFC 0006): a Cloudflare Worker that forwards encrypted pushes to APNs (iPhones) and FCM (Android). It
 never sees content, only a device token, an envelope sealed with
-[`@freecorps/brigade-push`](../../packages/push/README.md) and an urgency. For now it is spike S1's relay
-([write-up](../../docs/spikes/s1-apns-encryption.md)) plus FCM, and instance registration (RFC 0015, see "Instance
-registration"); no handles or `/v1/send` yet, and so no limit on sends: the per-IP limit covers the instance routes
-only.
+[`@freecorps/brigade-push`](../../packages/push/README.md) and an urgency. Two ways in: `/send`, spike S1's route
+([write-up](../../docs/spikes/s1-apns-encryption.md)) plus FCM, which takes a raw device token from whoever holds
+`RELAY_SEND_TOKEN` (our own instance, until every app sends handles); and the `/v1` instance protocol of RFC 0015:
+instance registration (see "Instance registration") and handles, `/v1/send` and the signed deep health (see "Handles
+and /v1/send"). Both send routes share the delivery code (`src/send.ts`), so they answer alike.
 
 | Route                | Response                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -107,7 +108,7 @@ that lookup fails, the answer is `503 registry_unavailable`.
 
 Every `/v1/` path answers `503 not_configured` without the `REGISTRY` binding, and `503 registry_unavailable` when
 the object cannot be reached: registration and anything that grants a capability fail closed. Only the send path's
-revocation check (`isRevoked`, for `/v1/send` later) fails open, so a registry outage never stops a page. Records that
+revocation check (`isRevoked`, on `/v1/send`) fails open, so a registry outage never stops a page. Records that
 exist are cached per isolate for 60 s (a revocation takes up to a minute to apply); a missing one is never cached.
 `/send` and `/health` do not use any of this.
 
@@ -123,6 +124,52 @@ Sending (as `apps/api`), are still to be added; until then `/v1/instances/contac
 its record, `200`). The setup script will register the relay's one instance
 through a closed-mode registration authorized by a relay admin secret, in a later slice; until then a closed relay
 refuses every registration.
+
+## Handles and /v1/send
+
+RFC 0015 sections 2 and 3 (`src/handles.ts`, `src/v1.ts`). The app asks the relay for a **handle**, its tokens sealed
+for one instance, and gives the instance only that; the instance sends with the handle, signed with its key. Nothing
+is stored: the relay opens the handle on each send.
+
+| Route                   | Who                               | Body                                                                           | Answers                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------------- | --------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /v1/handles`      | The app, unsigned                 | `{ instance, platform, environment, pushToken, voipToken? }`                   | `200 { handle, tag }`; `400 invalid_body`; `403 instance_unregistered` or `instance_revoked`; `503 registry_unavailable` (fails closed: an unknown id never gets a handle); `429 rate_limited { limit: "ip" }`                                                                                                                                                 |
+| `POST /v1/send`         | The instance, signed              | `/send`'s body with `handle` instead of `deviceToken`/`platform`/`environment` | As `/send` (`200`, `502` with the provider's reason, `400 invalid_body`, `500 relay_misconfigured`), plus `401 bad_signature`/`missing_signature`/`stale_timestamp`, `400 bad_handle`, `403 handle_not_yours`, `403 instance_revoked`, `429 rate_limited { limit }` with `Retry-After`, `503 registry_unavailable` (a rotated key the registry cannot confirm) |
+| `GET /v1/health?deep=1` | The instance, signed (empty body) | none                                                                           | `/health?deep=1`'s `{ ok, apns, fcm }` plus `handles` (whether the handle keys are set and parse) and `instance`; `503` unless all are ok; `401` for a bad signature, `403 instance_unregistered`/`instance_revoked`, `503 registry_unavailable`, `429 rate_limited`. Without `deep=1`, `200 {"ok":true}`                                                      |
+
+**Minting.** `platform` is `ios` or `android`. On iOS `environment` (`sandbox` or `production`) is required and
+`pushToken` (and `voipToken`, the PushKit token, for calls) are hex APNs tokens, lowercased before sealing; on
+Android `pushToken` is the FCM token, `environment` optional, and there is no `voipToken` (a call rings through the FCM
+token). Unknown fields are ignored, so a newer app still gets a handle. The handle is
+`<key id>.<base64url(nonce ‖ AES-256-GCM ciphertext ‖ tag)>`, sealing `{ v: 1, instance, platform, environment,
+pushToken, voipToken }` with the key id as additional data. The **tag** is base64url(HMAC-SHA-256(`RELAY_TAG_KEY`,
+instance ‖ 0x00 ‖ pushToken)): the same for one token at one instance however many times it is sealed and whatever key
+sealed it, different at every other instance. The instance compares tags where it compared tokens.
+
+**Sending.** The signature is checked first (so no one spends another instance's limits), then the sender: on the
+instance's original key only revocation is read, and a registry that does not answer is logged and **fails open** (the
+handle could only have been minted for a registered instance); a rotated key must be confirmed by the registry, else
+`503 registry_unavailable`, which the instance retries. Then the handle: one that does not open (tampered, sealed by
+another relay, a retired key id) is `400 bad_handle`; one sealed for another instance `403 handle_not_yours`, which the
+instance treats like `BadDeviceToken`. Calls and Critical Alerts are still a page's only, as on `/send`; a call to an
+iPhone handle without a VoIP token is `400 invalid_body`.
+
+**Limits** (decision D4, Workers Rate Limiting, each binding optional): `SEND_LIMIT` 600 sends a minute per instance
+id, `CALL_LIMIT` 60 calls a minute per instance id on top, `PHONE_LIMIT` 30 a minute per phone keyed by the tag (every
+handle of one token counts together; not the handle, which differs on every sealing), `HANDLE_LIMIT` 60 handles a minute
+per caller IP. A page is never exempt. Only a send that passed every check counts, and a signed deep health counts as
+one send (it asks APNs). `429 { error: "rate_limited", limit: "instance" | "calls" | "phone" | "ip" }`, always
+`Retry-After: 60` (the binding does not say when its window ends). A limiter that throws lets the call through, logged.
+Workers Rate Limiting counts per Cloudflare location and settles eventually, so the limits are approximate (Q28).
+
+**The handle keys.** `RELAY_HANDLE_KEYS` is a JSON keyring, `{ "current": "<id>", "keys": { "<id>": "<32 random bytes,
+base64url>" } }` (ids: 1 to 16 letters or digits). The current key seals; every key listed opens. To rotate, add a key
+and make it `current`; keep the old one listed for at least 13 months (a phone opened once a year still works; each
+registration re-seals with the current key). Drop a key early only if it leaked: then every phone must open the app once
+to be paged again. `RELAY_TAG_KEY` is at least 32 random bytes, base64url, and **never rotates** (a new one changes every
+tag, and the instance would take every phone for a new one). Without either secret `/v1/handles` and `/v1/send` answer
+`503 not_configured` (and the deep health `handles: false`); one that does not parse is `500 relay_misconfigured`.
+`/send` needs neither.
 
 ## Configuration
 
@@ -140,10 +187,18 @@ the config:
 Optional, for Android: `FCM_SERVICE_ACCOUNT`, the Google service account's JSON key (see "Setting up FCM"). Not in
 `secrets.required`, so a relay without it still deploys and serves iPhones.
 
+Optional, for handles and `/v1/send` (see "Handles and /v1/send"): `RELAY_HANDLE_KEYS` (the keyring) and
+`RELAY_TAG_KEY`. Not in `secrets.required` either, so `/send` keeps deploying without them. Make each key with
+`openssl rand -base64 32 | tr '+/' '-_' | tr -d '='` (32 random bytes in base64url) into the secrets file outside
+the repository, never into this repository or a shell history.
+
+The rate limits (`CODE_LIMIT`, `HANDLE_LIMIT`, `SEND_LIMIT`, `CALL_LIMIT`, `PHONE_LIMIT`) are config only, declared in
+`wrangler.jsonc` for both environments with their own namespace ids; nothing to create.
+
 ```bash
 vp run build:dev                                                          # builds the dev environment into dist/
 bunx wrangler deploy --secrets-file ~/.config/brigade/relay-dev-secrets.json  # deploys it with its secrets
-vp test                                                                   # JWTs, request builders and /send (Node, fetch stubbed)
+vp test                                                                   # JWTs, request builders, /send and /v1 (Node, fetch stubbed)
 ```
 
 ## Sending a test push

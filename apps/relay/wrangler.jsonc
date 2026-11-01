@@ -25,12 +25,20 @@
   // creates the class; nothing to set up by hand. Not inherited by `env.dev`, so repeated there.
   "durable_objects": { "bindings": [{ "name": "REGISTRY", "class_name": "RegistryDO" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RegistryDO"] }],
-  // Per caller IP, on every /v1/instances route (src/instances.ts). Config only, nothing to create; optional.
+  // Workers Rate Limiting (config only, nothing to create; each is optional in the code). CODE_LIMIT: per caller IP, on
+  // every /v1/instances route (src/instances.ts). The rest are RFC 0015 section 3 (src/v1.ts): HANDLE_LIMIT per caller
+  // IP on /v1/handles; SEND_LIMIT and CALL_LIMIT per instance id (decision D4); PHONE_LIMIT per phone (the tag).
   "ratelimits": [
     { "name": "CODE_LIMIT", "namespace_id": "4201", "simple": { "limit": 5, "period": 60 } },
+    { "name": "HANDLE_LIMIT", "namespace_id": "4211", "simple": { "limit": 60, "period": 60 } },
+    { "name": "SEND_LIMIT", "namespace_id": "4221", "simple": { "limit": 600, "period": 60 } },
+    { "name": "CALL_LIMIT", "namespace_id": "4231", "simple": { "limit": 60, "period": 60 } },
+    { "name": "PHONE_LIMIT", "namespace_id": "4241", "simple": { "limit": 30, "period": 60 } },
   ],
   // Set with `wrangler secret put` from files outside the repository; never in this file. `FCM_SERVICE_ACCOUNT` (the
   // Google service account's JSON key, for Android) is optional: without it the relay serves iPhones only (README).
+  // `RELAY_HANDLE_KEYS` (the handle keyring) and `RELAY_TAG_KEY` (RFC 0015 section 2) are optional too: without them
+  // `/v1/handles` and `/v1/send` answer 503 not_configured and `/send` keeps working (README "Handles and /v1/send").
   "secrets": { "required": ["APNS_KEY", "APNS_KEY_ID", "APNS_TEAM_ID", "RELAY_SEND_TOKEN"] },
   "env": {
     "dev": {
@@ -47,6 +55,10 @@
       "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RegistryDO"] }],
       "ratelimits": [
         { "name": "CODE_LIMIT", "namespace_id": "4202", "simple": { "limit": 5, "period": 60 } },
+        { "name": "HANDLE_LIMIT", "namespace_id": "4212", "simple": { "limit": 60, "period": 60 } },
+        { "name": "SEND_LIMIT", "namespace_id": "4222", "simple": { "limit": 600, "period": 60 } },
+        { "name": "CALL_LIMIT", "namespace_id": "4232", "simple": { "limit": 60, "period": 60 } },
+        { "name": "PHONE_LIMIT", "namespace_id": "4242", "simple": { "limit": 30, "period": 60 } },
       ],
     },
   },

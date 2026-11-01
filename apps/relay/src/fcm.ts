@@ -223,7 +223,7 @@ export interface FcmPush {
 /** FCM's limit on a data message's payload. */
 export const FCM_DATA_MAX_BYTES = 4096;
 /** Registration tokens are about 160 characters of base64url and `:`; Google says not to rely on the form. */
-const FCM_TOKEN = /^[A-Za-z0-9_:-]{16,512}$/;
+export const FCM_TOKEN = /^[A-Za-z0-9_:-]{16,512}$/;
 const COLLAPSE_ID_MAX_BYTES = 64;
 
 /**

@@ -72,7 +72,7 @@ export function voipTopic(topic: string): string {
 }
 
 /** Device tokens are 32 bytes today; Apple says to treat the length as variable. */
-const DEVICE_TOKEN = /^[0-9a-f]{64,200}$/i;
+export const DEVICE_TOKEN = /^[0-9a-f]{64,200}$/i;
 const COLLAPSE_ID_MAX_BYTES = 64;
 
 /** The APNs request, ready for `fetch`. Throws on a malformed device token or collapse id. */

@@ -37,6 +37,8 @@ export type InstanceStorage = {
   workspace: string;
   /** The relay handle (src/lib/relay.ts `HandleRecord`). */
   handle: string;
+  /** A sign-out nobody heard nor kept (src/lib/switcher.ts `UnfinishedSignOut`), which removing it retries. */
+  unfinished: string;
 };
 
 export function instanceStorage(id: string): InstanceStorage {
@@ -47,6 +49,7 @@ export function instanceStorage(id: string): InstanceStorage {
       workspaces: PHONE_WORKSPACES_KEY,
       workspace: WORKSPACE_KEY,
       handle: "brigade.handle",
+      unfinished: "brigade.unfinished",
     };
   }
   return {
@@ -54,6 +57,7 @@ export function instanceStorage(id: string): InstanceStorage {
     workspaces: `brigade.${id}.workspaces`,
     workspace: `brigade_${id}_workspace`,
     handle: `brigade.${id}.handle`,
+    unfinished: `brigade.${id}.unfinished`,
   };
 }
 
@@ -167,6 +171,25 @@ export function withoutInstance(list: Instances, id: string): Instances {
   return { instances, active };
 }
 
+/**
+ * Where a session for the dashboard at `origin` would be kept on this phone: the listed instance's storage prefix, or,
+ * for the build's default origin while it is not listed (removed), the default instance's keys from before (`brigade`),
+ * where a cookie may be left. Undefined for an origin the phone never had: a new instance gets a new id, so nothing
+ * can be kept for it yet.
+ */
+export function sessionHome(
+  list: Instances,
+  origin: string,
+  defaultOrigin: string | undefined,
+): Instance | undefined {
+  const listed = instanceAt(list, origin);
+  if (listed) return listed;
+  const normalized = originOf(origin);
+  return normalized !== undefined && normalized === defaultOrigin
+    ? { id: DEFAULT_INSTANCE, origin: normalized }
+    : undefined;
+}
+
 /** With instance `id` active; unchanged when it is not listed. */
 export function withActive(list: Instances, id: string): Instances {
   return list.instances.some((one) => one.id === id) ? { ...list, active: id } : list;
@@ -225,18 +248,61 @@ export function instancesStore(deps: {
         listeners.delete(listener);
       };
     },
-    /** Adds the instance at `origin` (not made active), or finds it; `full` or `invalid` adds nothing. */
+    /**
+     * Adds the instance at `origin` (not made active), or finds it; `full` or `invalid` adds nothing. The build's
+     * default instance, removed and added again, comes back as itself (`DEFAULT_INSTANCE`, with its keys). `created`:
+     * whether this call added it to the stored list (false when it was there, in storage if not yet in memory), so a
+     * caller that has to undo its own add removes only a row it made.
+     */
     add: (origin: string) =>
-      change<Instance | "full" | "invalid">((list) => {
-        const added = withInstance(list, origin, deps.newId());
+      change<{ instance: Instance; created: boolean } | "full" | "invalid">((list) => {
+        const id =
+          deps.defaultOrigin !== undefined && originOf(origin) === deps.defaultOrigin
+            ? DEFAULT_INSTANCE
+            : deps.newId();
+        const added = withInstance(list, origin, id);
         return typeof added === "string"
           ? { list, result: added }
-          : { list: added.list, result: added.instance };
+          : {
+              list: added.list,
+              result: { instance: added.instance, created: added.list !== list },
+            };
       }),
     remove: (id: string) =>
       change((list) => ({ list: withoutInstance(list, id), result: undefined })),
+    /**
+     * The member's Remove: refused (`last`) when it would leave no instance, or the instance is not listed, decided
+     * on the list as stored, in turn with every other change, so two removals at once never leave none.
+     */
+    removeUnlessLast: (id: string) =>
+      change<"removed" | "last">((list) =>
+        list.instances.length <= 1 || !list.instances.some((one) => one.id === id)
+          ? { list, result: "last" }
+          : { list: withoutInstance(list, id), result: "removed" },
+      ),
     activate: (id: string) => change((list) => ({ list: withActive(list, id), result: undefined })),
   };
 }
 
 export type InstancesStore = ReturnType<typeof instancesStore>;
+
+/**
+ * Adds (or finds) the instance at `origin` and runs `keep` for it (storing a session there); when `keep` fails, the
+ * row is removed again only if this call created it, so an instance already stored is never lost to a failed keep.
+ * Throws `full` or `invalid` as an Error, and whatever `keep` threw.
+ */
+export async function addAndKeep(
+  store: Pick<InstancesStore, "add" | "remove">,
+  origin: string,
+  keep: (instance: Instance) => Promise<void>,
+): Promise<Instance> {
+  const added = await store.add(origin);
+  if (typeof added === "string") throw new Error(added);
+  try {
+    await keep(added.instance);
+  } catch (error) {
+    if (added.created) await store.remove(added.instance.id).catch(() => {});
+    throw error;
+  }
+  return added.instance;
+}

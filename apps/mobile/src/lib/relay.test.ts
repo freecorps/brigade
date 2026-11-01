@@ -3,6 +3,7 @@
 import { describe, expect, test } from "vite-plus/test";
 import type { DeviceRegistration } from "./device";
 import {
+  withDeadline,
   buildRelay,
   FREECORPS_BRIGADE,
   FREECORPS_RELAY,
@@ -371,4 +372,20 @@ describe("registering with a handle", () => {
     expect(at.minted).toHaveLength(2);
     expect(at.minted[1]).toMatchObject({ body: { instance: OTHER_INSTANCE } });
   });
+});
+
+test("withDeadline: past the deadline it rejects, and the late run's own rejection is handled", async () => {
+  let aborted = false;
+  const late = withDeadline(5, (signal) => {
+    signal.addEventListener("abort", () => {
+      aborted = true;
+    });
+    // An aborted fetch rejects after the race settled: nobody awaits it.
+    return new Promise<never>((_, reject) => setTimeout(() => reject(new Error("aborted")), 20));
+  });
+  await expect(late).rejects.toThrow("Timed out");
+  expect(aborted).toBe(true);
+  // Let the losing run reject; the test fails on an unhandled rejection.
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  expect(await withDeadline(50, async () => "answer")).toBe("answer");
 });

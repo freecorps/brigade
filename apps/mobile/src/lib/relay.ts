@@ -31,6 +31,43 @@ export type InstanceConfig =
   | { kind: "brigade"; versioned: boolean; relay?: InstanceRelay }
   | { kind: "unreachable" };
 
+/**
+ * `run` within `ms`: aborted then (its `signal`), and rejected at that moment whatever `run` still waits on, such as
+ * an answer's body that never ends, which an abort alone may not stop. Not `AbortSignal.timeout`, which Hermes may
+ * lack.
+ */
+export function withDeadline<T>(ms: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const abort = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      abort.abort();
+      reject(new Error("Timed out"));
+    }, ms);
+  });
+  const running = run(abort.signal);
+  // The loser of the race (an aborted fetch rejecting after the deadline) is nobody's to handle: no unhandled
+  // rejection. The race still sees `running`'s own outcome when it wins.
+  running.catch(() => {});
+  return Promise.race([running, late]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * `relay.app`, the own app build's store link, when it is one the app may open: an `https://` URL with a host and no
+ * username or password (as the API and the dashboard accept it); undefined otherwise.
+ */
+export function appLink(value: unknown): string | undefined {
+  if (typeof value !== "string" || !/^https:\/\//i.test(value)) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || !url.hostname || url.username || url.password)
+      return undefined;
+    return value;
+  } catch {
+    return undefined;
+  }
+}
+
 /** `/config`'s answer, read strictly: a relay with a bad origin or instance id is no relay. */
 export function parseConfig(body: unknown): InstanceConfig {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -50,7 +87,7 @@ export function parseConfig(body: unknown): InstanceConfig {
     relay: {
       origin: relayOrigin,
       instance,
-      ...(typeof app === "string" && app.startsWith("https://") ? { app } : {}),
+      ...(appLink(app) ? { app: appLink(app) } : {}),
     },
   };
 }

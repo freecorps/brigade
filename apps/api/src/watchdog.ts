@@ -52,10 +52,22 @@ const HOUR_MS = 60 * 60 * 1000;
 export const TRANSIENT_FAILURES_TO_DEGRADE = 3;
 
 /**
- * What the consumer found at the relay: `ok` when it took the send token (src/notify.ts), `unauthorized` when it
- * refused it, `unreachable` for anything else.
+ * What the consumer found at the relay: `ok` when it took the send token or the instance's signature (src/notify.ts),
+ * `unauthorized` when it refused the send token, `unreachable` for anything else. With an instance key (RFC 0015
+ * section 7), the signed deep health's own refusals: `bad_signature` (a key the relay does not take, or one that does
+ * not read), `instance_unregistered` (not registered yet, or registered on another relay), `instance_revoked`,
+ * `rate_limited` (the relay's limits), and `handles_unavailable` (the relay answers but cannot open handles).
  */
-export type RelayHealth = "ok" | "unauthorized" | "unreachable" | "not_configured";
+export type RelayHealth =
+  | "ok"
+  | "unauthorized"
+  | "unreachable"
+  | "not_configured"
+  | "bad_signature"
+  | "instance_unregistered"
+  | "instance_revoked"
+  | "rate_limited"
+  | "handles_unavailable";
 /**
  * What the beat's deeper checks found (Q19): the push providers through the relay's `GET /health?deep=1` (APNs took
  * the relay's provider token; FCM gave it an access token), and one cheap D1 read. `unknown`: not checked (an older
@@ -68,7 +80,16 @@ export type CheckHealth = "ok" | "error" | "not_configured" | "unknown";
  * beats in a row; `error` (a refused key or account) counts at once.
  */
 export type BeatCheck = CheckHealth | "transient";
-export type BeatChecks = { apns: BeatCheck; fcm: BeatCheck; d1: BeatCheck };
+export type BeatChecks = {
+  apns: BeatCheck;
+  fcm: BeatCheck;
+  d1: BeatCheck;
+  /**
+   * The send token's own check (`POST /send` with no body) when the relay's answer was its signed deep check and
+   * `RELAY_SEND_TOKEN` is set too (RFC 0015 section 9: raw-token phones still page through `/send`). Absent otherwise.
+   */
+  sendToken?: RelayHealth;
+};
 export type DegradedReason =
   | "no_beat"
   | "pipeline_stalled"
@@ -76,6 +97,11 @@ export type DegradedReason =
   | "relay_unauthorized"
   | "relay_unreachable"
   | "relay_not_configured"
+  | "relay_bad_signature"
+  | "relay_instance_unregistered"
+  | "relay_instance_revoked"
+  | "relay_rate_limited"
+  | "relay_handles_unavailable"
   | "apns_failing"
   | "fcm_failing"
   | "d1_failing";
@@ -127,6 +153,8 @@ type Keys =
   | "apns_failures"
   | "fcm_failures"
   | "d1_failures"
+  | "send_token"
+  | "relay_limited"
   | "status"
   | "reasons"
   | "last_ping_at"
@@ -199,20 +227,23 @@ export class WatchdogDO extends DurableObject<Env> {
     const beatAt = Date.parse(beatTime);
     const known = Number(this.get("proved_beat_at") ?? Number.NEGATIVE_INFINITY);
     if (!Number.isFinite(beatAt) || beatAt <= known) return this.health(now);
-    const failing = this.ctx.storage.transactionSync(() => {
+    const pages = this.ctx.storage.transactionSync(() => {
       this.set("proved_beat_at", String(beatAt));
       this.set("last_proved_at", String(now));
-      this.set("relay", relay);
+      const recorded = this.relayCheck(relay);
+      const token = checks?.sendToken;
+      if (token === undefined) this.delete("send_token");
+      else this.set("send_token", token);
       for (const key of ["apns", "fcm", "d1"] as const) this.check(key, checks?.[key] ?? "unknown");
       const failed = (["apns", "fcm", "d1"] as const).some((key) => this.get(key) === "error");
-      // "The last time a page could have gone out": not while APNs, FCM or D1 is failing.
-      if (relay === "ok" && !failed) this.set("last_ok_at", String(now));
+      // "The last time a page could have gone out": not while APNs, FCM or D1 is failing, nor the send token.
+      const up = recorded === "ok" && (token === undefined || token === "ok") && !failed;
+      if (up) this.set("last_ok_at", String(now));
       this.settle(now);
-      return failed;
+      return up;
     });
     this.ctx.waitUntil(this.emailOperators(now));
     await this.armDrain(now);
-    const pages = relay === "ok" && !failing;
     if (pages && now - beatAt <= MAX_PROOF_LATENCY_MS) this.ctx.waitUntil(this.ping(now));
     else if (pages) log("heartbeat too late to ping", { latencyMs: now - beatAt });
     return this.health(now);
@@ -296,6 +327,7 @@ export class WatchdogDO extends DurableObject<Env> {
           provedBeatAt: num(this.get("proved_beat_at")),
           lastProvedAt: num(this.get("last_proved_at")),
           relay: this.get("relay") as RelayHealth | null,
+          sendToken: this.get("send_token") as RelayHealth | null,
           apns: this.get("apns") as CheckHealth | null,
           fcm: this.get("fcm") as CheckHealth | null,
           d1: this.get("d1") as CheckHealth | null,
@@ -328,6 +360,24 @@ export class WatchdogDO extends DurableObject<Env> {
     const failures = Number(this.get(count) ?? 0) + 1;
     this.set(count, String(failures));
     if (failures >= TRANSIENT_FAILURES_TO_DEGRADE) this.set(key, "error");
+  }
+
+  /**
+   * Records what a proved beat found at the relay, and returns what counts. The relay's limits (`rate_limited`) are
+   * transient: its signed deep check is limited per caller IP, and instances on Workers may share Cloudflare's egress
+   * addresses (Q28), so one limited answer says little. Until the `TRANSIENT_FAILURES_TO_DEGRADE`th in a row the relay
+   * keeps what it was (nothing, before any answer); anything else is recorded as it is and starts the count again.
+   */
+  private relayCheck(found: RelayHealth): RelayHealth | null {
+    if (found !== "rate_limited") {
+      this.set("relay_limited", "0");
+      this.set("relay", found);
+      return found;
+    }
+    const limited = Number(this.get("relay_limited") ?? 0) + 1;
+    this.set("relay_limited", String(limited));
+    if (limited >= TRANSIENT_FAILURES_TO_DEGRADE) this.set("relay", found);
+    return this.get("relay") as RelayHealth | null;
   }
 
   /** Drains the outbox to the Queue; comes back when a failed send's backoff ends. */
@@ -431,6 +481,10 @@ export class WatchdogDO extends DurableObject<Env> {
       value,
     );
   }
+
+  private delete(key: Keys): void {
+    this.ctx.storage.sql.exec("delete from watchdog_state where key = ?", key);
+  }
 }
 
 /**
@@ -441,7 +495,8 @@ export class WatchdogDO extends DurableObject<Env> {
  *   the Queue is backed up);
  * - `pipeline_slow`: the last proof took longer than `MAX_PROOF_LATENCY_MS`, which pings nothing;
  * - `relay_unauthorized` / `relay_unreachable` / `relay_not_configured`: what the consumer found at the relay on the
- *   last proof;
+ *   last proof; with an instance key (RFC 0015), `relay_bad_signature` / `relay_instance_unregistered` /
+ *   `relay_instance_revoked` / `relay_rate_limited` / `relay_handles_unavailable` from its signed deep health;
  * - `apns_failing` / `fcm_failing` / `d1_failing`: the deeper checks (Q19): APNs refused the relay's provider token,
  *   FCM refused the service account, or (on `TRANSIENT_FAILURES_TO_DEGRADE` proofs in a row) a provider or the D1
  *   read did not answer.
@@ -455,6 +510,8 @@ export function pagingStatus(
     provedBeatAt: number | null;
     lastProvedAt: number | null;
     relay: RelayHealth | null;
+    /** The send token's check beside the signed one (`BeatChecks.sendToken`); null or absent without it. */
+    sendToken?: RelayHealth | null;
     apns?: CheckHealth | null;
     fcm?: CheckHealth | null;
     d1?: CheckHealth | null;
@@ -469,14 +526,25 @@ export function pagingStatus(
   if (provedBeatAt !== null && lastProvedAt !== null) {
     if (lastProvedAt - provedBeatAt > MAX_PROOF_LATENCY_MS) reasons.push("pipeline_slow");
   }
-  if (relay === "unauthorized") reasons.push("relay_unauthorized");
-  if (relay === "unreachable") reasons.push("relay_unreachable");
+  if (relay === "unauthorized" || times.sendToken === "unauthorized") {
+    reasons.push("relay_unauthorized");
+  }
+  if (relay === "unreachable" || times.sendToken === "unreachable") {
+    reasons.push("relay_unreachable");
+  }
   if (relay === "not_configured") reasons.push("relay_not_configured");
+  if (relay === "bad_signature") reasons.push("relay_bad_signature");
+  if (relay === "instance_unregistered") reasons.push("relay_instance_unregistered");
+  if (relay === "instance_revoked") reasons.push("relay_instance_revoked");
+  if (relay === "rate_limited") reasons.push("relay_rate_limited");
+  if (relay === "handles_unavailable") reasons.push("relay_handles_unavailable");
   if (times.apns === "error") reasons.push("apns_failing");
   if (times.fcm === "error") reasons.push("fcm_failing");
   if (times.d1 === "error") reasons.push("d1_failing");
   if (reasons.length > 0) return { status: "degraded", reasons };
-  return { status: lastProvedAt === null ? "unknown" : "ok", reasons };
+  // A relay not known yet (every proof so far met only its limits, `relayCheck`) proves nothing: the beat pinged
+  // nothing either, so the dashboard and the external check agree.
+  return { status: lastProvedAt === null || relay === null ? "unknown" : "ok", reasons };
 }
 
 /**

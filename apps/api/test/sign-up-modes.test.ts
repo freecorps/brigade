@@ -11,6 +11,8 @@ import {
   verifiedEmailRequired,
   type SignUpMode,
 } from "../src/sign-up.ts";
+import { generateInstanceKey } from "@freecorps/brigade-push/instance";
+import { BRIGADE_API_VERSION, MIN_APP_VERSION } from "../src/relay-instance.ts";
 import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
@@ -75,6 +77,9 @@ const signIn = (address: string, vars: Record<string, string | undefined> = {}) 
 
 /** An instance with no email sender at all: no `EMAIL_FROM`, and not the dev log double. */
 const NO_EMAIL = { EMAIL_LOG: undefined, EMAIL_FROM: undefined };
+
+/** What every `GET /config` says of the API (RFC 0015 section 5). */
+const BRIGADE = { api: BRIGADE_API_VERSION, minApp: MIN_APP_VERSION };
 
 /** An owner with a workspace, verified (to invite), signed up on the tests' open instance. */
 async function owner() {
@@ -217,8 +222,98 @@ describe("GET /config", () => {
     ] as const) {
       const response = await under(mode, "/config");
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ signUp: expected, requireVerifiedEmail: false });
+      expect(await response.json()).toEqual({
+        signUp: expected,
+        requireVerifiedEmail: false,
+        brigade: BRIGADE,
+      });
       expect(response.headers.get("Cache-Control")).toBe("public, max-age=60");
+    }
+  });
+
+  test("names the relay and this instance's id when phones can be paged with handles (RFC 0015)", async () => {
+    const key = await generateInstanceKey();
+    const relay = {
+      RELAY_URL: "https://relay.example.com/some/path",
+      RELAY_INSTANCE_KEY: key.privateKey,
+    };
+    const config = await (await under("open", "/config", {}, relay)).json();
+    expect(config).toMatchObject({
+      brigade: BRIGADE,
+      relay: { origin: "https://relay.example.com", instance: key.instance },
+    });
+    expect(Reflect.get(Object(config), "relay")).not.toHaveProperty("app");
+    // Never the key, whole or in part.
+    expect(JSON.stringify(config)).not.toContain(key.privateKey.slice(0, 16));
+    // An own app build's store link, for the store app to send people there.
+    const own = await under(
+      "open",
+      "/config",
+      {},
+      {
+        ...relay,
+        RELAY_APP_URL: "https://apps.example.com/acme-brigade",
+      },
+    );
+    expect(await own.json()).toMatchObject({
+      relay: { app: "https://apps.example.com/acme-brigade" },
+    });
+    // A link with credentials in it is left out of the public, cached answer.
+    const leaky = await (
+      await under(
+        "open",
+        "/config",
+        {},
+        {
+          ...relay,
+          RELAY_APP_URL: "https://user:secret@apps.example.com/acme-brigade",
+        },
+      )
+    ).json();
+    expect(Reflect.get(Object(leaky), "relay")).toMatchObject({ instance: key.instance });
+    expect(Reflect.get(Object(leaky), "relay")).not.toHaveProperty("app");
+    expect(JSON.stringify(leaky)).not.toContain("secret");
+  });
+
+  test("after a key rotation, the instance's first id (RELAY_INSTANCE_ID), never the new key's", async () => {
+    const first = await generateInstanceKey();
+    const rotated = await generateInstanceKey();
+    const config = await (
+      await under(
+        "open",
+        "/config",
+        {},
+        {
+          RELAY_URL: "https://relay.example.com",
+          RELAY_INSTANCE_KEY: rotated.privateKey,
+          RELAY_INSTANCE_ID: first.instance,
+        },
+      )
+    ).json();
+    expect(config).toMatchObject({ relay: { instance: first.instance } });
+  });
+
+  test("no relay without the instance key, a relay address or a key that reads", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const key = await generateInstanceKey();
+      for (const vars of [
+        { RELAY_URL: "https://relay.example.com" },
+        { RELAY_INSTANCE_KEY: key.privateKey },
+        { RELAY_URL: "http://relay.example.com", RELAY_INSTANCE_KEY: key.privateKey },
+        { RELAY_URL: "https://relay.example.com", RELAY_INSTANCE_KEY: "not-a-key" },
+        {
+          RELAY_URL: "https://relay.example.com",
+          RELAY_INSTANCE_KEY: key.privateKey,
+          RELAY_INSTANCE_ID: "ins_short",
+        },
+      ]) {
+        const config = await (await under("open", "/config", {}, vars)).json();
+        expect(config, JSON.stringify(Object.keys(vars))).not.toHaveProperty("relay");
+        expect(config).toMatchObject({ brigade: BRIGADE });
+      }
+    } finally {
+      error.mockRestore();
     }
   });
 
@@ -244,6 +339,7 @@ describe("an instance without email (Q21)", () => {
           signUp: "closed",
           signUpClosedBy: "no_email",
           requireVerifiedEmail: false,
+          brigade: BRIGADE,
         });
       }
       const told = error.mock.calls.filter((call) =>
@@ -252,7 +348,11 @@ describe("an instance without email (Q21)", () => {
       expect(told).toHaveLength(1);
       // Closed as asked is nothing to explain.
       const closed = await under("closed", "/config", {}, NO_EMAIL);
-      expect(await closed.json()).toEqual({ signUp: "closed", requireVerifiedEmail: false });
+      expect(await closed.json()).toEqual({
+        signUp: "closed",
+        requireVerifiedEmail: false,
+        brigade: BRIGADE,
+      });
     } finally {
       error.mockRestore();
     }
@@ -281,7 +381,11 @@ describe("REQUIRE_VERIFIED_EMAIL (Q21)", () => {
       expect(verifiedEmailRequired(value)).toBe(false);
     }
     const config = await under("open", "/config", {}, on);
-    expect(await config.json()).toEqual({ signUp: "open", requireVerifiedEmail: true });
+    expect(await config.json()).toEqual({
+      signUp: "open",
+      requireVerifiedEmail: true,
+      brigade: BRIGADE,
+    });
     const address = email("Kai");
     expect((await signUp("open", address, {}, on)).status).toBe(200);
     const refused = await signIn(address, on);

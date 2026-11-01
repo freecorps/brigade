@@ -61,6 +61,7 @@ import { ACK_STATUS, INVITATION_STATUS, MEMBER_STATUS, RECEIPT_STATUS, USER_ID }
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
 import { pruneEmailDays } from "./email-ceiling.ts";
 import { instanceAccess, serveConfig, type AccessEnv } from "./sign-up.ts";
+import { relayConfig, type RelayInstanceEnv } from "./relay-instance.ts";
 import { BOOTSTRAP_PATH, bootstrapFirstUser } from "./bootstrap.ts";
 import { forgetSessionEnd, recordSessionEnd, sweepSessionEnds } from "./session-end.ts";
 import { within } from "./deadline.ts";
@@ -183,7 +184,10 @@ export default {
     if (sync !== undefined) return openSync(request, env, auth, sync, waitUntil);
     if (pathname === "/workspaces") return createWorkspace(request, auth);
     // Before anyone signs in: the sign-up mode, and the first owner of a new instance (RFC 0002 "Auth").
-    if (pathname === "/config") return serveConfig(request, instanceAccess(env as SetupEnv));
+    if (pathname === "/config") {
+      const setup = env as SetupEnv;
+      return serveConfig(request, instanceAccess(setup), await relayConfig(setup));
+    }
     if (pathname === BOOTSTRAP_PATH) {
       return bootstrapFirstUser(request, (env as SetupEnv).BOOTSTRAP_TOKEN, env.DB, auth);
     }
@@ -439,7 +443,7 @@ async function memberRoles(db: D1Database, userId: string): Promise<Role[]> {
  * send email at all (src/email.ts); and the optional secret `BOOTSTRAP_TOKEN` (src/bootstrap.ts), which only a new
  * instance needs, until its first user exists.
  */
-type SetupEnv = AccessEnv & { BOOTSTRAP_TOKEN?: string };
+type SetupEnv = AccessEnv & RelayInstanceEnv & { BOOTSTRAP_TOKEN?: string };
 
 /**
  * Better Auth on this Worker's D1 for one request; a new workspace gets its shard provisioned right away.

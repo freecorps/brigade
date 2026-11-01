@@ -239,7 +239,7 @@ async function pagedMembers(ws: Workspace, tokens: string[]) {
       ...new Set(
         shard.store
           .scan("devices")
-          .filter((device) => tokens.includes(device.pushToken))
+          .filter((device) => tokens.includes(device.pushToken!))
           .map((device) => device.userId),
       ),
     ].sort(),
@@ -1648,7 +1648,8 @@ async function deliverTry(event: BrigadeEvent, send: Fetch, attempts: number) {
 
 const pushTokenOf = (ws: Workspace, member: Actor) =>
   ws.withShard(
-    (shard) => shard.store.scan("devices").find((device) => device.userId === member.id)!.pushToken,
+    (shard) =>
+      shard.store.scan("devices").find((device) => device.userId === member.id)!.pushToken!,
   );
 
 const pagedEvents = async (ws: Workspace, incident: string) =>

@@ -6,6 +6,7 @@
 import {
   ALERTS_ACTOR,
   callChoiceOf,
+  canRing,
   deliveryId,
   type DeliveryError,
   ESCALATION_ACTOR,
@@ -18,6 +19,7 @@ import {
   type EscalationPage,
   type EscalationPaged,
   type DevicePlatform,
+  type DeviceRow,
   incidentPolicy,
   isCallDelivery,
   type IncidentPagedAgain,
@@ -156,10 +158,22 @@ export type PageTarget = {
   userId: string;
   platform: DevicePlatform;
   environment: PushEnvironment;
-  pushToken: string;
+  /** The raw push token, for the relay's `POST /send`; null for a device with a relay handle alone (RFC 0015). */
+  pushToken: string | null;
   publicKey: string;
   /** PushKit's token, for a page that rings as a call (RFC 0010); null without one. */
   voipToken: string | null;
+  /**
+   * The relay handle (RFC 0015 section 2), for `POST /v1/send` signed with the instance key, and its tag, which a
+   * push service's "token gone" expires the device by. Absent for a device with raw tokens alone (and from a shard of
+   * the version before handles, during a deploy).
+   */
+  handle?: string;
+  tag?: string;
+  /** Whether the handle can ring as a call; absent without a handle. */
+  voip?: boolean;
+  /** 2 when the app opens envelope version 2 (RFC 0015 section 4): its pages are sealed v2. Absent: version 1. */
+  envelope?: 2;
   /**
    * Whether the member allowed Critical Alerts on this device (RFC 0006 "Critical Alerts"). Absent from a shard of the
    * version before them (during a deploy): not allowed.
@@ -232,9 +246,14 @@ export type DeliveryDetail = { ms?: number; error?: DeliveryError; apnsReason?: 
 
 /**
  * What the relay answered for one device's call (RFC 0010), for its delivery row: never part of the page's own outcome.
- * `expiredVoipToken`: APNs said the PushKit token the call went to is gone, so it is cleared (`device.expireVoip`).
+ * `expiredVoipToken`: APNs said the PushKit token the call went to is gone, so it is cleared (`device.expireVoip`);
+ * `expiredVoipHandle` the same for a call sent with a relay handle (RFC 0015), which then stops ringing.
  */
-export type CallOutcome = { ok: boolean; expiredVoipToken?: string } & DeliveryDetail;
+export type CallOutcome = {
+  ok: boolean;
+  expiredVoipToken?: string;
+  expiredVoipHandle?: string;
+} & DeliveryDetail;
 
 /** One device's outcome, as the notifier reports it. */
 export type DeviceOutcome =
@@ -244,7 +263,8 @@ export type DeviceOutcome =
       ok: true;
       /** The call that rang the device after the alert push; absent when none was sent. */
       call?: CallOutcome;
-    } & DeliveryDetail)
+    } & DeliveryDetail &
+      HandleExpiry)
   | ({
       deviceId: string;
       userId: string;
@@ -255,7 +275,17 @@ export type DeviceOutcome =
        */
       expiredToken?: string;
       reason: SendFailure;
-    } & DeliveryDetail);
+    } & DeliveryDetail &
+      HandleExpiry);
+
+/**
+ * A push sent with a relay handle (RFC 0015) that says the handle is done: `expiredHandle` is the handle it went to
+ * (`device.expire` by it, so a device registered again meanwhile, even with the same token and tag, is kept). With
+ * `handleOnly` only the handle is (`403 handle_not_yours`), not the phone's token: a device with a raw token too keeps
+ * it, and the page may have gone through `/send` (an `ok` outcome). Without it the push service said the token is
+ * gone, and the device is dropped.
+ */
+export type HandleExpiry = { expiredHandle?: string; handleOnly?: boolean };
 
 /**
  * Whether an event asks for a page (RFC 0006 "Who is paged"), from the event alone: a declared incident (any
@@ -325,6 +355,25 @@ export function sendsCritical(
 
 const rank = (severity: Severity) => ["sev1", "sev2", "sev3", "sev4"].indexOf(severity);
 
+/** What the notifier needs of one registered device; a handle's fields only when it has one. */
+function targetOf(device: DeviceRow): PageTarget {
+  const { id, userId, platform, environment, pushToken, voipToken, publicKey } = device;
+  return {
+    deviceId: id,
+    userId,
+    platform,
+    environment,
+    pushToken,
+    voipToken,
+    criticalAlerts: device.criticalAlerts === true,
+    publicKey,
+    ...(device.handle && device.tag
+      ? { handle: device.handle, tag: device.tag, voip: device.voip === true }
+      : {}),
+    ...(device.envelope === 2 ? { envelope: 2 as const } : {}),
+  };
+}
+
 /**
  * Who a page goes to, until on-call schedules exist (Phase 2): the incident commander, if one is assigned, is still a
  * member who can respond, did not cause the event and has a device; otherwise every member who can respond (owner,
@@ -348,18 +397,7 @@ export function pageTargets(
   const members = store.scan("members");
   const devices = store.scan("devices");
   const devicesOf = (userId: string): PageTarget[] =>
-    devices
-      .filter((device) => device.userId === userId)
-      .map(({ id, platform, environment, pushToken, voipToken, criticalAlerts, publicKey }) => ({
-        deviceId: id,
-        userId,
-        platform,
-        environment,
-        pushToken,
-        voipToken,
-        criticalAlerts: criticalAlerts === true,
-        publicKey,
-      }));
+    devices.filter((device) => device.userId === userId).map(targetOf);
   const noDevices: string[] = [];
   const commander = everyone ? undefined : incident.roles?.commander;
   if (
@@ -565,7 +603,7 @@ export class Pager {
       call:
         rings &&
         // An iPhone's PushKit token, or an Android phone's FCM token registered for calls (RFC 0010).
-        Boolean(target.voipToken) &&
+        canRing(target) &&
         wantsCall(callChoiceOf(settings, target.userId), incident.severity),
     }));
     this.planStep(event, incident.id, now);
@@ -1204,19 +1242,7 @@ export class Pager {
       if (!member || member.role === "viewer") continue;
       const mine = devices.filter((device) => device.userId === userId);
       if (mine.length === 0) noDevices.push(userId);
-      for (const device of mine) {
-        const { id, platform, environment, pushToken, voipToken, publicKey } = device;
-        targets.push({
-          deviceId: id,
-          userId,
-          platform,
-          environment,
-          pushToken,
-          voipToken,
-          criticalAlerts: device.criticalAlerts === true,
-          publicKey,
-        });
-      }
+      for (const device of mine) targets.push(targetOf(device));
     }
     return { targets, noDevices };
   }
@@ -1254,19 +1280,44 @@ export class Pager {
           outcome.deviceId,
         );
         if (outcome.call?.expiredVoipToken !== undefined) {
-          this.expireVoip(event, outcome.deviceId, outcome.call.expiredVoipToken, now);
+          this.expireVoip(
+            event,
+            outcome.deviceId,
+            { voipToken: outcome.call.expiredVoipToken },
+            now,
+          );
+        } else if (outcome.call?.expiredVoipHandle !== undefined) {
+          this.expireVoip(event, outcome.deviceId, { handle: outcome.call.expiredVoipHandle }, now);
+        }
+        // Delivered through `/send` after the relay said the handle is not this instance's: the handle goes.
+        if (outcome.expiredHandle !== undefined) {
+          this.run(
+            NOTIFIER_ACTOR,
+            "notifier",
+            `expire:${event.id}:${outcome.deviceId}`,
+            "device.expire",
+            { id: outcome.deviceId, handle: outcome.expiredHandle, handleOnly: true },
+            now,
+          );
         }
         continue;
       }
       // A page the relay did not take is not on its way: it holds nothing back (`holding`).
       this.unplanUrgent(event, outcome.deviceId);
-      if (outcome.expiredToken !== undefined) {
+      // The token the push went to, or the handle it went to (RFC 0015).
+      const expired =
+        outcome.expiredHandle !== undefined
+          ? { handle: outcome.expiredHandle, ...(outcome.handleOnly ? { handleOnly: true } : {}) }
+          : outcome.expiredToken !== undefined
+            ? { pushToken: outcome.expiredToken }
+            : undefined;
+      if (expired) {
         this.run(
           NOTIFIER_ACTOR,
           "notifier",
           `expire:${event.id}:${outcome.deviceId}`,
           "device.expire",
-          { id: outcome.deviceId, pushToken: outcome.expiredToken },
+          { id: outcome.deviceId, ...expired },
           now,
         );
       }
@@ -1304,16 +1355,22 @@ export class Pager {
 
   /**
    * Clears a device's PushKit token APNs refused a call to as gone (`device.expireVoip`), so later pages do not call
-   * it; its alert token stays. Never throws: a call never stands in a page's way.
+   * it, or stops a handle's device ringing (`handle`, RFC 0015); its alert token stays. Never throws: a call never
+   * stands in a page's way.
    */
-  private expireVoip(event: BrigadeEvent, deviceId: string, voipToken: string, now: number): void {
+  private expireVoip(
+    event: BrigadeEvent,
+    deviceId: string,
+    gone: { voipToken: string } | { handle: string },
+    now: number,
+  ): void {
     try {
       this.run(
         NOTIFIER_ACTOR,
         "notifier",
         `expire-voip:${event.id}:${deviceId}`,
         "device.expireVoip",
-        { id: deviceId, voipToken },
+        { id: deviceId, ...gone },
         now,
       );
     } catch (error) {
@@ -1635,6 +1692,19 @@ export class Pager {
    */
   arrived(eventId: string): void {
     this.options.storage.sql.exec("delete from page_pending where event_id = ?", eventId);
+  }
+
+  /**
+   * Holds a leased page (`overdue`) back until at least `until`: the relay asked for its `Retry-After`, which can be
+   * longer than the lease's `PAGE_LOCAL_RETRY_MS`. Never brings it forward.
+   */
+  postpone(eventId: string, until: number): void {
+    this.options.storage.sql.exec(
+      "update page_pending set due = max(due, ?) where event_id = ?",
+      until,
+      eventId,
+    );
+    this.options.wake(until);
   }
 
   /** When the next queued page again is due; null with none. */

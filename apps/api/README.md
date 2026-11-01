@@ -184,6 +184,40 @@ reached on none of their devices gets a `page_failed` timeline entry and a `noti
 unless it was registered again with another token meanwhile). Devices are a server-only table (`devices`), written
 by `device.register` and `device.unregister` (any member, their own devices only).
 
+**Relay handles** (RFC 0015 section 7, `src/relay-instance.ts`). A phone may register with a `handle` and `tag` from
+the relay (`POST /v1/handles`) instead of raw tokens, `voip` saying whether the handle can ring, or with both while an
+instance moves; `envelope: 2` says the app opens envelope version 2. A handle device is paged through `POST /v1/send`,
+signed with the instance key (`RELAY_INSTANCE_KEY`, `@freecorps/brigade-push/instance`); a raw-token device through
+`POST /send` with `RELAY_SEND_TOKEN`; a device with both goes through `/send` when `/v1/send` refuses the instance.
+Pages to a device registered with `envelope: 2` are sealed version 2 (`sealPushV2`: the dashboard's origin from
+`DASHBOARD_URL`, the urgency, and the TTL sent to the relay, 15 minutes for a page, an hour for less, 60 s for a call);
+version 1 otherwise, or without `DASHBOARD_URL`. The relay's answers: `403 handle_not_yours` (a lost instance key)
+drops the handle (`device.expire` with `handleOnly`, by the handle the push went to): a device with a raw token too
+keeps it and is paged through `/send` at once (`device.handle_cleared`), one with the handle alone is dropped. A
+token the push service calls gone drops the device, by the handle the push went to. `401`, any other `403`
+(`instance_revoked`, `instance_unregistered`), `404` (a relay without `/v1`), `500 relay_misconfigured`, `503` and
+`400 bad_handle` are the instance's or the relay's, not the phone's (a handle the relay itself minted stops opening
+only when its `RELAY_HANDLE_KEYS` lost a key, which on the hosted relay would drop every instance's phones), so they
+go through `/send` for a device with a raw token, are retried and never expire anything, and once the retries are
+spent the member is recorded as not paged (`notification.failed`, which the email notifier sends on);
+`429 rate_limited` is retried after its `Retry-After` (at most 300 s). The tag replaces the token where tokens were
+compared: the same tag under a new id replaces the old device. Expiring goes by the handle, not the tag: a phone that
+registered again while a push was out has a new handle (a fresh sealing) even for the same token, and is kept. A
+call refused as gone stops a handle device ringing (`device.expireVoip` by the handle it went to). Rows are JSON documents in the shard
+(`src/store.ts`), so the new fields (`handle`, `tag`, `voip`, `envelope`; `pushToken` null for a handle alone) need
+no migration. `GET /config` gives the app `brigade { api, minApp }` and, with the instance key and a public
+`RELAY_URL`, `relay { origin, instance, app? }` (`RELAY_APP_URL`, an own app build's store link), so it can mint
+handles for this instance.
+
+**Rotating the instance key** (RFC 0015 section 1). The instance id comes from the first key and never changes; every
+handle is sealed for it. After a rotation (`POST /v1/instances/keys` on the relay, signed with the old key), set the
+new key as `RELAY_INSTANCE_KEY` **and** the first id as `RELAY_INSTANCE_ID` (`ins_…`, what `GET /config` showed as
+`relay.instance` before): the API signs as that id and `/config` keeps giving it. Without `RELAY_INSTANCE_ID` the id is
+the one the key gives, which after a rotation is another instance's, for which no handle was sealed: every page would
+be answered `handle_not_yours`, dropping the phones' handles. Retire the old key on the relay only once the new
+secrets are deployed. A malformed `RELAY_INSTANCE_ID` disables the key (logged; the watchdog says
+`relay_bad_signature`).
+
 A message the shard fails on every time (unreachable, throwing) is retried up to `max_retries` (10); the last
 delivery logs `page dead-lettered` and it goes to `brigade-events-dlq`, which the same handler consumes
 (`consumeDeadLetters`): it asks the shard once to record the page as `dead_lettered` on the incident's timeline
@@ -346,7 +380,13 @@ token, without a push; a relay without the deep check falls back to `POST /send`
 accepted), reads D1 once (`select 1`, 3 s), and reports to `WatchdogDO.proved()`, which pings `DEAD_MAN_URL`
 (in `waitUntil`, 5 s timeout) when the beat is the newest yet, took at most 2 minutes, the relay took the token and
 no deeper check (APNs, FCM, D1) failed: a refused key or account at once, a transient failure (a timeout, a 5xx, a D1
-read) only on the 3rd proved beat in a row (`TRANSIENT_FAILURES_TO_DEGRADE`). The external check
+read) only on the 3rd proved beat in a row (`TRANSIENT_FAILURES_TO_DEGRADE`). With `RELAY_INSTANCE_KEY` it asks the
+relay's signed `GET /v1/health?deep=1` instead (RFC 0015): `401` is `relay_bad_signature` (a key that does not read
+too, without asking), `403` `relay_instance_unregistered` or `relay_instance_revoked`, `429` `relay_rate_limited`, an
+answer with `handles: false` `relay_handles_unavailable`; a relay without `/v1` (`404`) is `relay_handles_unavailable`, with the send
+token's old check for the providers (and its reasons) when there is one. With the send token set too, its check (`POST /send`, no body) runs beside the signed one
+and both reasons count, since raw-token phones still page through `/send`. `429` counts only from its 3rd proved beat
+in a row (the relay limits the signed check per caller IP, and instances on Workers may share egress addresses, Q28). The external check
 (any service or self-hosted checker that alerts on a missed URL ping; period 1 minute, grace about 5) pages the
 operators when the pings stop.
 
@@ -354,7 +394,8 @@ operators when the pings stop.
 lastBeatAt, lastProvedAt, lastOkAt }` to a member; never `external` (operators read the logs).
 `degraded` after 3 minutes with no beat (`no_beat`), with the newest proved beat older than 3 minutes
 (`pipeline_stalled`), with the last proof over 2 minutes late (`pipeline_slow`), or with the relay
-`relay_unauthorized`, `relay_unreachable` or `relay_not_configured` on the last proof, or with `apns_failing`,
+`relay_unauthorized`, `relay_unreachable` or `relay_not_configured` (or one of the signed check's reasons above) on
+the last proof, or with `apns_failing`,
 `fcm_failing` or `d1_failing` from its deeper checks; `unknown` before the first proof. The dashboard shows a notice
 while it is not `ok`. Changes of status or reasons write `brigade.status_changed` and log `paging pipeline degraded`;
 the watchdog emails each to `OPERATOR_EMAILS` (comma-separated, at most 10 addresses, in English) as it happens, not
@@ -470,6 +511,9 @@ In order, from `apps/api` unless noted:
    | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
    | `BETTER_AUTH_SECRET` | Required: sessions (`openssl rand -base64 32`)                                                                                                                                                                                                                                                                                                                                |
    | `RELAY_SEND_TOKEN`   | Push: the relay's send token (apps/relay); without it every page is recorded as failed                                                                                                                                                                                                                                                                                        |
+   | `RELAY_INSTANCE_KEY` | Optional: the instance's Ed25519 key (PKCS#8, base64url; RFC 0015), for phones registered with relay handles (`/v1/send`) and the signed deep check                                                                                                                                                                                                                           |
+   | `RELAY_INSTANCE_ID`  | Optional: the instance's first id on the relay (`ins_…`), set after a key rotation ("Rotating the instance key" above)                                                                                                                                                                                                                                                        |
+   | `RELAY_APP_URL`      | Optional: an own app build's store link, given to the app in `GET /config` (`relay.app`, RFC 0015 section 8)                                                                                                                                                                                                                                                                  |
    | `DASHBOARD_URL`      | Links in emails and Slack: `https://brigade-web-dev.<subdomain>.workers.dev`                                                                                                                                                                                                                                                                                                  |
    | `EMAIL_FROM`         | Optional: the email sender ("Email" above); without it no email goes out, so addresses cannot be verified or passwords reset                                                                                                                                                                                                                                                  |
    | `SLACK_TOKEN_KEY`    | Optional until Slack: seals bot tokens ("Slack" below)                                                                                                                                                                                                                                                                                                                        |
@@ -479,10 +523,11 @@ In order, from `apps/api` unless noted:
    | `MAX_MONITORS`       | Optional: the most monitors any workspace may have on this instance, 1 to 10000 (default 100); owners can set a lower cap for their workspace (RFC 0007 "Limits"). Not secret, but set like the others: no environment has `vars`                                                                                                                                             |
    | `API_TOKEN_KEY`      | Optional: the HMAC key API tokens are hashed under ("API tokens" below, `openssl rand 32 \| base64 \| tr '+/' '-_' \| tr -d =`); without it they are hashed with SHA-256 alone. Setting it later keeps every token: one minted without it is found by its SHA-256 once and its row moved to the keyed digest. Changing or removing it invalidates every token hashed under it |
 
-   No `RELAY_URL`: the `dev` environment reaches `brigade-relay-dev` through its `RELAY` service binding
+   No `RELAY_URL` for paging: the `dev` environment reaches `brigade-relay-dev` through its `RELAY` service binding
    (wrangler.jsonc). A Worker's fetch to another workers.dev Worker on the same account is answered 404, so the
    relay's public URL only works from outside the account (a phone, `curl`, a self-hosted instance); a `RELAY_URL`
-   secret left from before is ignored while the binding is there. Deploy the relay before the API: a binding to a
+   secret is not used for calls while the binding is there, only as the relay address `GET /config` gives the app
+   (with `RELAY_INSTANCE_KEY`, so phones can mint handles). Deploy the relay before the API: a binding to a
    Worker that does not exist fails the deploy.
 
 3. **API.** `vp run build:dev`, then `wrangler deploy` (the built config already names `brigade-api-dev`). `dev`

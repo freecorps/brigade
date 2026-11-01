@@ -46,6 +46,30 @@ export async function generateInstanceKey(): Promise<{
   };
 }
 
+/** An instance key read back from its secret: the signing key, its raw public key (base64url) and the id it gives. */
+export type InstanceKey = { privateKey: CryptoKey; publicKey: string; instance: string };
+
+/**
+ * Reads `RELAY_INSTANCE_KEY` (PKCS#8, base64url, as `generateInstanceKey` makes it) into a non-extractable signing
+ * key and the public key it pairs with, and the instance id that public key gives. The id is that of the key held now:
+ * after a rotation (RFC 0015 section 1) the instance keeps its first id, so a rotated key's holder says the id
+ * itself. Throws for anything that is not an Ed25519 private key.
+ */
+export async function importInstanceKey(pkcs8: string): Promise<InstanceKey> {
+  const bytes = fromBase64url(pkcs8.trim());
+  // Only an extractable key exports its JWK, whose `x` is the public key; it never leaves this function.
+  const extractable = await crypto.subtle.importKey("pkcs8", bytes, ED25519, true, ["sign"]);
+  const jwk = await crypto.subtle.exportKey("jwk", extractable);
+  if (typeof jwk.x !== "string") throw new Error("not an Ed25519 private key");
+  const raw = fromBase64url(jwk.x);
+  if (raw.length !== 32) throw new Error("not an Ed25519 private key");
+  return {
+    privateKey: await crypto.subtle.importKey("pkcs8", bytes, ED25519, false, ["sign"]),
+    publicKey: toBase64url(raw),
+    instance: await instanceId(raw),
+  };
+}
+
 export type SignRequestInput = {
   /** An Ed25519 private `CryptoKey`, or the PKCS#8 key as base64url (`RELAY_INSTANCE_KEY`). */
   privateKey: CryptoKey | string;
@@ -191,7 +215,7 @@ function keyProofBytes(instance: string): Uint8Array<ArrayBuffer> {
 }
 
 function importPrivateKey(pkcs8: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey("pkcs8", fromBase64url(pkcs8), ED25519, false, ["sign"]);
+  return crypto.subtle.importKey("pkcs8", fromBase64url(pkcs8.trim()), ED25519, false, ["sign"]);
 }
 
 /** The signed string (module comment), UTF-8. */

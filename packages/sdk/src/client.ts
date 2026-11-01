@@ -45,7 +45,15 @@ export type PagingHealthReason =
   | "pipeline_slow"
   | "relay_unauthorized"
   | "relay_unreachable"
-  | "relay_not_configured";
+  | "relay_not_configured"
+  | "relay_bad_signature"
+  | "relay_instance_unregistered"
+  | "relay_instance_revoked"
+  | "relay_rate_limited"
+  | "relay_handles_unavailable"
+  | "apns_failing"
+  | "fcm_failing"
+  | "d1_failing";
 
 /** `reasons` and the times only for a member of some workspace; `unknown` until a new deployment proves a beat. */
 export type PagingHealth = {

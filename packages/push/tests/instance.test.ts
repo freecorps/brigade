@@ -3,6 +3,7 @@ import { fromBase64url } from "../src/base64url.ts";
 import {
   canonicalKey,
   generateInstanceKey,
+  importInstanceKey,
   instanceId,
   signKeyProof,
   signRequest,
@@ -35,6 +36,55 @@ describe("instanceId", () => {
     expect(key.instance).toMatch(/^ins_[A-Za-z0-9_-]{22}$/);
     expect(await instanceId(fromBase64url(key.publicKey))).toBe(key.instance);
     expect(fromBase64url(key.publicKey)).toHaveLength(32);
+  });
+});
+
+describe("importInstanceKey", () => {
+  test("reads the secret back into the public key and id it was made with, and signs as it", async () => {
+    const key = await generateInstanceKey();
+    const imported = await importInstanceKey(key.privateKey);
+    expect(imported.publicKey).toBe(key.publicKey);
+    expect(imported.instance).toBe(key.instance);
+    expect(imported.privateKey.extractable).toBe(false);
+    const headers = new Headers(
+      await signRequest({
+        privateKey: imported.privateKey,
+        publicKey: imported.publicKey,
+        instance: imported.instance,
+        method: "GET",
+        path: "/v1/health?deep=1",
+        body: "",
+        now: NOW,
+      }),
+    );
+    const verified = await verifyRequest({
+      method: "GET",
+      path: "/v1/health?deep=1",
+      headers,
+      body: "",
+      now: NOW,
+    });
+    expect(verified).toMatchObject({ ok: true, instance: key.instance, original: true });
+  });
+
+  test("a secret with a trailing newline still reads; anything else throws", async () => {
+    const key = await generateInstanceKey();
+    expect((await importInstanceKey(`${key.privateKey}\n`)).instance).toBe(key.instance);
+    await expect(importInstanceKey("not a key")).rejects.toThrow();
+    await expect(importInstanceKey(key.publicKey)).rejects.toThrow();
+    // The string key `signRequest` takes reads the same secret the same way.
+    const raw = fromBase64url(key.publicKey);
+    const input = {
+      privateKey: `${key.privateKey}\n`,
+      publicKey: raw,
+      instance: key.instance,
+      method: "GET",
+      path: "/v1/health",
+      body: "",
+      now: NOW,
+    };
+    const headers = new Headers(await signRequest(input));
+    expect(await verifyRequest({ ...input, headers })).toMatchObject({ ok: true });
   });
 });
 

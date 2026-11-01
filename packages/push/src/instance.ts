@@ -215,7 +215,7 @@ function keyProofBytes(instance: string): Uint8Array<ArrayBuffer> {
 }
 
 function importPrivateKey(pkcs8: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey("pkcs8", fromBase64url(pkcs8), ED25519, false, ["sign"]);
+  return crypto.subtle.importKey("pkcs8", fromBase64url(pkcs8.trim()), ED25519, false, ["sign"]);
 }
 
 /** The signed string (module comment), UTF-8. */

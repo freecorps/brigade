@@ -72,6 +72,19 @@ describe("importInstanceKey", () => {
     expect((await importInstanceKey(`${key.privateKey}\n`)).instance).toBe(key.instance);
     await expect(importInstanceKey("not a key")).rejects.toThrow();
     await expect(importInstanceKey(key.publicKey)).rejects.toThrow();
+    // The string key `signRequest` takes reads the same secret the same way.
+    const raw = fromBase64url(key.publicKey);
+    const input = {
+      privateKey: `${key.privateKey}\n`,
+      publicKey: raw,
+      instance: key.instance,
+      method: "GET",
+      path: "/v1/health",
+      body: "",
+      now: NOW,
+    };
+    const headers = new Headers(await signRequest(input));
+    expect(await verifyRequest({ ...input, headers })).toMatchObject({ ok: true });
   });
 });
 

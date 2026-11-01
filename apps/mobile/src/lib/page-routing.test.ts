@@ -121,6 +121,10 @@ test("an answered call acknowledges over the socket when it is the shown instanc
   expect(
     callAckRoute({ origin: shown.origin, workspace: "ws_one" }, instances, shown, "ws_one"),
   ).toEqual({ kind: "sync" });
+  // The shown instance from another snapshot of the list is still the shown one.
+  expect(
+    callAckRoute({ origin: shown.origin, workspace: "ws_one" }, instances, { ...shown }, "ws_one"),
+  ).toEqual({ kind: "sync" });
   // An older build's call names no workspace: the open one, as before.
   expect(callAckRoute({ origin: shown.origin }, instances, shown, "ws_one")).toEqual({
     kind: "sync",

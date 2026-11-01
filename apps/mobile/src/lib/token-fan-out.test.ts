@@ -26,6 +26,7 @@ function setup() {
     tokens,
     nudges,
     hear: (token: string) => heard?.({ data: token }),
+    hearRaw: (data: unknown) => heard?.({ data }),
     listening: () => listening,
     leaveA,
     leaveB,
@@ -63,4 +64,12 @@ test("one platform listener, removed when the last instance leaves", () => {
   expect(at.listening()).toBe(1);
   at.leaveB();
   expect(at.listening()).toBe(0);
+});
+
+test("a listener event without a token string changes nothing", async () => {
+  const at = setup();
+  await at.tokens.fetch(async () => OLD);
+  for (const data of [undefined, null, {}, 1, ""]) at.hearRaw(data);
+  await flush();
+  expect(at.nudges).toEqual({ a: 0, b: 0 });
 });

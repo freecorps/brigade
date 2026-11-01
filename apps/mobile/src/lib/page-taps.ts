@@ -18,9 +18,20 @@ export function openedPage(value: unknown): OpenedPage | null {
   if (typeof incident !== "string" || !INCIDENT.test(incident)) return null;
   if (typeof workspace !== "string" || !WORKSPACE.test(workspace)) return null;
   if (origin === undefined || origin === null) return { incident, workspace };
-  // An origin that is not one is no page: it could not say which instance to open.
-  if (typeof origin !== "string" || originOf(origin) !== origin) return null;
-  return { incident, workspace, origin };
+  // An origin that is not one is no page: it could not say which instance to open. One written otherwise (a trailing
+  // slash, the default port, upper case) is the same instance.
+  const normalized = typeof origin === "string" ? bareOrigin(origin) : undefined;
+  if (normalized === undefined) return null;
+  return { incident, workspace, origin: normalized };
+}
+
+/** `value` as `URL.origin` writes it, if it is an origin and nothing more (no path, query, fragment or user). */
+function bareOrigin(value: string): string | undefined {
+  const origin = originOf(value);
+  if (origin === undefined) return undefined;
+  const url = new URL(value);
+  const bare = url.pathname === "/" && !url.search && !url.hash && !url.username && !url.password;
+  return bare ? origin : undefined;
 }
 
 /**

@@ -127,7 +127,11 @@ export function callAckRoute<T extends { origin: string }>(
   const instance = instances.find((one) => one.origin === call.origin);
   if (!instance) return { kind: "none" };
   const workspace = call.workspace ?? undefined;
-  if (instance === active && (workspace === undefined || workspace === openWorkspace)) {
+  // By origin, not identity: the list and the active instance may come from different snapshots.
+  if (
+    instance.origin === active?.origin &&
+    (workspace === undefined || workspace === openWorkspace)
+  ) {
     return { kind: "sync" };
   }
   return workspace === undefined ? { kind: "none" } : { kind: "http", instance, workspace };

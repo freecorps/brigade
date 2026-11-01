@@ -8,6 +8,14 @@ test("a tapped page from native code is checked", () => {
   expect(openedPage(page)).toEqual(page);
   expect(openedPage(sealed)).toEqual(sealed);
   expect(openedPage({ ...page, origin: null })).toEqual(page);
+  // Written otherwise, the same instance.
+  for (const same of [
+    "https://ACME.example.com",
+    "https://acme.example.com/",
+    "https://acme.example.com:443",
+  ]) {
+    expect(openedPage({ ...page, origin: same }), same).toEqual(sealed);
+  }
   for (const bad of [
     null,
     "inc_01",
@@ -18,6 +26,8 @@ test("a tapped page from native code is checked", () => {
     { incident: "inc_01", workspace: "a/b" },
     // An origin not written as `URL.origin` writes it cannot name an instance.
     { ...page, origin: "https://acme.example.com/path" },
+    { ...page, origin: "https://acme.example.com/?q" },
+    { ...page, origin: "https://user@acme.example.com" },
     { ...page, origin: "acme" },
     { ...page, origin: 1 },
   ]) {

@@ -26,6 +26,20 @@ export function usePageTaps(): void {
   const list = useSyncExternalStore(instances.subscribe, instances.current);
   const workspace = view.kind === "ready" ? view.member.workspaceId : undefined;
   const [tapped, setTapped] = useState(0);
+  // Until the stored list is read, only the build's default instance is known: a page from another would be dropped.
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void instances
+      .load()
+      .catch(() => {})
+      .finally(() => {
+        if (live) setLoaded(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     const module = BrigadePush;
@@ -43,7 +57,7 @@ export function usePageTaps(): void {
 
   useEffect(() => {
     const page = pending;
-    if (!page) return;
+    if (!page || !loaded) return;
     const active = activeInstance(list);
     const target = pageInstance(page, list.instances, active);
     const step = tapStep(
@@ -94,5 +108,5 @@ export function usePageTaps(): void {
         });
     }
     return undefined;
-  }, [list, clients, workspace, tapped, router]);
+  }, [list, clients, workspace, tapped, router, loaded]);
 }

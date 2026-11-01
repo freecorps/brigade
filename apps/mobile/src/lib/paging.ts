@@ -371,7 +371,8 @@ export function tokenFanOut(
   const cycles = new Set<Pick<PagingCycle, "nudge">>();
   let stop: (() => void) | null = null;
   const heard = (token: { data: unknown }) => {
-    void tokens.changed(String(token.data));
+    // Only a real token: anything else would become a made-up "known" token and nudge every instance for nothing.
+    if (typeof token.data === "string" && token.data.length > 0) void tokens.changed(token.data);
   };
   tokens.onNew(() => {
     for (const cycle of cycles) cycle.nudge();

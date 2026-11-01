@@ -917,13 +917,16 @@ async function confirmSwitch(
 /**
  * What setting up Freecorps' relay removes from the API: a stale instance id, and an own relay's leftovers.
  * `RELAY_APP_URL` marks an own relay: its link and its `RELAY_SEND_TOKEN` (which Freecorps' relay never accepts from a
- * self-hosted instance) go with it. An API without `RELAY_APP_URL` (our own instance) keeps its send token.
+ * self-hosted instance) go with it, and so do the `SEND_PAIR` markers that vouched for that token. An API without
+ * `RELAY_APP_URL` (our own instance) keeps its send token.
  */
 function replacedRelaySecrets(existing: Set<string>): Record<string, null> {
   const removed: Record<string, null> = { ...staleInstanceId(existing) };
   if (existing.has("RELAY_APP_URL")) {
     removed.RELAY_APP_URL = null;
     if (existing.has("RELAY_SEND_TOKEN")) removed.RELAY_SEND_TOKEN = null;
+    // The pair markers vouched for that token: left behind, a later own-relay run would keep a token the API lost.
+    for (const name of existing) if (name.startsWith(SEND_PAIR)) removed[name] = null;
   }
   return removed;
 }

@@ -721,12 +721,22 @@ describe("what a switch removes from the API", () => {
   test("from an own relay (RELAY_APP_URL), its send token goes with its link", async () => {
     const h = harness({
       secrets: {
-        "brigade-api": ["RELAY_INSTANCE_KEY", "RELAY_URL", "RELAY_APP_URL", "RELAY_SEND_TOKEN"],
+        "brigade-api": [
+          "RELAY_INSTANCE_KEY",
+          "RELAY_URL",
+          "RELAY_APP_URL",
+          "RELAY_SEND_TOKEN",
+          "BRIGADE_SEND_PAIR_old",
+        ],
       },
     });
     const api = await finish(h);
     expect(api?.has("RELAY_SEND_TOKEN")).toBe(false);
     expect(api?.has("RELAY_APP_URL")).toBe(false);
+    // Its pair marker too: left behind, it would vouch for a token the API no longer has.
+    expect([...(api?.keys() ?? [])].some((name) => name.startsWith("BRIGADE_SEND_PAIR_"))).toBe(
+      false,
+    );
   });
 
   test("an instance with no RELAY_APP_URL (ours) keeps its send token", async () => {

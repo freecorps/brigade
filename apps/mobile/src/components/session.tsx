@@ -521,10 +521,7 @@ export async function removeInstance(
   if (!instance || list.instances.length <= 1) return "failed";
   const clients = clientsFor(instance);
   try {
-    if (signOutShown) await signOutShown();
-    else if ((await clients.authClient.getCookie().catch(() => "")) !== "") {
-      await signOutBackground(clients);
-    }
+    await signOutInstance(id, signOutShown);
     // Anything kept from an offline sign-out there is finished now, or the instance stays.
     if ((await finishLeftover(clients.server)) === "pending") return "kept";
     await SecureStore.deleteItemAsync(clients.storage.handle).catch(() => {});
@@ -533,6 +530,24 @@ export async function removeInstance(
     return "removed";
   } catch {
     return "failed";
+  }
+}
+
+/**
+ * Signs out of instance `id` the way the account section does, keeping it listed: the shown instance by its own
+ * sign-out (`signOutShown`), any other in the background (`signOutBackground`), both taking the phone off the
+ * member's workspaces there or keeping the sign-out to finish later. Nothing when no session is kept there.
+ */
+export async function signOutInstance(
+  id: string,
+  signOutShown?: () => Promise<unknown>,
+): Promise<void> {
+  const instance = instances.current().instances.find((one) => one.id === id);
+  if (!instance) return;
+  const clients = clientsFor(instance);
+  if (signOutShown) await signOutShown();
+  else if ((await clients.authClient.getCookie().catch(() => "")) !== "") {
+    await signOutBackground(clients);
   }
 }
 

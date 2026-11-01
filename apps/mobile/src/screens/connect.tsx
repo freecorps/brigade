@@ -5,20 +5,22 @@ import { Stack } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { AccessibilityInfo, Linking } from "react-native";
 import { FooterText } from "@/components/footer-text";
-import { endText, say, useBoard, verdictText } from "@/components/instances";
+import { endText, say, verdictText } from "@/components/instances";
 import { ListItem } from "@/components/list-item";
 import { NativeHost } from "@/components/native-host";
-import { openInstance } from "@/components/session";
+import { openInstance, signOutInstance, useSessionView } from "@/components/session";
 import { SubmitButton } from "@/components/submit-button";
 import { useTheme } from "@/hooks/use-theme";
 import type { ConnectLink } from "@/lib/connect-link";
-import { checkInstance, instances, keepSignIn } from "@/lib/instance-clients";
-import { hostOf } from "@/lib/instance-address";
+import { checkInstance, instances, keepSignIn, sessionAt } from "@/lib/instance-clients";
+import { hostOf, readAddress } from "@/lib/instance-address";
 import { instanceAt, MAX_INSTANCES } from "@/lib/instances";
 import { runClaim, type ClaimState } from "@/lib/qr-sign-in";
 import { leaveSheet } from "@/screens/add-instance";
 
 type Step =
+  /** A link from outside the app: the host shown, nothing asked of it yet. */
+  | { kind: "ask"; host: string }
   | { kind: "checking" }
   | { kind: "refused"; title?: string; text: string; app?: string }
   | { kind: "already"; instanceId: string; origin: string }
@@ -30,11 +32,25 @@ type Step =
  * camera or the in-app scanner. The address is checked first, as typed ones are. With the address alone: "You are
  * signing in to <host>", then its sign-in screen. With a code: "Sign in to <host>?", then the claim; the phone shows
  * the 2-digit number the member types on the dashboard, and once they did, "Signed in to <host> as <name>" and the
- * instance opens. Nothing is claimed before the member confirms, so a QR from a stranger is seen for what it is.
+ * instance opens. Nothing is claimed before the member confirms, so a QR from a stranger is seen for what it is; and a
+ * link from outside the app (`trusted` false) asks nothing of the address before the member taps Continue. A session
+ * kept at that instance is never replaced: the screen offers to open it, or to sign out of it first.
  */
-export function Connect({ link }: { link: ConnectLink | undefined }) {
-  const states = useBoard();
-  const [step, setStep] = useState<Step>({ kind: "checking" });
+export function Connect({ link, trusted }: { link: ConnectLink | undefined; trusted: boolean }) {
+  const view = useSessionView();
+  const server = link?.server;
+  const code = link?.code;
+  // Opened from outside the app (any app or web page can open a `brigade://` link): nothing is asked of the address,
+  // not even its `/config`, before the member says so. The in-app scanner's own link goes straight on.
+  const [step, setStep] = useState<Step>(() => {
+    const read = server
+      ? readAddress(server, typeof __DEV__ !== "undefined" && __DEV__)
+      : undefined;
+    return !trusted && read && "origin" in read
+      ? { kind: "ask", host: hostOf(read.origin) }
+      : { kind: "checking" };
+  });
+  const [round, setRound] = useState(step.kind === "checking" ? 1 : 0);
   const left = useRef(false);
   useEffect(() => {
     left.current = false;
@@ -43,22 +59,15 @@ export function Connect({ link }: { link: ConnectLink | undefined }) {
     };
   }, []);
 
-  // Read when the check answers, so a session that loaded meanwhile counts.
-  const statesRef = useRef(states);
   useEffect(() => {
-    statesRef.current = states;
-  });
-  const signedIn = (id: string) => statesRef.current[id]?.kind === "signed-in";
-
-  const server = link?.server;
-  const code = link?.code;
-  useEffect(() => {
+    if (round === 0) return;
     if (!server) {
       setStep({ kind: "refused", text: say("scan_not_brigade") });
       return;
     }
     let live = true;
-    void checkInstance(server).then((checked) => {
+    setStep({ kind: "checking" });
+    void checkInstance(server).then(async (checked) => {
       if (!live) return;
       if ("problem" in checked) {
         setStep({ kind: "refused", ...verdictText({ kind: checked.problem }, "")! });
@@ -72,8 +81,11 @@ export function Connect({ link }: { link: ConnectLink | undefined }) {
       }
       const list = instances.current();
       const known = instanceAt(list, checked.origin);
-      if (known && signedIn(known.id)) {
-        setStep({ kind: "already", instanceId: known.id, origin: checked.origin });
+      // From what secure storage keeps, not the session as last read: one still loading or offline counts.
+      const kept = await sessionAt(checked.origin);
+      if (!live) return;
+      if (kept) {
+        setStep({ kind: "already", instanceId: kept.id, origin: checked.origin });
         return;
       }
       if (!known && list.instances.length >= MAX_INSTANCES) {
@@ -89,8 +101,23 @@ export function Connect({ link }: { link: ConnectLink | undefined }) {
     return () => {
       live = false;
     };
-    // Checked once per link; the sessions are read when the answer comes.
-  }, [server, code]);
+    // Checked once per round: the member's Continue, and again after signing out of a session kept there.
+  }, [server, code, round]);
+
+  /** Signs out of the session kept there through the account section's own path, then checks again. */
+  const signOutFirst = async (instanceId: string) => {
+    setStep({ kind: "checking" });
+    const shown =
+      instances.current().active === instanceId
+        ? view.kind === "ready"
+          ? () => view.member.signOut()
+          : view.kind === "no-workspace"
+            ? view.signOut
+            : undefined
+        : undefined;
+    await signOutInstance(instanceId, shown).catch(() => {});
+    if (!left.current) setRound((value) => value + 1);
+  };
 
   const addAndOpen = async (origin: string) => {
     const added = await instances.add(origin);
@@ -107,9 +134,16 @@ export function Connect({ link }: { link: ConnectLink | undefined }) {
 
   // One claim per screen: a second tap would spend nothing but end the first claim's screen as `invalid_code`.
   const claimed = useRef(false);
-  const claim = (origin: string) => {
+  const claim = async (origin: string) => {
     if (!code || claimed.current) return;
     claimed.current = true;
+    // Signed in there since the check (a password sign-in, another link): the code is not spent on it.
+    const kept = await sessionAt(origin);
+    if (kept) {
+      claimed.current = false;
+      setStep({ kind: "already", instanceId: kept.id, origin });
+      return;
+    }
     let instanceId: string | undefined;
     void runClaim(
       {
@@ -150,11 +184,13 @@ export function Connect({ link }: { link: ConnectLink | undefined }) {
       <ConnectView
         step={step}
         code={code !== undefined}
-        onConfirm={(origin) => (code ? claim(origin) : void addAndOpen(origin))}
+        onContinue={() => setRound((value) => value + 1)}
+        onConfirm={(origin) => void (code ? claim(origin) : addAndOpen(origin))}
         onOpen={(id) => {
           leaveSheet();
           void openInstance(id);
         }}
+        onSignOutFirst={code ? (id) => void signOutFirst(id) : undefined}
       />
     </>
   );
@@ -163,13 +199,18 @@ export function Connect({ link }: { link: ConnectLink | undefined }) {
 function ConnectView({
   step,
   code,
+  onContinue,
   onConfirm,
   onOpen,
+  onSignOutFirst,
 }: {
   step: Step;
   code: boolean;
+  onContinue: () => void;
   onConfirm: (origin: string) => void;
   onOpen: (instanceId: string) => void;
+  /** With a sign-in code: sign out of the session kept there, then go on with the code. */
+  onSignOutFirst?: (instanceId: string) => void;
 }) {
   const colors = useTheme();
   const heading = (text: string) => (
@@ -187,7 +228,28 @@ function ConnectView({
     </FieldGroup.Section>
   );
   let body;
-  if (step.kind === "checking") {
+  if (step.kind === "ask") {
+    body = (
+      <>
+        {heading(say("check_question", step.host))}
+        <FieldGroup.Section>
+          <ListItem>
+            <Text>{say("check_body", step.host)}</Text>
+          </ListItem>
+        </FieldGroup.Section>
+        <FieldGroup.Section>
+          <SubmitButton label={say("continue")} onPress={onContinue} />
+        </FieldGroup.Section>
+        <FieldGroup.Section>
+          <ListItem onPress={leaveSheet}>
+            <Text textStyle={{ color: colors.primary }}>
+              {m.mobile_session({ part: "cancel" })}
+            </Text>
+          </ListItem>
+        </FieldGroup.Section>
+      </>
+    );
+  } else if (step.kind === "checking") {
     body = (
       <FieldGroup.Section>
         <ListItem>
@@ -222,6 +284,16 @@ function ConnectView({
             onPress={() => onOpen(step.instanceId)}
           />
         </FieldGroup.Section>
+        {onSignOutFirst ? (
+          <FieldGroup.Section>
+            <ListItem onPress={() => onSignOutFirst(step.instanceId)}>
+              <Text textStyle={{ color: colors.destructive }}>{say("sign_out_first")}</Text>
+            </ListItem>
+            <FieldGroup.SectionFooter>
+              <FooterText>{say("sign_out_first_hint", hostOf(step.origin))}</FooterText>
+            </FieldGroup.SectionFooter>
+          </FieldGroup.Section>
+        ) : null}
         {close}
       </>
     );

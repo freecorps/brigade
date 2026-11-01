@@ -48,6 +48,28 @@ export function parseConnectLink(value: string): ConnectLink | undefined {
   return connectParams(query.get("server"), query.get("code"));
 }
 
+let scanned: string | undefined;
+
+function linkKey(link: ConnectLink): string {
+  return `${link.server}\n${link.code ?? ""}`;
+}
+
+/**
+ * The in-app scanner's link, marked before it opens the connect route: only that one goes straight to its checks. A
+ * `brigade://connect` opened from anywhere else (any app or web page can open one, with any params) waits for the
+ * member's Continue before the app asks anything of the address.
+ */
+export function markScanned(link: ConnectLink): void {
+  scanned = linkKey(link);
+}
+
+/** Whether `link` is the one the scanner just marked; true once. */
+export function takeScanned(link: ConnectLink | undefined): boolean {
+  if (!link || scanned === undefined || scanned !== linkKey(link)) return false;
+  scanned = undefined;
+  return true;
+}
+
 /**
  * The same from the route's search params (expo-router hands `brigade://connect?…` to src/app/connect.tsx as
  * `/connect` with them). A param given twice comes as an array: refused, as a link nobody made.

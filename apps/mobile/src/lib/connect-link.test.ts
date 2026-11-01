@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { connectParams, parseConnectLink, queryOf } from "./connect-link";
+import { connectParams, markScanned, parseConnectLink, queryOf, takeScanned } from "./connect-link";
 
 const CODE = "AbCdEfGhIjKlMnOpQrSt_-";
 
@@ -61,6 +61,20 @@ test("route params: a param given twice is refused", () => {
   expect(connectParams("https://b.example", [CODE, CODE])).toBeUndefined();
   expect(connectParams(undefined, CODE)).toBeUndefined();
   expect(connectParams("  ", undefined)).toBeUndefined();
+});
+
+test("only the scanner's own link skips the Continue, once", () => {
+  const link = { server: "https://b.example", code: CODE };
+  // A link from outside the app (nothing marked).
+  expect(takeScanned(link)).toBe(false);
+  markScanned(link);
+  // Another link than the one scanned.
+  expect(takeScanned({ server: "https://evil.example", code: CODE })).toBe(false);
+  expect(takeScanned({ server: "https://b.example" })).toBe(false);
+  expect(takeScanned(link)).toBe(true);
+  // Spent: the same link opened again from outside asks first.
+  expect(takeScanned(link)).toBe(false);
+  expect(takeScanned(undefined)).toBe(false);
 });
 
 test("queries decode, and a bad escape is skipped", () => {

@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { say } from "@/components/instances";
 import { m } from "@freecorps/brigade-i18n";
 import { useTheme } from "@/hooks/use-theme";
-import { parseConnectLink } from "@/lib/connect-link";
+import { markScanned, parseConnectLink } from "@/lib/connect-link";
 
 /** How long "This QR code isn't from Brigade" stays before the next code is read. */
 const REFUSED_MS = 2_500;
@@ -45,6 +45,7 @@ export function Scan() {
     done.current = true;
     if (process.env.EXPO_OS === "ios")
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    markScanned(link);
     router.replace({
       pathname: "/connect",
       params: { server: link.server, ...(link.code ? { code: link.code } : {}) },

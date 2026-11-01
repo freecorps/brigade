@@ -193,7 +193,8 @@ export function onCallNow(workspaces: PhoneWorkspace[], now: number): PhoneWorks
  * What removing an instance does: `last` when it is the only one (signing out is what is left; removing would leave
  * the app with no instance to sign in to, the build's default included); otherwise it signs out of it, after a
  * warning naming the workspaces where the member is on call there now (`onCall`, as last seen on the phone; an
- * instance whose shifts the phone never saw gets the general warning, `unknown`).
+ * instance whose shifts the phone never saw gets the general warning, `unknown`). An instance whose session was not
+ * read yet counts as signed in: the warnings err towards saying too much.
  */
 export type Removal =
   | { kind: "last" }
@@ -209,9 +210,12 @@ export function removal(
   if (!list.instances.some((one) => one.id === id) || list.instances.length <= 1) {
     return { kind: "last" };
   }
-  if (state.kind !== "signed-in") {
-    return { kind: "remove", signedIn: false, onCall: [], unknown: state.kind === "unknown" };
+  if (state.kind === "signed-out") {
+    return { kind: "remove", signedIn: false, onCall: [], unknown: false };
   }
+  // Not read yet (loading, offline): maybe signed in, and maybe on call there. Warned as if so.
+  if (state.kind === "unknown")
+    return { kind: "remove", signedIn: true, onCall: [], unknown: true };
   const onCall = onCallNow(state.workspaces, now).map((one) => one.name?.trim() || unnamed);
   return {
     kind: "remove",

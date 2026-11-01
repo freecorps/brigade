@@ -8,6 +8,7 @@ import * as SecureStore from "expo-secure-store";
 import {
   brigadeAuthClient,
   defaultOrigin,
+  sessionKept,
   storeSessionCookie,
   type AuthClient,
 } from "@/lib/auth-client";
@@ -169,10 +170,21 @@ export async function checkInstance(
 }
 
 /**
+ * The instance at `origin` when the phone keeps a session there (src/lib/auth-client.ts `sessionKept`, from secure
+ * storage, so a session still loading or offline counts); undefined otherwise.
+ */
+export async function sessionAt(origin: string): Promise<Instance | undefined> {
+  const instance = instanceAt(instances.current(), origin);
+  if (!instance) return undefined;
+  return (await sessionKept(SecureStore, instanceStorage(instance.id).auth)) ? instance : undefined;
+}
+
+/**
  * A QR sign-in's session (RFC 0015 section 6), kept for the instance at `origin` and no other: the instance is added
  * (or found), the session stored under its own prefix (src/lib/auth-client.ts `storeSessionCookie`) and its client
  * told to read it. Not made active: the caller opens it once it said who signed in. An instance added for it is
- * removed again when the session could not be kept. Throws `full` when the phone has the most instances it can.
+ * removed again when the session could not be kept. Throws `full` when the phone has the most instances it can, and
+ * `SessionExists` when a session is kept there already (signed in meanwhile): it is never replaced.
  */
 export async function keepSignIn(origin: string, cookie: string): Promise<Instance> {
   const before = instanceAt(instances.current(), origin);

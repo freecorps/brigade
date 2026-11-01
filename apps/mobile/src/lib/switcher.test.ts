@@ -231,6 +231,13 @@ test("removal: never the last instance; others after an on-call warning", () => 
     onCall: [],
     unknown: false,
   });
+  // A session not read yet (loading, offline) may be signed in and on call: the general warning.
+  expect(removal(list, "acme1", { kind: "unknown" }, NOW, "W")).toEqual({
+    kind: "remove",
+    signedIn: true,
+    onCall: [],
+    unknown: true,
+  });
   const onCall = signedIn({
     workspaces: [
       { id: "a", name: "Ops", oncall: { shifts: [[NOW - HOUR, null]], staleAt: NOW + HOUR } },

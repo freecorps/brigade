@@ -85,6 +85,11 @@ export type Mobile_InstancesInputs = {
 * | "unnamed" | "Workspace" |
 * | "open" | "Open" |
 * | "current" | "Open now" |
+* | "check_question" | "Connect to {host}?" |
+* | "check_body" | "A link asked Brigade to connect to {host}. Brigade contacts it only if you continue. Continue only if you opened this link from your company's Brigade dashbo..." |
+* | "sign_out_first" | "Sign out of it, then continue" |
+* | "sign_out_first_hint" | "Signs you out of {host} on this phone first, as Sign out does, so it stops paging you here. Then this code signs you in." |
+* | "ended_already" | "You're already signed in to {host} on this phone, so this sign-in wasn't used. It's listed in the account's sessions on the dashboard, where you can sign it ..." |
 * | * | "Instances" |
 *
 * @param {Mobile_InstancesInputs} inputs

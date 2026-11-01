@@ -312,7 +312,8 @@ version 2 for a device registered with `envelope: 2`, version 1 for any other; t
   older expo-barcode-scanner is gone), its iOS usage text from packages/i18n (`mobile_camera_usage`, en in Info.plist,
   each locale's `InfoPlist.strings` in the app's `<locale>.lproj` folder, `plugins/camera-usage.ts`; not Expo's
   `locales`, whose own `.lproj` group races that folder in the build), no microphone. Any other code says "This QR code isn't from Brigade" and
-  scanning goes on. An instance already signed in on the phone opens instead.
+  scanning goes on. An instance already signed in on the phone opens instead. A link from outside the app asks
+  before any request (section 6).
 - **Switching.** The Account tab's first section is the open instance's workspaces (titled by the instance, rows
   "Freecorps · Production" when there are several), then one section per other instance with the workspaces this
   phone pages the member for there (as last seen, `brigade.<id>.workspaces`) and each one's paging state: on, setting
@@ -330,7 +331,8 @@ version 2 for a device registered with `envelope: 2`, version 1 for any other; t
   `relay.app`).
 - **Removing one** signs out of it first: the open instance by the member's sign-out (its shard first), another by
   `/sign-out` with this phone's device id. The warning names the workspaces where the member's shifts, as last seen
-  on the phone (`oncall` in its workspace list), have them on call now; with no shifts seen there it warns in general.
+  on the phone (`oncall` in its workspace list), have them on call now; with no shifts seen there it warns in general,
+  as it does for an instance whose session was not read yet (loading, offline: maybe signed in).
   An instance whose sign-out the server did not hear stays listed, signed out, until its kept sign-out is finished
   (else nothing would finish it and it would keep paging the phone); removing it works then. The last instance is
   never removed, the build's default included: signing out is what is left, and the app would have nothing to sign
@@ -452,25 +454,40 @@ apps/web's "Use the app" page (`/use-the-app`, `src/components/app-sign-in-card.
 `storeSessionCookie` in `src/lib/auth-client.ts`, `keepSignIn` in `src/lib/instance-clients.ts`; against the routes
 above (docs/api/openapi.json). As built:
 
+- **A link from outside the app asks first.** Any app or web page can open `brigade://connect` with any address, so
+  a link the system opens shows the host and "Connect to <host>?" and sends no request, not even `GET /api/config`,
+  before the member taps Continue. The in-app scanner's link (marked by the scanner, once, `takeScanned`) and a typed
+  address go straight to the checks: the member already chose to reach that address.
 - The link's address is checked as a typed one is (section 5), then "Sign in to <host>?" with "Continue only if you
   showed this code on <host>'s dashboard yourself, just now"; nothing is claimed before the member confirms. A phone
-  already signed in there opens it instead; a phone with 5 instances says so before spending the code.
+  with 5 instances says so before spending the code.
+- **A session kept there is never replaced.** Whether one is kept is read from secure storage (`sessionKept`), not
+  from the session as last loaded, so one still loading or offline counts, and storage that cannot be read counts as
+  one. It is checked after the address checks, again right before the claim, and once more by `storeSessionCookie`
+  itself (signed in meanwhile: `already`, and the delivered session stays unused, listed and revocable among the
+  account's sessions). The screen then offers to open that instance, or, for a sign-in code, "Sign out of it, then
+  continue", which signs out through the account section's own path (the shard first for the shown instance,
+  `/sign-out` with the device id for another, kept to finish later when offline) and checks again.
 - The claim sends `{ code, deviceName, platform }` (`deviceName` is the system's device name, else "iPhone" or
   "Android"). The screen then shows the number large, "Type this number on the dashboard", "Never share this number"
   and polls every 2 s with `Authorization: Bearer <secret>`, following the `expiresAt` each `pending` answer gives
-  (an approval moves it), and stops 5 s past it. No answer or a 5xx while waiting is asked again until then.
+  (an approval moves it) and stopping 5 s past it, but never past the claim's first `expiresAt` plus 30 s (the
+  server's pickup window, `POLL_CAP_MS`), whatever later end the server answers. No answer or a 5xx while waiting is
+  asked again until then.
 - Each end is worded: `denied`, `wrong_number`, `timeout`, `delivered`, `signed_out` (an unknown future reason reads as
   `timeout`), and on the phone's side `invalid_code` (404 on the claim), `rate_limited`, unreachable, `lost` (404 on a
-  poll) and not stored. Leaving the screen stops polling.
+  poll), not stored and `already`. Leaving the screen stops polling.
 - Approved, the `Set-Cookie` value is merged and stored as `@better-auth/expo` stores a sign-in's (its own
   `getSetCookie` and storage wrapper, `<prefix>_cookie`), under that instance's prefix only, read back to prove it was
   kept, and that instance's last session read is cleared; its client is told (`$sessionSignal`). The instance is
   added for it (removed again if the session could not be kept). Then "Signed in to <host> as <name>", with the email,
   and Open makes it the shown instance.
 - **Tests:** apps/mobile `qr-sign-in.test.ts`: the claim's body and the poll's header, each expired reason (nothing
-  stored), each claim refusal, retries until the time is up, an approval moving the end, `lost`, leaving the screen,
-  the session stored for the claim's instance and never another's key (the default instance's session untouched),
-  and a session that cannot be kept.
+  stored), each claim refusal, retries until the time is up, an approval moving the end within the cap and polling
+  stopped at it, `lost`, leaving the screen, the session stored for the claim's instance and never another's key (the
+  default instance's session untouched), a session kept there never replaced (`already`; an expired one, or
+  unreadable storage counted as one), and a session that cannot be kept; `connect-link.test.ts`: only the scanner's
+  own link skips the Continue, once.
 
 ### 7. The instance side
 
@@ -752,6 +769,14 @@ built:
   the fallback text and sends no receipt. The instance's next send gets `BadDeviceToken`-like answers only when the
   token dies, so the phone should also unregister when signing out (it does) and the relay could answer
   `410 handle_retired` for a pairing the app retired (needs storage: **not proposed**).
+- **An instance removed after its session already ended on the server** (expired, revoked from the dashboard, a
+  password reset): the app's `/sign-out` finds no session, so nothing takes the phone off. The API records every way
+  a session ends (D1's `session_end`, apps/api `src/session-end.ts`), but takes a phone off the member's devices only
+  when the ending session names its device (`DEVICE_HEADER`, which only the app's own sign-out sends): an expired or
+  revoked session has none, so its device stays registered there, and that instance keeps sealing pages for the
+  phone. The phone, no longer paired with that origin, shows the fallback text for them and sends no receipt (the
+  case above); a member who is no longer anyone's on-call there gets none. The fix is server side: tie a device to
+  the session that registered it and remove it when that session ends (**proposed**, not built).
 - **The relay's handle key leaks.** It opens tokens, not content. Retire it, re-seal on each registration; phones not
   opened are not paged until they open.
 - **An app version that does not know `brigade.k`** gets a page sealed for a key it does not have: it shows the

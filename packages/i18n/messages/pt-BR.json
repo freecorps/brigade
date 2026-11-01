@@ -4085,6 +4085,11 @@
         "part=unnamed": "Espaço de trabalho",
         "part=open": "Abrir",
         "part=current": "Aberta agora",
+        "part=check_question": "Conectar a {host}?",
+        "part=check_body": "Um link pediu ao Brigade para se conectar a {host}. O Brigade só entra em contato se você continuar. Continue só se você abriu este link pelo painel do Brigade da sua empresa.",
+        "part=sign_out_first": "Sair dela e continuar",
+        "part=sign_out_first_hint": "Primeiro tira você de {host} neste telefone, como Sair faz, para que ela deixe de chamar você aqui. Depois este código conecta você.",
+        "part=ended_already": "Você já está conectado a {host} neste telefone, então esta entrada não foi usada. Ela aparece nas sessões da conta no painel, onde você pode encerrá-la.",
         "part=*": "Instâncias"
       }
     }

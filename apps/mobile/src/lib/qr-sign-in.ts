@@ -9,6 +9,11 @@ import { RELAY_TIMEOUT_MS } from "@/lib/relay";
 export const POLL_INTERVAL_MS = 2_000;
 /** Past the claim's `expiresAt` by this much with no answer, the phone stops asking: the server has ended it. */
 export const POLL_GRACE_MS = 5_000;
+/**
+ * The longest the phone asks past the claim's first `expiresAt`, whatever later one the server answers: an approval
+ * gives the phone at least 30 s to pick its session up (apps/api `APP_SIGN_IN_PICKUP_MS`), and no claim is worth more.
+ */
+export const POLL_CAP_MS = 30_000;
 
 const CLAIM_ID = /^asi_[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const SECRET = /^[A-Za-z0-9_-]{43}$/;
@@ -19,7 +24,8 @@ const NUMBER = /^[0-9]{2}$/;
  * number typed), `timeout` (2 minutes passed), `delivered` (the session went to an earlier poll), `signed_out` (the
  * dashboard session that showed the code signed out). From the phone: `invalid_code` (unknown, spent or past its
  * time, which the server does not tell apart), `rate_limited`, `unreachable` (no answer to the claim), `lost` (the
- * server no longer knows the claim), `not_stored` (the session could not be kept on the phone).
+ * server no longer knows the claim), `not_stored` (the session could not be kept on the phone), `already` (by the
+ * time it was approved, the phone had a session at that instance, which a QR sign-in never replaces).
  */
 export type EndReason =
   | "denied"
@@ -31,7 +37,8 @@ export type EndReason =
   | "rate_limited"
   | "unreachable"
   | "lost"
-  | "not_stored";
+  | "not_stored"
+  | "already";
 
 const SERVER_REASONS: ReadonlySet<string> = new Set([
   "denied",
@@ -132,7 +139,8 @@ export type ClaimDeps = {
   sleep: (ms: number) => Promise<void>;
   /**
    * Keeps the session for the instance the code came from, and only it: src/lib/auth-client.ts `storeSessionCookie`
-   * under that instance's storage prefix. Throws when it could not.
+   * under that instance's storage prefix. Throws when it could not; a `SessionExists` when the phone has a session
+   * there already (never replaced).
    */
   store: (cookie: string) => Promise<void>;
   onState: (state: ClaimState) => void;
@@ -176,6 +184,7 @@ export async function runClaim(
   if (deps.cancelled()) return { step: "ended", reason: "timeout" };
   deps.onState({ step: "waiting", number: claimed.number, expiresAt: claimed.expiresAt });
   let expiresAt = claimed.expiresAt;
+  const cap = claimed.expiresAt + POLL_CAP_MS;
   const url = `${input.origin}/api/app-sign-in/claim/${encodeURIComponent(claimed.claimId)}`;
   for (;;) {
     await deps.sleep(POLL_INTERVAL_MS);
@@ -197,14 +206,26 @@ export async function runClaim(
       // on the server unseen (it is listed and revocable there either way).
       try {
         await deps.store(poll.cookie);
-      } catch {
-        return finish({ step: "ended", reason: "not_stored" });
+      } catch (error) {
+        return finish({
+          step: "ended",
+          reason: error instanceof SessionExists ? "already" : "not_stored",
+        });
       }
       return finish({ step: "signed-in", user: poll.user });
     }
     if (poll.kind === "ended") return finish({ step: "ended", reason: poll.reason });
     if (poll.kind === "pending" && poll.expiresAt !== undefined) expiresAt = poll.expiresAt;
-    if (deps.now() > expiresAt + POLL_GRACE_MS) return finish({ step: "ended", reason: "timeout" });
+    if (deps.now() > Math.min(expiresAt + POLL_GRACE_MS, cap))
+      return finish({ step: "ended", reason: "timeout" });
+  }
+}
+
+/** Thrown by a `store` that found a session at the instance already: a QR sign-in never replaces one. */
+export class SessionExists extends Error {
+  constructor() {
+    super("A session is kept for this instance already");
+    this.name = "SessionExists";
   }
 }
 

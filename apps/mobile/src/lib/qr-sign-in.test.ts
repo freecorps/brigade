@@ -10,9 +10,10 @@ vi.mock("expo-linking", () => ({ createURL: (path: string) => `brigade://${path}
 vi.mock("expo-secure-store", () => ({}));
 vi.stubGlobal("__DEV__", false);
 
-const { brigadeAuthClient, storeSessionCookie } = await import("./auth-client");
+const { brigadeAuthClient, sessionKept, storeSessionCookie } = await import("./auth-client");
 const { DEFAULT_INSTANCE, instanceStorage } = await import("./instances");
-const { POLL_GRACE_MS, POLL_INTERVAL_MS, readPoll, runClaim } = await import("./qr-sign-in");
+const { POLL_CAP_MS, POLL_GRACE_MS, POLL_INTERVAL_MS, SessionExists, readPoll, runClaim } =
+  await import("./qr-sign-in");
 type ClaimState = import("./qr-sign-in").ClaimState;
 
 afterEach(() => {
@@ -169,20 +170,56 @@ test("no answer while waiting keeps asking until the claim's time is up", async 
   expect(polls).toBe(Math.floor((120_000 + POLL_GRACE_MS) / POLL_INTERVAL_MS) + 1);
 });
 
-test("an approval moves the end: the phone keeps asking past the first expiresAt", async () => {
+test("a later expiresAt is followed, but never past the first one plus the pickup window", async () => {
   const later = {
     status: 200,
     body: { status: "pending", expiresAt: new Date(START + 600_000).toISOString() },
   };
-  const fake = server(CLAIMED, [
-    later,
-    ...Array(80)
-      .fill(PENDING)
-      .map(() => later),
-    APPROVED,
-  ]);
-  const { done } = run(fake);
-  expect((await done).step).toBe("signed-in");
+  // Approved inside the cap (first expiresAt + 30 s): picked up.
+  const inside = server(CLAIMED, [...Array(70).fill(later), APPROVED]);
+  expect((await run(inside).done).step).toBe("signed-in");
+  // A server that keeps moving the end: the phone stops at the cap.
+  const endless = server(CLAIMED, [later]);
+  expect(await run(endless).done).toEqual({ step: "ended", reason: "timeout" });
+  expect(endless.clock.now).toBeLessThanOrEqual(START + 120_000 + POLL_CAP_MS + POLL_INTERVAL_MS);
+  expect(endless.clock.now).toBeGreaterThan(START + 120_000 + POLL_CAP_MS);
+});
+
+test("approved while the phone kept a session there meanwhile: never replaced", async () => {
+  const fake = server(CLAIMED, [APPROVED]);
+  const { done } = run(fake, async () => {
+    throw new SessionExists();
+  });
+  expect(await done).toEqual({ step: "ended", reason: "already" });
+  const storage = memoryStore();
+  const live = JSON.stringify({
+    "better-auth.session_token": { value: "mine.sig", expires: "2999-01-01T00:00:00.000Z" },
+  });
+  storage.items.set("brigade_acme1_cookie", live);
+  expect(await sessionKept(storage, "brigade:acme1")).toBe(true);
+  await expect(storeSessionCookie(storage, "brigade:acme1", COOKIE)).rejects.toBeInstanceOf(
+    SessionExists,
+  );
+  expect(storage.items.get("brigade_acme1_cookie")).toBe(live);
+  // An expired cookie, or none, is no session: stored.
+  storage.items.set(
+    "brigade_acme1_cookie",
+    JSON.stringify({
+      "better-auth.session_token": { value: "old.sig", expires: "2000-01-01T00:00:00.000Z" },
+    }),
+  );
+  expect(await sessionKept(storage, "brigade:acme1")).toBe(false);
+  await storeSessionCookie(storage, "brigade:acme1", COOKIE);
+  expect(await sessionKept(storage, "brigade:acme1")).toBe(true);
+  expect(await sessionKept(memoryStore(), "brigade:other")).toBe(false);
+  // Storage that cannot be read counts as a session: nothing is claimed over it.
+  const locked = {
+    ...memoryStore(),
+    getItemAsync: async () => {
+      throw new Error("locked");
+    },
+  };
+  expect(await sessionKept(locked, "brigade:acme1")).toBe(true);
 });
 
 test("a claim the server no longer knows ends as lost", async () => {

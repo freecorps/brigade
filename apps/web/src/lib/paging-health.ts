@@ -24,12 +24,31 @@ export const DEGRADED_REASONS = [
 ] as const;
 export type DegradedReason = (typeof DEGRADED_REASONS)[number];
 
+/**
+ * Which relay pages go through (RFC 0015 section 8): none, Freecorps' relay (the store app) or the company's own (its
+ * own app build), with the relay's host when the instance has its address and an own build's link when set.
+ */
+export type RelaySetup =
+  | { kind: "none" }
+  | { kind: "freecorps" }
+  | { kind: "own"; host: string | null; app: string | null };
+
 export type PagingHealth = {
   status: "ok" | "degraded" | "unknown";
   reasons: DegradedReason[];
   /** The last time a heartbeat got all the way through, relay token included. */
   lastOkAt: Date | null;
+  /** Which relay pages go through; null when the API did not say (no session, an older API). */
+  relay: RelaySetup | null;
 };
+
+/**
+ * No usable answer: no network, an error answer, or a body that is not the shape. A member's `503` (the watchdog
+ * itself down) still says which relay pages go through, which comes from the config, not the watchdog.
+ */
+export type PagingUnreachable = { status: "unreachable"; relay: RelaySetup | null };
+export type PagingAnswer = PagingHealth | PagingUnreachable;
+export const UNREACHABLE: PagingUnreachable = { status: "unreachable", relay: null };
 
 /**
  * What the dashboard shows: nothing while it loads or when all is well, the reasons when degraded, a neutral note
@@ -48,7 +67,7 @@ export type PagingView =
  */
 export function parsePagingHealth(body: unknown): PagingHealth | undefined {
   if (typeof body !== "object" || body === null) return undefined;
-  const { status, reasons = [], lastOkAt } = body as Record<string, unknown>;
+  const { status, reasons = [], lastOkAt, relay } = body as Record<string, unknown>;
   if (status !== "ok" && status !== "degraded" && status !== "unknown") return undefined;
   if (!Array.isArray(reasons)) return undefined;
   const ok = typeof lastOkAt === "string" ? new Date(lastOkAt) : null;
@@ -59,22 +78,50 @@ export function parsePagingHealth(body: unknown): PagingHealth | undefined {
       (DEGRADED_REASONS as readonly unknown[]).includes(reason),
     ),
     lastOkAt: ok && !Number.isNaN(ok.getTime()) ? ok : null,
+    relay: parseRelay(relay),
   };
 }
 
-export function pagingView(health: PagingHealth | "unreachable" | undefined): PagingView {
+/** `relay` as the API gives it; anything not that shape is "not said" rather than shown wrong. */
+export function parseRelay(body: unknown): RelaySetup | null {
+  if (typeof body !== "object" || body === null) return null;
+  const { kind, host, app } = body as Record<string, unknown>;
+  if (kind === "none" || kind === "freecorps") return { kind };
+  if (kind !== "own") return null;
+  return {
+    kind,
+    host: typeof host === "string" && host.trim() !== "" ? host.trim() : null,
+    // A link is shown and followed: https only, so a `javascript:` URL can never reach an href, and never one that
+    // carries credentials (the API drops those too, `publicOrigin`).
+    app: typeof app === "string" && isHttps(app) ? app : null,
+  };
+}
+
+function isHttps(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" && url.username === "" && url.password === "";
+  } catch {
+    return false;
+  }
+}
+
+export function pagingView(health: PagingAnswer | undefined): PagingView {
   if (health === undefined) return { kind: "hidden" };
-  if (health === "unreachable") return { kind: "unreachable" };
+  if (health.status === "unreachable") return { kind: "unreachable" };
   if (health.status === "ok") return { kind: "hidden" };
   if (health.status === "unknown") return { kind: "unknown" };
   return { kind: "degraded", reasons: health.reasons, lastOkAt: health.lastOkAt };
 }
 
-/** One check; never throws. A network failure, an error answer or a body that is not the shape is `unreachable`. */
+/**
+ * One check; never throws. A network failure, an error answer or a body that is not the shape is unreachable, with
+ * the relay when an error answer gives it.
+ */
 export async function fetchPagingHealth(
   fetcher: typeof fetch,
   signal?: AbortSignal,
-): Promise<PagingHealth | "unreachable"> {
+): Promise<PagingAnswer> {
   try {
     const response = await fetcher(PAGING_HEALTH_PATH, {
       signal,
@@ -82,9 +129,13 @@ export async function fetchPagingHealth(
       credentials: "same-origin",
       headers: { accept: "application/json" },
     });
-    if (!response.ok) return "unreachable";
-    return parsePagingHealth(await response.json()) ?? "unreachable";
+    const body: unknown = await response.json().catch(() => null);
+    if (!response.ok) {
+      const relay = typeof body === "object" && body !== null ? Reflect.get(body, "relay") : null;
+      return { status: "unreachable", relay: parseRelay(relay) };
+    }
+    return parsePagingHealth(body) ?? UNREACHABLE;
   } catch {
-    return "unreachable";
+    return UNREACHABLE;
   }
 }

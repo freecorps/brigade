@@ -338,12 +338,25 @@ const LISTED: readonly Operation[] = [
     summary: "Whether the paging pipeline proved itself lately",
     description:
       "Without a session, or for a user in no workspace, only `status`. A member of any workspace also gets the " +
-      "reasons and times, since a responder needs to know they may not be paged.",
+      "reasons and times, since a responder needs to know they may not be paged, and `relay`. When the watchdog " +
+      "cannot answer (`503`), a member's answer still has `relay` beside `error`.",
     auth: "optional",
-    responses: answers(
-      { 200: { description: "The pipeline's state.", body: ref("PagingHealth") } },
-      { 503: ["unavailable"] },
-    ),
+    responses: {
+      200: { description: "The pipeline's state.", body: ref("PagingHealth") },
+      503: {
+        description: "The watchdog cannot answer; a member still gets `relay`.",
+        // Inline, like every refusal's `{ error }`, so the refusal code reads where clients look for it.
+        body: {
+          type: "object",
+          properties: {
+            error: { type: "string", enum: ["unavailable"] },
+            relay: { $ref: "#/components/schemas/PagingHealth/properties/relay" },
+          },
+          required: ["error"],
+          additionalProperties: false,
+        },
+      },
+    },
   },
   {
     method: "post",
@@ -1816,6 +1829,20 @@ const SCHEMAS: Record<string, JsonSchema> = {
       lastBeatAt: { type: ["string", "null"], format: "date-time", description: "Members only." },
       lastProvedAt: { type: ["string", "null"], format: "date-time", description: "Members only." },
       lastOkAt: { type: ["string", "null"], format: "date-time", description: "Members only." },
+      relay: {
+        type: "object",
+        description:
+          "Members only. Which relay pages go through: `none` (phones are not paged), `freecorps` (Freecorps' " +
+          "relay, for the store app) or `own` (the company's own relay, for its own app build). For `own` only: " +
+          "`host`, the relay's host when the instance has its address, and `app`, the own build's link when set.",
+        properties: {
+          kind: { type: "string", enum: ["none", "freecorps", "own"] },
+          host: { type: ["string", "null"] },
+          app: { type: ["string", "null"], format: "uri" },
+        },
+        required: ["kind"],
+        additionalProperties: false,
+      },
     },
     required: ["status"],
     additionalProperties: false,

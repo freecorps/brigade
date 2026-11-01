@@ -591,7 +591,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - [x] Custom domains for status pages, set up by hand for now (apps/api README "Custom domains")
   - [x] Relay registration: `vp run setup:relay` for Freecorps' relay or the company's own (closed registration by
         the relay's admin token), or none (RFC 0015 section 8, apps/api README "Push relay"); Freecorps' relay's
-        public address is still to be chosen (Q31)
+        public address is still to be chosen (Q31). The dashboard says which relay pages go through and its state
+        ("Phones and pages" in the workspace settings) and which app to install ("Use the app" on the account page)
   - Left (decided, Q23; RFC 0002 "Environments"): the setup wizard running those steps, the custom domains' and
     `setup:first-user`.
 - [ ] Hosted push relay with terms of service

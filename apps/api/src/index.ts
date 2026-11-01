@@ -61,7 +61,12 @@ import { ACK_STATUS, INVITATION_STATUS, MEMBER_STATUS, RECEIPT_STATUS, USER_ID }
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
 import { pruneEmailDays } from "./email-ceiling.ts";
 import { instanceAccess, serveConfig, type AccessEnv } from "./sign-up.ts";
-import { relayConfig, type RelayInstanceEnv } from "./relay-instance.ts";
+import {
+  relayConfig,
+  relaySetup,
+  type RelayInstanceEnv,
+  type RelaySetup,
+} from "./relay-instance.ts";
 import { BOOTSTRAP_PATH, bootstrapFirstUser } from "./bootstrap.ts";
 import { forgetSessionEnd, recordSessionEnd, sweepSessionEnds } from "./session-end.ts";
 import { within } from "./deadline.ts";
@@ -375,7 +380,8 @@ export async function workspaceInfo(
 /**
  * `GET /health/paging`: whether the paging pipeline proved itself lately (src/watchdog.ts), for the dashboard. Never a
  * URL or an id, and trimmed by who asks (`pagingHealthFor`). Answers 503 when the watchdog itself cannot be reached,
- * which is also degraded.
+ * which is also degraded; a member's 503 still says which relay pages go through (it comes from the config, not the
+ * watchdog), so "Use the app" keeps pointing to the right app.
  */
 export async function pagingHealth(
   request: Request,
@@ -384,13 +390,6 @@ export async function pagingHealth(
 ): Promise<Response> {
   if (!READ_METHODS.includes(request.method)) {
     return json({ error: "method_not_allowed" }, 405, { Allow: READ_METHODS.join(", ") });
-  }
-  let health: PagingHealth;
-  try {
-    health = await env.WATCHDOG.getByName(WATCHDOG_NAME).health();
-  } catch (error) {
-    console.error(JSON.stringify({ message: "WatchdogDO.health failed", error: String(error) }));
-    return json({ error: "unavailable" }, 503);
   }
   // D1 or the session failing degrades the answer to `{ status }`, the same as no session, rather than a 500.
   let roles: Role[] = [];
@@ -402,10 +401,18 @@ export async function pagingHealth(
       JSON.stringify({ message: "paging health: session lookup failed", error: String(error) }),
     );
   }
-  return json(pagingHealthFor(health, roles), 200, {
-    // Varies by the session's cookie, so no shared cache may keep it.
-    "Cache-Control": "private, no-store",
-  });
+  // Which relay pages go through (RFC 0015 section 8), only for members: nothing is read for anyone else.
+  const relay = roles.length > 0 ? relaySetup(env as SetupEnv) : undefined;
+  // Varies by the session's cookie, so no shared cache may keep it.
+  const headers = { "Cache-Control": "private, no-store" };
+  let health: PagingHealth;
+  try {
+    health = await env.WATCHDOG.getByName(WATCHDOG_NAME).health();
+  } catch (error) {
+    console.error(JSON.stringify({ message: "WatchdogDO.health failed", error: String(error) }));
+    return json({ error: "unavailable", ...(relay === undefined ? {} : { relay }) }, 503, headers);
+  }
+  return json(pagingHealthFor(health, roles, relay), 200, headers);
 }
 
 /**
@@ -413,7 +420,10 @@ export async function pagingHealth(
  * single workspace owns it:
  * - no session, or no workspace: `{ status }` only, like `/health`; why and since when would tell an outsider when
  *   pages stop going out;
- * - any member: the reasons and times too, since a responder needs to know they may not be paged.
+ * - any member: the reasons and times too, since a responder needs to know they may not be paged, and `relay`, which
+ *   relay pages go through (RFC 0015 section 8: the dashboard's "Phones and pages" and which app to install). Only an
+ *   own relay's host is given, which its phones (the company's own app) reach anyway; `GET /config` also gives the
+ *   relay's origin to anyone, with the instance key and a public `RELAY_URL`.
  * `external` (whether the dead-man check is set up and answering) is never sent: it is the instance operator's
  * business, and with open sign-up any user can own a workspace, so no workspace role can stand in for that operator
  * (Q19). Operators read it in the logs.
@@ -421,10 +431,11 @@ export async function pagingHealth(
 export function pagingHealthFor(
   health: PagingHealth,
   roles: readonly Role[],
-): Pick<PagingHealth, "status"> & Partial<PagingHealth> {
+  relay?: RelaySetup,
+): Pick<PagingHealth, "status"> & Partial<PagingHealth> & { relay?: RelaySetup } {
   if (roles.length === 0) return { status: health.status };
   const { external: _external, ...rest } = health;
-  return rest;
+  return relay === undefined ? rest : { ...rest, relay };
 }
 
 /** The user's Brigade roles in every workspace they belong to (empty when none). */

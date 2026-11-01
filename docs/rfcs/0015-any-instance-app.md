@@ -439,6 +439,46 @@ does it.
   (`relay.app`) when there is one.
 - Every string in en and pt-BR (RFC 0008).
 
+**Built (step 3): the dashboard.** apps/web `src/components/phones-pages-card.tsx` (settings),
+`src/components/use-app-card.tsx` (account), `src/lib/relay.ts`; apps/api `relaySetup` in `src/relay-instance.ts`. As
+built:
+
+- **Which relay** comes from the server, not from the relay's origin: Freecorps' relay has no public address yet (Q31),
+  so no constant could tell the two apart. `GET /health/paging`, which the dashboard already asks every minute, gives
+  members `relay: { kind: "none" | "freecorps" | "own", host?, app? }`. `none` when phones cannot be paged at all (no
+  relay to reach, or neither `RELAY_SEND_TOKEN` nor `RELAY_INSTANCE_KEY`; unlike `/config`'s `relay` it counts the send
+  token, which pages raw-token phones today). A key that does not read still counts, so the card shows the watchdog's
+  "refused" rather than "set one up", whose new key would orphan every handle. `own` when `RELAY_KIND` (`own` or unset,
+  nothing else) or `RELAY_APP_URL` is set: the link is optional, so `vp run setup:relay` now marks an own relay with
+  `RELAY_KIND=own`, and its switch to Freecorps' relay removes it with the link and the own relay's send token. The
+  script reads only secret names, so any `RELAY_KIND` counts as own there, and the API agrees. An own relay set up
+  before the marker, with no link, shows as Freecorps' until `RELAY_KIND=own` is set by hand (not by running the
+  script again, which would remove `RELAY_INSTANCE_ID`; apps/api README "Push relay").
+  Anything else is Freecorps'. Only an own relay has `host` (`RELAY_URL`'s; none with the binding alone) and `app` (the
+  https link, never one with credentials). Not sent without a session or to a user in no workspace, like the reasons;
+  a member's `503` (the watchdog down) still has it, so "Use the app" does not depend on the watchdog.
+- **"Phones and pages"** (workspace settings, owners and admins): the relay ("Pages go through Freecorps' relay", "…
+  your company's own relay (host)", or "No relay: phones aren't paged" with email as the fallback and the command to
+  set one up), its state, and for an own relay the app link or how to add one. The host is `RELAY_URL`'s even with the
+  `RELAY` binding: the setup script points both at the same relay (with the binding, `RELAY_URL` is only its address,
+  section 7). The state is one per card, from the watchdog's reasons, most telling first: beats that stopped
+  (`no_beat`, `pipeline_stalled`: "held up in Brigade", since the relay's reasons are then from its last proof and
+  stale); refused (`relay_bad_signature`, `relay_instance_revoked`, `relay_unauthorized`); not registered;
+  unreachable; handles unavailable; push service failing (`apns_failing`, `fcm_failing`); rate limited; a slow pipeline;
+  the database (`d1_failing`, its own hint: the relay answered). `ok` is working, `unknown` not checked yet, an API that
+  does not answer "Couldn't check", and an answer without the session's details (an expired session) says so. With no
+  relay the state row shows only Brigade's own trouble (beats stopped, the database). Each hint differs where the fix
+  is the operator's (an own relay) or Freecorps' (a revoked instance: write to Freecorps rather than register again; a
+  refused send token: the same `RELAY_SEND_TOKEN` on both, since Freecorps' flow never sets one), and when the API did
+  not say which relay, it says so and points to the overview's notice instead of guessing. The command shows only when
+  it fixes the state (`vp run setup:relay`, or with `--replace-credentials`); never for a bad signature, since setting
+  a key up again removes `RELAY_INSTANCE_ID` and a rotated instance would sign as another id, orphaning every handle.
+  Registration pending is "not registered": the relay has no pending state (section 7).
+- **"Use the app"** is a card on the member's account page, above "Your phones", until the page with the QR
+  (section 6, step 4) exists: the Brigade app from the stores on Freecorps' relay; the company's own build, with "Get
+  your company's app" when the link is set ("Ask an owner or admin" otherwise), on an own relay; the store app with
+  nothing about pages when there is no relay.
+
 ### 9. Moving our instance and the apps in the field
 
 1. The relay ships `/v1/*` next to `/send`.
@@ -531,7 +571,7 @@ does it.
    reasons, `vp run setup:relay` (both relays), the dashboard's "Phones and pages". The notifier switches to
    `sealPushV2` (origin: the dashboard's, TTL: the one it gives the relay) only for apps that open v2: an older app
    shows the fallback text for every v2 page. Built: the API side (`device.register`, the notifier, `/config`, the
-   watchdog; section 7) and `vp run setup:relay` (section 8). Still to do: the dashboard's "Phones and pages".
+   watchdog; section 7), `vp run setup:relay` and the dashboard's "Phones and pages" and "Use the app" (section 8).
 4. App: handles and per-instance keys and storage; the instance switcher, address field, QR and link, address
    checks, which relay; QR sign-in (with its API routes and the dashboard's approval).
 5. Our instance moves (section 9); then the docs for self-hosters ("Your own app" included) and the terms.

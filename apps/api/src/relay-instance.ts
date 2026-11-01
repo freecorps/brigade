@@ -31,6 +31,15 @@ export type RelayInstanceEnv = {
    * /config` gives it as `relay.app`, so the store app can send people there. Optional, https only.
    */
   RELAY_APP_URL?: string;
+  /**
+   * `own` when the relay is the company's own (RFC 0015 section 8), set by `vp run setup:relay` and removed by it on a
+   * switch to Freecorps' relay; unset otherwise, nothing else. `RELAY_APP_URL` says the same, but the link is optional,
+   * so this marks an own relay without one. Any value counts as own, as it does for the script (which reads only secret
+   * names, and on a switch to Freecorps' relay drops the send token of an API that has it). Not secret.
+   */
+  RELAY_KIND?: string;
+  /** The send token for `POST /send` (src/notify.ts); read here only for whether there is one. */
+  RELAY_SEND_TOKEN?: string;
 };
 
 export type Fetch = (request: Request) => Promise<Response>;
@@ -153,6 +162,40 @@ export async function relayConfig(
   if (!key) return undefined;
   const app = publicOrigin(env.RELAY_APP_URL, true);
   return { origin, instance: key.instance, ...(app === undefined ? {} : { app }) };
+}
+
+/**
+ * Which relay pages go through, for the dashboard's "Phones and pages" (RFC 0015 section 8, `GET /health/paging`
+ * `relay`): `none` when phones cannot be paged at all (no relay to reach, or neither a send token nor an instance key),
+ * else `freecorps` or `own`; an own relay with its host when `RELAY_URL` gives one (a `RELAY` binding alone has none)
+ * and its app build's link. Unlike `relayConfig` it counts the send token too: an instance paging raw-token phones
+ * through `/send` (ours today) pages phones, with or without handles. An instance key counts even when it does not
+ * read: the watchdog then says `relay_bad_signature`, and the dashboard must show that rather than "no relay, set one
+ * up", whose fix (a new key) would orphan every handle.
+ */
+export type RelaySetup =
+  | { kind: "none" }
+  | { kind: "freecorps" }
+  | { kind: "own"; host: string | null; app: string | null };
+
+export function relaySetup(env: RelayInstanceEnv): RelaySetup {
+  if (!relayReachable(env)) return { kind: "none" };
+  if (!env.RELAY_SEND_TOKEN?.trim() && !env.RELAY_INSTANCE_KEY?.trim()) return { kind: "none" };
+  if (!isOwnRelay(env)) return { kind: "freecorps" };
+  const origin = publicOrigin(env.RELAY_URL);
+  return {
+    kind: "own",
+    host: origin === undefined ? null : new URL(origin).host,
+    app: publicOrigin(env.RELAY_APP_URL, true) ?? null,
+  };
+}
+
+/**
+ * An own relay: `RELAY_KIND` set to anything (it is `own` or unset; `vp run setup:relay` reads only secret names, so
+ * it too takes any value as own) or an app link, which only an own relay has.
+ */
+function isOwnRelay(env: Pick<RelayInstanceEnv, "RELAY_KIND" | "RELAY_APP_URL">): boolean {
+  return Boolean(env.RELAY_KIND?.trim() || env.RELAY_APP_URL?.trim());
 }
 
 /** An https URL's origin (or the whole URL with `whole`); http only on a loopback host. Undefined for anything else. */

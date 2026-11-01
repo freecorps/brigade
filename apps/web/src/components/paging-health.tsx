@@ -7,7 +7,7 @@ import {
   PAGING_REFRESH_MS,
   pagingView,
   type DegradedReason,
-  type PagingHealth,
+  type PagingAnswer,
   type PagingView,
 } from "@/lib/paging-health";
 
@@ -33,7 +33,16 @@ const REASONS: Record<DegradedReason, () => string> = {
  * back. Says nothing while all is well: a notice that is always there stops being read. `fetcher` is for the tests.
  */
 export function PagingHealthNotice({ fetcher = fetch }: { fetcher?: typeof fetch }) {
-  const [health, setHealth] = useState<PagingHealth | "unreachable">();
+  return <PagingHealthView view={pagingView(usePagingHealth(fetcher))} />;
+}
+
+/**
+ * `GET /health/paging`, asked on mount and every minute while the tab is visible, and again when it comes back:
+ * undefined until the first answer. Shared by the overview's notice, the settings' "Phones and pages" and the
+ * account's "Use the app".
+ */
+export function usePagingHealth(fetcher: typeof fetch = fetch): PagingAnswer | undefined {
+  const [health, setHealth] = useState<PagingAnswer>();
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setInterval> | undefined;
@@ -56,7 +65,7 @@ export function PagingHealthNotice({ fetcher = fetch }: { fetcher?: typeof fetch
       controller.abort();
     };
   }, [fetcher]);
-  return <PagingHealthView view={pagingView(health)} />;
+  return health;
 }
 
 export function PagingHealthView({ view }: { view: PagingView }) {

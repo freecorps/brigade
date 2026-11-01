@@ -40,6 +40,7 @@ function localSecrets(): Record<string, string> {
     "RELAY_INSTANCE_KEY",
     "RELAY_INSTANCE_ID",
     "RELAY_APP_URL",
+    "RELAY_KIND",
     "EMAIL_FROM",
     "DASHBOARD_URL",
     "WEBHOOK_SECRET_KEY",

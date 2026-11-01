@@ -391,7 +391,9 @@ in a row (the relay limits the signed check per caller IP, and instances on Work
 operators when the pings stop.
 
 `GET /health/paging` answers `{ status }` without a session (or to a user in no workspace); `{ status, reasons,
-lastBeatAt, lastProvedAt, lastOkAt }` to a member; never `external` (operators read the logs).
+lastBeatAt, lastProvedAt, lastOkAt, relay }` to a member; never `external` (operators read the logs). `relay` is which
+relay pages go through, `{ kind: "none" | "freecorps" | "own", host, app }` (`relaySetup` in src/relay-instance.ts,
+RFC 0015 section 8): the dashboard's "Phones and pages" and "Use the app".
 `degraded` after 3 minutes with no beat (`no_beat`), with the newest proved beat older than 3 minutes
 (`pipeline_stalled`), with the last proof over 2 minutes late (`pipeline_slow`), or with the relay
 `relay_unauthorized`, `relay_unreachable` or `relay_not_configured` (or one of the signed check's reasons above) on
@@ -524,7 +526,8 @@ Workers of that environment (default production). It asks which relay, then:
   4. registers the instance with the admin token (no terms, no email);
   5. then, one right after the other: deletes the admin token from the relay (with the relay's new send token if it
      needed one), and sets `RELAY_INSTANCE_KEY`, `RELAY_URL`, `RELAY_SEND_TOKEN` (the relay's, for phones that still
-     register raw tokens) and the store link (`RELAY_APP_URL`, optional) on the API.
+     register raw tokens), `RELAY_KIND=own` (what tells the dashboard's "Phones and pages" this is an own relay) and
+     the store link (`RELAY_APP_URL`, optional) on the API.
 
   **The send token.** Only secret names can be read, so a shared marker, `BRIGADE_SEND_PAIR_<id>`, set on the relay
   and the API in the same step as their token, is what shows the two tokens are the same. With the same marker on
@@ -542,10 +545,18 @@ app unable to page at all. Whenever the API already has `RELAY_INSTANCE_KEY`, th
 (`--yes` without questions), even with `--instance-key-file`: it can read only secret names, so it cannot prove the
 key is the one set. Whenever it installs a key it also removes `RELAY_INSTANCE_ID`: it registers and checks the key as
 the id the key gives, so a leftover id (from a rotation, or a key deleted by hand) would make the API sign as another
-instance. A switch to Freecorps' relay also removes `RELAY_APP_URL` and, with it (it marks an own relay), the own
-relay's `RELAY_SEND_TOKEN`; an API without `RELAY_APP_URL` keeps its send token. Keep the saved key in a password
+instance. A switch to Freecorps' relay also removes `RELAY_KIND` and `RELAY_APP_URL` and, with them (either marks an
+own relay), the own relay's `RELAY_SEND_TOKEN`; an API with neither keeps its send token. Keep the saved key in a password
 manager and delete the file: a lost key is the same as a switch. `--instance-key-file` reuses a saved key, to finish a
 run that stopped (a code that expired, secrets wrangler could not set) without a new id.
+
+**`RELAY_KIND`** is `own` or unset, nothing else: the script can read only secret names, so it takes any value as an
+own relay (and a switch to Freecorps' relay then drops the API's send token), and the API agrees. **An own relay set
+up before the script set `RELAY_KIND`** (and with no app link) shows on the dashboard as Freecorps' relay, and its
+members are told to install the store app, which it cannot page: set only the marker, `wrangler secret put
+RELAY_KIND` (value `own`) in apps/api, which changes nothing else. Don't run `vp run setup:relay` again for this, not
+even with `--instance-key-file`: installing a key removes `RELAY_INSTANCE_ID`, so an instance whose key was rotated
+would sign as another id and the relay would refuse every handle (`handle_not_yours`).
 
 Secret values never appear on the screen, in a command's arguments or in a file in the repository: wrangler gets them
 on stdin (`wrangler secret bulk`). Without a terminal, or with `--non-interactive`, every answer is a flag (`vp run
@@ -606,6 +617,7 @@ In order, from `apps/api` unless noted:
    | `RELAY_INSTANCE_KEY` | Optional: the instance's Ed25519 key (PKCS#8, base64url; RFC 0015), for phones registered with relay handles (`/v1/send`) and the signed deep check; set by `vp run setup:relay` ("Push relay")                                                                                                                                                                               |
    | `RELAY_INSTANCE_ID`  | Optional: the instance's first id on the relay (`ins_…`), set after a key rotation ("Rotating the instance key" above)                                                                                                                                                                                                                                                        |
    | `RELAY_APP_URL`      | Optional: an own app build's store link, given to the app in `GET /config` (`relay.app`, RFC 0015 section 8)                                                                                                                                                                                                                                                                  |
+   | `RELAY_KIND`         | Optional: `own` on an own relay (set by `vp run setup:relay`), so the dashboard says so; unset otherwise ("Push relay")                                                                                                                                                                                                                                                       |
    | `DASHBOARD_URL`      | Links in emails and Slack: `https://brigade-web-dev.<subdomain>.workers.dev`                                                                                                                                                                                                                                                                                                  |
    | `EMAIL_FROM`         | Optional: the email sender ("Email" above); without it no email goes out, so addresses cannot be verified or passwords reset                                                                                                                                                                                                                                                  |
    | `SLACK_TOKEN_KEY`    | Optional until Slack: seals bot tokens ("Slack" below)                                                                                                                                                                                                                                                                                                                        |

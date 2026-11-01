@@ -260,6 +260,24 @@ describe("GET /config", () => {
     });
   });
 
+  test("after a key rotation, the instance's first id (RELAY_INSTANCE_ID), never the new key's", async () => {
+    const first = await generateInstanceKey();
+    const rotated = await generateInstanceKey();
+    const config = await (
+      await under(
+        "open",
+        "/config",
+        {},
+        {
+          RELAY_URL: "https://relay.example.com",
+          RELAY_INSTANCE_KEY: rotated.privateKey,
+          RELAY_INSTANCE_ID: first.instance,
+        },
+      )
+    ).json();
+    expect(config).toMatchObject({ relay: { instance: first.instance } });
+  });
+
   test("no relay without the instance key, a relay address or a key that reads", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
@@ -269,6 +287,11 @@ describe("GET /config", () => {
         { RELAY_INSTANCE_KEY: key.privateKey },
         { RELAY_URL: "http://relay.example.com", RELAY_INSTANCE_KEY: key.privateKey },
         { RELAY_URL: "https://relay.example.com", RELAY_INSTANCE_KEY: "not-a-key" },
+        {
+          RELAY_URL: "https://relay.example.com",
+          RELAY_INSTANCE_KEY: key.privateKey,
+          RELAY_INSTANCE_ID: "ins_short",
+        },
       ]) {
         const config = await (await under("open", "/config", {}, vars)).json();
         expect(config, JSON.stringify(Object.keys(vars))).not.toHaveProperty("relay");

@@ -20,6 +20,13 @@ export type RelayInstanceEnv = {
    */
   RELAY_INSTANCE_KEY?: string;
   /**
+   * The instance's id on the relay (`ins_…`), for an instance whose key was rotated (RFC 0015 section 1): the id
+   * comes from the first key and never changes, so after a rotation the key held now gives another id. Every handle
+   * was sealed for the first id, so signing as any other would make the relay answer `handle_not_yours` for each.
+   * Optional: without it, the id is the one the key gives (right until the first rotation).
+   */
+  RELAY_INSTANCE_ID?: string;
+  /**
    * The store link of the company's own app build, for an instance on its own relay (RFC 0015 section 8): `GET
    * /config` gives it as `relay.app`, so the store app can send people there. Optional, https only.
    */
@@ -44,32 +51,50 @@ export const BRIGADE_API_VERSION = 1;
  */
 export const MIN_APP_VERSION = "0.1.0";
 
-/** Keys read per isolate, by the secret's value: importing is WebCrypto work, done once. */
+/** Keys read per isolate, by the secrets' values: importing is WebCrypto work, done once. */
 const keys = new Map<string, Promise<InstanceKey | undefined>>();
 
+const INSTANCE_ID = /^ins_[A-Za-z0-9_-]{22}$/;
+
 /**
- * The instance key from `RELAY_INSTANCE_KEY`, or undefined without one or with one that is not an Ed25519 private key
- * (logged once per isolate, never the key).
+ * The instance key from `RELAY_INSTANCE_KEY`, signing as `RELAY_INSTANCE_ID` when set (a rotated key) and as the id
+ * the key gives otherwise. Undefined without a key, with one that is not an Ed25519 private key, or with an id that is
+ * not one (logged once per isolate, never the key).
  */
 export function instanceKey(
-  env: Pick<RelayInstanceEnv, "RELAY_INSTANCE_KEY">,
+  env: Pick<RelayInstanceEnv, "RELAY_INSTANCE_KEY" | "RELAY_INSTANCE_ID">,
 ): Promise<InstanceKey | undefined> {
   const secret = env.RELAY_INSTANCE_KEY?.trim();
   if (!secret) return Promise.resolve(undefined);
-  let key = keys.get(secret);
+  const id = env.RELAY_INSTANCE_ID?.trim() || undefined;
+  const cacheKey = `${id ?? ""}\n${secret}`;
+  let key = keys.get(cacheKey);
   if (!key) {
-    key = importInstanceKey(secret).catch((error: unknown) => {
-      console.error(
-        JSON.stringify({
-          message: "RELAY_INSTANCE_KEY is not an Ed25519 private key (PKCS#8, base64url); ignored",
-          error: String(error),
-        }),
-      );
-      return undefined;
-    });
-    keys.set(secret, key);
+    key = (async () => {
+      if (id !== undefined && !INSTANCE_ID.test(id)) {
+        problem(
+          "RELAY_INSTANCE_ID is not an instance id (ins_ and 22 base64url characters); the key is not used",
+        );
+        return undefined;
+      }
+      try {
+        const imported = await importInstanceKey(secret);
+        return id === undefined ? imported : { ...imported, instance: id };
+      } catch (error) {
+        problem(
+          "RELAY_INSTANCE_KEY is not an Ed25519 private key (PKCS#8, base64url); ignored",
+          String(error),
+        );
+        return undefined;
+      }
+    })();
+    keys.set(cacheKey, key);
   }
   return key;
+}
+
+function problem(message: string, error?: string): void {
+  console.error(JSON.stringify({ message, ...(error === undefined ? {} : { error }) }));
 }
 
 /** Whether a relay can be reached at all: through the binding or at `RELAY_URL`. */

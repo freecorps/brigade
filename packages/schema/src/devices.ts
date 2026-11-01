@@ -68,6 +68,14 @@ export type DeviceVoipCleared = DomainEvent<
   "device.voip_cleared",
   { id: string; userId: string; reason: "token_invalid" }
 >;
+/**
+ * A device's relay handle was dropped while it keeps its raw tokens (RFC 0015 section 9): the relay said the handle is
+ * not this instance's (`handle_not_yours`), so its pages go through `/send` until the app registers a new handle.
+ */
+export type DeviceHandleCleared = DomainEvent<
+  "device.handle_cleared",
+  { id: string; userId: string; reason: "handle_not_yours" }
+>;
 
 /**
  * Who reports what a page did (RFC 0005 "Notifiers"): the queue consumer records failed pages through it. Server-only
@@ -186,7 +194,7 @@ const tag: Validator<string> = (input, path = "") =>
  * Registers the actor's device, or refreshes it (a rotated token or key). The phone is named to the relay by raw
  * tokens (`pushToken`, `voipToken`: apps that pair with an instance holding the relay's send token, RFC 0006) or by
  * a relay handle and its tag (`handle`, `tag`, `voip`: RFC 0015 section 7, the instance never seeing a token), or
- * both while an instance moves (RFC 0015 section 9); at least one. `envelope: 2` says the app opens envelope version
+ * both while an instance moves (RFC 0015 section 9); at least one. `envelope: 2` (or more) says the app opens envelope version
  * 2 (RFC 0015 section 4, Q29); left out by older apps, which then get version 1. The id is made by the app; the same
  * push token (the same tag, for handles) registered under another id by the same member (a reinstall) replaces that
  * device, so one phone is never paged twice. A device belongs to whoever registered it: another member's id is
@@ -208,7 +216,8 @@ export const registerDevice = defineMutation({
     tag: v.optional(v.nullable(tag)),
     // Whether the handle can ring as a call; only with a handle.
     voip: v.omittable(v.boolean()),
-    envelope: v.omittable(v.literal(2)),
+    // The newest envelope version the app opens; a later one (3, …) is stored as 2, the newest this instance seals.
+    envelope: v.omittable(v.integer({ min: 2, max: 1000 })),
     publicKey,
     // Whether Critical Alerts are allowed (RFC 0006 "Critical Alerts"). Optional, so apps from before it still
     // register; left out reads as not allowed.
@@ -263,7 +272,7 @@ export const registerDevice = defineMutation({
         handle: args.handle,
         tag: args.tag,
         voip: args.handle !== null && args.voip === true,
-        envelope: args.envelope ?? null,
+        envelope: args.envelope === undefined ? null : 2,
         publicKey: args.publicKey,
         criticalAlerts: args.criticalAlerts === true,
         registeredAt: current?.registeredAt ?? ctx.now,
@@ -410,25 +419,49 @@ export const unregisterDevice = defineMutation({
 
 /**
  * Server only, as the notifier: drops a device whose push service said its token is gone (APNs `BadDeviceToken`,
- * `Unregistered`), or whose relay handle is no longer good for this instance (`403 handle_not_yours` after a lost
- * instance key, `400 bad_handle`: RFC 0015 "Dead ends"), so later pages do not count it. The app registers again
- * with a fresh token (and handle) when it next runs. `pushToken` is the token the push went to, or `tag` the relay
- * tag of the handle it went to (exactly one): a device registered again with another token while the push was out
- * is kept (`conflict`), since its new token was never tried.
+ * `Unregistered`), or whose relay handle is no longer this instance's (`403 handle_not_yours` after a lost instance
+ * key: RFC 0015 "Dead ends"), so later pages do not count it. The app registers again with a fresh token (and handle)
+ * when it next runs. `pushToken` is the token the push went to, or `handle` the relay handle it went to (exactly
+ * one): a device registered again meanwhile (another token, or a new handle, even for the same token and tag) is
+ * kept (`conflict`), since what it registered was never tried. `handleOnly`: only the handle is dead, not the phone's
+ * token, so a device that also has a raw token keeps it and loses only its handle (`device.handle_cleared`); one with
+ * the handle alone is dropped.
  */
 export const expireDevice = defineMutation({
   name: "device.expire",
-  args: v.object({ id: v.id("dev"), pushToken: v.omittable(pushToken), tag: v.omittable(tag) }),
+  args: v.object({
+    id: v.id("dev"),
+    pushToken: v.omittable(pushToken),
+    handle: v.omittable(handle),
+    handleOnly: v.omittable(v.literal(true)),
+  }),
   permission: "incident:update",
   apply(store, args) {
-    if ((args.pushToken === undefined) === (args.tag === undefined)) {
-      return fail("invalid_args", "Expected the push token or the relay tag the push went to");
+    if ((args.pushToken === undefined) === (args.handle === undefined)) {
+      return fail("invalid_args", "Expected the push token or the relay handle the push went to");
+    }
+    if (args.handleOnly && args.handle === undefined) {
+      return fail("invalid_args", "handleOnly comes with the relay handle");
     }
     const current = store.get("devices", args.id);
     if (!current) return fail("not_found", "Device not found");
     const same =
-      args.tag !== undefined ? current.tag === args.tag : current.pushToken === args.pushToken;
-    if (!same) return fail("conflict", "Device was registered again with another token");
+      args.handle !== undefined
+        ? current.handle === args.handle
+        : current.pushToken === args.pushToken;
+    if (!same) return fail("conflict", "Device was registered again since");
+    if (args.handleOnly && current.pushToken !== null) {
+      store.update("devices", args.id, { handle: null, tag: null, voip: false });
+      const summary = store.get("member_devices", args.id);
+      const voip = current.voipToken !== null;
+      if (summary && summary.voip !== voip) store.update("member_devices", args.id, { voip });
+      const event: DeviceHandleCleared = {
+        type: "device.handle_cleared",
+        subject: args.id,
+        data: { id: args.id, userId: current.userId, reason: "handle_not_yours" },
+      };
+      return ok(event);
+    }
     forgetDevice(store, args.id);
     const event: DeviceUnregistered = {
       type: "device.unregistered",

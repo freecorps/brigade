@@ -119,7 +119,8 @@ gone, `member_removed` when its member left or was removed, `password_reset` whe
 from `device.signOut`, or from `member.reconcile` when that failed, RFC 0002 "Auth"; `replaced` when its member
 registered a new device over their limit and it was their least recently alive: registered, or confirmed a page, whichever is later; RFC 0006 "Device registration"), `device.voip_cleared` (`id`,
 `userId`, `reason: token_invalid`: APNs refused a call to its PushKit token as gone, so it no longer rings; its pushes
-go on, RFC 0010), `member.calls_changed` (`userId`, `calls`: the member's choice of which pages ring them as a call,
+go on, RFC 0010), `device.handle_cleared` (`id`, `userId`, `reason: handle_not_yours`: the relay said the device's
+handle is not this instance's, so it keeps only its raw tokens, RFC 0015), `member.calls_changed` (`userId`, `calls`: the member's choice of which pages ring them as a call,
 RFC 0010 "Who a call rings") and `notification.failed` (`incidentId`, `eventId` of the event that asked for the page, `channel: "push"`,
 `userId` or null, `reason`: `no_devices`, `token_invalid` (no device left because the push service refused the one a
 page of this incident went to), `undelivered`, `unsupported`, `not_configured`, `over_limit`,

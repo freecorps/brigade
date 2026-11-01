@@ -2528,51 +2528,85 @@ describe("relay handles (RFC 0015)", () => {
     expect(parsePushEnvelope(plain.requests[0]!.body.envelope)).toMatchObject({ v: 1 });
   });
 
-  test("handle_not_yours and bad_handle expire the device by its tag, like a token gone", async () => {
-    for (const refused of [
-      Response.json({ error: "handle_not_yours" }, { status: 403 }),
-      Response.json({ error: "bad_handle" }, { status: 400 }),
-    ]) {
+  test("handle_not_yours drops a device with the handle alone, by the handle it went to", async () => {
+    const ws = await workspace();
+    const phone = await handlePhone(ws, bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    const fake = v1Relay(() => Response.json({ error: "handle_not_yours" }, { status: 403 }));
+    expect((await deliver(event, fake.send, { environment: handleEnv() })).retried).toHaveLength(1);
+    expect(await stored(ws, phone.deviceId)).toBeUndefined();
+    expect(await deliver(event, fake.send, { attempts: 2, environment: handleEnv() })).toEqual({
+      acked: ["msg-0"],
+      retried: [],
+    });
+    expect(await ws.timeline(incident)).toContainEqual(
+      expect.objectContaining({ kind: "page_failed", userId: "usr_bia", reason: "token_invalid" }),
+    );
+  });
+
+  test("handle_not_yours on a phone with a raw token too: paged through /send now, and only its handle goes", async () => {
+    const ws = await workspace();
+    const phone = await handlePhone(ws, bia, { token: true, voip: true });
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    const fake = v1Relay((request) =>
+      request.url.endsWith("/v1/send")
+        ? Response.json({ error: "handle_not_yours" }, { status: 403 })
+        : Response.json({ status: 200 }),
+    );
+    expect(await deliver(event, fake.send, { environment: handleEnv() })).toEqual({
+      acked: ["msg-0"],
+      retried: [],
+    });
+    expect(fake.requests.map((r) => new URL(r.url).pathname)).toEqual(["/v1/send", "/send"]);
+    expect(await stored(ws, phone.deviceId)).toMatchObject({
+      pushToken: phone.pushToken,
+      handle: null,
+      tag: null,
+      voip: false,
+    });
+    expect((await ws.events()).map((e) => e.type)).toContain("device.handle_cleared");
+    expect((await ws.events()).map((e) => e.type)).not.toContain("device.unregistered");
+    // Bia was paged (Ana, with no phone, was not).
+    expect(
+      (await ws.timeline(incident)).filter(
+        (row) => row.kind === "page_failed" && row.userId === "usr_bia",
+      ),
+    ).toEqual([]);
+    // The next page goes straight to /send.
+    const next = await ws.declare(MONITOR_ACTOR);
+    const after = v1Relay();
+    await deliver(next.event, after.send, { environment: handleEnv() });
+    expect(after.requests.map((r) => new URL(r.url).pathname)).toEqual(["/send"]);
+  });
+
+  test("a device registered again while its push was out is kept, even with the same tag and a new handle", async () => {
+    for (const sameTag of [false, true]) {
       const ws = await workspace();
       const phone = await handlePhone(ws, bia);
-      const { incident, event } = await ws.declare(MONITOR_ACTOR);
-      const fake = v1Relay(() => refused.clone());
-      expect((await deliver(event, fake.send, { environment: handleEnv() })).retried).toHaveLength(
-        1,
-      );
-      expect(await stored(ws, phone.deviceId)).toBeUndefined();
-      expect(await deliver(event, fake.send, { attempts: 2, environment: handleEnv() })).toEqual({
-        acked: ["msg-0"],
-        retried: [],
+      const { event } = await ws.declare(MONITOR_ACTOR);
+      const fake = v1Relay(async () => {
+        // The phone registers again while the relay answers: a newly sealed handle, for the same token (the same
+        // tag) or another.
+        await handlePhone(ws, bia, { id: phone.deviceId, ...(sameTag ? { tag: phone.tag } : {}) });
+        return Response.json({ error: "handle_not_yours" }, { status: 403 });
       });
-      expect(await ws.timeline(incident)).toContainEqual(
-        expect.objectContaining({
-          kind: "page_failed",
-          userId: "usr_bia",
-          reason: "token_invalid",
-        }),
-      );
+      await deliver(event, fake.send, { environment: handleEnv() });
+      const kept = await stored(ws, phone.deviceId);
+      expect(kept, `same tag: ${sameTag}`).toBeDefined();
+      expect(kept?.handle).not.toBe(phone.handle);
     }
   });
 
-  test("a device registered again with another tag while its push was out is kept", async () => {
-    const ws = await workspace();
-    const phone = await handlePhone(ws, bia);
-    const { event } = await ws.declare(MONITOR_ACTOR);
-    const fake = v1Relay(async () => {
-      // The phone registers again (a new token, so a new tag) while the relay answers.
-      await handlePhone(ws, bia, { id: phone.deviceId });
-      return Response.json({ error: "handle_not_yours" }, { status: 403 });
-    });
-    await deliver(event, fake.send, { environment: handleEnv() });
-    expect(await stored(ws, phone.deviceId)).toBeDefined();
-  });
-
-  test("a relay that refuses the instance (401, 403 revoked, 503) is retried and expires nothing; spent, the member is not paged and emailed", async () => {
+  test("a relay that refuses the instance or fails as one is retried and expires nothing; spent, the member is not paged and emailed", async () => {
     for (const refused of [
       Response.json({ error: "bad_signature" }, { status: 401 }),
       Response.json({ error: "instance_revoked" }, { status: 403 }),
       Response.json({ error: "registry_unavailable" }, { status: 503 }),
+      // A relay from before /v1.
+      Response.json({ error: "not_found" }, { status: 404 }),
+      Response.json({ error: "relay_misconfigured" }, { status: 500 }),
+      // The relay's own key trouble (a broken RELAY_HANDLE_KEYS), never proof the phone is gone.
+      Response.json({ error: "bad_handle" }, { status: 400 }),
     ]) {
       const ws = await workspace();
       const phone = await handlePhone(ws, bia);
@@ -2581,13 +2615,14 @@ describe("relay handles (RFC 0015)", () => {
       for (let attempt = 1; attempt < MAX_PAGE_ATTEMPTS; attempt++) {
         expect(
           await deliver(event, fake.send, { attempts: attempt, environment: handleEnv() }),
+          `${refused.status} attempt ${attempt}`,
         ).toEqual({ acked: [], retried: [{ msgId: "msg-0", delaySeconds: retryDelay(attempt) }] });
       }
       expect(
         await deliver(event, fake.send, { attempts: MAX_PAGE_ATTEMPTS, environment: handleEnv() }),
       ).toEqual({ acked: ["msg-0"], retried: [] });
-      // The phone is fine; the instance is not. It stays, to be paged once the instance is.
-      expect(await stored(ws, phone.deviceId)).toBeDefined();
+      // The phone is fine; the instance (or the relay) is not. It stays, to be paged once they are.
+      expect(await stored(ws, phone.deviceId)).toMatchObject({ handle: phone.handle });
       expect((await ws.events()).map((e) => e.type)).not.toContain("device.unregistered");
       // The page's fallback: `notification.failed` on the push channel, which the email notifier sends on.
       const failed = (await ws.events(incident)).filter((e) => e.type === "notification.failed");
@@ -2603,27 +2638,72 @@ describe("relay handles (RFC 0015)", () => {
     }
   });
 
-  test("a phone with a handle and a raw token is paged through /send when /v1/send refuses the instance", async () => {
-    const ws = await workspace();
-    const phone = await handlePhone(ws, bia, { token: true });
-    const { event } = await ws.declare(MONITOR_ACTOR);
-    const fake = v1Relay((request) =>
-      request.url.endsWith("/v1/send")
-        ? Response.json({ error: "instance_revoked" }, { status: 403 })
-        : Response.json({ status: 200 }),
-    );
-    expect(await deliver(event, fake.send, { environment: handleEnv() })).toEqual({
-      acked: ["msg-0"],
-      retried: [],
-    });
-    expect(fake.requests.map((r) => new URL(r.url).pathname)).toEqual(["/v1/send", "/send"]);
-    expect(fake.requests[1]!.body.deviceToken).toBe(phone.pushToken);
+  test("a phone with a handle and a raw token is paged through /send when /v1/send refuses the instance or fails", async () => {
+    for (const refused of [
+      Response.json({ error: "instance_revoked" }, { status: 403 }),
+      Response.json({ error: "not_found" }, { status: 404 }),
+      Response.json({ error: "relay_misconfigured" }, { status: 500 }),
+      Response.json({ error: "bad_handle" }, { status: 400 }),
+    ]) {
+      const ws = await workspace();
+      const phone = await handlePhone(ws, bia, { token: true });
+      const { event } = await ws.declare(MONITOR_ACTOR);
+      const fake = v1Relay((request) =>
+        request.url.endsWith("/v1/send") ? refused.clone() : Response.json({ status: 200 }),
+      );
+      expect(await deliver(event, fake.send, { environment: handleEnv() })).toEqual({
+        acked: ["msg-0"],
+        retried: [],
+      });
+      expect(fake.requests.map((r) => new URL(r.url).pathname)).toEqual(["/v1/send", "/send"]);
+      expect(fake.requests[1]!.body.deviceToken).toBe(phone.pushToken);
+      // The handle is kept: it was the instance or the relay that failed.
+      expect(await stored(ws, phone.deviceId)).toMatchObject({ handle: phone.handle });
+    }
     // With a working instance key the handle is used, and the raw token never leaves.
+    const ws = await workspace();
+    await handlePhone(ws, bia, { token: true });
     const next = await ws.declare(MONITOR_ACTOR);
     const working = v1Relay();
     await deliver(next.event, working.send, { environment: handleEnv() });
     expect(working.requests.map((r) => new URL(r.url).pathname)).toEqual(["/v1/send"]);
     expect(working.requests[0]!.body).not.toHaveProperty("deviceToken");
+  });
+
+  test("a rotated key signs as RELAY_INSTANCE_ID, the id every handle was sealed for", async () => {
+    const ws = await workspace();
+    await handlePhone(ws, bia);
+    const rotated = await generateInstanceKey();
+    const { event } = await ws.declare(MONITOR_ACTOR);
+    const fake = v1Relay();
+    await deliver(event, fake.send, {
+      environment: {
+        ...handleEnv(),
+        RELAY_INSTANCE_KEY: rotated.privateKey,
+        RELAY_INSTANCE_ID: key.instance,
+      },
+    });
+    // Verified against the first id, with the rotated key (the relay then finds the key in the instance's record).
+    expect(fake.requests.map((r) => r.signed)).toEqual([true]);
+    // Without it the rotated key would sign as an id of its own, for which no handle was sealed.
+    const next = await ws.declare(MONITOR_ACTOR);
+    const unset = v1Relay();
+    await deliver(next.event, unset.send, {
+      environment: { ...handleEnv(), RELAY_INSTANCE_KEY: rotated.privateKey },
+    });
+    expect(unset.requests.map((r) => r.signed)).toEqual([false]);
+  });
+
+  test("a token APNs calls gone through /v1/send drops the device, by the handle the push went to", async () => {
+    const ws = await workspace();
+    const phone = await handlePhone(ws, bia, { token: true });
+    const { event } = await ws.declare(MONITOR_ACTOR);
+    const fake = v1Relay(() =>
+      Response.json({ status: 410, reason: "Unregistered" }, { status: 502 }),
+    );
+    expect((await deliver(event, fake.send, { environment: handleEnv() })).retried).toHaveLength(1);
+    // The phone's token is dead, whichever way it is reached: the device goes, raw token and all.
+    expect(await stored(ws, phone.deviceId)).toBeUndefined();
   });
 
   test("429 rate_limited is retried no sooner than Retry-After, and expires nothing", async () => {

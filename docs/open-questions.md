@@ -85,7 +85,11 @@ caller IP (`HANDLE_LIMIT`). Phones on mobile data often share one IP behind a ca
 could be refused; the app keeps its previous handle, which still works, and tries again on its backoff. Is 60 right,
 or should the limit be higher, or count per instance as well? The signed deep health is limited per IP too (120 a
 minute, `HEALTH_LIMIT`, so made-up instance ids cannot force unbounded registry reads), and instances on Workers may
-reach the relay from shared Cloudflare addresses: is 120 enough headroom for their watchdogs? Also: Workers Rate Limiting counts per Cloudflare
+reach the relay from shared Cloudflare addresses: is 120 enough headroom for their watchdogs? (The API counts
+`relay_rate_limited` only from the 3rd limited beat in a row, so a shared bucket now and then degrades nothing. The
+relay is unchanged: a limit per instance id cannot replace the per-IP one, since ids are free to make and the
+signature only proves the caller holds the key it made; a higher per-IP cap, or one per instance after the
+registry says it exists, is the open choice.) Also: Workers Rate Limiting counts per Cloudflare
 location and is eventually consistent, so the D4 limits (600 sends, 60 calls, 30 per phone a minute) are approximate
 and apply per location. Good enough against an instance flooding APNs, or does the per-instance limit need a Durable
 Object?

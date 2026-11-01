@@ -437,7 +437,7 @@ describe("devices with a relay handle", () => {
       args(deviceId(), { voip: true }),
       handleArgs(deviceId(), { handle: "no-key-id" }),
       handleArgs(deviceId(), { tag: "short" }),
-      handleArgs(deviceId(), { envelope: 3 }),
+      handleArgs(deviceId(), { envelope: 1 }),
     ]) {
       expect(run(store, ana, "device.register", input), JSON.stringify(input)).toMatchObject({
         ok: false,
@@ -465,27 +465,91 @@ describe("devices with a relay handle", () => {
     expect(store.get("devices", raw)).toBeDefined();
   });
 
-  test("device.expire by tag drops the device, unless it was registered again with another tag", () => {
+  test("device.expire by handle drops the device, unless it registered again since, even with the same tag", () => {
     const store = createMemoryStore<BrigadeTables>();
     const id = deviceId();
     run(store, ana, "device.register", handleArgs(id));
-    run(store, ana, "device.register", handleArgs(id, { tag: OTHER_TAG }));
-    expect(run(store, NOTIFIER_ACTOR, "device.expire", { id, tag: TAG })).toMatchObject({
+    // The phone registered again mid-flight: the same token (so the same tag), a newly sealed handle.
+    run(store, ana, "device.register", handleArgs(id, { handle: OTHER_HANDLE }));
+    expect(run(store, NOTIFIER_ACTOR, "device.expire", { id, handle: HANDLE })).toMatchObject({
       ok: false,
       error: { code: "conflict" },
     });
-    expect(run(store, NOTIFIER_ACTOR, "device.expire", { id, tag: OTHER_TAG })).toMatchObject({
-      ok: true,
-      events: [{ type: "device.unregistered", data: { id, reason: "token_invalid" } }],
-    });
-    // Exactly one of the token and the tag.
+    expect(store.get("devices", id)?.handle).toBe(OTHER_HANDLE);
+    expect(run(store, NOTIFIER_ACTOR, "device.expire", { id, handle: OTHER_HANDLE })).toMatchObject(
+      {
+        ok: true,
+        events: [{ type: "device.unregistered", data: { id, reason: "token_invalid" } }],
+      },
+    );
+    // Exactly one of the token and the handle; handleOnly only with the handle.
+    for (const input of [
+      { id, handle: HANDLE, pushToken: "a".repeat(64) },
+      { id },
+      { id, pushToken: "a".repeat(64), handleOnly: true },
+      { id, tag: TAG },
+    ]) {
+      expect(
+        run(store, NOTIFIER_ACTOR, "device.expire", input),
+        JSON.stringify(input),
+      ).toMatchObject({
+        ok: false,
+        error: { code: "invalid_args" },
+      });
+    }
+  });
+
+  test("device.expire with handleOnly keeps a device's raw token and drops only its handle", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const both = deviceId();
+    const alone = deviceId();
+    run(
+      store,
+      ana,
+      "device.register",
+      handleArgs(both, { pushToken: "a".repeat(64), voipToken: "b".repeat(64), voip: true }),
+    );
+    run(store, ana, "device.register", handleArgs(alone, { handle: OTHER_HANDLE, tag: OTHER_TAG }));
     expect(
-      run(store, NOTIFIER_ACTOR, "device.expire", { id, tag: TAG, pushToken: "a".repeat(64) }),
-    ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
-    expect(run(store, NOTIFIER_ACTOR, "device.expire", { id })).toMatchObject({
-      ok: false,
-      error: { code: "invalid_args" },
+      run(store, NOTIFIER_ACTOR, "device.expire", { id: both, handle: HANDLE, handleOnly: true }),
+    ).toMatchObject({
+      ok: true,
+      events: [{ type: "device.handle_cleared", data: { id: both, reason: "handle_not_yours" } }],
     });
+    expect(store.get("devices", both)).toMatchObject({
+      pushToken: "a".repeat(64),
+      voipToken: "b".repeat(64),
+      handle: null,
+      tag: null,
+      voip: false,
+    });
+    // It still rings through its PushKit token.
+    expect(store.get("member_devices", both)?.voip).toBe(true);
+    // A device with the handle alone has nothing left: dropped.
+    expect(
+      run(store, NOTIFIER_ACTOR, "device.expire", {
+        id: alone,
+        handle: OTHER_HANDLE,
+        handleOnly: true,
+      }),
+    ).toMatchObject({ ok: true, events: [{ type: "device.unregistered" }] });
+    expect(store.get("devices", alone)).toBeUndefined();
+  });
+
+  test("envelope: a later version than 2 is stored as 2; under 2 is refused", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const id = deviceId();
+    expect(run(store, ana, "device.register", handleArgs(id, { envelope: 3 })).ok).toBe(true);
+    expect(store.get("devices", id)?.envelope).toBe(2);
+    expect(run(store, ana, "device.register", handleArgs(id, { envelope: 2 }))).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    for (const envelope of [1, 0, 2.5, "2"]) {
+      expect(
+        run(store, ana, "device.register", handleArgs(deviceId(), { envelope })),
+      ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+    }
   });
 
   test("device.expireVoip by handle stops the device ringing, unless it registered again since", () => {

@@ -263,7 +263,8 @@ export type DeviceOutcome =
       ok: true;
       /** The call that rang the device after the alert push; absent when none was sent. */
       call?: CallOutcome;
-    } & DeliveryDetail)
+    } & DeliveryDetail &
+      HandleExpiry)
   | ({
       deviceId: string;
       userId: string;
@@ -273,13 +274,18 @@ export type DeviceOutcome =
        * (`device.expire`) unless it was registered again with another token meanwhile.
        */
       expiredToken?: string;
-      /**
-       * The same for a push sent with a relay handle (RFC 0015): the tag of the handle it went to, when the push
-       * service said the token is gone or the relay that the handle is no longer this instance's.
-       */
-      expiredTag?: string;
       reason: SendFailure;
-    } & DeliveryDetail);
+    } & DeliveryDetail &
+      HandleExpiry);
+
+/**
+ * A push sent with a relay handle (RFC 0015) that says the handle is done: `expiredHandle` is the handle it went to
+ * (`device.expire` by it, so a device registered again meanwhile, even with the same token and tag, is kept). With
+ * `handleOnly` only the handle is (`403 handle_not_yours`), not the phone's token: a device with a raw token too keeps
+ * it, and the page may have gone through `/send` (an `ok` outcome). Without it the push service said the token is
+ * gone, and the device is dropped.
+ */
+export type HandleExpiry = { expiredHandle?: string; handleOnly?: boolean };
 
 /**
  * Whether an event asks for a page (RFC 0006 "Who is paged"), from the event alone: a declared incident (any
@@ -1283,14 +1289,25 @@ export class Pager {
         } else if (outcome.call?.expiredVoipHandle !== undefined) {
           this.expireVoip(event, outcome.deviceId, { handle: outcome.call.expiredVoipHandle }, now);
         }
+        // Delivered through `/send` after the relay said the handle is not this instance's: the handle goes.
+        if (outcome.expiredHandle !== undefined) {
+          this.run(
+            NOTIFIER_ACTOR,
+            "notifier",
+            `expire:${event.id}:${outcome.deviceId}`,
+            "device.expire",
+            { id: outcome.deviceId, handle: outcome.expiredHandle, handleOnly: true },
+            now,
+          );
+        }
         continue;
       }
       // A page the relay did not take is not on its way: it holds nothing back (`holding`).
       this.unplanUrgent(event, outcome.deviceId);
-      // The token the push went to, or the tag of the handle it went to (RFC 0015).
+      // The token the push went to, or the handle it went to (RFC 0015).
       const expired =
-        outcome.expiredTag !== undefined
-          ? { tag: outcome.expiredTag }
+        outcome.expiredHandle !== undefined
+          ? { handle: outcome.expiredHandle, ...(outcome.handleOnly ? { handleOnly: true } : {}) }
           : outcome.expiredToken !== undefined
             ? { pushToken: outcome.expiredToken }
             : undefined;

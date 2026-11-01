@@ -789,7 +789,7 @@ describe("the heartbeat, end to end", () => {
 });
 
 // With an instance key (RFC 0015 sections 3 and 7) the deep check is the relay's signed `GET /v1/health?deep=1`, and
-// the instance's own state on the relay is a reason of its own.
+// the instance's own state on the relay is a reason of its own. With the send token too, its check runs beside it.
 describe("the signed deep check (RFC 0015)", () => {
   let key: Awaited<ReturnType<typeof generateInstanceKey>>;
   beforeAll(async () => {
@@ -797,11 +797,22 @@ describe("the signed deep check (RFC 0015)", () => {
   });
   const PROVIDERS = { apns: { status: "ok" }, fcm: { status: "not_configured" } };
 
-  /** A relay answering the signed deep check with `answer` (a 404 for anything else, as a relay without `/v1`). */
-  function signedRelay(answer: () => Response) {
+  /**
+   * A relay answering the signed deep check with `answer`, and the send token's check (`POST /send`, no body) as
+   * apps/relay does (`400 invalid_body` for `test-token`, `401` for any other) unless `token` says otherwise.
+   */
+  function signedRelay(answer: () => Response, token?: () => Response) {
     const calls: { url: string; auth: string | null; signed: boolean }[] = [];
+    const tokenChecks: (string | null)[] = [];
     const send: Fetch = async (request) => {
       const url = new URL(request.url);
+      if (url.pathname === "/send") {
+        tokenChecks.push(request.headers.get("Authorization"));
+        if (token) return token();
+        return request.headers.get("Authorization") === "Bearer test-token"
+          ? Response.json({ error: "invalid_body" }, { status: 400 })
+          : Response.json({ error: "unauthorized" }, { status: 401 });
+      }
       const verified = await verifyRequest({
         method: request.method,
         path: url.pathname + url.search,
@@ -816,21 +827,53 @@ describe("the signed deep check (RFC 0015)", () => {
       });
       return answer();
     };
-    return { calls, send };
+    return { calls, tokenChecks, send };
   }
+  const admitted = () =>
+    Response.json({ ok: true, ...PROVIDERS, handles: true, instance: key.instance });
 
-  test("an admitted instance: signed, no send token, the providers recorded, and a ping", async () => {
+  test("an admitted instance: signed, the providers recorded, the send token checked beside it, and a ping", async () => {
     const { stub, heartbeats, notifyEnv } = watchdog();
     const { beat } = deepBeats(stub, heartbeats, notifyEnv);
-    const up = signedRelay(() =>
-      Response.json({ ok: true, ...PROVIDERS, handles: true, instance: key.instance }),
-    );
+    const up = signedRelay(admitted);
     await beat(up.send, { RELAY_INSTANCE_KEY: key.privateKey, DB: env.DB });
     expect(up.calls).toEqual([
       { url: "GET https://relay.test/v1/health?deep=1", auth: null, signed: true },
     ]);
+    expect(up.tokenChecks).toEqual(["Bearer test-token"]);
     expect(await stub.health()).toMatchObject({ status: "ok", reasons: [] });
     await pinged(stub, true);
+    // Without a send token, only the signed check.
+    const alone = signedRelay(admitted);
+    await beat(alone.send, {
+      RELAY_INSTANCE_KEY: key.privateKey,
+      RELAY_SEND_TOKEN: undefined,
+      DB: env.DB,
+    });
+    expect(alone.tokenChecks).toEqual([]);
+    expect(await stub.health()).toMatchObject({ status: "ok", reasons: [] });
+  });
+
+  test("a send token the relay refuses is a reason beside an admitted instance, and pings nothing", async () => {
+    const { stub, heartbeats, notifyEnv } = watchdog();
+    const { beat } = deepBeats(stub, heartbeats, notifyEnv);
+    await beat(signedRelay(admitted).send, {
+      RELAY_INSTANCE_KEY: key.privateKey,
+      RELAY_SEND_TOKEN: "rotated",
+      DB: env.DB,
+    });
+    expect(await stub.health()).toMatchObject({
+      status: "degraded",
+      reasons: ["relay_unauthorized"],
+      lastOkAt: null,
+    });
+    // Both failing say both.
+    await beat(
+      signedRelay(() => Response.json({ error: "instance_revoked" }, { status: 403 })).send,
+      { RELAY_INSTANCE_KEY: key.privateKey, RELAY_SEND_TOKEN: "rotated", DB: env.DB },
+    );
+    expect((await stub.health()).reasons).toEqual(["relay_unauthorized", "relay_instance_revoked"]);
+    expect(pings()).toEqual([]);
   });
 
   test("each refusal of the instance degrades with its reason, and pings nothing", async () => {
@@ -846,14 +889,6 @@ describe("the signed deep check (RFC 0015)", () => {
       [
         () => Response.json({ error: "instance_revoked" }, { status: 403 }),
         "relay_instance_revoked",
-      ],
-      [
-        () =>
-          Response.json(
-            { error: "rate_limited", limit: "ip" },
-            { status: 429, headers: { "Retry-After": "60" } },
-          ),
-        "relay_rate_limited",
       ],
       [
         () =>
@@ -874,13 +909,68 @@ describe("the signed deep check (RFC 0015)", () => {
     expect(pings()).toEqual([]);
   });
 
-  test("a key that does not read is a bad signature, asked of no relay", async () => {
+  test("the relay's limits degrade only on the third limited beat in a row (shared egress IPs, Q28)", async () => {
     const { stub, heartbeats, notifyEnv } = watchdog();
     const { beat } = deepBeats(stub, heartbeats, notifyEnv);
-    const none = signedRelay(() => Response.json({ ok: true, ...PROVIDERS, handles: true }));
-    await beat(none.send, { RELAY_INSTANCE_KEY: "not-a-key", DB: env.DB });
-    expect(none.calls).toEqual([]);
-    expect((await stub.health()).reasons).toEqual(["relay_bad_signature"]);
+    const limited = () =>
+      Response.json(
+        { error: "rate_limited", limit: "ip" },
+        { status: 429, headers: { "Retry-After": "60" } },
+      );
+    const vars = { RELAY_INSTANCE_KEY: key.privateKey, DB: env.DB };
+    await beat(signedRelay(admitted).send, vars);
+    for (const n of [1, 2]) {
+      await beat(signedRelay(limited).send, vars);
+      expect(await stub.health(), `beat ${n}`).toMatchObject({ status: "ok", reasons: [] });
+    }
+    await beat(signedRelay(limited).send, vars);
+    expect((await stub.health()).reasons).toEqual(["relay_rate_limited"]);
+    // An answer that is not limited starts the count again.
+    await beat(signedRelay(admitted).send, vars);
+    await beat(signedRelay(limited).send, vars);
+    expect(await stub.health()).toMatchObject({ status: "ok", reasons: [] });
+  });
+
+  test("a key that does not read, or an instance id that is not one, is a bad signature, asked of no relay", async () => {
+    const { stub, heartbeats, notifyEnv } = watchdog();
+    const { beat } = deepBeats(stub, heartbeats, notifyEnv);
+    for (const vars of [
+      { RELAY_INSTANCE_KEY: "not-a-key" },
+      { RELAY_INSTANCE_KEY: key.privateKey, RELAY_INSTANCE_ID: "ins_short" },
+    ]) {
+      const none = signedRelay(admitted);
+      await beat(none.send, { ...vars, DB: env.DB });
+      expect(none.calls).toEqual([]);
+      expect((await stub.health()).reasons).toEqual(["relay_bad_signature"]);
+    }
+  });
+
+  test("a rotated key signs as RELAY_INSTANCE_ID, the instance's first id", async () => {
+    const { stub, heartbeats, notifyEnv } = watchdog();
+    const { beat } = deepBeats(stub, heartbeats, notifyEnv);
+    const rotated = await generateInstanceKey();
+    const instances: (string | null)[] = [];
+    const send: Fetch = async (request) => {
+      if (new URL(request.url).pathname === "/send") {
+        return Response.json({ error: "invalid_body" }, { status: 400 });
+      }
+      const verified = await verifyRequest({
+        method: request.method,
+        path: new URL(request.url).pathname + new URL(request.url).search,
+        headers: request.headers,
+        body: "",
+        now: Date.now(),
+      });
+      instances.push(verified.ok && !verified.original ? verified.instance : null);
+      return admitted();
+    };
+    await beat(send, {
+      RELAY_INSTANCE_KEY: rotated.privateKey,
+      RELAY_INSTANCE_ID: key.instance,
+      DB: env.DB,
+    });
+    expect(instances).toEqual([key.instance]);
+    expect(await stub.health()).toMatchObject({ status: "ok" });
   });
 
   test("a relay without /v1 falls back to the send token's check, and is unreachable without one", async () => {

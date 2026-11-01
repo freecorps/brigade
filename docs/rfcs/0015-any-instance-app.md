@@ -297,25 +297,38 @@ The address-only QR (`brigade://connect?server=<origin>`) stays for an instance 
   (section 9). Every field is written on each registration (null when not given), so a phone moving from raw tokens
   to a handle keeps nothing of its tokens. Rows are JSON documents in the shard (apps/api `src/store.ts`), so the new
   fields need no migration; `pushToken` is null for a handle alone. The same tag under a new id replaces the old
-  device; a raw token never matches a tag. `device.expire` takes the `tag` of the handle the push went to (or the
-  token, as before); `device.expireVoip` the `handle` a call went to, since a registration with a new PushKit token
-  keeps the tag, and turns `voip` off.
+  device; a raw token never matches a tag. `device.expire` takes the `handle` the push went to (or the token, as
+  before), not the tag: a phone that registered again mid-flight has a new handle for the same token and tag, and is
+  kept. With `handleOnly` (`handle_not_yours`) a device that also has a raw token keeps it and loses only its handle
+  (`device.handle_cleared`). `device.expireVoip` takes the `handle` a call went to, since a registration with a new PushKit token
+  keeps the tag, and turns `voip` off. `envelope` takes any whole number from 2 (a later app may open more) and is
+  stored as 2, the newest this instance seals.
 - **The notifier** sends a handle device to `/v1/send`, signed with `RELAY_INSTANCE_KEY` (through the `RELAY`
   binding or at `RELAY_URL`), and a raw-token device to `/send` with `RELAY_SEND_TOKEN`. A device with both goes
   through `/send` when `/v1/send` refuses the instance itself, so a broken instance key never costs a page `/send`
-  can still deliver. A handle device on an instance without the key is `not_configured`. For `envelope: 2` it seals
+  can still deliver (and on `handle_not_yours` its handle is dropped). A handle device on an instance without the key
+  is `not_configured`. After a key rotation `RELAY_INSTANCE_ID` names the first id, which the API signs as and
+  `/config` gives (section 1: the id never changes). For `envelope: 2` it seals
   v2 with the dashboard's origin (`DASHBOARD_URL`; v1 without it) and sends the relay the TTL it sealed (15 minutes
-  for a page, an hour for less, 60 s for a call). Answers: `403 handle_not_yours` and `400 bad_handle` expire the
-  device by its tag; `401`, any other `403` and `503` are the instance's, not the phone's: retried within the page's
-  attempts, never expiring anything, then recorded as not paged (`notification.failed`), so the email notifier and
-  the rest of the ladder go on; `429` is retried no sooner than its `Retry-After` (at most 300 s).
+  for a page, an hour for less, 60 s for a call). Answers: `403 handle_not_yours` expires the handle (the device,
+  with a handle alone) by the handle the push went to; `401`, any other `403`, `404` (a relay without `/v1`), `500
+  relay_misconfigured`, `503` and `400 bad_handle` are the instance's or the relay's, not the phone's: through `/send`
+  for a device with a raw token, else retried within the page's attempts, never expiring anything, then recorded as
+  not paged (`notification.failed`), so the email notifier and the rest of the ladder go on; `429` is retried no
+  sooner than its `Retry-After` (at most 300 s). **`bad_handle` is not taken as proof the phone is gone** (a
+  deviation from "Dead ends"): a handle the relay minted stops opening only when the relay lost a key from
+  `RELAY_HANDLE_KEYS`, and on the hosted relay one bad deploy would otherwise drop every instance's phones; a phone
+  that moved to another relay registers a new handle when it opens.
 - **`GET /config`** adds `brigade: { api, minApp }` (`api` 1, `minApp` the oldest app version supported, `0.1.0`)
   and, with the instance key and a public `RELAY_URL` (https), `relay: { origin, instance, app? }`, `app` from
   `RELAY_APP_URL`. With the `RELAY` binding, `RELAY_URL` is only that address.
 - **The watchdog** asks the signed `GET /v1/health?deep=1` when the instance key is set: `relay_bad_signature` (also
   for a key that does not read), `relay_instance_unregistered`, `relay_instance_revoked`, `relay_rate_limited` and
-  `relay_handles_unavailable` (the relay answers `handles: false`), each degrading at once; a relay without `/v1`
-  falls back to the send token's check. The relay has no pending state to answer (registration completes with the
+  `relay_handles_unavailable` (the relay answers `handles: false`), each but the limits degrading at once; a relay without `/v1`
+  falls back to the send token's check. With `RELAY_SEND_TOKEN` set too, the send token's cheap check runs beside it
+  and both reasons count (section 9: most phones still page through `/send`). `rate_limited` degrades only on the 3rd
+  beat in a row: the signed check is limited per caller IP (`HEALTH_LIMIT`), and instances on Workers may share
+  Cloudflare's egress addresses (Q28). The relay has no pending state to answer (registration completes with the
   emailed code), so `instance_registration_pending` is not a reason: an instance not registered yet is
   `instance_unregistered`.
 - Open: Q30 (a new handle, so a changed row, on every registration).

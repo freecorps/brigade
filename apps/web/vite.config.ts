@@ -38,6 +38,7 @@ function localSecrets(): Record<string, string> {
     "RELAY_URL",
     "RELAY_SEND_TOKEN",
     "RELAY_INSTANCE_KEY",
+    "RELAY_INSTANCE_ID",
     "RELAY_APP_URL",
     "EMAIL_FROM",
     "DASHBOARD_URL",

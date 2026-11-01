@@ -218,10 +218,10 @@ describe("QR sign-in", () => {
     expect(response.status).toBe(201);
     const phoneSide = (await response.json()) as Claimed;
     const shown = await api(`/app-sign-in/${created.id}`, { headers: { Cookie: ana.cookie } });
-    const text = await shown.text();
-    expect(text).not.toContain("37");
-    expect(text).not.toContain("Type");
-    expect(JSON.parse(text)).toMatchObject({ status: "claimed", deviceKind: "android" });
+    // Exactly these fields: the id and the time are random enough to contain "37" by chance, so they are not searched.
+    const body = (await shown.json()) as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(["deviceKind", "expiresAt", "id", "status"]);
+    expect(body).toMatchObject({ status: "claimed", deviceKind: "android" });
     // Kept, cleaned, for the session it gets.
     await approve(created.id, ana.cookie, phoneSide.number);
     const delivered = (await (await poll(phoneSide.claimId, phoneSide.secret)).json()) as {

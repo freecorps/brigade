@@ -70,6 +70,11 @@ const MAX_TTL_SECONDS = 30 * 24 * 60 * 60;
  */
 const PROVIDER_TIMEOUT_MS = 5000;
 /**
+ * The whole of one APNs send, its answer's body included: headers get `PROVIDER_TIMEOUT_MS`, the body what is left,
+ * so a provider that answers and then stalls is still a 502 inside the API's 10 s.
+ */
+const APNS_CALL_BUDGET_MS = 9000;
+/**
  * The whole of one FCM send, the retry after a 401 included (another token exchange and send): each step gets what is
  * left of it, so the call stays under the API's 10 s.
  */
@@ -219,7 +224,19 @@ export async function deliver(
     return json({ error: "apns_unreachable", detail: String(error) }, 502);
   }
   // APNs answers 200 with an empty body, or an error status with `{ "reason": "..." }`.
-  const text = await response.text();
+  let text: string;
+  try {
+    text = await readWithin(
+      response,
+      APNS_CALL_BUDGET_MS - (Date.now() - started),
+      "APNs body not read in time",
+    );
+  } catch (error) {
+    console.error(
+      JSON.stringify({ message: "APNs body read failed", ...log, error: String(error) }),
+    );
+    return json({ error: "apns_unreachable", detail: String(error) }, 502);
+  }
   const reason = response.ok ? undefined : parseReason(text);
   if (reason === "ExpiredProviderToken" || reason === "InvalidProviderToken") tokens.clear();
   const result = {
@@ -234,6 +251,16 @@ export async function deliver(
     JSON.stringify({ message: "APNs response", ...log, environment, kind: push.kind, ...result }),
   );
   return json(result, response.ok ? 200 : 502);
+}
+
+/** A provider's answer body, or a rejection once `ms` passed; the body is cancelled then, so the stream is let go. */
+async function readWithin(response: Response, ms: number, late: string): Promise<string> {
+  try {
+    return await within(response.text(), Math.max(0, ms), () => new Error(late));
+  } catch (error) {
+    response.body?.cancel().catch(() => {});
+    throw error;
+  }
 }
 
 /** `GET /health?deep=1` and the signed `GET /v1/health?deep=1`: whether each provider would take a page now. */
@@ -326,7 +353,15 @@ async function sendFcm(
     }
   }
   const answer = response!;
-  const text = await answer.text();
+  let text: string;
+  try {
+    text = await readWithin(answer, left(), "FCM body not read in time");
+  } catch (error) {
+    console.error(
+      JSON.stringify({ message: "FCM body read failed", ...log, error: String(error) }),
+    );
+    return json({ error: "fcm_unreachable", detail: String(error) }, 502);
+  }
   let result: Record<string, unknown>;
   if (answer.ok) {
     let name: unknown;

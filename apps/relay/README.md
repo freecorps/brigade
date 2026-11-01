@@ -104,11 +104,12 @@ have to register with another address, or a plus-address of the same mailbox, un
 slows such an attacker but does not stop one with many addresses.
 
 A key missing from a cached record is looked up again before it is refused (another isolate may have added it); if
-that lookup fails, the answer is `503 registry_unavailable`.
+that lookup fails, the answer is `503 registry_unavailable` (except on `/v1/send` with the original key, below).
 
 Every `/v1/` path answers `503 not_configured` without the `REGISTRY` binding, and `503 registry_unavailable` when
 the object cannot be reached: registration and anything that grants a capability fail closed. Only the send path's
-revocation check (`isRevoked`, on `/v1/send`) fails open, so a registry outage never stops a page. Records that
+check of the original key (`checkSender`, on `/v1/send`) fails open, so a registry outage never stops a page: when the
+read fails, it skips the revoked and retired-key checks. A rotated key still fails closed. Records that
 exist are cached per isolate for 60 s (a revocation takes up to a minute to apply); a missing one is never cached.
 `/send` and `/health` do not use any of this.
 

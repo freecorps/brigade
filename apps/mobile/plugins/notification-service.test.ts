@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, test } from "vite-plus/test";
 import { APP_GROUP_PLIST_KEY, APP_ID_PATTERN, appGroup, appId, DEFAULT_APP_ID } from "./app-id.ts";
+import { fakeProject } from "./fake-xcode.ts";
 import {
   applyAppEntitlements,
+  applyNotificationService,
   CRITICAL_ALERTS_ENTITLEMENT,
   extensionEntitlements,
   extensionInfoPlist,
@@ -10,6 +12,7 @@ import {
   NATIVE_LOCALES,
   NATIVE_STRING_KEYS,
   NSE_SOURCES,
+  NSE_TARGET,
 } from "./notification-service.ts";
 
 const GROUP = "group.com.acme.brigade";
@@ -98,6 +101,43 @@ describe("applyAppEntitlements", () => {
   test("does not add the App Group twice", () => {
     const once = applyAppEntitlements({}, { apsEnvironment: "development" }, GROUP);
     expect(applyAppEntitlements(once, { apsEnvironment: "development" }, GROUP)).toEqual(once);
+  });
+
+  test("a company build drops the store app's group a prebuild without --clean kept, and nothing else", () => {
+    const store = appGroup(DEFAULT_APP_ID);
+    const before = { "com.apple.security.application-groups": [store, "group.other"] };
+    expect(
+      applyAppEntitlements(before, { apsEnvironment: "production" }, GROUP)[
+        "com.apple.security.application-groups"
+      ],
+    ).toEqual(["group.other", GROUP]);
+    // The store app keeps its own.
+    expect(
+      applyAppEntitlements(before, { apsEnvironment: "production" }, store)[
+        "com.apple.security.application-groups"
+      ],
+    ).toEqual([store, "group.other"]);
+  });
+});
+
+describe("an existing extension target (prebuild without --clean)", () => {
+  test("gets the new bundle id in every build configuration, and nothing else changes", () => {
+    const { project, section } = fakeProject(
+      NSE_TARGET,
+      "app.freecorps.brigade.NotificationService",
+    );
+    applyNotificationService(project, {
+      appGroupPath: "Brigade",
+      bundleIdentifier: "com.acme.brigade",
+      teamId: undefined,
+    });
+    expect(section.debug?.buildSettings).toEqual({
+      PRODUCT_BUNDLE_IDENTIFIER: '"com.acme.brigade.NotificationService"',
+      OTHER: "kept",
+    });
+    expect(section.release?.buildSettings.PRODUCT_BUNDLE_IDENTIFIER).toBe(
+      '"com.acme.brigade.NotificationService"',
+    );
   });
 });
 

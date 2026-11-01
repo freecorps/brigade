@@ -15,6 +15,7 @@ import {
   extensionEntitlements,
   NATIVE_LOCALES,
   readMessages,
+  setTargetBundleId,
 } from "./notification-service.ts";
 import { APP_GROUP_PLIST_KEY, appGroup } from "./app-id.ts";
 
@@ -115,12 +116,16 @@ interface Objects {
   [section: string]: Record<string, unknown> | undefined;
 }
 
-/** Adds the widget target to the Xcode project, embedded in the app. Does nothing if it exists. */
+/**
+ * Adds the widget target to the Xcode project, embedded in the app. If it exists (prebuild without `--clean`), only its
+ * bundle id is brought up to date.
+ */
 export function applyWidget(
   project: XcodeProject,
   options: { bundleIdentifier: string; teamId: string | undefined },
 ): XcodeProject {
-  if (project.pbxTargetByName(WIDGET_TARGET)) return project;
+  if (setTargetBundleId(project, WIDGET_TARGET, `${options.bundleIdentifier}.Widget`))
+    return project;
   const objects = project.hash.project.objects as Objects;
   objects.PBXTargetDependency ??= {};
   objects.PBXContainerItemProxy ??= {};

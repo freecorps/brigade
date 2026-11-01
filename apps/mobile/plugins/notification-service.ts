@@ -10,7 +10,7 @@ import {
   withXcodeProject,
   type XcodeProject,
 } from "expo/config-plugins";
-import { APP_GROUP_PLIST_KEY, appGroup } from "./app-id.ts";
+import { APP_GROUP_PLIST_KEY, appGroup, DEFAULT_APP_ID } from "./app-id.ts";
 
 // The iOS Notification Service Extension that decrypts Brigade pushes (spike S1, RFC 0006). It adds:
 // - the push, App Group and time-sensitive entitlements to the app, and Critical Alerts when asked (`criticalAlerts`);
@@ -137,16 +137,20 @@ export const extensionEntitlements = (
 
 /**
  * The app's entitlements: APNs, the App Group shared with the extension (and its Keychain), Time Sensitive, and
- * Critical Alerts when the build asks for them.
+ * Critical Alerts when the build asks for them. A company build drops the store app's group, which a prebuild without
+ * `--clean` would otherwise keep and its profile cannot sign; other groups stay.
  */
 export function applyAppEntitlements(
   entitlements: Record<string, unknown>,
   { apsEnvironment, criticalAlerts }: NotificationServiceOptions,
   group: string,
 ): Record<string, unknown> {
-  const groups = Array.isArray(entitlements["com.apple.security.application-groups"])
-    ? (entitlements["com.apple.security.application-groups"] as unknown[])
-    : [];
+  const storeGroup = appGroup(DEFAULT_APP_ID);
+  const groups = (
+    Array.isArray(entitlements["com.apple.security.application-groups"])
+      ? (entitlements["com.apple.security.application-groups"] as unknown[])
+      : []
+  ).filter((other) => group === storeGroup || other !== storeGroup);
   // Dropped when the flag is off, so a prebuild without `--clean` never keeps it from an earlier flagged one.
   const { [CRITICAL_ALERTS_ENTITLEMENT]: _critical, ...rest } = entitlements;
   return {
@@ -163,14 +167,62 @@ interface Objects {
 }
 
 /**
+ * A native target by name, quoted or not. Not `pbxTargetByName`: it matches the section's comments, and `addTarget`
+ * writes the comment quoted (`"BrigadeWidget"`, quotes included), so a target this plugin made is never found by it once the project
+ * is read back from disk, and a prebuild without `--clean` would add it a second time.
+ */
+export function nativeTarget(
+  project: Pick<XcodeProject, "pbxNativeTargetSection">,
+  name: string,
+): { buildConfigurationList?: string } | null {
+  const section = project.pbxNativeTargetSection() as Record<string, unknown>;
+  for (const [key, value] of Object.entries(section)) {
+    if (key.endsWith("_comment") || typeof value !== "object" || value === null) continue;
+    const target = value as { name?: unknown; buildConfigurationList?: string };
+    if (typeof target.name === "string" && target.name.replace(/^"(.*)"$/, "$1") === name) {
+      return target;
+    }
+  }
+  return null;
+}
+
+/**
+ * Sets an existing target's bundle id in each of its build configurations, as `addTarget` does for a new one. A
+ * prebuild without `--clean` after `BRIGADE_APP_ID` changed keeps the extension targets, with their old ids. Returns
+ * whether the target exists.
+ */
+export function setTargetBundleId(
+  project: Pick<
+    XcodeProject,
+    "pbxNativeTargetSection" | "pbxXCConfigurationList" | "pbxXCBuildConfigurationSection"
+  >,
+  name: string,
+  bundleIdentifier: string,
+): boolean {
+  const target = nativeTarget(project, name);
+  if (!target?.buildConfigurationList) return false;
+  const list = project.pbxXCConfigurationList()[target.buildConfigurationList] as
+    | { buildConfigurations: { value: string }[] }
+    | undefined;
+  const section = project.pbxXCBuildConfigurationSection();
+  for (const { value } of list?.buildConfigurations ?? []) {
+    const settings = section[value]?.buildSettings as Record<string, unknown> | undefined;
+    if (settings) settings.PRODUCT_BUNDLE_IDENTIFIER = `"${bundleIdentifier}"`;
+  }
+  return true;
+}
+
+/**
  * Adds the extension target to the Xcode project, embedded in the app, and the `.lproj` folders to both
- * targets. Does nothing if the target exists (prebuild without `--clean`).
+ * targets. If the target exists (prebuild without `--clean`), only its bundle id is brought up to date.
  */
 export function applyNotificationService(
   project: XcodeProject,
   options: { appGroupPath: string; bundleIdentifier: string; teamId: string | undefined },
 ): XcodeProject {
-  if (project.pbxTargetByName(NSE_TARGET)) return project;
+  if (setTargetBundleId(project, NSE_TARGET, `${options.bundleIdentifier}.NotificationService`)) {
+    return project;
+  }
   const objects = project.hash.project.objects as Objects;
   // node-xcode assumes these sections exist; the bare template has none.
   objects.PBXTargetDependency ??= {};

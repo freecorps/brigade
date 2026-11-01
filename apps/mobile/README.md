@@ -177,12 +177,13 @@ vp run build            # cached expo export of the Android and iOS JS bundles i
   lays out an entry per handoff, so it flips on time with the app closed, and past 24 hours asks to open Brigade. The
   widget cannot run Paraglide, so it bundles its strings and the snapshot names the app's language, which the widget
   uses over the system's. Its decisions are in `src/lib/widget.ts` (tested) and mirrored in `WidgetState.swift`.
-  The extension is its own target (`app.freecorps.brigade.Widget`, App Group `group.app.freecorps.brigade`), so the
-  first EAS build after it needs its credentials once, interactively (`eas credentials -p ios`, or an interactive
-  `eas build`): the App ID with App Groups on, and an ad hoc and an App Store profile for it. Until then a
-  non-interactive build stops at the credentials step. A local build (`mobile:install`) has Xcode create the App ID,
-  but without the App Group: assign `group.app.freecorps.brigade` to `app.freecorps.brigade.Widget` once in the
-  Developer portal (Identifiers → App Groups → Configure), or the build stops on the widget's profile.
+  The extension is its own target (`<BRIGADE_APP_ID>.Widget`, App Group `group.<BRIGADE_APP_ID>`; for the store app
+  `app.freecorps.brigade.Widget` and `group.app.freecorps.brigade`), so the first EAS build after it needs its
+  credentials once, interactively (`eas credentials -p ios`, or an interactive `eas build`): the App ID with App
+  Groups on, and an ad hoc and an App Store profile for it. Until then a non-interactive build stops at the
+  credentials step. A local build (`mobile:install`) has Xcode create the App ID, but without the App Group: assign
+  `group.<BRIGADE_APP_ID>` to `<BRIGADE_APP_ID>.Widget` once in the Developer portal (Identifiers → App Groups →
+  Configure), or the build stops on the widget's profile.
 - **Critical Alerts (off):** `BRIGADE_CRITICAL_ALERTS=1` at build time adds the entitlement, asks for Critical Alerts
   with the notification permission and reports them in `device.register`; SEV1 pages then ring through silent mode
   on phones that allow them. Leave it unset until Apple grants the entitlement (RFC 0006 "Critical Alerts").
@@ -191,8 +192,9 @@ vp run build            # cached expo export of the Android and iOS JS bundles i
   CallKit), reads it aloud and takes the ack ("press 1"), and `plugins/incoming-call.ts` adds the `voip` background
   mode and the Android strings from `packages/i18n`. The development-only `/call-test` screen rings a test call;
   on Android, `adb shell am broadcast -a app.freecorps.brigade.call.DEBUG_RING -n
-  app.freecorps.brigade/app.freecorps.brigade.call.DebugCallReceiver --es title … --es body … --es incident <id>`
-  does the same from a shell. The paging decisions live in `src/lib/call-route.ts`, tested in CI, and the native code
+  <BRIGADE_APP_ID>/app.freecorps.brigade.call.DebugCallReceiver --es title … --es body … --es incident <id>`
+  does the same from a shell (the package before the `/` is the app's, `app.freecorps.brigade` for the store app;
+  the action and the class name stay as they are, being the module's). The paging decisions live in `src/lib/call-route.ts`, tested in CI, and the native code
   mirrors them; the Kotlin copy also has JVM tests: `./gradlew :brigade-call:testDebugUnitTest` in the prebuilt
   `android/` (with `ANDROID_HOME` set). See the S6 write-up.
 - **Android pages (FCM):** `modules/brigade-push/android` keeps the device key in the Android Keystore and its
@@ -223,12 +225,14 @@ app ships (RFC 0015 "Order of work" step 5):
 - **Its own identifiers.** Set `BRIGADE_APP_ID` at build time (and for `vp run mobile:install`, which launches the
   app by it): the bundle id and Android package, `app.freecorps.brigade` when unset (`plugins/app-id.ts`). It must
   suit both stores: two or more parts of letters and digits, each starting with a letter (no `-`, which Android
-  refuses, and no `_`, which Apple refuses); `vp run setup:relay --bundle-id` takes the same. Everything else follows it: the App Group the Notification Service
-  Extension and the widget share with the app is `group.<BRIGADE_APP_ID>`, which the plugins put in the entitlements
-  and in each target's Info.plist (`BrigadeAppGroup`, read by the Swift code), and the extensions' bundle ids are
-  `<bundle id>.NotificationService` and `<bundle id>.Widget`. For EAS builds, set it as an environment variable of
-  the build profile. The relay's topic (`RELAY_APNS_TOPIC`, which `vp run setup:relay` sets from `--bundle-id`) is
-  that bundle id.
+  refuses, and no `_`, which Apple refuses); `vp run setup:relay --bundle-id` takes the same. Everything else follows
+  it: the App Group the Notification Service Extension and the widget share with the app is `group.<BRIGADE_APP_ID>`,
+  which the plugins put in the entitlements and in each target's Info.plist (`BrigadeAppGroup`, read by the Swift
+  code), and the extensions' bundle ids are `<bundle id>.NotificationService` and `<bundle id>.Widget`. For EAS
+  builds, set it as an environment variable of the build profile. The relay's topic (`RELAY_APNS_TOPIC`, which
+  `vp run setup:relay` sets from `--bundle-id`) is that bundle id. After changing it on a machine that already has
+  `ios/` and `android/`, prebuild with `--clean` (`mobile:install --clean`): a prebuild without it updates the
+  extensions' bundle ids and drops the store app's App Group, but anything else left from the old id stays.
 - **Apple:** an Apple Developer account with App IDs for the app and both extensions, the App Group, Push
   Notifications, VoIP (PushKit, for calls) and, if granted, Critical Alerts (`BRIGADE_CRITICAL_ALERTS=1`); an APNs key
   (`.p8`) for the relay. Local builds take the team id from `APPLE_TEAM_ID`.

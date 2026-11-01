@@ -2,7 +2,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, test } from "vite-plus/test";
 import { APP_GROUP_PLIST_KEY, appGroup, DEFAULT_APP_ID } from "./app-id.ts";
 import { NATIVE_LOCALES } from "./notification-service.ts";
+import { fakeProject } from "./fake-xcode.ts";
 import {
+  applyWidget,
   WIDGET_SOURCES,
   WIDGET_STRING_KEYS,
   WIDGET_TARGET,
@@ -60,6 +62,16 @@ describe("the widget extension", () => {
     expect(plist).toMatch(/CFBundleShortVersionString<\/key>\s*<string>0\.1\.0</);
     expect(plist).toMatch(/CFBundleVersion<\/key>\s*<string>7</);
     for (const locale of NATIVE_LOCALES) expect(plist).toContain(`<string>${locale}</string>`);
+  });
+
+  test("an existing widget target gets the new bundle id (prebuild without --clean)", () => {
+    const { project, section } = fakeProject(WIDGET_TARGET, "app.freecorps.brigade.Widget");
+    applyWidget(project, { bundleIdentifier: "com.acme.brigade", teamId: undefined });
+    for (const config of ["debug", "release"]) {
+      expect(section[config]?.buildSettings.PRODUCT_BUNDLE_IDENTIFIER).toBe(
+        '"com.acme.brigade.Widget"',
+      );
+    }
   });
 
   test("its sources exist", () => {

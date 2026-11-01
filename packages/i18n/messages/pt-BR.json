@@ -3926,7 +3926,7 @@
         "part=hint_providers_own": "O serviço de push da Apple ou do Google recusou as credenciais do seu relay, ou não está respondendo. Se você trocou a chave do APNs ou a conta do Firebase, substitua-as:",
         "part=state_pipeline": "Parado no Brigade",
         "part=state_database": "Banco de dados sem resposta",
-        "part=hint_database": "O relay respondeu, mas o banco de dados (D1) não respondeu a uma leitura simples nas últimas verificações. Veja os logs da API; se durar, confira o status da Cloudflare.",
+        "part=hint_database": "O banco de dados (D1) não respondeu a uma leitura simples nas últimas verificações. Veja os logs da API; se durar, confira o status da Cloudflare.",
         "part=hint_unknown_relay": "O Brigade não disse qual é o relay, então não dá para dizer o que fazer aqui. O aviso de acionamentos na visão geral diz o motivo.",
         "part=hint_pipeline": "Os acionamentos estão parados antes de chegar ao relay, então ele não pode ser verificado. O aviso de acionamentos na visão geral diz o motivo.",
         "part=state_no_answer": "Não foi possível verificar",

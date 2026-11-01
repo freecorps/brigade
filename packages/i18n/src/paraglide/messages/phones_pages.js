@@ -51,7 +51,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "hint_providers_own" | "Apple's or Google's push service refused your relay's credentials, or isn't answering. If you changed the APNs key or the Firebase account, replace them:" |
 * | "state_pipeline" | "Held up in Brigade" |
 * | "state_database" | "Database not answering" |
-* | "hint_database" | "The relay answered, but the database (D1) didn't answer a simple read in the last checks. Look at the API's logs; if it lasts, check Cloudflare's status." |
+* | "hint_database" | "The database (D1) didn't answer a simple read in the last checks. Look at the API's logs; if it lasts, check Cloudflare's status." |
 * | "hint_unknown_relay" | "Brigade didn't say which relay this is, so it can't say what to do here. The paging notice on the overview names the reason." |
 * | "hint_pipeline" | "Pages are held up before they reach the relay, so it can't be checked. The paging notice on the overview says why." |
 * | "state_no_answer" | "Couldn't check" |
@@ -107,7 +107,7 @@ export const phones_pages = /** @type {((inputs: Phones_PagesInputs, options?: {
 		if (i?.part === "hint_providers_own") return /** @type {LocalizedString} */ (`O serviço de push da Apple ou do Google recusou as credenciais do seu relay, ou não está respondendo. Se você trocou a chave do APNs ou a conta do Firebase, substitua-as:`);
 		if (i?.part === "state_pipeline") return /** @type {LocalizedString} */ (`Parado no Brigade`);
 		if (i?.part === "state_database") return /** @type {LocalizedString} */ (`Banco de dados sem resposta`);
-		if (i?.part === "hint_database") return /** @type {LocalizedString} */ (`O relay respondeu, mas o banco de dados (D1) não respondeu a uma leitura simples nas últimas verificações. Veja os logs da API; se durar, confira o status da Cloudflare.`);
+		if (i?.part === "hint_database") return /** @type {LocalizedString} */ (`O banco de dados (D1) não respondeu a uma leitura simples nas últimas verificações. Veja os logs da API; se durar, confira o status da Cloudflare.`);
 		if (i?.part === "hint_unknown_relay") return /** @type {LocalizedString} */ (`O Brigade não disse qual é o relay, então não dá para dizer o que fazer aqui. O aviso de acionamentos na visão geral diz o motivo.`);
 		if (i?.part === "hint_pipeline") return /** @type {LocalizedString} */ (`Os acionamentos estão parados antes de chegar ao relay, então ele não pode ser verificado. O aviso de acionamentos na visão geral diz o motivo.`);
 		if (i?.part === "state_no_answer") return /** @type {LocalizedString} */ (`Não foi possível verificar`);
@@ -157,7 +157,7 @@ export const phones_pages = /** @type {((inputs: Phones_PagesInputs, options?: {
 		if (i?.part === "hint_providers_own") return /** @type {LocalizedString} */ (`Apple's or Google's push service refused your relay's credentials, or isn't answering. If you changed the APNs key or the Firebase account, replace them:`);
 		if (i?.part === "state_pipeline") return /** @type {LocalizedString} */ (`Held up in Brigade`);
 		if (i?.part === "state_database") return /** @type {LocalizedString} */ (`Database not answering`);
-		if (i?.part === "hint_database") return /** @type {LocalizedString} */ (`The relay answered, but the database (D1) didn't answer a simple read in the last checks. Look at the API's logs; if it lasts, check Cloudflare's status.`);
+		if (i?.part === "hint_database") return /** @type {LocalizedString} */ (`The database (D1) didn't answer a simple read in the last checks. Look at the API's logs; if it lasts, check Cloudflare's status.`);
 		if (i?.part === "hint_unknown_relay") return /** @type {LocalizedString} */ (`Brigade didn't say which relay this is, so it can't say what to do here. The paging notice on the overview names the reason.`);
 		if (i?.part === "hint_pipeline") return /** @type {LocalizedString} */ (`Pages are held up before they reach the relay, so it can't be checked. The paging notice on the overview says why.`);
 		if (i?.part === "state_no_answer") return /** @type {LocalizedString} */ (`Couldn't check`);

@@ -63,9 +63,11 @@ export function PhonesPagesPanel({
   // A 503 (the watchdog down) still says which relay; only the state is unknown then.
   const relay = health === undefined ? null : health.relay;
   const state = relayState(health);
-  // With no relay there is no relay state to show, but Brigade's own trouble (beats stopped, the database) still is:
-  // the settings page has no other place for it. A bare `relay_not_configured` is the "no relay" line itself.
-  const showState = relay?.kind !== "none" || state === "pipeline" || state === "database";
+  // With no relay there is no relay state to show, but Brigade's own trouble (beats stopped, the database, the
+  // watchdog not answering) still is: the settings page has no other place for it. A bare `relay_not_configured` is
+  // the "no relay" line itself.
+  const showState =
+    relay?.kind !== "none" || state === "pipeline" || state === "database" || state === "no_answer";
   return (
     <Card id="phones-and-pages" aria-labelledby="phones-pages-title">
       <CardHeader id="phones-pages-title" title={text("title")} description={text("description")} />

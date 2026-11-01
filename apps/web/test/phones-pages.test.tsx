@@ -117,6 +117,14 @@ describe("PhonesPagesPanel", () => {
     );
     expect(database.textContent).toContain("Database not answering");
     expect(database.textContent).toContain("database (D1)");
+    // With no relay, the hint doesn't say a relay answered.
+    expect(database.textContent).not.toContain("relay answered");
+    act(() => root?.unmount());
+    container.remove();
+    // The watchdog not answering at all: a member's 503 still names the relay, and the state row says so.
+    const down = await panel({ status: "unreachable", relay: { kind: "none" } });
+    expect(down.textContent).toContain("No relay: phones aren't paged");
+    expect(down.textContent).toContain("State");
   });
 
   test("each refusal says what to run", async () => {

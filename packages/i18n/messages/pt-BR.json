@@ -3999,6 +3999,7 @@
         "part=device_phone": "Um celular",
         "part=expired_claimed": "O acesso expirou antes de terminar. Ninguém entrou.",
         "part=cancel_failed": "Não foi possível cancelar. Tente de novo; o código para de funcionar sozinho quando a contagem acabar.",
+        "part=signed_out": "Sua sessão no painel terminou. Entre de novo.",
         "part=*": "Entrar com um QR code"
       }
     }

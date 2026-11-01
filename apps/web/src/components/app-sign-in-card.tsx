@@ -5,12 +5,14 @@ import { QrCode } from "@/components/qr-code";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Field, FormError } from "@/components/ui/field";
+import { authClient } from "@/lib/auth";
 import {
   answerSignIn,
   connectUrl,
   countdown,
   createSignIn,
   ENDED,
+  nextView,
   NUMBER,
   POLL_MS,
   readSignIn,
@@ -35,16 +37,27 @@ type Phase =
 /**
  * "Sign in with a QR code" (RFC 0015 section 6): a code only once the member asks for one (a credential on screen is
  * never shown by just opening the page), then the QR with its countdown, the claim with "<device> wants to sign in as
- * you" and the number to type, and how it ended. `fetcher` and `pollMs` are for the tests.
+ * you" and the number to type, and how it ended. `fetcher`, `pollMs` and `onSignedOut` are for the tests.
+ * `onSignedOut` runs once the API says the dashboard session ended: by default it has Better Auth read the session
+ * again, so the page's guard sends the member to sign in.
  */
 export function AppSignInCard({
   fetcher = fetch,
   pollMs = POLL_MS,
+  onSignedOut = refreshSession,
 }: {
   fetcher?: typeof fetch;
   pollMs?: number;
+  onSignedOut?: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
+  const signedOut = phase.kind === "failed" && phase.reason === "unauthenticated";
+  // Once per sign-out, whatever function the caller passes on each render.
+  const signedOutRef = useRef(onSignedOut);
+  signedOutRef.current = onSignedOut;
+  useEffect(() => {
+    if (signedOut) signedOutRef.current();
+  }, [signedOut]);
   const live = phase.kind === "live" ? phase.view : undefined;
   const active = live !== undefined && !ENDED.includes(live.status);
   const now = useNow(active);
@@ -56,10 +69,14 @@ export function AppSignInCard({
     const timer = setInterval(() => {
       void readSignIn(live.id, fetcher).then((view) => {
         if (stopped || !view) return;
+        if (view === "unauthenticated") {
+          setPhase({ kind: "failed", reason: "unauthenticated" });
+          return;
+        }
         setPhase((current) =>
           current.kind === "live" && current.view.id === view.id
             ? // Never back from an answer the member just gave (a poll sent before it may land after).
-              { ...current, view: ENDED.includes(current.view.status) ? current.view : view }
+              { ...current, view: nextView(current.view, view) }
             : current,
         );
       });
@@ -87,9 +104,12 @@ export function AppSignInCard({
         : current,
     );
 
-  // Past its time on this clock: shown as expired at once, without waiting for the next poll.
+  // Past its time on this clock: shown as expired at once, without waiting for the next poll. Not once approved: the
+  // server gave the phone more time to pick its session up than this view's `expiresAt` says.
   const status: SignInStatus | undefined =
-    live && active && live.expiresAt <= now ? "expired" : live?.status;
+    live && active && live.status !== "approved" && live.expiresAt <= now
+      ? "expired"
+      : live?.status;
 
   return (
     <Card aria-labelledby="app-sign-in-title">
@@ -110,7 +130,13 @@ export function AppSignInCard({
         ) : phase.kind === "failed" ? (
           <Ended
             tone="error"
-            text={signInText(phase.reason === "rate_limited" ? "rate_limited" : "failed")}
+            text={signInText(
+              phase.reason === "rate_limited"
+                ? "rate_limited"
+                : phase.reason === "unauthenticated"
+                  ? "signed_out"
+                  : "failed",
+            )}
             onAgain={() => void start()}
           />
         ) : status === "waiting" ? (
@@ -390,4 +416,9 @@ function useNow(running: boolean): number {
     return () => clearInterval(timer);
   }, [running]);
   return now;
+}
+
+/** Has Better Auth read the session again: once it is gone, `RequireWorkspace` sends the member to sign in. */
+function refreshSession(): void {
+  authClient.$store.notify("$sessionSignal");
 }

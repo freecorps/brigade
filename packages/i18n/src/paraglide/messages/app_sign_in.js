@@ -45,6 +45,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "device_phone" | "A phone" |
 * | "expired_claimed" | "The sign-in ran out of time before it finished. Nobody was signed in." |
 * | "cancel_failed" | "Couldn't cancel. Try again; the code stops working on its own when the countdown ends." |
+* | "signed_out" | "Your dashboard session ended. Sign in again." |
 * | * | "Sign in with a QR code" |
 *
 * @param {App_Sign_InInputs} inputs
@@ -89,6 +90,7 @@ export const app_sign_in = /** @type {((inputs: App_Sign_InInputs, options?: { l
 		if (i?.part === "device_phone") return /** @type {LocalizedString} */ (`Um celular`);
 		if (i?.part === "expired_claimed") return /** @type {LocalizedString} */ (`O acesso expirou antes de terminar. Ninguém entrou.`);
 		if (i?.part === "cancel_failed") return /** @type {LocalizedString} */ (`Não foi possível cancelar. Tente de novo; o código para de funcionar sozinho quando a contagem acabar.`);
+		if (i?.part === "signed_out") return /** @type {LocalizedString} */ (`Sua sessão no painel terminou. Entre de novo.`);
 		return /** @type {LocalizedString} */ (`Entrar com um QR code`)
 	}
 	{
@@ -127,6 +129,7 @@ export const app_sign_in = /** @type {((inputs: App_Sign_InInputs, options?: { l
 		if (i?.part === "device_phone") return /** @type {LocalizedString} */ (`A phone`);
 		if (i?.part === "expired_claimed") return /** @type {LocalizedString} */ (`The sign-in ran out of time before it finished. Nobody was signed in.`);
 		if (i?.part === "cancel_failed") return /** @type {LocalizedString} */ (`Couldn't cancel. Try again; the code stops working on its own when the countdown ends.`);
+		if (i?.part === "signed_out") return /** @type {LocalizedString} */ (`Your dashboard session ended. Sign in again.`);
 		return /** @type {LocalizedString} */ (`Sign in with a QR code`)
 	}
 });

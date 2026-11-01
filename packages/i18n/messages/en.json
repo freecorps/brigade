@@ -3992,6 +3992,7 @@
         "part=device_phone": "A phone",
         "part=expired_claimed": "The sign-in ran out of time before it finished. Nobody was signed in.",
         "part=cancel_failed": "Couldn't cancel. Try again; the code stops working on its own when the countdown ends.",
+        "part=signed_out": "Your dashboard session ended. Sign in again.",
         "part=*": "Sign in with a QR code"
       }
     }

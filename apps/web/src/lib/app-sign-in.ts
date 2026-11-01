@@ -31,6 +31,16 @@ export type Created = SignInView & { url: string };
 /** Ended: no poll changes it any more. */
 export const ENDED: readonly SignInStatus[] = ["signed_in", "denied", "wrong_number", "expired"];
 
+/**
+ * The view a poll leaves: an ended one never changes, and an approved one only moves on to an end (a poll sent before
+ * the approval may land after it, still saying `claimed`).
+ */
+export function nextView(current: SignInView, polled: SignInView): SignInView {
+  if (ENDED.includes(current.status)) return current;
+  if (current.status === "approved" && !ENDED.includes(polled.status)) return current;
+  return polled;
+}
+
 /** How often the dashboard asks where its request is. */
 export const POLL_MS = 1500;
 
@@ -85,17 +95,21 @@ export async function createSignIn(
   }
 }
 
-/** `GET /api/app-sign-in/:id`; undefined when it could not be read this time (the next poll tries again). */
+/**
+ * `GET /api/app-sign-in/:id`; `unauthenticated` when the dashboard session ended (polling stops: nothing more can be
+ * done with this request), undefined when it could not be read this time (the next poll tries again).
+ */
 export async function readSignIn(
   id: string,
   fetcher: typeof fetch = fetch,
-): Promise<SignInView | undefined> {
+): Promise<SignInView | "unauthenticated" | undefined> {
   try {
     const response = await fetcher(`/api/app-sign-in/${encodeURIComponent(id)}`, {
       headers: { Accept: "application/json" },
     });
     // Gone (another session, or deleted a day after it ended): nothing more will happen to it.
     if (response.status === 404) return { id, status: "expired", expiresAt: 0 };
+    if (response.status === 401) return "unauthenticated";
     if (!response.ok) return undefined;
     const body = (await response.json()) as {
       id: string;

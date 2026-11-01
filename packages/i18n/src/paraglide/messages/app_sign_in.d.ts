@@ -44,6 +44,7 @@ export type App_Sign_InInputs = {
 * | "device_phone" | "A phone" |
 * | "expired_claimed" | "The sign-in ran out of time before it finished. Nobody was signed in." |
 * | "cancel_failed" | "Couldn't cancel. Try again; the code stops working on its own when the countdown ends." |
+* | "signed_out" | "Your dashboard session ended. Sign in again." |
 * | * | "Sign in with a QR code" |
 *
 * @param {App_Sign_InInputs} inputs

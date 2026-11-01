@@ -39,7 +39,13 @@ async function mount(node: ReactNode, locale: Locale = "en") {
 
 /** A made-up API: what `GET /app-sign-in/:id` answers is `server`, changed by the test as a phone would. */
 function fakeApi(
-  options: { create?: number; deny?: number; answer?: (number: string) => SignInStatus } = {},
+  options: {
+    create?: number;
+    deny?: number;
+    /** Set to answer the status poll with this HTTP status instead. */
+    read?: { status: number };
+    answer?: (number: string) => SignInStatus;
+  } = {},
 ) {
   const server = {
     status: "waiting" as SignInStatus,
@@ -64,6 +70,9 @@ function fakeApi(
       );
     }
     if (input === `/api/app-sign-in/${ID}` && method === "GET") {
+      if (options.read) {
+        return Response.json({ error: "unauthenticated" }, { status: options.read.status });
+      }
       return Response.json({
         id: ID,
         status: server.status,
@@ -125,7 +134,7 @@ const submit = async () => {
 
 /** Up to the claim: asked, scanned, claimed by a device of `kind`. */
 async function claimedBy(kind: string, api = fakeApi(), locale: Locale = "en") {
-  await mount(<AppSignInCard fetcher={api.fetcher} pollMs={5} />, locale);
+  await mount(<AppSignInCard fetcher={api.fetcher} pollMs={5} onSignedOut={() => {}} />, locale);
   await click(container.querySelector("button"));
   api.server.status = "claimed";
   api.server.deviceKind = kind;
@@ -236,6 +245,64 @@ describe("AppSignInCard", () => {
     await polls();
     expect(container.textContent).toContain("The sign-in ran out of time before it finished.");
     expect(container.textContent).not.toContain("This code expired");
+  });
+
+  test("a poll from before the approval does not take the approval back", async () => {
+    const api = await claimedBy("apple");
+    type(container.querySelector("input")!, "42");
+    await submit();
+    expect(container.textContent).toContain("Approved. Finishing on your phone");
+    // A stale answer still saying `claimed`.
+    api.server.status = "claimed";
+    await polls();
+    expect(container.textContent).toContain("Approved. Finishing on your phone");
+    expect(container.querySelector("input")).toBeNull();
+    // It still moves on to how it ended.
+    api.server.status = "signed_in";
+    await polls();
+    expect(container.textContent).toContain("An iPhone or iPad is signed in as you.");
+  });
+
+  test("once approved, the claim's old end on this clock does not show it as expired", async () => {
+    const api = await claimedBy("apple");
+    type(container.querySelector("input")!, "42");
+    await submit();
+    // The server gave the phone more time; this view's `expiresAt` is the claim's, now past.
+    api.server.expiresAt = Date.now() - 1000;
+    await polls();
+    expect(container.textContent).toContain("Approved. Finishing on your phone");
+    expect(container.textContent).not.toContain("ran out of time");
+  });
+
+  test("a dashboard session that ended while asking for a code says so and refreshes the session", async () => {
+    let refreshed = 0;
+    await mount(
+      <AppSignInCard
+        fetcher={fakeApi({ create: 401 }).fetcher}
+        pollMs={5}
+        onSignedOut={() => refreshed++}
+      />,
+    );
+    await click(button("Show a sign-in code"));
+    expect(container.textContent).toContain("Your dashboard session ended. Sign in again.");
+    expect(refreshed).toBe(1);
+  });
+
+  test("a dashboard session that ended while waiting stops the polls, says so and refreshes the session", async () => {
+    let refreshed = 0;
+    const api = fakeApi({ read: { status: 401 } });
+    await mount(
+      <AppSignInCard fetcher={api.fetcher} pollMs={5} onSignedOut={() => refreshed++} />,
+      "pt-BR",
+    );
+    await click(button("Mostrar um código de acesso"));
+    await polls();
+    expect(container.textContent).toContain("Sua sessão no painel terminou. Entre de novo.");
+    expect(container.querySelector("svg[role=img]")).toBeNull();
+    expect(refreshed).toBe(1);
+    const polled = api.requests.filter((request) => request.method === "GET").length;
+    await polls();
+    expect(api.requests.filter((request) => request.method === "GET").length).toBe(polled);
   });
 
   test("past its time it shows as expired, with a new code to make", async () => {

@@ -392,12 +392,7 @@ async function pollClaim(
     }
     // Bound to the dashboard session that asked: signed out there since, no session here. Read before the claim
     // moves, so a failure here leaves it `approved` for the next poll; signed out ends it for good.
-    const asker = await env.DB.prepare(
-      `select "expiresAt" from "session" where id = ? and "userId" = ?`,
-    )
-      .bind(row.sessionId, row.userId)
-      .first<{ expiresAt: string | number }>();
-    const signedOut = !asker || new Date(asker.expiresAt).getTime() <= now;
+    const signedOut = !(await askerAlive(env.DB, row, now));
     // Approved: only the poll that moves it on gets a session (or the `signed_out` answer).
     const taken = await env.DB.prepare(
       `update app_sign_in set state = ?3, "endedAt" = ?2
@@ -419,7 +414,17 @@ async function pollClaim(
     }
     if (signedOut) return ended("signed_out");
     try {
-      return json(await newSession(env, auth, row, request), 200, NO_STORE);
+      const made = await newSession(env, auth, row, request);
+      if (made === "signed_out") {
+        // The dashboard session ended while the phone's was being made (which `newSession` deleted again).
+        await env.DB.prepare(
+          `update app_sign_in set state = 'signed_out' where id = ? and state = 'delivered'`,
+        )
+          .bind(id)
+          .run();
+        return ended("signed_out");
+      }
+      return json(made, 200, NO_STORE);
     } catch (error) {
       // Nothing was handed out (`newSession` deleted any session it made): the phone's next poll may try again,
       // within the same time.
@@ -439,9 +444,16 @@ async function pollClaim(
  * A new Better Auth session for the row's user, made here (no password on the phone), with the device name, the
  * phone's address and user agent, `signInMethod: "qr"` (so the sessions list says how it was made), and the user's
  * first workspace active as a sign-in would. Everything that can fail is read first and the session made last; should
- * signing its cookie still fail, the session is deleted again, so no live session is ever left undelivered.
+ * signing its cookie still fail, the session is deleted again, so no live session is ever left undelivered. The
+ * dashboard session that asked is read again once the new one exists: ended meanwhile (a sign-out racing the pickup),
+ * the new one is deleted and this answers `signed_out`.
  */
-async function newSession(env: AppSignInEnv, auth: () => Auth, row: Row, request: Request) {
+async function newSession(
+  env: AppSignInEnv,
+  auth: () => Auth,
+  row: Row,
+  request: Request,
+): Promise<"signed_out" | Delivered> {
   const context = await auth().$context;
   const user = await context.internalAdapter.findUserById(row.userId);
   if (!user) throw new Error("the user is gone");
@@ -470,6 +482,10 @@ async function newSession(env: AppSignInEnv, auth: () => Auth, row: Row, request
       ...(cookie.attributes.secure ? ["Secure"] : []),
       "SameSite=Lax",
     ];
+    if (!(await askerAlive(env.DB, row, Date.now()))) {
+      await context.internalAdapter.deleteSession(session.token);
+      return "signed_out";
+    }
     return {
       status: "approved" as const,
       session: { cookie: attributes.join("; "), expiresAt: expiresAt.toISOString() },
@@ -479,6 +495,22 @@ async function newSession(env: AppSignInEnv, auth: () => Auth, row: Row, request
     await context.internalAdapter.deleteSession(session.token);
     throw error;
   }
+}
+
+/** What the phone's poll answers when it gets its session. */
+type Delivered = {
+  status: "approved";
+  session: { cookie: string; expiresAt: string };
+  user: { id: string; name: string; email: string };
+};
+
+/** Whether the dashboard session that asked for `row`'s code still exists, unexpired, for its user. */
+async function askerAlive(db: D1Database, row: Row, now: number): Promise<boolean> {
+  const asker = await db
+    .prepare(`select "expiresAt" from "session" where id = ? and "userId" = ?`)
+    .bind(row.sessionId, row.userId)
+    .first<{ expiresAt: string | number }>();
+  return asker !== null && new Date(asker.expiresAt).getTime() > now;
 }
 
 /** `session.signInMethod` for a session a QR sign-in made (src/auth.ts). */

@@ -373,7 +373,9 @@ apps/web's "Use the app" page (`/use-the-app`, `src/components/app-sign-in-card.
   `session.signInMethod` (`qr`) columns (Better Auth additional fields, `input: false`), so `/auth/list-sessions` names
   the device and how it signed in, and it is revoked like any other. Everything that can fail is read before the
   session is made; should signing its cookie still fail, the session is deleted and the claim goes back to `approved`
-  for the next poll, so no live session is ever left undelivered. The answer is `{ status: "approved", session: { cookie, expiresAt }, user: { id, name, email } }`:
+  for the next poll, so no live session is ever left undelivered. The dashboard session that asked is read again
+  once the new one exists: a sign-out racing the pickup deletes the new one and ends the claim as `signed_out`. The
+  answer is `{ status: "approved", session: { cookie, expiresAt }, user: { id, name, email } }`:
   `cookie` is a `Set-Cookie` value the app stores with `@better-auth/expo`'s `getSetCookie` under the instance's
   storage prefix, and `user` is what the phone names ("Signed in to <host> as …"). Every poll after gets `{ status:
   "expired", reason: "delivered" }`; other reasons are `denied`, `wrong_number`, `timeout` and `signed_out` (the
@@ -387,7 +389,10 @@ apps/web's "Use the app" page (`/use-the-app`, `src/components/app-sign-in-card.
   dashboard's own origin). No code is made until the member asks for one; the QR (drawn from `uqr`'s module matrix,
   dark on white with the quiet zone) shows with its countdown and "Never share this code, nor the number your phone
   shows", then "<kind of device> wants to sign in as you" with the number to type, Deny, and how it ended; Cancel
-  goes back to the start only once the code is denied, and says so when it could not be. The QR's `server` is
+  goes back to the start only once the code is denied, and says so when it could not be. An approval stays on screen
+  until the request ends (a poll from before it never takes it back, nor does the claim's old end on this clock), and
+  a `401` (the dashboard session ended) stops the polls with "Your dashboard session ended. Sign in again." and has
+  the session read again, so the page sends the member to sign in. The QR's `server` is
   `DASHBOARD_URL`, or the origin the request came through without it.
 - **Still to do (the phone, step 4):** the scanner on the sign-in screen, "Sign in to <host>?", the claim, showing the
   number and polling, storing the cookie per instance.

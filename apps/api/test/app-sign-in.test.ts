@@ -312,6 +312,34 @@ describe("QR sign-in", () => {
     expect((await qrSessions())?.n).toBe(1);
   });
 
+  test("a dashboard sign-out racing the pickup leaves the phone without a session", async () => {
+    const ana = await signUp();
+    const created = await create(ana.cookie);
+    const phoneSide = await claimed(created.code);
+    await approve(created.id, ana.cookie, phoneSide.number);
+    const asker = await env.DB.prepare(`select id from "session" where "userId" = ?`)
+      .bind(ana.id)
+      .first<{ id: string }>();
+    // The dashboard session ends right after the phone's was made (while its cookie is signed).
+    const sign = crypto.subtle.sign.bind(crypto.subtle);
+    vi.spyOn(crypto.subtle, "sign").mockImplementationOnce(async (...args) => {
+      await env.DB.prepare(`delete from "session" where id = ?`).bind(asker!.id).run();
+      return sign(...args);
+    });
+    expect(await (await poll(phoneSide.claimId, phoneSide.secret)).json()).toEqual({
+      status: "expired",
+      reason: "signed_out",
+    });
+    const left = await env.DB.prepare(`select count(*) as n from "session" where "userId" = ?`)
+      .bind(ana.id)
+      .first<{ n: number }>();
+    expect(left?.n).toBe(0);
+    expect(await (await poll(phoneSide.claimId, phoneSide.secret)).json()).toEqual({
+      status: "expired",
+      reason: "signed_out",
+    });
+  });
+
   test("the phone polls with GET only", async () => {
     const ana = await signUp();
     const created = await create(ana.cookie);

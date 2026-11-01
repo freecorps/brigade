@@ -6,13 +6,16 @@
 #   `production` channel, and installed builds pick it up on their next launches;
 # - none was: the native code changed, and no installed build could run an update, so a new production build is
 #   made instead, with `eas build --local` on this runner (no EAS build credits, apps/mobile/README.md). The .ipa or
-#   .aab is kept as a run artifact for 14 days; submitting it to the stores waits for roadmap Phase 4. A small
-#   `mobile-build-<platform>-<fingerprint>` artifact, kept 90 days, records that the fingerprint was built.
+#   .aab is kept as a run artifact for 14 days. A small `mobile-build-<platform>-<fingerprint>` artifact, kept 90
+#   days, records that the fingerprint was built. The .ipa then goes to TestFlight with `eas submit` when the App
+#   Store Connect API key secrets below are set; the .aab is not submitted to Google Play yet (roadmap Phase 4).
 #
 # Repository settings: secrets EXPO_TOKEN (an EAS robot token of the freecorps organisation) and GOOGLE_SERVICES_JSON
 # (the Firebase file, apps/mobile/README.md "Android pages"); variable EXPO_PUBLIC_BRIGADE_URL (the hosted
 # dashboard's origin). Nothing ships without them: a build without a server cannot sign in, and an Android one
-# without Firebase cannot be paged.
+# without Firebase cannot be paged. Optional secrets ASC_API_KEY_P8 (the .p8 file's contents), ASC_API_KEY_ID and
+# ASC_API_ISSUER_ID: an App Store Connect API key (App Manager role) that submits iOS builds to TestFlight; without
+# all three, iOS builds are only kept as artifacts.
 name: Mobile
 run-name: Mobile ${{ github.event.workflow_run.head_sha || github.sha }}
 
@@ -180,3 +183,27 @@ jobs:
           name: ${{ steps.fingerprint.outputs.marker }}
           path: ${{ runner.temp }}/fingerprint.txt
           retention-days: 90
+      # Last, after the fingerprint is recorded: the build is kept and counts as built whatever Apple says, so a
+      # failed submission fails the job, visibly, without making the next run build the same native code again. The
+      # kept .ipa can be submitted by hand then (apps/mobile/README.md "Submitting"). eas.json's `ci` submit profile
+      # (production's, plus the key) reads the key from these environment variables; without the three secrets the
+      # step only notes that nothing was submitted, and the job is what it was before submissions.
+      - name: Submit to TestFlight
+        if: steps.fingerprint.outputs.built != 'true' && matrix.platform == 'ios'
+        env:
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_KEY_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          IPA: ${{ runner.temp }}/brigade-ios-production-${{ needs.changes.outputs.sha }}.ipa
+        run: |
+          if [ -z "$ASC_API_KEY_P8" ] || [ -z "$ASC_API_KEY_ID" ] || [ -z "$ASC_API_KEY_ISSUER_ID" ]; then
+            echo "::notice::Not submitted to TestFlight: the ASC_API_KEY_P8, ASC_API_KEY_ID and ASC_API_ISSUER_ID secrets are not all set"
+            echo "iOS build not submitted to TestFlight: the ASC_API_KEY_P8, ASC_API_KEY_ID and ASC_API_ISSUER_ID secrets are not all set" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          export ASC_API_KEY_PATH="$RUNNER_TEMP/asc-api-key.p8"
+          trap 'rm -f "$ASC_API_KEY_PATH"' EXIT
+          (umask 077 && printf '%s\n' "$ASC_API_KEY_P8" > "$ASC_API_KEY_PATH")
+          unset ASC_API_KEY_P8
+          vpx "$EAS_CLI" submit --platform ios --profile ci --path "$IPA" --non-interactive
+          echo "iOS build submitted to TestFlight" >> "$GITHUB_STEP_SUMMARY"

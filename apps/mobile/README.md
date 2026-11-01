@@ -126,9 +126,14 @@ vp run mobile:install --from ~/brigade-builds/brigade-ios-preview-<commit>.ipa
   iOS needs fastlane and CocoaPods. On a Mac whose login keychain holds another Apple Distribution certificate
   of the same team, the iOS archive can fail with "Provisioning profile … doesn't include signing certificate"
   (see spike S4).
-- **Submitting** waits for roadmap Phase 4 (after the CLA). It will be `bunx eas-cli@latest submit --platform
-  <ios|android> --profile production --path <artifact>` from this directory, once `eas.json`'s `submit.production`
-  has the App Store Connect app and the Play service account.
+- **Submitting**: iOS production builds go to TestFlight. `eas.json`'s `submit.production.ios` has the App Store
+  Connect app (`ascAppId` 6829554691, "Freecorps Brigade", `app.freecorps.brigade`); the `ci` submit profile
+  extends it with an API key read from `ASC_API_KEY_PATH`, `ASC_API_KEY_ID` and `ASC_API_KEY_ISSUER_ID`. The Mobile
+  workflow submits each production .ipa it builds with `--profile ci` when the repository secrets `ASC_API_KEY_P8`,
+  `ASC_API_KEY_ID` and `ASC_API_ISSUER_ID` are all set; without them it only keeps the build. By hand, from this
+  directory: `bunx eas-cli@latest submit --platform ios --profile production --path <artifact>`, with the key EAS
+  keeps for the app or one it asks for (or `--profile ci` with the three variables set). The Play Store submission
+  waits for roadmap Phase 4 (after the CLA), with a Play service account in `submit.production.android`.
 - **A cloud build** (`bunx eas-cli@latest build --platform <platform> --profile <profile>`) is only for when EAS
   must create or regenerate credentials, such as a new distribution certificate or keystore. A newly registered
   iPhone should not need one: a local build goes through the same credentials step, which updates the ad hoc
@@ -145,7 +150,9 @@ From `main`, `.github/workflows/mobile.yml` ships the app after CI passes, when 
 (RFC 0002 "Continuous delivery"). Per platform it computes the fingerprint: if a build with it was made there
 before, it publishes an EAS Update to `production`; if not (a native dependency, a config plugin or `app.config.ts`
 changed), it builds a production .ipa or .aab with `eas build --local` on GitHub's runners and keeps it as a run
-artifact for 14 days. Install one from the run's artifacts with `vp run mobile:install --from <file>`.
+artifact for 14 days. Install one from the run's artifacts with `vp run mobile:install --from <file>`. A new iOS
+build then goes to TestFlight when the App Store Connect key secrets are set (below); a failed submission fails the
+job but the build still counts as built, so submit its .ipa by hand.
 
 - The fingerprint covers the app config, so the workflow pins what the config reads from the environment:
   `BRIGADE_APS_ENVIRONMENT=production` and `GOOGLE_SERVICES_FILE` in the runner's temp directory. A build made on
@@ -153,7 +160,8 @@ artifact for 14 days. Install one from the run's artifacts with `vp run mobile:i
   reach it; use the CI build for phones that should follow `main`.
 - Repository settings: the `EXPO_TOKEN` secret (an EAS robot token), `GOOGLE_SERVICES_JSON` (the Firebase file's
   contents) and the `EXPO_PUBLIC_BRIGADE_URL` variable. Without them nothing ships: no server, no sign-in; no
-  Firebase, no pages.
+  Firebase, no pages. Optional: `ASC_API_KEY_P8` (the App Store Connect API key's .p8 contents), `ASC_API_KEY_ID`
+  and `ASC_API_ISSUER_ID`, which submit iOS builds to TestFlight; without all three nothing is submitted.
 - Rolling an update back: `bunx eas-cli@latest update:republish --group <previous group id>` (`eas update:list`).
 
 `android/` and `ios/` are generated from `app.config.ts` and gitignored; change native settings there, never in

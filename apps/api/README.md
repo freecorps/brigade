@@ -533,7 +533,10 @@ Workers of that environment (default production). It asks which relay, then:
   reachable and this instance is registered**. **Required afterwards:** the production build binds `RELAY` to
   `brigade-relay` (vite.config.ts `PRODUCTION_BINDINGS`; dev and staging: `services` in wrangler.jsonc), and the API
   sends through that binding before `RELAY_URL`, to a relay that does not know this instance: remove it and deploy the
-  API again. The script reads those files and says when the binding is there. Freecorps' relay is
+  API again. The script reads those files and says when the binding is there; it says the binding stays only in production,
+  registered at the default address, with the binding to `brigade-relay` and that Worker on the same account without
+  `BRIGADE_OWN_RELAY`, as on Freecorps' own instance (RFC 0015 "What stays as it is"). Dev has no hosted relay
+  address, so there it always says to remove the binding. Freecorps' relay is
   `https://relay.brigade.freecorps.com.br`, the default; `--relay-url` (or `BRIGADE_RELAY_URL`) points at another
   (a test relay, say). The script asks the relay's `/health` before it makes the instance key, so until its domain is
   attached (docs/open-questions.md Q31) it stops there with "Could not reach the relay": no key file, nothing

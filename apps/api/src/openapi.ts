@@ -345,7 +345,16 @@ const LISTED: readonly Operation[] = [
       200: { description: "The pipeline's state.", body: ref("PagingHealth") },
       503: {
         description: "The watchdog cannot answer; a member still gets `relay`.",
-        body: ref("PagingHealthUnavailable"),
+        // Inline, like every refusal's `{ error }`, so the refusal code reads where clients look for it.
+        body: {
+          type: "object",
+          properties: {
+            error: { type: "string", enum: ["unavailable"] },
+            relay: { $ref: "#/components/schemas/PagingHealth/properties/relay" },
+          },
+          required: ["error"],
+          additionalProperties: false,
+        },
       },
     },
   },
@@ -1836,15 +1845,6 @@ const SCHEMAS: Record<string, JsonSchema> = {
       },
     },
     required: ["status"],
-    additionalProperties: false,
-  },
-  PagingHealthUnavailable: {
-    type: "object",
-    properties: {
-      error: { type: "string", enum: ["unavailable"] },
-      relay: { $ref: "#/components/schemas/PagingHealth/properties/relay" },
-    },
-    required: ["error"],
     additionalProperties: false,
   },
 };

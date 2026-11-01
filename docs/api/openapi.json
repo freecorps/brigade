@@ -110,7 +110,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PagingHealthUnavailable"
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    },
+                    "relay": {
+                      "$ref": "#/components/schemas/PagingHealth/properties/relay"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
                 }
               }
             }
@@ -14095,24 +14110,6 @@
         },
         "required": [
           "status"
-        ],
-        "additionalProperties": false
-      },
-      "PagingHealthUnavailable": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "string",
-            "enum": [
-              "unavailable"
-            ]
-          },
-          "relay": {
-            "$ref": "#/components/schemas/PagingHealth/properties/relay"
-          }
-        },
-        "required": [
-          "error"
         ],
         "additionalProperties": false
       }

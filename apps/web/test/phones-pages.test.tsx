@@ -311,7 +311,7 @@ describe("UseAppPanel", () => {
     expect(after?.textContent).toContain("your company's own build");
     // The heading, description and link are not in the live region.
     expect(after?.querySelector("a")).toBeNull();
-    expect(after?.textContent).not.toContain("Use the app");
+    expect(after?.textContent).not.toContain("Which app to install");
   });
 
   test("an own relay: the company's build, with its link", async () => {
@@ -349,7 +349,7 @@ describe("UseAppPanel", () => {
 
   test("in pt-BR", async () => {
     const shown = await card(health(own()), "pt-BR");
-    expect(shown.textContent).toContain("Use o app");
+    expect(shown.textContent).toContain("Qual app instalar");
     expect(shown.textContent).toContain("Baixar o app da sua empresa");
   });
 

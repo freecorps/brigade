@@ -71,6 +71,7 @@ import { BOOTSTRAP_PATH, bootstrapFirstUser } from "./bootstrap.ts";
 import { forgetSessionEnd, recordSessionEnd, sweepSessionEnds } from "./session-end.ts";
 import { within } from "./deadline.ts";
 import { DEVICES_REGISTER_PATH, registerDevices } from "./device-route.ts";
+import { appSignInRoute, pruneAppSignIns } from "./app-sign-in.ts";
 import {
   IDEMPOTENCY_KEY_HEADER,
   ORGANIZATION_ID,
@@ -278,6 +279,9 @@ export default {
     const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
     if (heartbeat !== undefined) return receiveHeartbeat(request, env, heartbeat);
     if (pathname === DEVICES_REGISTER_PATH) return registerDevices(request, env, auth);
+    // Signing in to the app with a QR code from the dashboard (RFC 0015 section 6, src/app-sign-in.ts).
+    const appSignIn = appSignInRoute(request, env as Env & NotifyEnv, auth, pathname);
+    if (appSignIn) return appSignIn;
     if (pathname === "/receipts") return receiveReceipt(request, env);
     const alerts = ALERTS_PATH.exec(pathname)?.[1];
     if (alerts !== undefined) return receiveAlerts(request, env, alerts);
@@ -325,7 +329,7 @@ export default {
       ctx?.waitUntil(sweep);
     }
     // Ended sessions a shard has yet to act on (src/session-end.ts), every run; and the rate-limit counters past
-    // every window and the email ceiling's old days, once an hour. Never in the heartbeat's way.
+    // every window, the email ceiling's old days and ended QR sign-ins, once an hour. Never in the heartbeat's way.
     ctx?.waitUntil(sweepSessionEnds(env, Date.now()));
     if (new Date(controller.scheduledTime).getUTCMinutes() === RATE_LIMIT_PRUNE_MINUTE) {
       ctx?.waitUntil(
@@ -336,6 +340,13 @@ export default {
         ),
       );
       ctx?.waitUntil(pruneEmailDays(env.DB, Date.now()));
+      ctx?.waitUntil(
+        pruneAppSignIns(env.DB, Date.now()).catch((error: unknown) =>
+          console.error(
+            JSON.stringify({ message: "app sign-in prune failed", error: String(error) }),
+          ),
+        ),
+      );
     }
     await env.WATCHDOG.getByName(WATCHDOG_NAME).beat();
   },

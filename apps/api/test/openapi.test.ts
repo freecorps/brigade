@@ -9,6 +9,7 @@ import {
   alertSourceToken,
   checkJsonSchema,
   heartbeatToken,
+  idPattern,
   INVITATION_RESEND_INTERVAL_MS,
   newHeartbeatSecret,
   newId,
@@ -30,6 +31,7 @@ import {
   WORKSPACE_ID_PATTERN,
   type Operation,
 } from "../src/openapi.ts";
+import { APP_SIGN_IN_ID } from "../src/app-sign-in.ts";
 import { forgetAllTokens, newApiToken, tokenDigest } from "../src/api-tokens.ts";
 import { Shard } from "../src/shard.ts";
 import { serverSignedFixture } from "./sdk-fixture.ts";
@@ -714,7 +716,65 @@ const CASES: Record<string, () => Promise<Case>> = {
       status: 101,
     };
   },
+  createAppSignIn: async () => {
+    const ana = await signUp("Ana");
+    return { path: "/app-sign-in", init: { method: "POST" }, cookie: ana.cookie, status: 201 };
+  },
+  getAppSignIn: async () => {
+    const { ana, id } = await appSignIn();
+    return { path: `/app-sign-in/${id}`, cookie: ana.cookie, status: 200 };
+  },
+  approveAppSignIn: async () => {
+    const { ana, id, claim } = await appSignIn(true);
+    return {
+      path: `/app-sign-in/${id}/approve`,
+      init: { method: "POST", body: JSON.stringify({ number: claim!.number }) },
+      cookie: ana.cookie,
+      status: 200,
+    };
+  },
+  denyAppSignIn: async () => {
+    const { ana, id } = await appSignIn(true);
+    return {
+      path: `/app-sign-in/${id}/deny`,
+      init: { method: "POST" },
+      cookie: ana.cookie,
+      status: 200,
+    };
+  },
+  claimAppSignIn: async () => {
+    const { code } = await appSignIn();
+    return {
+      path: "/app-sign-in/claim",
+      init: { method: "POST", body: JSON.stringify({ code, deviceName: "Ana's iPhone" }) },
+      status: 201,
+    };
+  },
+  pollAppSignIn: async () => {
+    const { claim } = await appSignIn(true);
+    return {
+      path: `/app-sign-in/claim/${claim!.claimId}`,
+      init: { headers: { Authorization: `Bearer ${claim!.secret}` } },
+      status: 200,
+    };
+  },
 };
+
+/** A QR sign-in Ana asked for (src/app-sign-in.ts), claimed by a phone with `claimed`. */
+async function appSignIn(claimed = false) {
+  const ana = await signUp("Ana");
+  const created = await api("/app-sign-in", { method: "POST", headers: { Cookie: ana.cookie } });
+  expect(created.status).toBe(201);
+  const { id, code } = (await created.json()) as { id: string; code: string };
+  if (!claimed) return { ana, id, code, claim: undefined };
+  const response = await api("/app-sign-in/claim", {
+    method: "POST",
+    body: JSON.stringify({ code, deviceName: "Ana's iPhone" }),
+  });
+  expect(response.status).toBe(201);
+  const claim = (await response.json()) as { claimId: string; secret: string; number: string };
+  return { ana, id, code, claim };
+}
 
 /**
  * An API token with every scope for the workspace's owner, written to D1 and listed in its shard as minting does
@@ -795,6 +855,8 @@ function samplePath(path: string): string {
     fieldId: newId("fld", Date.now(), random),
     webhookId: newId("whk", Date.now(), random),
     exportId: newId("exp", Date.now(), random),
+    signInId: newId("asi", Date.now(), random),
+    claimId: newId("asi", Date.now(), random),
     token: "token",
   };
   return path.replaceAll(/\{(\w+)\}/g, (_, name: string) => samples[name]!);
@@ -809,6 +871,7 @@ describe("the API reference", () => {
     expect(WORKSPACE_ID_PATTERN).toBe(ORGANIZATION_ID.source);
     expect(IDEMPOTENCY_KEY_PATTERN).toBe(TOKEN.source);
     expect(WEBHOOK_IDEMPOTENCY_KEY_PATTERN).toBe(WEBHOOK_IDEMPOTENCY_KEY.source);
+    expect(idPattern("asi")).toBe(APP_SIGN_IN_ID.source);
     const ack = OPERATIONS.find((operation) => operation.operationId === "acknowledgeIncident");
     expect(ack?.parameters?.map((parameter) => parameter.name)).toContain(IDEMPOTENCY_KEY_HEADER);
   });

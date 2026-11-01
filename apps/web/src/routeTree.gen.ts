@@ -24,6 +24,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as SignUpRouteImport } from './routes/sign-up'
 import { Route as StatusPageRouteImport } from './routes/status-page'
+import { Route as UseTheAppRouteImport } from './routes/use-the-app'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as IncidentsIndexRouteImport } from './routes/incidents.index'
 import { Route as IncidentsNumberRouteImport } from './routes/incidents.$number'
@@ -107,6 +108,11 @@ const StatusPageRoute = StatusPageRouteImport.update({
   path: '/status-page',
   getParentRoute: () => rootRouteImport,
 } as any)
+const UseTheAppRoute = UseTheAppRouteImport.update({
+  id: '/use-the-app',
+  path: '/use-the-app',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const VerifyEmailRoute = VerifyEmailRouteImport.update({
   id: '/verify-email',
   path: '/verify-email',
@@ -159,6 +165,7 @@ export interface FileRoutesByFullPath {
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
   '/status-page': typeof StatusPageRoute
+  '/use-the-app': typeof UseTheAppRoute
   '/verify-email': typeof VerifyEmailRoute
   '/incidents/$number': typeof IncidentsNumberRoute
   '/invitations/$id': typeof InvitationsIdRoute
@@ -183,6 +190,7 @@ export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
   '/status-page': typeof StatusPageRoute
+  '/use-the-app': typeof UseTheAppRoute
   '/verify-email': typeof VerifyEmailRoute
   '/incidents/$number': typeof IncidentsNumberRoute
   '/invitations/$id': typeof InvitationsIdRoute
@@ -208,6 +216,7 @@ export interface FileRoutesById {
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
   '/status-page': typeof StatusPageRoute
+  '/use-the-app': typeof UseTheAppRoute
   '/verify-email': typeof VerifyEmailRoute
   '/incidents/$number': typeof IncidentsNumberRoute
   '/invitations/$id': typeof InvitationsIdRoute
@@ -234,6 +243,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/sign-up'
     | '/status-page'
+    | '/use-the-app'
     | '/verify-email'
     | '/incidents/$number'
     | '/invitations/$id'
@@ -258,6 +268,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/sign-up'
     | '/status-page'
+    | '/use-the-app'
     | '/verify-email'
     | '/incidents/$number'
     | '/invitations/$id'
@@ -282,6 +293,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/sign-up'
     | '/status-page'
+    | '/use-the-app'
     | '/verify-email'
     | '/incidents/$number'
     | '/invitations/$id'
@@ -307,6 +319,7 @@ export interface RootRouteChildren {
   SignInRoute: typeof SignInRoute
   SignUpRoute: typeof SignUpRoute
   StatusPageRoute: typeof StatusPageRoute
+  UseTheAppRoute: typeof UseTheAppRoute
   VerifyEmailRoute: typeof VerifyEmailRoute
   IncidentsNumberRoute: typeof IncidentsNumberRoute
   InvitationsIdRoute: typeof InvitationsIdRoute
@@ -423,6 +436,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StatusPageRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/use-the-app': {
+      id: '/use-the-app'
+      path: '/use-the-app'
+      fullPath: '/use-the-app'
+      preLoaderRoute: typeof UseTheAppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/verify-email': {
       id: '/verify-email'
       path: '/verify-email'
@@ -491,6 +511,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignInRoute: SignInRoute,
   SignUpRoute: SignUpRoute,
   StatusPageRoute: StatusPageRoute,
+  UseTheAppRoute: UseTheAppRoute,
   VerifyEmailRoute: VerifyEmailRoute,
   IncidentsNumberRoute: IncidentsNumberRoute,
   InvitationsIdRoute: InvitationsIdRoute,

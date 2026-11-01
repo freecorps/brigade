@@ -16,6 +16,10 @@ export type Use_AppInputs = {
 * | "own_link" | "Get your company's app" |
 * | "own_no_link" | "Ask an owner or admin where to get it." |
 * | "failed" | "Couldn't check which app pages you here. Try again in a minute." |
+* | "install_title" | "Which app to install" |
+* | "page_description" | "Brigade on your phone: install the app, then sign it in as you with a QR code from this page." |
+* | "link_description" | "Install the Brigade app and sign it in with a QR code, with no password typed on the phone." |
+* | "link_open" | "Set up the app" |
 * | * | "Use the app" |
 *
 * @param {Use_AppInputs} inputs

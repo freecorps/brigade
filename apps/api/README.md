@@ -369,6 +369,27 @@ sockets and take the phone that signed out off the member's devices, deleting th
 upgrade, or by the cron (every minute, rows older than a minute; dropped after 30 days). The same cron deletes
 rate-limit counters past every window once an hour (minute 23).
 
+## QR sign-in
+
+RFC 0015 section 6 (`src/app-sign-in.ts`, D1 `migrations/0016_app_sign_in.sql`: apply it before deploying). The
+dashboard's "Use the app" page signs the app in without a password, as a device approval:
+
+| Route                           | Who                                         | What                                                                                   |
+| ------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `POST /app-sign-in`             | dashboard session                           | a 128-bit code, 2 minutes, single use, hashed at rest; `url` is the QR                 |
+| `GET /app-sign-in/:id`          | the same session                            | `waiting`, `claimed` (with `deviceName`, never the number), `approved`, `signed_in`, … |
+| `POST /app-sign-in/:id/approve` | the same session                            | `{ number }` typed by the member; a wrong one ends the claim (`403 wrong_number`)      |
+| `POST /app-sign-in/:id/deny`    | the same session                            | ends it                                                                                |
+| `POST /app-sign-in/claim`       | the phone, no session                       | `{ code, deviceName }` → `{ claimId, secret, number, expiresAt }`; spends the code     |
+| `GET /app-sign-in/claim/:id`    | the phone, `Authorization: Bearer <secret>` | `pending`, then once a new Better Auth session (`session.cookie`), then `expired`      |
+
+Each step is one conditional `update … returning` in D1, so a code is claimed once and a session handed out once.
+The session is an ordinary one (listed by `/auth/list-sessions`, revocable) with `session.deviceName` set; it is made
+only when the phone picks it up, and not at all if the dashboard session that asked has signed out. Claims are limited
+per caller address with Workers Rate Limiting (`APP_SIGN_IN_LIMIT`, 20 a minute, namespaces 4301-4303); codes per
+user in D1's `rateLimit` (10 a minute). The QR names `DASHBOARD_URL` as the server, or the request's origin without
+it. The cron deletes rows a day after they end (minute 23).
+
 ## Dead-man switch
 
 RFC 0007 "Watching the watcher" (`src/watchdog.ts`). A Cron Trigger (`* * * * *`, `scheduled`) asks the one

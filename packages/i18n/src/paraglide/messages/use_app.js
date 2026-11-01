@@ -19,6 +19,10 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "own_link" | "Get your company's app" |
 * | "own_no_link" | "Ask an owner or admin where to get it." |
 * | "failed" | "Couldn't check which app pages you here. Try again in a minute." |
+* | "install_title" | "Which app to install" |
+* | "page_description" | "Brigade on your phone: install the app, then sign it in as you with a QR code from this page." |
+* | "link_description" | "Install the Brigade app and sign it in with a QR code, with no password typed on the phone." |
+* | "link_open" | "Set up the app" |
 * | * | "Use the app" |
 *
 * @param {Use_AppInputs} inputs
@@ -37,6 +41,10 @@ export const use_app = /** @type {((inputs: Use_AppInputs, options?: { locale?: 
 		if (i?.part === "own_link") return /** @type {LocalizedString} */ (`Baixar o app da sua empresa`);
 		if (i?.part === "own_no_link") return /** @type {LocalizedString} */ (`Pergunte a um owner ou admin onde baixá-lo.`);
 		if (i?.part === "failed") return /** @type {LocalizedString} */ (`Não foi possível verificar qual app aciona você aqui. Tente de novo em um minuto.`);
+		if (i?.part === "install_title") return /** @type {LocalizedString} */ (`Qual app instalar`);
+		if (i?.part === "page_description") return /** @type {LocalizedString} */ (`O Brigade no seu celular: instale o app e entre nele como você com um QR code desta página.`);
+		if (i?.part === "link_description") return /** @type {LocalizedString} */ (`Instale o app do Brigade e entre nele com um QR code, sem digitar senha no celular.`);
+		if (i?.part === "link_open") return /** @type {LocalizedString} */ (`Configurar o app`);
 		return /** @type {LocalizedString} */ (`Use o app`)
 	}
 	{
@@ -49,6 +57,10 @@ export const use_app = /** @type {((inputs: Use_AppInputs, options?: { locale?: 
 		if (i?.part === "own_link") return /** @type {LocalizedString} */ (`Get your company's app`);
 		if (i?.part === "own_no_link") return /** @type {LocalizedString} */ (`Ask an owner or admin where to get it.`);
 		if (i?.part === "failed") return /** @type {LocalizedString} */ (`Couldn't check which app pages you here. Try again in a minute.`);
+		if (i?.part === "install_title") return /** @type {LocalizedString} */ (`Which app to install`);
+		if (i?.part === "page_description") return /** @type {LocalizedString} */ (`Brigade on your phone: install the app, then sign it in as you with a QR code from this page.`);
+		if (i?.part === "link_description") return /** @type {LocalizedString} */ (`Install the Brigade app and sign it in with a QR code, with no password typed on the phone.`);
+		if (i?.part === "link_open") return /** @type {LocalizedString} */ (`Set up the app`);
 		return /** @type {LocalizedString} */ (`Use the app`)
 	}
 });

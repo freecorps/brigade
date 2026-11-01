@@ -330,6 +330,50 @@ Threats and what answers each:
 The address-only QR (`brigade://connect?server=<origin>`) stays for an instance whose sign-in happens elsewhere
 (SSO later, RFC 0002), and the address field for everyone else.
 
+**Built (the server and the dashboard).** apps/api `src/app-sign-in.ts` (D1 `migrations/0016_app_sign_in.sql`),
+apps/web's "Use the app" page (`/use-the-app`, `src/components/app-sign-in-card.tsx`). As built:
+
+- **Routes** (documented in docs/api/openapi.json, tag "App sign-in"): `POST /app-sign-in` (session; `{ id, code, url,
+  expiresAt }`, at most 10 a minute per user; a new code ends the session's code not claimed yet), `GET
+  /app-sign-in/:id`, `POST /app-sign-in/:id/approve { number }` and `POST /app-sign-in/:id/deny` (only the session that
+  asked: anyone else gets `404`), `POST /app-sign-in/claim { code, deviceName }` (no session; `{ claimId, secret,
+  number, expiresAt }`) and `GET /app-sign-in/claim/:id` with `Authorization: Bearer <secret>`. The dashboard polls
+  (every 1.5 s) rather than holding a long request open: each poll is one D1 read, and a Worker request waiting two
+  minutes would hold a connection per open page for nothing. The request and the claim are one id (`asi_<ULID>`).
+- **Storage: D1, not a Durable Object.** Each step that must happen once (spending the code, approving or failing on
+  the number, handing out the session) is one conditional `update … where state = <the step before> and "expiresAt" >
+  now returning …`. D1 runs each statement atomically on its one primary, so of two requests at once exactly one gets
+  the row back (test/app-sign-in.test.ts claims one code twice at once). The rows sit beside Better Auth's sessions
+  they are bound to, and nothing needs to live in memory between polls, so a Durable Object would add a hop and buy
+  nothing. The code and the phone's secret are stored only as SHA-256 digests (128 and 256 random bits: no salt or slow
+  hash needed); the number as it is (100 values); rows are deleted a day after they end.
+- **Lives:** the code 2 minutes unclaimed; the claim 2 minutes from its claim, for the approval and the phone's pickup
+  both. Past it, every answer is `expired`.
+- **The number:** 2 digits, uniform, given only to the claiming phone; the dashboard's `GET` names the device and never
+  carries it. A malformed number (`400`) spends nothing; any other wrong one ends the claim (`403 wrong_number`), and
+  the right one after it is `409 not_claimed`.
+- **The session:** made only when the phone's first poll after the approval moves the claim to `delivered` (so a
+  session token is never at rest here), with Better Auth's own `internalAdapter.createSession`: an ordinary session
+  with the member's first workspace active, the phone's address and user agent, and a new `session.deviceName` column
+  (a Better Auth additional field, `input: false`), so `/auth/list-sessions` names the device and it is revoked like
+  any other. The answer is `{ status: "approved", session: { cookie, expiresAt }, user: { id, name, email } }`:
+  `cookie` is a `Set-Cookie` value the app stores with `@better-auth/expo`'s `getSetCookie` under the instance's
+  storage prefix, and `user` is what the phone names ("Signed in to <host> as …"). Every poll after gets `{ status:
+  "expired", reason: "delivered" }`; other reasons are `denied`, `wrong_number`, `timeout` and `signed_out` (the
+  dashboard session that asked ended before the pickup: no session is made). A secret that does not match is `404`, the
+  same as an unknown id.
+- **Rate limits:** claims per caller IP with Workers Rate Limiting (`APP_SIGN_IN_LIMIT`, 20 a minute, namespaces
+  4301-4303), checked before D1; a limiter that fails lets the claim through (the 128 bits stop guessing; the limit
+  bounds the work). The phone's poll is not limited: it needs the 256-bit secret, and polls every couple of seconds.
+- **The dashboard:** the "Use the app" page holds which app to install (the card that was on the account page, which
+  now links here), "Sign in with a QR code" and "Only the address" (`brigade://connect?server=<origin>`, the
+  dashboard's own origin). No code is made until the member asks for one; the QR (drawn from `uqr`'s module matrix,
+  dark on white with the quiet zone) shows with its countdown and "Never share this code, nor the number your phone
+  shows", then "<device> wants to sign in as you" with the number to type, Deny, and how it ended. The QR's `server` is
+  `DASHBOARD_URL`, or the origin the request came through without it.
+- **Still to do (the phone, step 4):** the scanner on the sign-in screen, "Sign in to <host>?", the claim, showing the
+  number and polling, storing the cookie per instance.
+
 ### 7. The instance side
 
 - `device.register` takes `handle` and `tag` instead of `pushToken` and `voipToken` (`voip: true|false` says whether
@@ -551,8 +595,8 @@ built:
   it fixes the state (`vp run setup:relay`, or with `--replace-credentials`); never for a bad signature, since setting
   a key up again removes `RELAY_INSTANCE_ID` and a rotated instance would sign as another id, orphaning every handle.
   Registration pending is "not registered": the relay has no pending state (section 7).
-- **"Use the app"** is a card on the member's account page, above "Your phones", until the page with the QR
-  (section 6, step 4) exists: the Brigade app from the stores on Freecorps' relay; the company's own build, with "Get
+- **"Use the app"** is now its own page (`/use-the-app`, section 6), linked from the member's account page where the
+  card was, and its first card says which app to install: the Brigade app from the stores on Freecorps' relay; the company's own build, with "Get
   your company's app" when the link is set ("Ask an owner or admin" otherwise), on an own relay; the store app with
   nothing about pages when there is no relay.
 
@@ -651,7 +695,8 @@ built:
    watchdog; section 7), `vp run setup:relay` and the dashboard's "Phones and pages" and "Use the app" (section 8).
 4. App: handles and per-instance keys and storage; the instance switcher, address field, QR and link, address
    checks, which relay; QR sign-in (with its API routes and the dashboard's approval). Built: handles, storage per
-   instance, background registration and page routing (section 5).
+   instance, background registration and page routing (section 5); QR sign-in's API routes and the dashboard's "Use
+   the app" page with the approval (section 6), the phone's side of it still to do.
 5. Our instance moves (section 9); then the docs for self-hosters ("Your own app" included) and the terms.
 
 Each step is a paging path: it keeps the old path working until the next one ships, and comes with its tests

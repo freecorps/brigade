@@ -3944,7 +3944,50 @@
         "part=own_link": "Get your company's app",
         "part=own_no_link": "Ask an owner or admin where to get it.",
         "part=failed": "Couldn't check which app pages you here. Try again in a minute.",
+        "part=install_title": "Which app to install",
+        "part=page_description": "Brigade on your phone: install the app, then sign it in as you with a QR code from this page.",
+        "part=link_description": "Install the Brigade app and sign it in with a QR code, with no password typed on the phone.",
+        "part=link_open": "Set up the app",
         "part=*": "Use the app"
+      }
+    }
+  ],
+  "app_sign_in": [
+    {
+      "declarations": ["input part", "input device", "input time"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Sign in with a QR code",
+        "part=description": "Signs the Brigade app in as you, with no password typed on the phone.",
+        "part=start": "Show a sign-in code",
+        "part=creating": "Making a code…",
+        "part=scan": "On the Brigade app's sign-in screen, tap \"Scan a QR code\" and point the phone at this code.",
+        "part=never_share": "Never share this code, nor the number your phone shows.",
+        "part=expires_in": "Expires in {time}",
+        "part=waiting": "Waiting for your phone to scan the code.",
+        "part=qr_label": "QR code that signs the Brigade app in as you",
+        "part=cancel": "Cancel",
+        "part=claimed_title": "{device} wants to sign in as you",
+        "part=claimed_hint": "Type the number your phone shows. If you didn't just scan this code, deny it.",
+        "part=number_label": "Number on your phone",
+        "part=number_invalid": "Type the 2 digits your phone shows.",
+        "part=approve": "Sign in",
+        "part=approving": "Checking…",
+        "part=deny": "Deny",
+        "part=answer_failed": "Couldn't send your answer. Try again.",
+        "part=approved": "Approved. Finishing on your phone…",
+        "part=signed_in": "{device} is signed in as you.",
+        "part=another": "Sign in another phone",
+        "part=denied": "Denied. Nobody was signed in.",
+        "part=wrong_number": "That number didn't match, so nobody was signed in. If it was your phone, start again.",
+        "part=expired": "This code expired before a phone used it.",
+        "part=again": "Show a new code",
+        "part=failed": "Couldn't make a code. Try again in a minute.",
+        "part=rate_limited": "Too many codes in a minute. Wait a moment and try again.",
+        "part=address_title": "Only the address",
+        "part=address_description": "Adds this Brigade to the app without signing in, for a phone that signs in another way (with its password, or your company's sign-in).",
+        "part=address_label": "QR code with this Brigade's address",
+        "part=*": "Sign in with a QR code"
       }
     }
   ]

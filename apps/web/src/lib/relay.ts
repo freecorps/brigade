@@ -1,7 +1,7 @@
 // Which relay pages go through and how it is doing, for the settings' "Phones and pages" and the account's "Use the
 // app" (RFC 0015 section 8). Pure functions over `GET /health/paging` (src/lib/paging-health.ts): the relay comes from
 // its `relay`, the state from the watchdog's reasons (apps/api src/watchdog.ts, RFC 0007).
-import type { DegradedReason, PagingHealth, RelaySetup } from "@/lib/paging-health";
+import type { DegradedReason, PagingAnswer } from "@/lib/paging-health";
 
 /** The command that sets up, fixes or switches the relay (apps/relay scripts/setup-relay, RFC 0015 section 8). */
 export const SETUP_RELAY = "vp run setup:relay";
@@ -18,6 +18,7 @@ export type RelayState =
   | "providers"
   | "rate_limited"
   | "pipeline"
+  | "database"
   | "no_answer"
   | "no_details";
 
@@ -36,16 +37,19 @@ export const STATE_TONE: Record<RelayState, RelayTone> = {
   providers: "error",
   rate_limited: "warning",
   pipeline: "warning",
+  database: "error",
   no_answer: "warning",
   no_details: "warning",
 };
 
 /**
- * The relay's reasons, most telling first: one headline per card, so a refusal (which no retry fixes) wins over a
- * relay that does not answer, and both over limits that pass by themselves. The pipeline's own reasons come last: with
- * beats stuck before the relay, what the relay said last is stale.
+ * The reasons, most telling first: one headline per card. Beats that stopped (`no_beat`, `pipeline_stalled`) come
+ * first: the relay's reasons are what its last proof found and are not cleared when beats stop, so they are stale then.
+ * Then a refusal (which no retry fixes) wins over a relay that does not answer, and both over limits that pass by
+ * themselves; a slow pipeline (beats still proved, so the relay's reasons are current) and the database come last.
  */
 const BY_REASON: [DegradedReason[], RelayState][] = [
+  [["no_beat", "pipeline_stalled"], "pipeline"],
   [["relay_bad_signature"], "bad_signature"],
   [["relay_instance_revoked"], "revoked"],
   [["relay_unauthorized"], "unauthorized"],
@@ -54,18 +58,17 @@ const BY_REASON: [DegradedReason[], RelayState][] = [
   [["relay_handles_unavailable"], "handles_unavailable"],
   [["apns_failing", "fcm_failing"], "providers"],
   [["relay_rate_limited"], "rate_limited"],
-  [["no_beat", "pipeline_stalled", "pipeline_slow", "d1_failing"], "pipeline"],
+  [["pipeline_slow"], "pipeline"],
+  [["d1_failing"], "database"],
 ];
 
 /**
  * The relay's state from the self-check: `undefined` while the first answer is on its way. `relay_not_configured`
  * maps to nothing here: it is the `none` relay, which has no state to show.
  */
-export function relayState(
-  health: PagingHealth | "unreachable" | undefined,
-): RelayState | undefined {
+export function relayState(health: PagingAnswer | undefined): RelayState | undefined {
   if (health === undefined) return undefined;
-  if (health === "unreachable") return "no_answer";
+  if (health.status === "unreachable") return "no_answer";
   if (health.status === "ok") return "working";
   if (health.status === "unknown") return "not_checked";
   for (const [reasons, state] of BY_REASON) {
@@ -95,6 +98,8 @@ export type HintKey =
   | "hint_providers_freecorps"
   | "hint_providers_own"
   | "hint_pipeline"
+  | "hint_database"
+  | "hint_unknown_relay"
   | "hint_no_answer"
   | "hint_no_details";
 
@@ -108,6 +113,7 @@ export type LabelKey =
   | "state_handles_unavailable"
   | "state_providers"
   | "state_pipeline"
+  | "state_database"
   | "state_no_answer";
 
 /** One state as shown: its label, its hint and, when there is one, the command that fixes it. */
@@ -119,7 +125,12 @@ export type StateView = {
   command: string | null;
 };
 
-export function stateView(state: RelayState, kind: "freecorps" | "own"): StateView {
+/**
+ * `kind` null: the API did not say which relay (an older one). Where the fix depends on whose relay it is, the hint
+ * then says so and points to the overview's notice instead of guessing (a Freecorps hint on an own relay sends the
+ * owner to the wrong people).
+ */
+export function stateView(state: RelayState, kind: "freecorps" | "own" | null): StateView {
   const own = kind === "own";
   const view = (label: LabelKey, hint: HintKey, command: string | null = null): StateView => ({
     state,
@@ -128,6 +139,15 @@ export function stateView(state: RelayState, kind: "freecorps" | "own"): StateVi
     hint,
     command,
   });
+  const whose = new Set<RelayState>([
+    "unregistered",
+    "revoked",
+    "unauthorized",
+    "unreachable",
+    "handles_unavailable",
+    "providers",
+  ]);
+  if (kind === null && whose.has(state)) return view(LABELS[state], "hint_unknown_relay");
   switch (state) {
     case "working":
       return view("state_working", "hint_working");
@@ -140,11 +160,9 @@ export function stateView(state: RelayState, kind: "freecorps" | "own"): StateVi
         SETUP_RELAY,
       );
     case "bad_signature":
-      return view(
-        "state_refused",
-        "hint_bad_signature",
-        `${SETUP_RELAY} --instance-key-file <file>`,
-      );
+      // No command: setting a key up again removes RELAY_INSTANCE_ID, so on a rotated instance (or with a wrong id)
+      // the API would sign as another id and every handle would be refused and expired. The fix is the secrets.
+      return view("state_refused", "hint_bad_signature");
     case "revoked":
       // Freecorps revoked it on purpose: registering again before asking why only gets it revoked again.
       return own
@@ -170,12 +188,32 @@ export function stateView(state: RelayState, kind: "freecorps" | "own"): StateVi
       return view("state_rate_limited", "hint_rate_limited");
     case "pipeline":
       return view("state_pipeline", "hint_pipeline");
+    case "database":
+      return view("state_database", "hint_database");
     case "no_answer":
       return view("state_no_answer", "hint_no_answer");
     case "no_details":
       return view("state_no_answer", "hint_no_details");
   }
 }
+
+/** The label of each state the hint can stand in for when the relay is not known. */
+const LABELS: Record<RelayState, LabelKey> = {
+  working: "state_working",
+  not_checked: "state_not_checked",
+  unregistered: "state_unregistered",
+  bad_signature: "state_refused",
+  revoked: "state_refused",
+  unauthorized: "state_refused",
+  unreachable: "state_unreachable",
+  handles_unavailable: "state_handles_unavailable",
+  providers: "state_providers",
+  rate_limited: "state_rate_limited",
+  pipeline: "state_pipeline",
+  database: "state_database",
+  no_answer: "state_no_answer",
+  no_details: "state_no_answer",
+};
 
 /**
  * Which app the "Use the app" card points to: the store app (Freecorps' relay), the company's own build with its
@@ -188,9 +226,10 @@ export type AppAdvice =
   | { kind: "own"; app: string | null }
   | { kind: "unknown" };
 
-export function appAdvice(health: PagingHealth | "unreachable" | undefined): AppAdvice {
+export function appAdvice(health: PagingAnswer | undefined): AppAdvice {
   if (health === undefined) return { kind: "checking" };
-  const relay: RelaySetup | null = health === "unreachable" ? null : health.relay;
+  // A 503 (the watchdog down) still says which relay: the advice does not depend on the watchdog.
+  const relay = health.relay;
   if (relay === null) return { kind: "unknown" };
   if (relay.kind === "none") return { kind: "store_no_push" };
   if (relay.kind === "own") return { kind: "own", app: relay.app };

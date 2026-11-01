@@ -7,7 +7,7 @@ import {
   PAGING_REFRESH_MS,
   pagingView,
   type DegradedReason,
-  type PagingHealth,
+  type PagingAnswer,
   type PagingView,
 } from "@/lib/paging-health";
 
@@ -41,10 +41,8 @@ export function PagingHealthNotice({ fetcher = fetch }: { fetcher?: typeof fetch
  * undefined until the first answer. Shared by the overview's notice, the settings' "Phones and pages" and the
  * account's "Use the app".
  */
-export function usePagingHealth(
-  fetcher: typeof fetch = fetch,
-): PagingHealth | "unreachable" | undefined {
-  const [health, setHealth] = useState<PagingHealth | "unreachable">();
+export function usePagingHealth(fetcher: typeof fetch = fetch): PagingAnswer | undefined {
+  const [health, setHealth] = useState<PagingAnswer>();
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setInterval> | undefined;

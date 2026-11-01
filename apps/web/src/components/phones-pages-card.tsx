@@ -14,7 +14,7 @@ import { usePagingHealth } from "@/components/paging-health";
 import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import type { PagingHealth } from "@/lib/paging-health";
+import type { PagingAnswer } from "@/lib/paging-health";
 import {
   relayState,
   SETUP_RELAY,
@@ -57,11 +57,15 @@ export function PhonesPagesPanel({
   health,
   locale,
 }: {
-  health: PagingHealth | "unreachable" | undefined;
+  health: PagingAnswer | undefined;
   locale: Locale;
 }) {
-  const relay = health === undefined || health === "unreachable" ? null : health.relay;
+  // A 503 (the watchdog down) still says which relay; only the state is unknown then.
+  const relay = health === undefined ? null : health.relay;
   const state = relayState(health);
+  // With no relay there is no relay state to show, but Brigade's own trouble (beats stopped, the database) still is:
+  // the settings page has no other place for it. A bare `relay_not_configured` is the "no relay" line itself.
+  const showState = relay?.kind !== "none" || state === "pipeline" || state === "database";
   return (
     <Card id="phones-and-pages" aria-labelledby="phones-pages-title">
       <CardHeader id="phones-pages-title" title={text("title")} description={text("description")} />
@@ -74,7 +78,7 @@ export function PhonesPagesPanel({
             {health === undefined ? (
               <Placeholder className="h-5 w-64" />
             ) : relay === null ? (
-              // The API could not say which relay (it did not answer, or an older one): the state row says why.
+              // The API could not say which relay (no answer, or an older API): the state row says why.
               <Hint>{text("relay_unknown")}</Hint>
             ) : relay.kind === "none" ? (
               <>
@@ -96,14 +100,17 @@ export function PhonesPagesPanel({
             )}
           </Row>
 
-          {relay?.kind === "none" ? null : (
+          {!showState ? null : (
             <Row label={text("state_label")}>
               {state === undefined ? (
                 <Placeholder className="h-5 w-32" />
               ) : (
                 <StateDetails
                   health={health}
-                  view={stateView(state, relay?.kind ?? "freecorps")}
+                  view={stateView(
+                    state,
+                    relay === null || relay.kind === "none" ? null : relay.kind,
+                  )}
                   locale={locale}
                 />
               )}
@@ -141,11 +148,11 @@ function StateDetails({
   view,
   locale,
 }: {
-  health: PagingHealth | "unreachable" | undefined;
+  health: PagingAnswer | undefined;
   view: ReturnType<typeof stateView>;
   locale: Locale;
 }) {
-  const lastOkAt = health && health !== "unreachable" ? health.lastOkAt : null;
+  const lastOkAt = health && health.status !== "unreachable" ? health.lastOkAt : null;
   return (
     <>
       <Status tone={view.tone} label={text(view.label)} />

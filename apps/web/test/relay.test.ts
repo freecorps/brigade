@@ -4,6 +4,7 @@ import { describe, expect, test } from "vite-plus/test";
 import {
   DEGRADED_REASONS,
   parseRelay,
+  UNREACHABLE,
   type DegradedReason,
   type PagingHealth,
 } from "../src/lib/paging-health";
@@ -47,7 +48,7 @@ describe("parseRelay", () => {
 describe("relayState", () => {
   test("loading, no answer, working and not checked yet", () => {
     expect(relayState(undefined)).toBeUndefined();
-    expect(relayState("unreachable")).toBe("no_answer");
+    expect(relayState(UNREACHABLE)).toBe("no_answer");
     expect(relayState(health("ok"))).toBe("working");
     expect(relayState(health("unknown"))).toBe("not_checked");
   });
@@ -66,7 +67,7 @@ describe("relayState", () => {
       ["no_beat", "pipeline"],
       ["pipeline_stalled", "pipeline"],
       ["pipeline_slow", "pipeline"],
-      ["d1_failing", "pipeline"],
+      ["d1_failing", "database"],
     ];
     for (const [reason, state] of expected) {
       expect(relayState(health("degraded", [reason])), reason).toBe(state);
@@ -90,6 +91,17 @@ describe("relayState", () => {
     expect(relayState(health("degraded", ["relay_unreachable", "fcm_failing"]))).toBe(
       "unreachable",
     );
+    // Beats that stopped win: the relay's reasons are from its last proof, never cleared, so stale by then.
+    expect(relayState(health("degraded", ["no_beat", "relay_bad_signature"]))).toBe("pipeline");
+    expect(relayState(health("degraded", ["pipeline_stalled", "relay_instance_revoked"]))).toBe(
+      "pipeline",
+    );
+    // A slow pipeline still proves beats, so the relay's reasons are current and win.
+    expect(relayState(health("degraded", ["pipeline_slow", "relay_bad_signature"]))).toBe(
+      "bad_signature",
+    );
+    // The database alone: the relay answered.
+    expect(relayState(health("degraded", ["d1_failing"]))).toBe("database");
     // Brigade answered (without the session's details): not "didn't answer".
     expect(relayState(health("degraded", [], null))).toBe("no_details");
     expect(relayState(health("degraded", ["relay_not_configured"]))).toBe("no_details");
@@ -110,9 +122,20 @@ describe("stateView", () => {
       command: SETUP_RELAY,
     });
     expect(stateView("unregistered", "own").hint).toBe("hint_unregistered_own");
-    expect(stateView("bad_signature", "own")).toMatchObject({
-      label: "state_refused",
-      command: `${SETUP_RELAY} --instance-key-file <file>`,
+    // No command for a bad signature: setting a key up again removes RELAY_INSTANCE_ID (a rotated instance would sign
+    // as another id and every handle would be refused); the fix is the secrets, which the hint names.
+    for (const kind of ["own", "freecorps", null] as const) {
+      expect(stateView("bad_signature", kind), String(kind)).toMatchObject({
+        label: "state_refused",
+        hint: "hint_bad_signature",
+        command: null,
+      });
+    }
+    expect(stateView("database", "own")).toMatchObject({
+      tone: "error",
+      label: "state_database",
+      hint: "hint_database",
+      command: null,
     });
     // Freecorps revoked it on purpose: ask, don't register again.
     expect(stateView("revoked", "freecorps")).toMatchObject({
@@ -147,12 +170,41 @@ describe("stateView", () => {
     expect(stateView("rate_limited", "own")).toMatchObject({ tone: "warning", command: null });
     expect(stateView("not_checked", "own").tone).toBe("neutral");
   });
+
+  test("with the relay unknown, a hint that depends on whose relay it is says so instead of guessing", () => {
+    for (const state of [
+      "unregistered",
+      "revoked",
+      "unauthorized",
+      "unreachable",
+      "handles_unavailable",
+      "providers",
+    ] as const) {
+      const view = stateView(state, null);
+      expect(view.hint, state).toBe("hint_unknown_relay");
+      expect(view.command, state).toBeNull();
+      expect(view.label, state).toBe(stateView(state, "own").label);
+    }
+    // States whose hint is the same whoever runs the relay keep it.
+    expect(stateView("rate_limited", null).hint).toBe("hint_rate_limited");
+    expect(stateView("pipeline", null).hint).toBe("hint_pipeline");
+  });
 });
 
 describe("appAdvice", () => {
   test("the store app, the company's own build, or nothing about pages", () => {
     expect(appAdvice(undefined)).toEqual({ kind: "checking" });
-    expect(appAdvice("unreachable")).toEqual({ kind: "unknown" });
+    expect(appAdvice(UNREACHABLE)).toEqual({ kind: "unknown" });
+    // The watchdog down: the relay still comes with the 503, and the advice does not depend on the watchdog.
+    expect(
+      appAdvice({
+        status: "unreachable",
+        relay: { kind: "own", host: null, app: "https://a.example/x" },
+      }),
+    ).toEqual({ kind: "own", app: "https://a.example/x" });
+    expect(appAdvice({ status: "unreachable", relay: { kind: "freecorps" } })).toEqual({
+      kind: "store",
+    });
     expect(appAdvice(health("ok", [], null))).toEqual({ kind: "unknown" });
     expect(appAdvice(health("ok"))).toEqual({ kind: "store" });
     expect(appAdvice(health("degraded", [], { kind: "none" }))).toEqual({ kind: "store_no_push" });

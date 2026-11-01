@@ -31,7 +31,7 @@ export type Phones_PagesInputs = {
 * | "hint_unregistered_freecorps" | "This instance isn't registered on Freecorps' relay, or its registration wasn't finished (it needs the code emailed to your contact). Run:" |
 * | "hint_unregistered_own" | "This instance isn't registered on your relay. Run setup again:" |
 * | "state_refused" | "Refused" |
-* | "hint_bad_signature" | "The relay doesn't accept this instance's key (RELAY_INSTANCE_KEY or RELAY_INSTANCE_ID), or this server's clock is more than 5 minutes off. Run setup again wi..." |
+* | "hint_bad_signature" | "The relay doesn't accept this instance's key, or this server's clock is more than 5 minutes off. Check that RELAY_INSTANCE_KEY is the key you saved and, afte..." |
 * | "hint_revoked_freecorps" | "Freecorps revoked this instance on its relay. Write to Freecorps to find out why before you register again." |
 * | "hint_revoked_own" | "This instance was revoked on your relay. Register it again:" |
 * | "hint_unauthorized_freecorps" | "The relay refused the send token (RELAY_SEND_TOKEN), so phones registered before relay handles aren't paged. Set the same RELAY_SEND_TOKEN on the relay and o..." |
@@ -42,12 +42,15 @@ export type Phones_PagesInputs = {
 * | "state_rate_limited" | "Rate limited" |
 * | "hint_rate_limited" | "The relay keeps refusing this instance's checks as over its limits. It usually clears on its own; if it lasts, ask whoever runs the relay to raise the limit." |
 * | "state_handles_unavailable" | "Handles unavailable" |
-* | "hint_handles_freecorps" | "The relay can't open phone handles right now, so phones on the current app aren't paged through it. If it lasts, write to Freecorps." |
+* | "hint_handles_freecorps" | "The relay can't open phone handles right now, so phones registered with a relay handle aren't paged through it. If it lasts, write to Freecorps." |
 * | "hint_handles_own" | "Your relay can't open phone handles. Deploy the current apps/relay and check its RELAY_HANDLE_KEYS; running setup again keeps the keys it has:" |
 * | "state_providers" | "Push service failing" |
 * | "hint_providers_freecorps" | "Apple's or Google's push service refused the relay's credentials, or isn't answering. That's on the relay's side: nothing to change on this instance." |
 * | "hint_providers_own" | "Apple's or Google's push service refused your relay's credentials, or isn't answering. If you changed the APNs key or the Firebase account, replace them:" |
 * | "state_pipeline" | "Held up in Brigade" |
+* | "state_database" | "Database not answering" |
+* | "hint_database" | "The relay answered, but the database (D1) didn't answer a simple read in the last checks. Look at the API's logs; if it lasts, check Cloudflare's status." |
+* | "hint_unknown_relay" | "Brigade didn't say which relay this is, so it can't say what to do here. The paging notice on the overview names the reason." |
 * | "hint_pipeline" | "Pages are held up before they reach the relay, so it can't be checked. The paging notice on the overview says why." |
 * | "state_no_answer" | "Couldn't check" |
 * | "hint_no_answer" | "Brigade didn't answer the paging check. It tries again every minute." |

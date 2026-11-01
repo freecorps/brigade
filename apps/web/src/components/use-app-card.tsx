@@ -3,7 +3,7 @@ import { ExternalLinkIcon } from "lucide-react";
 import { usePagingHealth } from "@/components/paging-health";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import type { PagingHealth } from "@/lib/paging-health";
+import type { PagingAnswer } from "@/lib/paging-health";
 import { appAdvice } from "@/lib/relay";
 
 const text = (part: string) => m.use_app({ part });
@@ -18,7 +18,7 @@ export function UseAppCard({ fetcher = fetch }: { fetcher?: typeof fetch }) {
 }
 
 /** The card without the hooks (tested with made-up answers). */
-export function UseAppPanel({ health }: { health: PagingHealth | "unreachable" | undefined }) {
+export function UseAppPanel({ health }: { health: PagingAnswer | undefined }) {
   const advice = appAdvice(health);
   return (
     <Card id="use-the-app" aria-labelledby="use-app-title">

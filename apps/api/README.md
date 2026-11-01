@@ -553,9 +553,10 @@ run that stopped (a code that expired, secrets wrangler could not set) without a
 **`RELAY_KIND`** is `own` or unset, nothing else: the script can read only secret names, so it takes any value as an
 own relay (and a switch to Freecorps' relay then drops the API's send token), and the API agrees. **An own relay set
 up before the script set `RELAY_KIND`** (and with no app link) shows on the dashboard as Freecorps' relay, and its
-members are told to install the store app, which it cannot page: set it by hand, `wrangler secret put RELAY_KIND`
-(value `own`) in apps/api, which changes nothing else; or run `vp run setup:relay` again (choice "your own relay")
-with `--instance-key-file` and the key you saved, so the instance keeps its id and phones their handles.
+members are told to install the store app, which it cannot page: set only the marker, `wrangler secret put
+RELAY_KIND` (value `own`) in apps/api, which changes nothing else. Don't run `vp run setup:relay` again for this, not
+even with `--instance-key-file`: installing a key removes `RELAY_INSTANCE_ID`, so an instance whose key was rotated
+would sign as another id and the relay would refuse every handle (`handle_not_yours`).
 
 Secret values never appear on the screen, in a command's arguments or in a file in the repository: wrangler gets them
 on stdin (`wrangler secret bulk`). Without a terminal, or with `--non-interactive`, every answer is a flag (`vp run

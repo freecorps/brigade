@@ -452,21 +452,28 @@ built:
   nothing else) or `RELAY_APP_URL` is set: the link is optional, so `vp run setup:relay` now marks an own relay with
   `RELAY_KIND=own`, and its switch to Freecorps' relay removes it with the link and the own relay's send token. The
   script reads only secret names, so any `RELAY_KIND` counts as own there, and the API agrees. An own relay set up
-  before the marker, with no link, shows as Freecorps' until `RELAY_KIND=own` is set (apps/api README "Push relay").
+  before the marker, with no link, shows as Freecorps' until `RELAY_KIND=own` is set by hand (not by running the
+  script again, which would remove `RELAY_INSTANCE_ID`; apps/api README "Push relay").
   Anything else is Freecorps'. Only an own relay has `host` (`RELAY_URL`'s; none with the binding alone) and `app` (the
-  https link, never one with credentials). Not sent without a session or to a user in no workspace, like the reasons.
+  https link, never one with credentials). Not sent without a session or to a user in no workspace, like the reasons;
+  a member's `503` (the watchdog down) still has it, so "Use the app" does not depend on the watchdog.
 - **"Phones and pages"** (workspace settings, owners and admins): the relay ("Pages go through Freecorps' relay", "…
   your company's own relay (host)", or "No relay: phones aren't paged" with email as the fallback and the command to
-  set one up), its state, and for an own relay the app link or how to add one. The state is one per card, from the
-  watchdog's reasons, most telling first: refused (`relay_bad_signature`, `relay_instance_revoked`,
-  `relay_unauthorized`: on Freecorps' relay, which a self-hosted instance never has a send token for, the fix is the
-  same token on the relay and the API, not the setup script), not registered, unreachable, handles unavailable, push service failing (`apns_failing`,
-  `fcm_failing`), rate limited, then held up in Brigade (the pipeline's reasons); `ok` is working, `unknown` not checked
-  yet, an API that does not answer "Couldn't check", and an answer without the session's details (an expired session)
-  says so. Each has a hint that differs where the fix is the operator's (an
-  own relay) or Freecorps' (a revoked instance: write to Freecorps rather than register again), and the command when
-  one fixes it (`vp run setup:relay`, with `--instance-key-file` or `--replace-credentials`). Registration pending is
-  "not registered": the relay has no pending state (section 7).
+  set one up), its state, and for an own relay the app link or how to add one. The host is `RELAY_URL`'s even with the
+  `RELAY` binding: the setup script points both at the same relay (with the binding, `RELAY_URL` is only its address,
+  section 7). The state is one per card, from the watchdog's reasons, most telling first: beats that stopped
+  (`no_beat`, `pipeline_stalled`: "held up in Brigade", since the relay's reasons are then from its last proof and
+  stale); refused (`relay_bad_signature`, `relay_instance_revoked`, `relay_unauthorized`); not registered;
+  unreachable; handles unavailable; push service failing (`apns_failing`, `fcm_failing`); rate limited; a slow pipeline;
+  the database (`d1_failing`, its own hint: the relay answered). `ok` is working, `unknown` not checked yet, an API that
+  does not answer "Couldn't check", and an answer without the session's details (an expired session) says so. With no
+  relay the state row shows only Brigade's own trouble (beats stopped, the database). Each hint differs where the fix
+  is the operator's (an own relay) or Freecorps' (a revoked instance: write to Freecorps rather than register again; a
+  refused send token: the same `RELAY_SEND_TOKEN` on both, since Freecorps' flow never sets one), and when the API did
+  not say which relay, it says so and points to the overview's notice instead of guessing. The command shows only when
+  it fixes the state (`vp run setup:relay`, or with `--replace-credentials`); never for a bad signature, since setting
+  a key up again removes `RELAY_INSTANCE_ID` and a rotated instance would sign as another id, orphaning every handle.
+  Registration pending is "not registered": the relay has no pending state (section 7).
 - **"Use the app"** is a card on the member's account page, above "Your phones", until the page with the QR
   (section 6, step 4) exists: the Brigade app from the stores on Freecorps' relay; the company's own build, with "Get
   your company's app" when the link is set ("Ask an owner or admin" otherwise), on an own relay; the store app with

@@ -380,7 +380,8 @@ export async function workspaceInfo(
 /**
  * `GET /health/paging`: whether the paging pipeline proved itself lately (src/watchdog.ts), for the dashboard. Never a
  * URL or an id, and trimmed by who asks (`pagingHealthFor`). Answers 503 when the watchdog itself cannot be reached,
- * which is also degraded.
+ * which is also degraded; a member's 503 still says which relay pages go through (it comes from the config, not the
+ * watchdog), so "Use the app" keeps pointing to the right app.
  */
 export async function pagingHealth(
   request: Request,
@@ -389,13 +390,6 @@ export async function pagingHealth(
 ): Promise<Response> {
   if (!READ_METHODS.includes(request.method)) {
     return json({ error: "method_not_allowed" }, 405, { Allow: READ_METHODS.join(", ") });
-  }
-  let health: PagingHealth;
-  try {
-    health = await env.WATCHDOG.getByName(WATCHDOG_NAME).health();
-  } catch (error) {
-    console.error(JSON.stringify({ message: "WatchdogDO.health failed", error: String(error) }));
-    return json({ error: "unavailable" }, 503);
   }
   // D1 or the session failing degrades the answer to `{ status }`, the same as no session, rather than a 500.
   let roles: Role[] = [];
@@ -409,10 +403,16 @@ export async function pagingHealth(
   }
   // Which relay pages go through (RFC 0015 section 8), only for members: nothing is read for anyone else.
   const relay = roles.length > 0 ? relaySetup(env as SetupEnv) : undefined;
-  return json(pagingHealthFor(health, roles, relay), 200, {
-    // Varies by the session's cookie, so no shared cache may keep it.
-    "Cache-Control": "private, no-store",
-  });
+  // Varies by the session's cookie, so no shared cache may keep it.
+  const headers = { "Cache-Control": "private, no-store" };
+  let health: PagingHealth;
+  try {
+    health = await env.WATCHDOG.getByName(WATCHDOG_NAME).health();
+  } catch (error) {
+    console.error(JSON.stringify({ message: "WatchdogDO.health failed", error: String(error) }));
+    return json({ error: "unavailable", ...(relay === undefined ? {} : { relay }) }, 503, headers);
+  }
+  return json(pagingHealthFor(health, roles, relay), 200, headers);
 }
 
 /**

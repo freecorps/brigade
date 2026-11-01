@@ -338,7 +338,8 @@ const LISTED: readonly Operation[] = [
     summary: "Whether the paging pipeline proved itself lately",
     description:
       "Without a session, or for a user in no workspace, only `status`. A member of any workspace also gets the " +
-      "reasons and times, since a responder needs to know they may not be paged.",
+      "reasons and times, since a responder needs to know they may not be paged, and `relay`. When the watchdog " +
+      "cannot answer (`503`), a member's answer still has `relay` beside `error`.",
     auth: "optional",
     responses: answers(
       { 200: { description: "The pipeline's state.", body: ref("PagingHealth") } },

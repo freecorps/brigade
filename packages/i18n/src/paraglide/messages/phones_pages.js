@@ -33,7 +33,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "hint_unregistered_freecorps" | "This instance isn't registered on Freecorps' relay, or its registration wasn't finished (it needs the code emailed to your contact). Run:" |
 * | "hint_unregistered_own" | "This instance isn't registered on your relay. Run setup again:" |
 * | "state_refused" | "Refused" |
-* | "hint_bad_signature" | "The relay doesn't accept this instance's key (RELAY_INSTANCE_KEY or RELAY_INSTANCE_ID), or this server's clock is more than 5 minutes off. Run setup again wi..." |
+* | "hint_bad_signature" | "The relay doesn't accept this instance's key, or this server's clock is more than 5 minutes off. Check that RELAY_INSTANCE_KEY is the key you saved and, afte..." |
 * | "hint_revoked_freecorps" | "Freecorps revoked this instance on its relay. Write to Freecorps to find out why before you register again." |
 * | "hint_revoked_own" | "This instance was revoked on your relay. Register it again:" |
 * | "hint_unauthorized_freecorps" | "The relay refused the send token (RELAY_SEND_TOKEN), so phones registered before relay handles aren't paged. Set the same RELAY_SEND_TOKEN on the relay and o..." |
@@ -44,12 +44,15 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "state_rate_limited" | "Rate limited" |
 * | "hint_rate_limited" | "The relay keeps refusing this instance's checks as over its limits. It usually clears on its own; if it lasts, ask whoever runs the relay to raise the limit." |
 * | "state_handles_unavailable" | "Handles unavailable" |
-* | "hint_handles_freecorps" | "The relay can't open phone handles right now, so phones on the current app aren't paged through it. If it lasts, write to Freecorps." |
+* | "hint_handles_freecorps" | "The relay can't open phone handles right now, so phones registered with a relay handle aren't paged through it. If it lasts, write to Freecorps." |
 * | "hint_handles_own" | "Your relay can't open phone handles. Deploy the current apps/relay and check its RELAY_HANDLE_KEYS; running setup again keeps the keys it has:" |
 * | "state_providers" | "Push service failing" |
 * | "hint_providers_freecorps" | "Apple's or Google's push service refused the relay's credentials, or isn't answering. That's on the relay's side: nothing to change on this instance." |
 * | "hint_providers_own" | "Apple's or Google's push service refused your relay's credentials, or isn't answering. If you changed the APNs key or the Firebase account, replace them:" |
 * | "state_pipeline" | "Held up in Brigade" |
+* | "state_database" | "Database not answering" |
+* | "hint_database" | "The relay answered, but the database (D1) didn't answer a simple read in the last checks. Look at the API's logs; if it lasts, check Cloudflare's status." |
+* | "hint_unknown_relay" | "Brigade didn't say which relay this is, so it can't say what to do here. The paging notice on the overview names the reason." |
 * | "hint_pipeline" | "Pages are held up before they reach the relay, so it can't be checked. The paging notice on the overview says why." |
 * | "state_no_answer" | "Couldn't check" |
 * | "hint_no_answer" | "Brigade didn't answer the paging check. It tries again every minute." |
@@ -86,7 +89,7 @@ export const phones_pages = /** @type {((inputs: Phones_PagesInputs, options?: {
 		if (i?.part === "hint_unregistered_freecorps") return /** @type {LocalizedString} */ (`Esta instância não está registrada no relay da Freecorps, ou o registro não foi concluído (ele pede o código enviado por email ao seu contato). Rode:`);
 		if (i?.part === "hint_unregistered_own") return /** @type {LocalizedString} */ (`Esta instância não está registrada no seu relay. Rode a configuração de novo:`);
 		if (i?.part === "state_refused") return /** @type {LocalizedString} */ (`Recusado`);
-		if (i?.part === "hint_bad_signature") return /** @type {LocalizedString} */ (`O relay não aceita a chave desta instância (RELAY_INSTANCE_KEY ou RELAY_INSTANCE_ID), ou o relógio deste servidor está mais de 5 minutos fora. Rode a configuração de novo com o arquivo da chave que você guardou:`);
+		if (i?.part === "hint_bad_signature") return /** @type {LocalizedString} */ (`O relay não aceita a chave desta instância, ou o relógio deste servidor está mais de 5 minutos fora. Confira se o RELAY_INSTANCE_KEY é a chave que você guardou e, depois de uma rotação de chave, se o RELAY_INSTANCE_ID é o primeiro id da instância. Não configure o relay de novo por isso: isso cria um novo id de instância, e todo celular teria de abrir o app de novo.`);
 		if (i?.part === "hint_revoked_freecorps") return /** @type {LocalizedString} */ (`A Freecorps revogou esta instância no relay dela. Escreva para a Freecorps para saber o motivo antes de registrar de novo.`);
 		if (i?.part === "hint_revoked_own") return /** @type {LocalizedString} */ (`Esta instância foi revogada no seu relay. Registre-a de novo:`);
 		if (i?.part === "hint_unauthorized_freecorps") return /** @type {LocalizedString} */ (`O relay recusou o token de envio (RELAY_SEND_TOKEN), então celulares registrados antes dos identificadores do relay não são acionados. Defina o mesmo RELAY_SEND_TOKEN no relay e na API.`);
@@ -97,12 +100,15 @@ export const phones_pages = /** @type {((inputs: Phones_PagesInputs, options?: {
 		if (i?.part === "state_rate_limited") return /** @type {LocalizedString} */ (`Limite atingido`);
 		if (i?.part === "hint_rate_limited") return /** @type {LocalizedString} */ (`O relay continua recusando as verificações desta instância por passarem dos limites dele. Isso costuma passar sozinho; se durar, peça a quem cuida do relay para aumentar o limite.`);
 		if (i?.part === "state_handles_unavailable") return /** @type {LocalizedString} */ (`Identificadores indisponíveis`);
-		if (i?.part === "hint_handles_freecorps") return /** @type {LocalizedString} */ (`O relay não consegue abrir os identificadores dos celulares agora, então os celulares no app atual não são acionados por ele. Se durar, escreva para a Freecorps.`);
+		if (i?.part === "hint_handles_freecorps") return /** @type {LocalizedString} */ (`O relay não consegue abrir os identificadores dos celulares agora, então os celulares registrados com um identificador do relay não são acionados por ele. Se durar, escreva para a Freecorps.`);
 		if (i?.part === "hint_handles_own") return /** @type {LocalizedString} */ (`Seu relay não consegue abrir os identificadores dos celulares. Faça o deploy do apps/relay atual e confira o RELAY_HANDLE_KEYS dele; rodar a configuração de novo mantém as chaves que ele já tem:`);
 		if (i?.part === "state_providers") return /** @type {LocalizedString} */ (`Serviço de push falhando`);
 		if (i?.part === "hint_providers_freecorps") return /** @type {LocalizedString} */ (`O serviço de push da Apple ou do Google recusou as credenciais do relay, ou não está respondendo. Isso é do lado do relay: nada a mudar nesta instância.`);
 		if (i?.part === "hint_providers_own") return /** @type {LocalizedString} */ (`O serviço de push da Apple ou do Google recusou as credenciais do seu relay, ou não está respondendo. Se você trocou a chave do APNs ou a conta do Firebase, substitua-as:`);
 		if (i?.part === "state_pipeline") return /** @type {LocalizedString} */ (`Parado no Brigade`);
+		if (i?.part === "state_database") return /** @type {LocalizedString} */ (`Banco de dados sem resposta`);
+		if (i?.part === "hint_database") return /** @type {LocalizedString} */ (`O relay respondeu, mas o banco de dados (D1) não respondeu a uma leitura simples nas últimas verificações. Veja os logs da API; se durar, confira o status da Cloudflare.`);
+		if (i?.part === "hint_unknown_relay") return /** @type {LocalizedString} */ (`O Brigade não disse qual é o relay, então não dá para dizer o que fazer aqui. O aviso de acionamentos na visão geral diz o motivo.`);
 		if (i?.part === "hint_pipeline") return /** @type {LocalizedString} */ (`Os acionamentos estão parados antes de chegar ao relay, então ele não pode ser verificado. O aviso de acionamentos na visão geral diz o motivo.`);
 		if (i?.part === "state_no_answer") return /** @type {LocalizedString} */ (`Não foi possível verificar`);
 		if (i?.part === "hint_no_answer") return /** @type {LocalizedString} */ (`O Brigade não respondeu à verificação dos acionamentos. Ele tenta de novo a cada minuto.`);
@@ -133,7 +139,7 @@ export const phones_pages = /** @type {((inputs: Phones_PagesInputs, options?: {
 		if (i?.part === "hint_unregistered_freecorps") return /** @type {LocalizedString} */ (`This instance isn't registered on Freecorps' relay, or its registration wasn't finished (it needs the code emailed to your contact). Run:`);
 		if (i?.part === "hint_unregistered_own") return /** @type {LocalizedString} */ (`This instance isn't registered on your relay. Run setup again:`);
 		if (i?.part === "state_refused") return /** @type {LocalizedString} */ (`Refused`);
-		if (i?.part === "hint_bad_signature") return /** @type {LocalizedString} */ (`The relay doesn't accept this instance's key (RELAY_INSTANCE_KEY or RELAY_INSTANCE_ID), or this server's clock is more than 5 minutes off. Run setup again with the key file you saved:`);
+		if (i?.part === "hint_bad_signature") return /** @type {LocalizedString} */ (`The relay doesn't accept this instance's key, or this server's clock is more than 5 minutes off. Check that RELAY_INSTANCE_KEY is the key you saved and, after a key rotation, that RELAY_INSTANCE_ID is the instance's first id. Don't set the relay up again for this: it makes a new instance id, and every phone would have to open the app again.`);
 		if (i?.part === "hint_revoked_freecorps") return /** @type {LocalizedString} */ (`Freecorps revoked this instance on its relay. Write to Freecorps to find out why before you register again.`);
 		if (i?.part === "hint_revoked_own") return /** @type {LocalizedString} */ (`This instance was revoked on your relay. Register it again:`);
 		if (i?.part === "hint_unauthorized_freecorps") return /** @type {LocalizedString} */ (`The relay refused the send token (RELAY_SEND_TOKEN), so phones registered before relay handles aren't paged. Set the same RELAY_SEND_TOKEN on the relay and on the API.`);
@@ -144,12 +150,15 @@ export const phones_pages = /** @type {((inputs: Phones_PagesInputs, options?: {
 		if (i?.part === "state_rate_limited") return /** @type {LocalizedString} */ (`Rate limited`);
 		if (i?.part === "hint_rate_limited") return /** @type {LocalizedString} */ (`The relay keeps refusing this instance's checks as over its limits. It usually clears on its own; if it lasts, ask whoever runs the relay to raise the limit.`);
 		if (i?.part === "state_handles_unavailable") return /** @type {LocalizedString} */ (`Handles unavailable`);
-		if (i?.part === "hint_handles_freecorps") return /** @type {LocalizedString} */ (`The relay can't open phone handles right now, so phones on the current app aren't paged through it. If it lasts, write to Freecorps.`);
+		if (i?.part === "hint_handles_freecorps") return /** @type {LocalizedString} */ (`The relay can't open phone handles right now, so phones registered with a relay handle aren't paged through it. If it lasts, write to Freecorps.`);
 		if (i?.part === "hint_handles_own") return /** @type {LocalizedString} */ (`Your relay can't open phone handles. Deploy the current apps/relay and check its RELAY_HANDLE_KEYS; running setup again keeps the keys it has:`);
 		if (i?.part === "state_providers") return /** @type {LocalizedString} */ (`Push service failing`);
 		if (i?.part === "hint_providers_freecorps") return /** @type {LocalizedString} */ (`Apple's or Google's push service refused the relay's credentials, or isn't answering. That's on the relay's side: nothing to change on this instance.`);
 		if (i?.part === "hint_providers_own") return /** @type {LocalizedString} */ (`Apple's or Google's push service refused your relay's credentials, or isn't answering. If you changed the APNs key or the Firebase account, replace them:`);
 		if (i?.part === "state_pipeline") return /** @type {LocalizedString} */ (`Held up in Brigade`);
+		if (i?.part === "state_database") return /** @type {LocalizedString} */ (`Database not answering`);
+		if (i?.part === "hint_database") return /** @type {LocalizedString} */ (`The relay answered, but the database (D1) didn't answer a simple read in the last checks. Look at the API's logs; if it lasts, check Cloudflare's status.`);
+		if (i?.part === "hint_unknown_relay") return /** @type {LocalizedString} */ (`Brigade didn't say which relay this is, so it can't say what to do here. The paging notice on the overview names the reason.`);
 		if (i?.part === "hint_pipeline") return /** @type {LocalizedString} */ (`Pages are held up before they reach the relay, so it can't be checked. The paging notice on the overview says why.`);
 		if (i?.part === "state_no_answer") return /** @type {LocalizedString} */ (`Couldn't check`);
 		if (i?.part === "hint_no_answer") return /** @type {LocalizedString} */ (`Brigade didn't answer the paging check. It tries again every minute.`);

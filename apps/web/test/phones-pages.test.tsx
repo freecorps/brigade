@@ -11,7 +11,12 @@ import { PhonesPagesCard, PhonesPagesPanel } from "../src/components/phones-page
 import { PreferencesProvider } from "../src/components/preferences";
 import { MemberProvider } from "../src/components/session";
 import { UseAppCard, UseAppPanel } from "../src/components/use-app-card";
-import type { PagingHealth, RelaySetup } from "../src/lib/paging-health";
+import {
+  UNREACHABLE,
+  type PagingAnswer,
+  type PagingHealth,
+  type RelaySetup,
+} from "../src/lib/paging-health";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -57,7 +62,7 @@ async function mount(node: ReactNode, locale: Locale = "en") {
   return container;
 }
 
-const panel = (value: PagingHealth | "unreachable" | undefined, locale: Locale = "en") =>
+const panel = (value: PagingAnswer | undefined, locale: Locale = "en") =>
   mount(<PhonesPagesPanel health={value} locale={locale} />, locale);
 
 describe("PhonesPagesPanel", () => {
@@ -99,6 +104,21 @@ describe("PhonesPagesPanel", () => {
     expect(shown.textContent).not.toContain("State");
   });
 
+  test("no relay, but Brigade's own trouble still shows: beats stopped, the database", async () => {
+    const stalled = await panel(
+      health({ kind: "none" }, "degraded", ["relay_not_configured", "pipeline_stalled"]),
+    );
+    expect(stalled.textContent).toContain("No relay: phones aren't paged");
+    expect(stalled.textContent).toContain("Held up in Brigade");
+    act(() => root?.unmount());
+    container.remove();
+    const database = await panel(
+      health({ kind: "none" }, "degraded", ["relay_not_configured", "d1_failing"]),
+    );
+    expect(database.textContent).toContain("Database not answering");
+    expect(database.textContent).toContain("database (D1)");
+  });
+
   test("each refusal says what to run", async () => {
     const unregistered = await panel(
       health(freecorps, "degraded", ["relay_instance_unregistered"]),
@@ -110,12 +130,12 @@ describe("PhonesPagesPanel", () => {
     act(() => root?.unmount());
     container.remove();
 
+    // A bad signature names the secrets to check and warns against setting the relay up again (a new instance id).
     const signature = await panel(health(own(), "degraded", ["relay_bad_signature"]));
     expect(signature.textContent).toContain("Refused");
-    expect(signature.textContent).toContain("RELAY_INSTANCE_KEY");
-    expect(signature.querySelector("code")?.textContent).toBe(
-      "vp run setup:relay --instance-key-file <file>",
-    );
+    expect(signature.textContent).toContain("RELAY_INSTANCE_ID is the instance's first id");
+    expect(signature.textContent).toContain("Don't set the relay up again for this");
+    expect(signature.querySelector("code")).toBeNull();
     act(() => root?.unmount());
     container.remove();
 
@@ -145,7 +165,11 @@ describe("PhonesPagesPanel", () => {
       [freecorps, ["relay_unreachable"], "Freecorps' relay isn't answering"],
       [freecorps, ["relay_rate_limited"], "Rate limited"],
       [own(), ["relay_handles_unavailable"], "RELAY_HANDLE_KEYS"],
-      [freecorps, ["relay_handles_unavailable"], "write to Freecorps"],
+      [
+        freecorps,
+        ["relay_handles_unavailable"],
+        "phones registered with a relay handle aren't paged",
+      ],
       [own(), ["apns_failing"], "--replace-credentials"],
       [freecorps, ["pipeline_stalled"], "Held up in Brigade"],
     ];
@@ -165,9 +189,23 @@ describe("PhonesPagesPanel", () => {
   });
 
   test("no answer from the API, or one without the relay", async () => {
-    const unreachable = await panel("unreachable");
+    const unreachable = await panel(UNREACHABLE);
     expect(unreachable.textContent).toContain("Couldn't tell which relay pages go through.");
     expect(unreachable.textContent).toContain("Couldn't check");
+    act(() => root?.unmount());
+    container.remove();
+    // The watchdog down (a 503 with the relay): the relay and its app are still shown, only the state is unknown.
+    const down = await panel({ status: "unreachable", relay: own() });
+    expect(down.textContent).toContain("your company's own relay (relay.acme.example)");
+    expect(down.textContent).toContain("Couldn't check");
+    expect(down.querySelector("a")?.getAttribute("href")).toBe(APP);
+    act(() => root?.unmount());
+    container.remove();
+    // An older API that names no relay: a hint that depends on whose relay it is doesn't guess.
+    const revoked = await panel(health(null, "degraded", ["relay_instance_revoked"]));
+    expect(revoked.textContent).toContain("Refused");
+    expect(revoked.textContent).toContain("Brigade didn't say which relay this is");
+    expect(revoked.textContent).not.toContain("Write to Freecorps");
     act(() => root?.unmount());
     container.remove();
     const older = await panel(health(null));
@@ -236,7 +274,7 @@ describe("PhonesPagesCard", () => {
 });
 
 describe("UseAppPanel", () => {
-  const card = (value: PagingHealth | "unreachable" | undefined, locale: Locale = "en") =>
+  const card = (value: PagingAnswer | undefined, locale: Locale = "en") =>
     mount(<UseAppPanel health={value} />, locale);
 
   test("Freecorps' relay: the store app, and that pages arrive there", async () => {
@@ -293,7 +331,12 @@ describe("UseAppPanel", () => {
     expect((await card(undefined)).textContent).toContain("Checking which app");
     act(() => root?.unmount());
     container.remove();
-    expect((await card("unreachable")).textContent).toContain("Couldn't check which app");
+    expect((await card(UNREACHABLE)).textContent).toContain("Couldn't check which app");
+    act(() => root?.unmount());
+    container.remove();
+    // The watchdog down: the 503 still says which relay, so the advice stands.
+    const down = await card({ status: "unreachable", relay: own() });
+    expect(down.querySelector("a")?.getAttribute("href")).toBe(APP);
   });
 
   test("in pt-BR", async () => {

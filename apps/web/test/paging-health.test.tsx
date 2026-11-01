@@ -13,6 +13,7 @@ import {
   PAGING_REFRESH_MS,
   pagingView,
   parsePagingHealth,
+  UNREACHABLE,
 } from "../src/lib/paging-health";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -80,12 +81,22 @@ describe("fetchPagingHealth", () => {
   });
 
   test("an error answer, a bad body or no network is unreachable", async () => {
-    expect(await fetchPagingHealth(answer({ error: "unavailable" }, 503))).toBe("unreachable");
-    expect(await fetchPagingHealth(answer({ nope: true }))).toBe("unreachable");
+    expect(await fetchPagingHealth(answer({ error: "unavailable" }, 503))).toEqual(UNREACHABLE);
+    expect(await fetchPagingHealth(answer({ nope: true }))).toEqual(UNREACHABLE);
     const offline = (async () => {
       throw new TypeError("Failed to fetch");
     }) as typeof fetch;
-    expect(await fetchPagingHealth(offline)).toBe("unreachable");
+    expect(await fetchPagingHealth(offline)).toEqual(UNREACHABLE);
+    const html = (async () => new Response("<html>", { status: 502 })) as unknown as typeof fetch;
+    expect(await fetchPagingHealth(html)).toEqual(UNREACHABLE);
+  });
+
+  test("with the watchdog down, a member's 503 still says which relay", async () => {
+    const relay = { kind: "own", host: "relay.acme.example", app: "https://apps.example.com/x" };
+    expect(await fetchPagingHealth(answer({ error: "unavailable", relay }, 503))).toEqual({
+      status: "unreachable",
+      relay,
+    });
   });
 });
 
@@ -97,7 +108,7 @@ test("pagingView: quiet while loading and when all is well", () => {
   expect(pagingView({ status: "unknown", reasons: [], lastOkAt: null, relay: null })).toEqual({
     kind: "unknown",
   });
-  expect(pagingView("unreachable")).toEqual({ kind: "unreachable" });
+  expect(pagingView(UNREACHABLE)).toEqual({ kind: "unreachable" });
 });
 
 describe("PagingHealthNotice", () => {

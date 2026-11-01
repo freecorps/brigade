@@ -1120,6 +1120,55 @@ describe("GET /health/paging", () => {
     expect((await paging(owner.cookie)).relay).toEqual({ kind: "none" });
   });
 
+  test("with the watchdog down, a member's 503 still says which relay (and app); nobody else's does", async () => {
+    const owner = await signUp("watchdogless");
+    const created = await api("/workspaces", {
+      method: "POST",
+      body: JSON.stringify({ name: "Acme" }),
+      cookie: owner.cookie,
+    });
+    expect(created.status).toBe(201);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const down = {
+        ...env,
+        WATCHDOG: {
+          getByName: () => ({
+            health: () => Promise.reject(new Error("watchdog down")),
+          }),
+        },
+        RELAY_URL: "https://relay.acme.example",
+        RELAY_SEND_TOKEN: "t",
+        RELAY_KIND: "own",
+        RELAY_APP_URL: "https://apps.example.com/acme-brigade",
+      } as unknown as typeof env;
+      const ask = (cookie?: string) =>
+        worker.fetch(
+          new Request(`${ORIGIN}/health/paging`, {
+            headers: { Origin: ORIGIN, ...(cookie ? { Cookie: cookie } : {}) },
+          }) as Parameters<typeof worker.fetch>[0],
+          down,
+          createExecutionContext(),
+        );
+      const member = await ask(owner.cookie);
+      expect(member.status).toBe(503);
+      expect(member.headers.get("Cache-Control")).toBe("private, no-store");
+      expect(await member.json()).toEqual({
+        error: "unavailable",
+        relay: {
+          kind: "own",
+          host: "relay.acme.example",
+          app: "https://apps.example.com/acme-brigade",
+        },
+      });
+      const outsider = await ask();
+      expect(outsider.status).toBe(503);
+      expect(await outsider.json()).toEqual({ error: "unavailable" });
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   test("other methods get 405", async () => {
     expect((await api("/health/paging", { method: "POST" })).status).toBe(405);
   });

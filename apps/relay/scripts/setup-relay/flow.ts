@@ -334,7 +334,7 @@ async function freecorps(options: Options, deps: Deps): Promise<number> {
   await deepHealth(deps, relay, key, "Freecorps' relay");
   const binding = await relayBinding(options, deps);
   const hostedBinding =
-    typeof binding === "string" && (await bindsFreecorpsRelay(options, deps, binding));
+    typeof binding === "string" && (await bindsFreecorpsRelay(options, deps, relay, binding));
   io.print(
     [
       "",
@@ -1018,26 +1018,40 @@ async function relayBinding(options: Options, deps: Deps): Promise<string | fals
 }
 
 /**
- * Whether the API's `RELAY` binding (to `service`) is Freecorps' own relay: it names the hosted relay's Worker for
- * `env` (`brigade-relay`, `brigade-relay-dev`), and that Worker exists on the account wrangler is logged in to
- * without the secret this script sets on a company's own relay. Every copy of the repository binds `brigade-relay`
- * in production, so the name alone would say this for any self-hosted instance too, whose `brigade-relay` (if any)
- * does not know the instance. Anything unclear (wrangler failing, say) is `false`: the warning stays.
+ * The hosted relay per environment: its public address and the Worker behind it. Only production has one; the dev
+ * relay (`brigade-relay-dev`) has no public address, so a dev instance registered anywhere (the default address is
+ * the production relay) is not registered with the Worker its binding reaches.
+ */
+const HOSTED_RELAY: Partial<Record<Environment, { url: string; worker: string }>> = {
+  production: { url: FREECORPS_RELAY_URL, worker: "brigade-relay" },
+};
+
+/**
+ * Whether the API's `RELAY` binding (to `service`) is Freecorps' own relay, the one `relay` (the address just
+ * registered with) serves: `relay` is the hosted relay's address for `env` (not a `--relay-url` or
+ * `BRIGADE_RELAY_URL` of another relay), the binding names the Worker behind it, and that Worker exists on the
+ * account wrangler is logged in to without the secret this script sets on a company's own relay. Every copy of the
+ * repository binds `brigade-relay` in production, so the name alone would say this for any self-hosted instance too,
+ * whose `brigade-relay` (if any) does not know the instance.
+ *
+ * Advisory, and run after the instance is registered and its secrets set: anything unclear, any error included, is
+ * `false`, so the warning to remove the binding stays and the script never stops here.
  */
 async function bindsFreecorpsRelay(
   options: Options,
   deps: Deps,
+  relay: string,
   service: string,
 ): Promise<boolean> {
-  if (service === "" || service !== RELAY_WORKER[options.env]) return false;
   try {
+    const hosted = HOSTED_RELAY[options.env];
+    if (!hosted || relay !== relayOrigin(hosted.url) || service !== hosted.worker) return false;
     const secrets = await listSecrets(deps, service, join(deps.repoRoot, "apps/relay"), {
       assumeNew: false,
     });
     return secrets !== null && !secrets.has(OWN_RELAY_MARKER);
-  } catch (error) {
-    if (error instanceof Stop) return false;
-    throw error;
+  } catch {
+    return false;
   }
 }
 

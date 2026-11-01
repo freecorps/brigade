@@ -73,6 +73,8 @@ function harness(
     /** How many calls to the own relay's domain fail before it answers (a new custom domain coming up). */
     ownDown?: number;
     failing?: (command: Command) => boolean;
+    /** `run` itself throws for these commands (not a failed exit: wrangler could not be started, say). */
+    throwing?: (command: Command) => boolean;
     /** `secret list` fails for this Worker with a reason other than "not found". */
     listFails?: string;
     /** Workers that do not exist on the account (the API does, unless named here). */
@@ -136,6 +138,7 @@ function harness(
       commands.push(command);
       const ok = { code: 0, stdout: "", stderr: "" };
       if (setup.failing?.(command)) return { ...ok, code: 1 };
+      if (setup.throwing?.(command)) throw new Error("spawn wrangler ENOENT");
       const [verb, sub] = command.args;
       const name = command.args[command.args.indexOf("--name") + 1] ?? "";
       if (command.tool === "vp") return ok;
@@ -205,7 +208,10 @@ function harness(
       fetched.push(`${request.method} ${request.url}`);
       if (setup.unreachable) throw new TypeError("fetch failed");
       const url = new URL(request.url);
-      if (url.origin === HOSTED) return handle(request, hostedEnv, providers);
+      // The hosted relay, at the test address or at the default one.
+      if (url.origin === HOSTED || url.origin === FREECORPS_RELAY_URL) {
+        return handle(request, hostedEnv, providers);
+      }
       if (url.hostname === OWN_HOST && deployed?.domain === OWN_HOST) {
         if (ownDown > 0) {
           ownDown--;
@@ -818,13 +824,25 @@ describe("the API's RELAY binding (Freecorps' relay)", () => {
   /** brigade-relay as Freecorps' account has it: deployed by hand, so without the own-relay marker. */
   const HOSTED_RELAY_SECRETS = ["APNS_KEY", "RELAY_SEND_TOKEN", "RELAY_HANDLE_KEYS", "EMAIL_FROM"];
 
+  /** Freecorps' relay at its default address: no --relay-url (nor BRIGADE_RELAY_URL). */
+  const AT_DEFAULT: Partial<Options> = {
+    relay: "freecorps",
+    acceptTerms: TERMS_VERSION,
+    contact: "oncall@acme.example",
+  };
+  const register = async (h: ReturnType<typeof harness>, options: Partial<Options>) => {
+    expect(await h.run(options)).toBe(0);
+    expect(await h.run({ ...options, code: h.code(), instanceKeyFile: h.keyFiles()[0] })).toBe(0);
+  };
+  const REQUIRED_PRODUCTION =
+    /REQUIRED, or no phone is paged: remove the API's RELAY service binding \(it is in apps\/api\/vite.config.ts PRODUCTION_BINDINGS\)/;
+
   test("to Freecorps' relay itself (Freecorps' own instance), the binding stays", async () => {
     const h = harness({
       files: { [`${REPO}/apps/api/vite.config.ts`]: BOUND },
       secrets: { "brigade-relay": HOSTED_RELAY_SECRETS },
     });
-    expect(await h.run(FREECORPS)).toBe(0);
-    expect(await h.run({ ...FREECORPS, code: h.code(), instanceKeyFile: h.keyFiles()[0] })).toBe(0);
+    await register(h, AT_DEFAULT);
     expect(h.out()).not.toMatch(/REQUIRED/);
     expect(h.out()).not.toMatch(/remove the API's RELAY service binding \(it is in/);
     expect(h.out()).toMatch(
@@ -838,17 +856,30 @@ describe("the API's RELAY binding (Freecorps' relay)", () => {
     expect(h.secrets.get("brigade-relay")?.size).toBe(HOSTED_RELAY_SECRETS.length);
   });
 
-  test("dev: brigade-relay-dev on this account, set up by hand, is Freecorps' dev relay", async () => {
-    const jsonc = `{ "env": { "dev": { "services": [{ "binding": "RELAY", "service": "brigade-relay-dev" }] } } }`;
+  test("another relay address (--relay-url, BRIGADE_RELAY_URL): the binding does not reach it, still required", async () => {
     const h = harness({
-      files: { [`${REPO}/apps/api/wrangler.jsonc`]: jsonc },
-      secrets: { "brigade-relay-dev": HOSTED_RELAY_SECRETS },
+      files: { [`${REPO}/apps/api/vite.config.ts`]: BOUND },
+      secrets: { "brigade-relay": HOSTED_RELAY_SECRETS },
     });
-    const dev = { ...FREECORPS, env: "dev" as const };
-    expect(await h.run(dev)).toBe(0);
-    expect(await h.run({ ...dev, code: h.code(), instanceKeyFile: h.keyFiles()[0] })).toBe(0);
-    expect(h.out()).not.toMatch(/REQUIRED/);
-    expect(h.out()).toMatch(/binding goes to brigade-relay-dev on this account/);
+    // FREECORPS registers at HOSTED, a relay other than the one brigade-relay serves.
+    await register(h, FREECORPS);
+    expect(h.out()).toMatch(REQUIRED_PRODUCTION);
+    expect(h.out()).not.toMatch(/Freecorps' relay itself/);
+  });
+
+  test("dev: no hosted dev relay address, so brigade-relay-dev never counts as the relay registered with", async () => {
+    const jsonc = `{ "env": { "dev": { "services": [{ "binding": "RELAY", "service": "brigade-relay-dev" }] } } }`;
+    for (const options of [AT_DEFAULT, FREECORPS]) {
+      const h = harness({
+        files: { [`${REPO}/apps/api/wrangler.jsonc`]: jsonc },
+        secrets: { "brigade-relay-dev": HOSTED_RELAY_SECRETS },
+      });
+      await register(h, { ...options, env: "dev" });
+      expect(h.out()).toMatch(
+        /REQUIRED, or no phone is paged: remove the API's RELAY service binding \(it is in apps\/api\/wrangler.jsonc env.dev/,
+      );
+      expect(h.out()).not.toMatch(/Freecorps' relay itself/);
+    }
   });
 
   test("a company's own relay, another Worker, none at all or an unreadable account: still required", async () => {
@@ -878,15 +909,23 @@ describe("the API's RELAY binding (Freecorps' relay)", () => {
     ];
     for (const setup of cases) {
       const h = harness(setup);
-      expect(await h.run(FREECORPS)).toBe(0);
-      expect(await h.run({ ...FREECORPS, code: h.code(), instanceKeyFile: h.keyFiles()[0] })).toBe(
-        0,
-      );
-      expect(h.out()).toMatch(
-        /REQUIRED, or no phone is paged: remove the API's RELAY service binding \(it is in apps\/api\/vite.config.ts PRODUCTION_BINDINGS\)/,
-      );
+      await register(h, AT_DEFAULT);
+      expect(h.out()).toMatch(REQUIRED_PRODUCTION);
       expect(h.out()).not.toMatch(/Freecorps' relay itself/);
     }
+  });
+
+  test("the check throwing after registration: the script finishes and keeps the warning", async () => {
+    const h = harness({
+      files: { [`${REPO}/apps/api/vite.config.ts`]: BOUND },
+      secrets: { "brigade-relay": HOSTED_RELAY_SECRETS },
+      throwing: (c) => c.args[1] === "list" && c.args.includes("brigade-relay"),
+    });
+    await register(h, AT_DEFAULT);
+    // Registered and set on the API before the check, and the rest of "Done. Next:" still printed.
+    expect(h.secrets.get("brigade-api")?.has("RELAY_INSTANCE_KEY")).toBe(true);
+    expect(h.out()).toMatch(REQUIRED_PRODUCTION);
+    expect(h.out()).toMatch(/Keep the instance key/);
   });
 
   test("not there, no such step", async () => {

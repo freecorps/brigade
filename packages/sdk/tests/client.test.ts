@@ -55,6 +55,7 @@ const WS = "ws_01M5W19VG0040G2081040G2081";
 const USER = "usr_01M5W19VG0081040G2081040G2";
 const INV = "inv_01M5W19VG0081040G2081040G2";
 const INC = "inc_01M5W19VG0081040G2081040G2";
+const ASI = "asi_01M5W19VG0081040G2081040G2";
 const SVC = "svc_01M5W19VG0081040G2081040G2";
 const TYP = "typ_01M5W19VG0081040G2081040G2";
 const FLD = "fld_01M5W19VG0081040G2081040G2";
@@ -114,6 +115,17 @@ const CALLS: Record<keyof BrigadeClient, (client: BrigadeClient) => Promise<unkn
   downloadExport: (c) => c.downloadExport(WS, EXP),
   requestPostmortemDraft: (c) => c.requestPostmortemDraft(WS, INC, { locale: "pt-BR" }),
   listPostmortemRevisions: (c) => c.listPostmortemRevisions(WS, INC),
+  createAppSignIn: (c) => c.createAppSignIn(),
+  getAppSignIn: (c) => c.getAppSignIn(ASI),
+  approveAppSignIn: (c) => c.approveAppSignIn(ASI, { number: "42" }),
+  denyAppSignIn: (c) => c.denyAppSignIn(ASI),
+  claimAppSignIn: (c) =>
+    c.claimAppSignIn({
+      code: "abcdefghijklmnopqrstuv",
+      deviceName: "Ana's iPhone",
+      platform: "ios",
+    }),
+  pollAppSignIn: (c) => c.pollAppSignIn(ASI, "s".repeat(43)),
 };
 
 const VALUES: Record<string, string> = {
@@ -127,6 +139,8 @@ const VALUES: Record<string, string> = {
   fieldId: FLD,
   webhookId: WHK,
   exportId: EXP,
+  signInId: ASI,
+  claimId: ASI,
   token: `${WS}.mon_x.secret`,
 };
 

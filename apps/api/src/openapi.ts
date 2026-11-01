@@ -105,7 +105,8 @@ export type Operation = {
     | "Status page"
     | "Exports"
     | "Postmortems"
-    | "Sync";
+    | "Sync"
+    | "App sign-in";
   summary: string;
   description?: string;
   /** `session`: the Better Auth session cookie; `optional`: answers more with one; `none`: no auth. */
@@ -1494,8 +1495,292 @@ const LISTED: readonly Operation[] = [
   },
 ];
 
+/** A QR sign-in (`asi_<ULID>`): the dashboard's request and the phone's claim are one id (src/app-sign-in.ts). */
+const signInId: Parameter = {
+  name: "signInId",
+  in: "path",
+  description: "The sign-in (`asi_<ULID>`), as `createAppSignIn` answers it.",
+  schema: { type: "string", pattern: idPattern("asi") },
+};
+const claimId: Parameter = {
+  name: "claimId",
+  in: "path",
+  description: "The claim (`asi_<ULID>`), as `claimAppSignIn` answers it.",
+  schema: { type: "string", pattern: idPattern("asi") },
+};
+const isoTime = { type: "string", format: "date-time" } as const;
+/** What the dashboard sees of its QR sign-in (src/app-sign-in.ts `view`). */
+const APP_SIGN_IN_VIEW: JsonSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string", pattern: idPattern("asi") },
+    status: {
+      type: "string",
+      enum: ["waiting", "claimed", "approved", "signed_in", "denied", "wrong_number", "expired"],
+    },
+    expiresAt: isoTime,
+    deviceKind: {
+      type: "string",
+      enum: ["apple", "android", "phone"],
+      description:
+        "Once claimed: what kind of device wants to sign in, from a fixed list (never the phone's own words, " +
+        "which could carry the number).",
+    },
+  },
+  required: ["id", "status", "expiresAt"],
+  additionalProperties: false,
+};
+const APP_SIGN_IN_ANSWERED: JsonSchema = {
+  type: "object",
+  properties: { status: { type: "string", enum: ["approved", "denied"] } },
+  required: ["status"],
+  additionalProperties: false,
+};
+/** A claim with no answer waiting (`409 not_claimed`), with the request's `status` beside the code. */
+const NOT_CLAIMED: Answer = {
+  description: "No claim waiting: not claimed yet, ended, or past its time (`status` says which).",
+  body: {
+    type: "object",
+    properties: {
+      error: { type: "string", enum: ["not_claimed"] },
+      status: { $ref: "#/components/schemas/AppSignIn/properties/status" },
+    },
+    required: ["error", "status"],
+  },
+};
+
+/** QR sign-in (RFC 0015 section 6): the dashboard's routes, then the phone's. */
+const APP_SIGN_IN: readonly Operation[] = [
+  {
+    method: "post",
+    path: "/app-sign-in",
+    operationId: "createAppSignIn",
+    tag: "App sign-in",
+    summary: "Ask for a QR code that signs the app in as you",
+    description:
+      "A 128-bit random code, single use, for 2 minutes, bound to your user and this session (kept hashed); a new " +
+      "one ends this session's code not claimed yet. `url` is what the QR holds: " +
+      "`brigade://connect?server=<dashboard origin>&code=<code>`. Then poll `getAppSignIn`. At most 10 a minute.",
+    auth: "session",
+    responses: answers(
+      {
+        201: {
+          description: "The code.",
+          body: {
+            type: "object",
+            properties: {
+              id: { type: "string", pattern: idPattern("asi") },
+              code: { type: "string", pattern: "^[A-Za-z0-9_-]{22}$" },
+              url: { type: "string", pattern: "^brigade://connect\\?" },
+              expiresAt: isoTime,
+            },
+            required: ["id", "code", "url", "expiresAt"],
+            additionalProperties: false,
+          },
+        },
+      },
+      refusals(SIGNED_IN, { 429: ["rate_limited"], 503: ["unavailable"] }),
+    ),
+  },
+  {
+    method: "get",
+    path: "/app-sign-in/{signInId}",
+    operationId: "getAppSignIn",
+    tag: "App sign-in",
+    summary: "Where your QR sign-in is",
+    description:
+      "Only for the session that asked. Once claimed, `deviceKind` says what kind of device wants to sign in as you; " +
+      "the number its phone shows and its device name are never here.",
+    auth: "session",
+    parameters: [signInId],
+    responses: answers(
+      { 200: { description: "The sign-in.", body: ref("AppSignIn") } },
+      refusals({ 401: ["unauthenticated"], 404: ["not_found"], 503: ["unavailable"] }),
+    ),
+  },
+  {
+    method: "post",
+    path: "/app-sign-in/{signInId}/approve",
+    operationId: "approveAppSignIn",
+    tag: "App sign-in",
+    summary: "Approve a claim with the number the phone shows",
+    description:
+      "`{ number }`: the 2 digits the claiming phone shows, typed by you. Any other number ends the claim " +
+      "(`403 wrong_number`); a malformed one (`400`) spends nothing. Approved, the phone has at least 30 seconds " +
+      "to pick its session up.",
+    auth: "session",
+    parameters: [signInId],
+    body: {
+      type: "object",
+      properties: { number: { type: "string", pattern: "^[0-9]{2}$" } },
+      required: ["number"],
+    },
+    responses: {
+      ...answers(
+        {
+          200: {
+            description: "Approved: the phone's next poll signs it in.",
+            body: APP_SIGN_IN_ANSWERED,
+          },
+        },
+        refusals(SIGNED_IN, {
+          400: ["invalid_args"],
+          403: ["wrong_number"],
+          404: ["not_found"],
+          503: ["unavailable"],
+        }),
+      ),
+      409: NOT_CLAIMED,
+    },
+  },
+  {
+    method: "post",
+    path: "/app-sign-in/{signInId}/deny",
+    operationId: "denyAppSignIn",
+    tag: "App sign-in",
+    summary: "Deny a claim, or drop a code",
+    description: "Ends the sign-in at any step before the phone got its session.",
+    auth: "session",
+    parameters: [signInId],
+    responses: {
+      ...answers(
+        { 200: { description: "Denied.", body: APP_SIGN_IN_ANSWERED } },
+        refusals(SIGNED_IN, { 404: ["not_found"], 503: ["unavailable"] }),
+      ),
+      409: NOT_CLAIMED,
+    },
+  },
+  {
+    method: "post",
+    path: "/app-sign-in/claim",
+    operationId: "claimAppSignIn",
+    tag: "App sign-in",
+    summary: "Claim a QR code (the app)",
+    description:
+      "`{ code, deviceName, platform? }`. `deviceName` is cleaned (NFKC, without controls or invisible characters, " +
+      "spaces collapsed; 1 to 64 characters left) and kept only with the session it may get, never shown on the " +
+      "dashboard before the approval; `platform` (`ios`, `android`) or else the User-Agent says what kind of device " +
+      "the dashboard names. Spends the " +
+      "code: a code unknown, spent or past its time is the same `404 invalid_code`. Answers the claim's id, a " +
+      "`secret` for polling `pollAppSignIn` (keep it on the phone only) and the 2-digit `number` to show, which the " +
+      "member types on the dashboard. Limited per caller address (`429`).",
+    auth: "none",
+    body: {
+      type: "object",
+      properties: {
+        code: { type: "string", pattern: "^[A-Za-z0-9_-]{22}$" },
+        deviceName: { type: "string", minLength: 1, maxLength: 256 },
+        platform: { type: "string", enum: ["ios", "android"] },
+      },
+      required: ["code", "deviceName"],
+    },
+    responses: answers(
+      {
+        201: {
+          description: "Claimed.",
+          body: {
+            type: "object",
+            properties: {
+              claimId: { type: "string", pattern: idPattern("asi") },
+              secret: { type: "string", pattern: "^[A-Za-z0-9_-]{43}$" },
+              number: { type: "string", pattern: "^[0-9]{2}$" },
+              expiresAt: isoTime,
+            },
+            required: ["claimId", "secret", "number", "expiresAt"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        400: ["invalid_args"],
+        403: ["forbidden_origin"],
+        404: ["invalid_code"],
+        429: ["rate_limited"],
+        503: ["unavailable"],
+      },
+    ),
+  },
+  {
+    method: "get",
+    path: "/app-sign-in/claim/{claimId}",
+    operationId: "pollAppSignIn",
+    tag: "App sign-in",
+    summary: "Poll a claim for its session (the app)",
+    description:
+      "With `Authorization: Bearer <secret>` from `claimAppSignIn`. `pending` until the member answers; once " +
+      "approved, the first poll gets a new session for the member, never again: `session.cookie` is a " +
+      "`Set-Cookie` value for Better Auth (as `@better-auth/expo` stores one), with the account it signs in to. " +
+      "Every poll after, and a claim denied, answered with a wrong number, past its time or whose dashboard " +
+      "session signed out, gets `expired` with the `reason`.",
+    auth: "none",
+    parameters: [
+      claimId,
+      {
+        name: "Authorization",
+        in: "header",
+        description: "`Bearer <secret>`, the secret `claimAppSignIn` answered.",
+        schema: { type: "string", pattern: "^Bearer [A-Za-z0-9_-]{43}$" },
+      },
+    ],
+    responses: answers(
+      {
+        200: {
+          description: "The claim.",
+          body: {
+            anyOf: [
+              {
+                type: "object",
+                properties: { status: { const: "pending" }, expiresAt: isoTime },
+                required: ["status", "expiresAt"],
+                additionalProperties: false,
+              },
+              {
+                type: "object",
+                properties: {
+                  status: { const: "approved" },
+                  session: {
+                    type: "object",
+                    properties: { cookie: { type: "string" }, expiresAt: isoTime },
+                    required: ["cookie", "expiresAt"],
+                    additionalProperties: false,
+                  },
+                  user: {
+                    type: "object",
+                    properties: {
+                      id: { type: "string" },
+                      name: { type: "string" },
+                      email: { type: "string" },
+                    },
+                    required: ["id", "name", "email"],
+                    additionalProperties: false,
+                  },
+                },
+                required: ["status", "session", "user"],
+                additionalProperties: false,
+              },
+              {
+                type: "object",
+                properties: {
+                  status: { const: "expired" },
+                  reason: {
+                    type: "string",
+                    enum: ["denied", "wrong_number", "timeout", "delivered", "signed_out"],
+                  },
+                },
+                required: ["status", "reason"],
+                additionalProperties: false,
+              },
+            ],
+          },
+        },
+      },
+      { 404: ["not_found"], 503: ["unavailable"] },
+    ),
+  },
+];
+
 /** Every public operation, in the order the reference lists them. */
-export const OPERATIONS: readonly Operation[] = LISTED.map((operation) =>
+export const OPERATIONS: readonly Operation[] = [...LISTED, ...APP_SIGN_IN].map((operation) =>
   operation.bearer === undefined
     ? operation
     : {
@@ -1538,6 +1823,7 @@ function withRefusals(
 }
 
 const SCHEMAS: Record<string, JsonSchema> = {
+  AppSignIn: APP_SIGN_IN_VIEW,
   WebhookSecret: {
     type: "object",
     properties: {

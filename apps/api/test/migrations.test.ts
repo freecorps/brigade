@@ -22,6 +22,8 @@ test("every Brigade table is there, with the indexes the actor lookup uses", asy
     "account",
     // migrations/0011_api_token.sql (RFC 0014).
     "api_token",
+    // migrations/0016_app_sign_in.sql (RFC 0015 section 6).
+    "app_sign_in",
     "d1_migrations",
     // migrations/0014_email_day.sql (RFC 0005 "Abuse": the daily email ceiling).
     "email_day",

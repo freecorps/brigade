@@ -15,6 +15,9 @@
 - `listPostmortemRevisions` (`incident:read`): the last 20 revisions of an incident's postmortem, newest first
   (type `PostmortemRevision`). `requestPostmortemDraft` may answer `403 ai_disabled`: an owner turned AI drafts off
   for the workspace.
+- QR sign-in for the app (RFC 0015 section 6): `createAppSignIn`, `getAppSignIn`, `approveAppSignIn` and
+  `denyAppSignIn` (the dashboard's, with the session), `claimAppSignIn` and `pollAppSignIn` (the phone's: no session,
+  the poll with the claim's secret). Types `AppSignInCode`, `AppSignIn`, `AppSignInClaim`, `AppSignInPoll`.
 
 ## 0.2.0 (unreleased)
 

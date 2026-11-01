@@ -84,6 +84,8 @@
   // then 429; a page that exists is never counted (RFC 0012 "Caching and abuse"). Namespace ids 418x.
   // STATUS_DOMAIN_LIMIT (src/status-domain.ts): changes to a status page's own domain, 10 a minute per workspace, each
   // a call to Cloudflare's API. Namespace ids 419x.
+  // APP_SIGN_IN_LIMIT (src/app-sign-in.ts): QR sign-in claims (`POST /app-sign-in/claim`, RFC 0015 section 6), 20 a
+  // minute per caller address, checked before D1. Namespace ids 430x (apps/relay holds 42xx).
   "ratelimits": [
     { "name": "RECEIPT_LIMIT", "namespace_id": "4101", "simple": { "limit": 120, "period": 60 } },
     { "name": "ALERT_LIMIT", "namespace_id": "4111", "simple": { "limit": 300, "period": 60 } },
@@ -121,6 +123,11 @@
       "name": "STATUS_DOMAIN_LIMIT",
       "namespace_id": "4191",
       "simple": { "limit": 10, "period": 60 },
+    },
+    {
+      "name": "APP_SIGN_IN_LIMIT",
+      "namespace_id": "4301",
+      "simple": { "limit": 20, "period": 60 },
     },
   ],
   // The public status page's snapshots (RFC 0012, src/status-page.ts): each workspace shard pushes its page here on
@@ -264,6 +271,11 @@
           "namespace_id": "4193",
           "simple": { "limit": 10, "period": 60 },
         },
+        {
+          "name": "APP_SIGN_IN_LIMIT",
+          "namespace_id": "4303",
+          "simple": { "limit": 20, "period": 60 },
+        },
       ],
       // `brigade-status-dev`, the dev status page snapshots (RFC 0012).
       "kv_namespaces": [{ "binding": "STATUS", "id": "cc29234582db43538204e0ae375d8ec8" }],
@@ -351,6 +363,11 @@
           "name": "STATUS_DOMAIN_LIMIT",
           "namespace_id": "4192",
           "simple": { "limit": 10, "period": 60 },
+        },
+        {
+          "name": "APP_SIGN_IN_LIMIT",
+          "namespace_id": "4302",
+          "simple": { "limit": 20, "period": 60 },
         },
       ],
       "secrets": { "required": ["BETTER_AUTH_SECRET"] },

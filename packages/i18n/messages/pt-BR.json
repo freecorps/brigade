@@ -3951,7 +3951,56 @@
         "part=own_link": "Baixar o app da sua empresa",
         "part=own_no_link": "Pergunte a um owner ou admin onde baixá-lo.",
         "part=failed": "Não foi possível verificar qual app aciona você aqui. Tente de novo em um minuto.",
+        "part=install_title": "Qual app instalar",
+        "part=page_description": "O Brigade no seu celular: instale o app e entre nele como você com um QR code desta página.",
+        "part=link_description": "Instale o app do Brigade e entre nele com um QR code, sem digitar senha no celular.",
+        "part=link_open": "Configurar o app",
         "part=*": "Use o app"
+      }
+    }
+  ],
+  "app_sign_in": [
+    {
+      "declarations": ["input part", "input device", "input time"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Entrar com um QR code",
+        "part=description": "Entra no app do Brigade como você, sem digitar senha no celular.",
+        "part=start": "Mostrar um código de acesso",
+        "part=creating": "Gerando um código…",
+        "part=scan": "Na tela de entrada do app do Brigade, toque em \"Ler um QR code\" e aponte o celular para este código.",
+        "part=never_share": "Nunca compartilhe este código, nem o número que seu celular mostrar.",
+        "part=expires_in": "Expira em {time}",
+        "part=waiting": "Esperando seu celular ler o código.",
+        "part=qr_label": "QR code que entra no app do Brigade como você",
+        "part=cancel": "Cancelar",
+        "part=claimed_title": "{device} quer entrar como você",
+        "part=claimed_hint": "Digite o número que seu celular mostra. Se você não acabou de ler este código, recuse.",
+        "part=number_label": "Número no seu celular",
+        "part=number_invalid": "Digite os 2 dígitos que seu celular mostra.",
+        "part=approve": "Entrar",
+        "part=approving": "Verificando…",
+        "part=deny": "Recusar",
+        "part=answer_failed": "Não foi possível enviar sua resposta. Tente de novo.",
+        "part=approved": "Aprovado. Terminando no seu celular…",
+        "part=signed_in": "{device} entrou como você.",
+        "part=another": "Entrar em outro celular",
+        "part=denied": "Recusado. Ninguém entrou.",
+        "part=wrong_number": "O número não confere, então ninguém entrou. Se era o seu celular, comece de novo.",
+        "part=expired": "Este código expirou antes de um celular usá-lo.",
+        "part=again": "Mostrar um novo código",
+        "part=failed": "Não foi possível gerar um código. Tente de novo em um minuto.",
+        "part=rate_limited": "Códigos demais em um minuto. Espere um pouco e tente de novo.",
+        "part=address_title": "Só o endereço",
+        "part=address_description": "Adiciona este Brigade ao app sem entrar, para um celular que entra de outro jeito (com a senha, ou o acesso da sua empresa).",
+        "part=address_label": "QR code com o endereço deste Brigade",
+        "part=device_apple": "Um iPhone ou iPad",
+        "part=device_android": "Um celular Android",
+        "part=device_phone": "Um celular",
+        "part=expired_claimed": "O acesso expirou antes de terminar. Ninguém entrou.",
+        "part=cancel_failed": "Não foi possível cancelar. Tente de novo; o código para de funcionar sozinho quando a contagem acabar.",
+        "part=signed_out": "Sua sessão no painel terminou. Entre de novo.",
+        "part=*": "Entrar com um QR code"
       }
     }
   ]

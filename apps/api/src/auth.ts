@@ -842,7 +842,16 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
       }),
     },
     // Stated, not left to the default: the mobile app keeps a session from an offline sign-out this long at most.
-    session: { expiresIn: SESSION_LIFETIME_S },
+    session: {
+      expiresIn: SESSION_LIFETIME_S,
+      // The phone a QR sign-in made the session for, and `signInMethod: "qr"` (RFC 0015 section 6,
+      // src/app-sign-in.ts), so the account's sessions say which device each is and how it was signed in; never set
+      // by a client (`input: false`), null for any other sign-in.
+      additionalFields: {
+        deviceName: { type: "string", required: false, input: false },
+        signInMethod: { type: "string", required: false, input: false },
+      },
+    },
     // Off by default on Workers (Better Auth enables it only when NODE_ENV is "production"). The in-memory store
     // would count per isolate, so the counts live in D1.
     rateLimit: {
@@ -869,7 +878,16 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
                 sortBy: { field: "createdAt", direction: "asc" },
                 limit: 1,
               })) ?? [];
-            return { data: { ...session, activeOrganizationId: member?.organizationId ?? null } };
+            // Made outside a request to Better Auth (an approved QR sign-in, src/app-sign-in.ts) there is no `ctx`:
+            // the caller then names the workspace itself.
+            const given = Reflect.get(session, "activeOrganizationId");
+            return {
+              data: {
+                ...session,
+                activeOrganizationId:
+                  member?.organizationId ?? (typeof given === "string" ? given : null),
+              },
+            };
           },
         },
         // Every way a session ends (sign-out, revoking one or all, a password reset, an expired one found) deletes

@@ -153,6 +153,39 @@ export type PostmortemRevision = {
   ai: boolean;
 };
 
+/** A QR sign-in code (`createAppSignIn`, RFC 0015 section 6): `url` is what the QR holds. Times are ISO 8601. */
+export type AppSignInCode = { id: string; code: string; url: string; expiresAt: string };
+
+/**
+ * Where a QR sign-in is (`getAppSignIn`). Once claimed, `deviceKind` is what kind of device wants to sign in, from a
+ * fixed list: the number its phone shows and its device name are never here.
+ */
+export type AppSignIn = {
+  id: string;
+  status: "waiting" | "claimed" | "approved" | "signed_in" | "denied" | "wrong_number" | "expired";
+  expiresAt: string;
+  deviceKind?: "apple" | "android" | "phone";
+};
+
+/** A claimed QR code (`claimAppSignIn`): keep `secret` on the phone, show `number` to the member. */
+export type AppSignInClaim = { claimId: string; secret: string; number: string; expiresAt: string };
+
+/**
+ * A claim as the phone polls it (`pollAppSignIn`): `approved` once, with a `Set-Cookie` value for Better Auth (as
+ * `@better-auth/expo` stores one) and the account it signs in to; `expired` with the reason after that or instead.
+ */
+export type AppSignInPoll =
+  | { status: "pending"; expiresAt: string }
+  | {
+      status: "approved";
+      session: { cookie: string; expiresAt: string };
+      user: { id: string; name: string; email: string };
+    }
+  | {
+      status: "expired";
+      reason: "denied" | "wrong_number" | "timeout" | "delivered" | "signed_out";
+    };
+
 /** Options of the webhook writes. */
 export type WebhookWriteOptions = {
   /**
@@ -359,6 +392,25 @@ export const OPERATION_ERRORS = {
     "ai_disabled",
   ],
   listPostmortemRevisions: [...MEMBER_CHECK, "forbidden", "not_found"],
+  createAppSignIn: [...SIGNED_IN, "rate_limited", "unavailable"],
+  getAppSignIn: ["unauthenticated", "not_found", "unavailable"],
+  approveAppSignIn: [
+    ...SIGNED_IN,
+    "invalid_args",
+    "wrong_number",
+    "not_found",
+    "not_claimed",
+    "unavailable",
+  ],
+  denyAppSignIn: [...SIGNED_IN, "not_found", "not_claimed", "unavailable"],
+  claimAppSignIn: [
+    "invalid_args",
+    "forbidden_origin",
+    "invalid_code",
+    "rate_limited",
+    "unavailable",
+  ],
+  pollAppSignIn: ["not_found", "unavailable"],
 } as const satisfies Record<string, readonly string[]>;
 
 export type Operation = keyof typeof OPERATION_ERRORS;
@@ -979,6 +1031,65 @@ export function createClient(options: ClientOptions) {
         "listPostmortemRevisions",
         "GET",
         () => `${ws(workspaceId)}/incidents/${segment(incidentId)}/postmortem/revisions`,
+      ),
+
+    // QR sign-in (RFC 0015 section 6): the dashboard's four, with the session; the phone's two, with none.
+
+    /**
+     * `POST /app-sign-in`: a 2-minute single-use code that signs the app in as you, bound to this session; `url` is
+     * the QR (`brigade://connect?server=…&code=…`). A new one ends this session's code not claimed yet.
+     */
+    createAppSignIn: () =>
+      call<AppSignInCode, "createAppSignIn">("createAppSignIn", "POST", "/app-sign-in"),
+
+    /** `GET /app-sign-in/:id`: where your QR sign-in is; only for the session that asked. */
+    getAppSignIn: (signInId: string) =>
+      call<AppSignIn, "getAppSignIn">(
+        "getAppSignIn",
+        "GET",
+        () => `/app-sign-in/${segment(signInId)}`,
+      ),
+
+    /**
+     * `POST /app-sign-in/:id/approve`: the 2 digits the claiming phone shows, as the member typed them. Any other
+     * well-formed number ends the claim (`403 wrong_number`); a malformed one (`400`) spends nothing.
+     */
+    approveAppSignIn: (signInId: string, body: { number: string }) =>
+      call<{ status: "approved" | "denied" }, "approveAppSignIn">(
+        "approveAppSignIn",
+        "POST",
+        () => `/app-sign-in/${segment(signInId)}/approve`,
+        { body },
+      ),
+
+    /** `POST /app-sign-in/:id/deny`: ends the sign-in at any step before the phone got its session. */
+    denyAppSignIn: (signInId: string) =>
+      call<{ status: "approved" | "denied" }, "denyAppSignIn">(
+        "denyAppSignIn",
+        "POST",
+        () => `/app-sign-in/${segment(signInId)}/deny`,
+      ),
+
+    /**
+     * `POST /app-sign-in/claim` (the app, no session): spends the code from the QR. `deviceName` is cleaned and kept
+     * only with the session; `platform` (`ios`, `android`) names the kind of device on the dashboard. A code unknown,
+     * spent or past its time is the same `404 invalid_code`.
+     */
+    claimAppSignIn: (body: { code: string; deviceName: string; platform?: "ios" | "android" }) =>
+      call<AppSignInClaim, "claimAppSignIn">("claimAppSignIn", "POST", "/app-sign-in/claim", {
+        body,
+      }),
+
+    /**
+     * `GET /app-sign-in/claim/:id` (the app) with the claim's `secret` as `Authorization: Bearer`, in place of any
+     * `token` the client has: `pending`, then the session once, then `expired`.
+     */
+    pollAppSignIn: (claimId: string, secret: string) =>
+      call<AppSignInPoll, "pollAppSignIn">(
+        "pollAppSignIn",
+        "GET",
+        () => `/app-sign-in/claim/${segment(claimId)}`,
+        { headers: { Authorization: `Bearer ${secret}` } },
       ),
   };
 }

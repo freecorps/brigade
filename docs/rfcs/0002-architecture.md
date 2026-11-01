@@ -202,6 +202,8 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
 - **Web dashboard:** React + TanStack Router + shadcn/ui.
 - **Site and docs:** Fumadocs on TanStack Start (Vite-based), prerendered, i18n per locale (RFC 0008).
 - **Auth:** Better Auth on Workers + D1; Expo client for mobile (OAuth/OIDC with PKCE via system browser, plus QR pairing).
+  QR pairing is built as RFC 0015 section 6 describes (a device approval, `apps/api/src/app-sign-in.ts`: the session
+  for the phone made server side with Better Auth's internal adapter, `session.deviceName` recording which phone).
   Built so far: email and password with cookie sessions for the web, and the organization plugin for workspaces
   (`apps/api/src/auth.ts`, served at `/auth/*`, `/api/auth/*` through the dashboard). One Better Auth instance per
   request, created only when the request needs it. Workers never set `NODE_ENV`, so what Better Auth would derive

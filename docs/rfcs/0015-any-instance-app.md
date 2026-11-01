@@ -301,12 +301,14 @@ approval, not as a token anyone holding the picture can use.
 2. The phone scans it **in the app** (the scanner on the sign-in screen), shows "Sign in to <host>?" and, once
    confirmed, claims it (`POST /api/app-sign-in/claim` with the code and its device name). The claim answers a
    **2-digit number** and the code is spent: a second claim fails.
-3. The dashboard, waiting on the same request, shows "<device name> wants to sign in as you" and asks the member to
+3. The dashboard, waiting on the same request, shows "<an iPhone or iPad> wants to sign in as you" (the kind of
+   device, from a fixed list: never words the phone wrote) and asks the member to
    **type the number the phone shows**, or Deny. The dashboard never shows the number, so there is no blind
    "Approve": whoever took the picture has the number on their own phone, and the member, whose phone shows none,
    has nothing to type. One wrong number ends the claim.
 4. Approved, the phone's next poll (`GET /api/app-sign-in/claim/:id`, with a secret the claim gave only to it) gets
-   a new Better Auth session, made server side for that user; denied or 2 minutes passed, it gets `expired`.
+   a new Better Auth session, made server side for that user; denied or 2 minutes passed, it gets `expired`. An
+   approval leaves the phone at least 30 seconds to pick the session up.
 
 Threats and what answers each:
 
@@ -321,14 +323,79 @@ Threats and what answers each:
   them with made-up incidents or collect what they type): the phone names the host and the account before it
   finishes ("Signed in to evil.example as …") and the instance is listed in the switcher like any other, removable.
   The same risk exists with the address alone; nothing more is exposed.
+- **The claiming phone writing on the member's dashboard** (whoever claims first sends a device name like "type 37 to
+  finish", and the member types it): before the approval the dashboard shows no text the phone wrote, only the kind
+  of device from a fixed list ("An iPhone or iPad", "An Android phone", "A phone"), from the claim's `platform` (`ios`
+  or `android`) or its User-Agent. The device name the phone gives is cleaned (NFKC, no control or invisible
+  characters, spaces collapsed, 1 to 64 characters) and only stored on the session it gets, for the sessions list.
 - **Brute force on the code**: 128 bits, single use, the claim route rate limited per IP.
 - **Second factor**: the dashboard session passed whatever sign-in the account requires; the phone gets a session of
   the same strength, made only with the member's approval.
 - **The session made** is an ordinary one, listed and revocable like any other; the approval is written to the
-  account's sessions with the device name.
+  account's sessions with the device name and `signInMethod: "qr"`.
+- **A stolen dashboard cookie** can approve a phone of the thief's own and so get a second session, one that outlives
+  the stolen one (a sign-out on the dashboard ends the stolen cookie, not that phone's). Accepted: whoever holds the
+  cookie already has the account, and could change its password or invite themselves elsewhere; there is no freshness
+  check (a password asked again) before showing a code. What answers it is visibility: the session is listed with its
+  device name and "signed in by QR code", and revoking it (or a password reset, which ends every session) ends it.
 
 The address-only QR (`brigade://connect?server=<origin>`) stays for an instance whose sign-in happens elsewhere
 (SSO later, RFC 0002), and the address field for everyone else.
+
+**Built (the server and the dashboard).** apps/api `src/app-sign-in.ts` (D1 `migrations/0016_app_sign_in.sql`),
+apps/web's "Use the app" page (`/use-the-app`, `src/components/app-sign-in-card.tsx`). As built:
+
+- **Routes** (documented in docs/api/openapi.json, tag "App sign-in"): `POST /app-sign-in` (session; `{ id, code, url,
+  expiresAt }`, at most 10 a minute per user; a new code ends the session's code not claimed yet), `GET
+  /app-sign-in/:id`, `POST /app-sign-in/:id/approve { number }` and `POST /app-sign-in/:id/deny` (only the session that
+  asked: anyone else gets `404`), `POST /app-sign-in/claim { code, deviceName, platform? }` (no session; `{ claimId,
+  secret, number, expiresAt }`) and `GET /app-sign-in/claim/:id` with `Authorization: Bearer <secret>` (`GET` only: a
+  `HEAD` would spend the delivery and drop the body). The dashboard polls
+  (every 1.5 s) rather than holding a long request open: each poll is one D1 read, and a Worker request waiting two
+  minutes would hold a connection per open page for nothing. The request and the claim are one id (`asi_<ULID>`).
+- **Storage: D1, not a Durable Object.** Each step that must happen once (spending the code, approving or failing on
+  the number, handing out the session) is one conditional `update … where state = <the step before> and "expiresAt" >
+  now returning …`. D1 runs each statement atomically on its one primary, so of two requests at once exactly one gets
+  the row back (test/app-sign-in.test.ts claims one code twice at once). The rows sit beside Better Auth's sessions
+  they are bound to, and nothing needs to live in memory between polls, so a Durable Object would add a hop and buy
+  nothing. The code and the phone's secret are stored only as SHA-256 digests (128 and 256 random bits: no salt or slow
+  hash needed); the number as it is (100 values); rows are deleted a day after they end.
+- **Lives:** the code 2 minutes unclaimed; the claim 2 minutes from its claim, for the approval and the phone's pickup
+  both, and an approval moves the end to at least 30 seconds away so the phone's next poll still gets its session.
+  Past it, every answer is `expired` (the dashboard says the code expired, or, once claimed, that the sign-in ran out
+  of time).
+- **The number:** 2 digits, uniform, given only to the claiming phone; the dashboard's `GET` gives only `deviceKind`
+  (`apple`, `android`, `phone`) and never the number or the phone's device name. A malformed number (`400`) spends nothing; any other wrong one ends the claim (`403 wrong_number`), and
+  the right one after it is `409 not_claimed`.
+- **The session:** made only when the phone's first poll after the approval moves the claim to `delivered` (so a
+  session token is never at rest here), with Better Auth's own `internalAdapter.createSession`: an ordinary session
+  with the member's first workspace active, the phone's address and user agent, and new `session.deviceName` and
+  `session.signInMethod` (`qr`) columns (Better Auth additional fields, `input: false`), so `/auth/list-sessions` names
+  the device and how it signed in, and it is revoked like any other. Everything that can fail is read before the
+  session is made; should signing its cookie still fail, the session is deleted and the claim goes back to `approved`
+  for the next poll, so no live session is ever left undelivered. The dashboard session that asked is read again
+  once the new one exists: a sign-out racing the pickup deletes the new one and ends the claim as `signed_out`. The
+  answer is `{ status: "approved", session: { cookie, expiresAt }, user: { id, name, email } }`:
+  `cookie` is a `Set-Cookie` value the app stores with `@better-auth/expo`'s `getSetCookie` under the instance's
+  storage prefix, and `user` is what the phone names ("Signed in to <host> as …"). Every poll after gets `{ status:
+  "expired", reason: "delivered" }`; other reasons are `denied`, `wrong_number`, `timeout` and `signed_out` (the
+  dashboard session that asked ended before the pickup: no session is made). A secret that does not match is `404`, the
+  same as an unknown id.
+- **Rate limits:** claims per caller IP with Workers Rate Limiting (`APP_SIGN_IN_LIMIT`, 20 a minute, namespaces
+  4301-4303), checked before D1; a limiter that fails lets the claim through (the 128 bits stop guessing; the limit
+  bounds the work). The phone's poll is not limited: it needs the 256-bit secret, and polls every couple of seconds.
+- **The dashboard:** the "Use the app" page holds which app to install (the card that was on the account page, which
+  now links here), "Sign in with a QR code" and "Only the address" (`brigade://connect?server=<origin>`, the
+  dashboard's own origin). No code is made until the member asks for one; the QR (drawn from `uqr`'s module matrix,
+  dark on white with the quiet zone) shows with its countdown and "Never share this code, nor the number your phone
+  shows", then "<kind of device> wants to sign in as you" with the number to type, Deny, and how it ended; Cancel
+  goes back to the start only once the code is denied, and says so when it could not be. An approval stays on screen
+  until the request ends (a poll from before it never takes it back, nor does the claim's old end on this clock), and
+  a `401` (the dashboard session ended) stops the polls with "Your dashboard session ended. Sign in again." and has
+  the session read again, so the page sends the member to sign in. The QR's `server` is
+  `DASHBOARD_URL`, or the origin the request came through without it.
+- **Still to do (the phone, step 4):** the scanner on the sign-in screen, "Sign in to <host>?", the claim, showing the
+  number and polling, storing the cookie per instance.
 
 ### 7. The instance side
 
@@ -551,8 +618,8 @@ built:
   it fixes the state (`vp run setup:relay`, or with `--replace-credentials`); never for a bad signature, since setting
   a key up again removes `RELAY_INSTANCE_ID` and a rotated instance would sign as another id, orphaning every handle.
   Registration pending is "not registered": the relay has no pending state (section 7).
-- **"Use the app"** is a card on the member's account page, above "Your phones", until the page with the QR
-  (section 6, step 4) exists: the Brigade app from the stores on Freecorps' relay; the company's own build, with "Get
+- **"Use the app"** is now its own page (`/use-the-app`, section 6), linked from the member's account page where the
+  card was, and its first card says which app to install: the Brigade app from the stores on Freecorps' relay; the company's own build, with "Get
   your company's app" when the link is set ("Ask an owner or admin" otherwise), on an own relay; the store app with
   nothing about pages when there is no relay.
 
@@ -651,7 +718,8 @@ built:
    watchdog; section 7), `vp run setup:relay` and the dashboard's "Phones and pages" and "Use the app" (section 8).
 4. App: handles and per-instance keys and storage; the instance switcher, address field, QR and link, address
    checks, which relay; QR sign-in (with its API routes and the dashboard's approval). Built: handles, storage per
-   instance, background registration and page routing (section 5).
+   instance, background registration and page routing (section 5); QR sign-in's API routes and the dashboard's "Use
+   the app" page with the approval (section 6), the phone's side of it still to do.
 5. Our instance moves (section 9); then the docs for self-hosters ("Your own app" included) and the terms.
 
 Each step is a paging path: it keeps the old path working until the next one ships, and comes with its tests

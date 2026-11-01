@@ -5,9 +5,11 @@
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
+import { defaultBuildOrigin } from "@/lib/build-origin";
 import {
   deviceId,
   devicePublicKey,
+  pairing,
   unregisterPhone,
   type DeviceDeps,
   type RegisterAnswer,
@@ -78,6 +80,12 @@ export function phoneWorkspacesAt(key: string) {
   });
 }
 
+/** Pairing with an instance's origin on the native side, as this binary allows (src/lib/device.ts `pairing`). */
+export const nativePairing = {
+  keep: (origin: string) => pairing(BrigadePush, defaultBuildOrigin()).keep(origin),
+  forget: (origin: string) => pairing(BrigadePush, defaultBuildOrigin()).forget(origin),
+};
+
 /** The push tokens fetched to register, so the token listener asks for a registration only for a new one. */
 export const pushTokens = knownTokens();
 
@@ -144,7 +152,7 @@ export function phoneDeps(
     // registration adds its instance to the native list (RFC 0015 section 5).
     ...(server && keys?.setReceiptOrigin
       ? {
-          receiptOrigin: { origin: server.auth, keep: (origin) => keys.setReceiptOrigin?.(origin) },
+          receiptOrigin: { origin: server.auth, keep: nativePairing.keep },
         }
       : {}),
   };

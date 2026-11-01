@@ -337,6 +337,25 @@ describe("registering with a handle", () => {
     expect(at.minted).toHaveLength(2);
   });
 
+  test("a relay down at the 30-day refresh keeps the old handle, and asks again next time", async () => {
+    let now = NOW;
+    let up = true;
+    const at = instance({
+      now: () => now,
+      mint: async () => (up ? { handle: HANDLE, tag: TAG } : null),
+    });
+    await withHandle(registration(), at.deps);
+    now = NOW + HANDLE_MAX_AGE_MS + 1;
+    up = false;
+    expect(await withHandle(registration(), at.deps)).toMatchObject({ handle: HANDLE });
+    expect(await withHandle(registration(), at.deps)).toMatchObject({ handle: HANDLE });
+    expect(at.minted).toHaveLength(3);
+    // A new token while the relay is down: the old handle is for the old token, so the raw tokens.
+    expect(await withHandle(registration({ pushToken: "ef".repeat(32) }), at.deps)).toMatchObject({
+      pushToken: "ef".repeat(32),
+    });
+  });
+
   test("a relay or instance id that changed asks for a new handle", async () => {
     const at = instance();
     await withHandle(registration(), at.deps);

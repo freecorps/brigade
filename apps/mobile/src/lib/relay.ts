@@ -181,6 +181,19 @@ export function handleServes(
   want: HandleRequest,
   now: number,
 ): record is HandleRecord {
+  if (!handleMatches(record, relay, want)) return false;
+  return now - record.at >= 0 && now - record.at < HANDLE_MAX_AGE_MS;
+}
+
+/**
+ * Whether the kept handle was sealed by this relay for this instance id and these tokens, however old: still the
+ * phone's, and what is sent while the relay cannot give a new one.
+ */
+export function handleMatches(
+  record: HandleRecord | null,
+  relay: InstanceRelay,
+  want: HandleRequest,
+): record is HandleRecord {
   if (!record) return false;
   if (record.relay !== relay.origin || record.instance !== want.instance) return false;
   if (record.platform !== want.platform || record.environment !== want.environment) return false;
@@ -190,7 +203,7 @@ export function handleServes(
   ) {
     return false;
   }
-  return now - record.at >= 0 && now - record.at < HANDLE_MAX_AGE_MS;
+  return true;
 }
 
 /** `POST <relay>/v1/handles`: `{ handle, tag }`, or null for any other answer (refused, unreachable, malformed). */
@@ -248,11 +261,11 @@ export async function withHandle(
   const versioned = config.kind === "brigade" && config.versioned;
   const raw: DeviceRegistration = versioned ? { ...args, envelope: 2 } : args;
   if (config.kind === "unreachable") {
-    // `/config` did not answer: the kept handle, while it serves the relay it came from, rather than flip the device
-    // to raw tokens and back on a flaky read.
+    // `/config` did not answer: the kept handle, while it is for these tokens (however old), rather than flip the
+    // device to raw tokens and back on a flaky read.
     if (kept) {
       const keptRelay = { origin: kept.relay, instance: kept.instance };
-      if (handleServes(kept, keptRelay, handleRequest(keptRelay, args), deps.now())) {
+      if (handleMatches(kept, keptRelay, handleRequest(keptRelay, args))) {
         return registrationWith(args, kept);
       }
     }
@@ -264,8 +277,11 @@ export async function withHandle(
   const want = handleRequest(plan.relay, args);
   if (handleServes(kept, plan.relay, want, deps.now())) return registrationWith(args, kept);
   const minted = await mintHandle(plan.relay.origin, want, deps.fetch);
-  // The relay did not answer: raw tokens, as before handles.
-  if (!minted) return raw;
+  if (!minted) {
+    // The relay did not answer. A kept handle for these tokens that is only old still pages (the relay keeps its old
+    // keys for 13 months), so it is sent and a new one asked for next time; anything else gets the raw tokens.
+    return handleMatches(kept, plan.relay, want) ? registrationWith(args, kept) : raw;
+  }
   const record: HandleRecord = { ...want, relay: plan.relay.origin, ...minted, at: deps.now() };
   await deps.write(JSON.stringify(record)).catch(() => {});
   return registrationWith(args, record);

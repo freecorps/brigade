@@ -31,14 +31,16 @@ interface BrigadePushModule {
    * Adds the instance's origin (`https://brigade.example.com`) to the paired ones, where the code that opens pages
    * reads them (the iOS App Group, Android's preferences): it opens version 2 pages and posts delivery receipts for
    * those origins only (RFC 0015 section 5). False for an origin it could not read. Absent from an app binary built
-   * before receipts; a binary without `receiptOriginList` keeps one origin, the last set.
+   * before receipts; a binary without `receiptOriginList` keeps one origin, which each call replaces, so the app sets
+   * only the build's default instance there (src/lib/device.ts `pairing`).
    */
   setReceiptOrigin?(origin: string): boolean;
   /**
    * Forgets the instance at `origin`: the member signed out there. Its version 2 pages then show the fallback text and
    * send no receipt until the app registers the phone there again (RFC 0015 section 4); the other instances stay
-   * paired. A binary without `receiptOriginList` forgets its one origin whatever is named. Absent from an app binary
-   * from before it.
+   * paired. A binary without `receiptOriginList` takes no argument (one passed throws, forgetting nothing): the app
+   * calls it without one, and only for the build's default instance (src/lib/device.ts `pairing`). Absent from an
+   * app binary from before it.
    */
   clearReceiptOrigin?(origin?: string): void;
   /** Whether the paired instances are a list (several instances, RFC 0015 section 5). */

@@ -40,14 +40,13 @@ export function hasHandle(args: RegistrationArgs): args is HandleRegistration {
 }
 
 /**
- * `device.register` codes that say a handle is no good (an instance that refused its form answers `invalid_args`): the
- * kept handle is dropped, the raw tokens sent at once, and a new handle asked for on the next registration (Q30).
+ * `device.register` codes that refuse a handle: the only one is `invalid_args` (a handle or tag of the wrong form, or an
+ * instance from before handles; the instance never opens a handle, so `bad_handle` and `handle_not_yours` come only
+ * from the relay at send time). The kept handle is dropped, the raw tokens sent at once, and a new handle asked for on
+ * the next registration (Q30). A handle the relay refuses at send time shows on the phone as its device leaving the
+ * shard (`device.expire`), which drops the kept handle too (src/components/session.tsx, RFC 0015 section 7).
  */
-export const HANDLE_REFUSALS: ReadonlySet<string> = new Set([
-  "bad_handle",
-  "handle_not_yours",
-  "invalid_args",
-]);
+export const HANDLE_REFUSALS: ReadonlySet<string> = new Set(["invalid_args"]);
 
 /**
  * The device's id, derived from its public key (the first 10 bytes of the key's x coordinate, as a ULID's
@@ -403,6 +402,48 @@ export function instanceOrigin(url: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** The push module's pairing calls (modules/brigade-push), as `pairing` reads them. */
+export type PairingModule = {
+  setReceiptOrigin?(origin: string): boolean;
+  clearReceiptOrigin?(origin?: string): void;
+  readonly receiptOriginList?: boolean;
+};
+
+/**
+ * Pairing the phone with an instance's origin on the native side (RFC 0015 section 5). A binary with the list
+ * (`receiptOriginList`) adds and removes each origin. An older one keeps one origin, which `setReceiptOrigin`
+ * replaces, and its `clearReceiptOrigin` takes no argument (one passed throws): there only the build's default
+ * instance (`defaultOrigin`) is paired and forgotten, so a second instance never takes its pages' origin away.
+ * Never throws.
+ */
+export function pairing(
+  module: PairingModule | null,
+  defaultOrigin: string | undefined,
+): { keep: (origin: string) => void; forget: (origin: string) => void } {
+  const list = module?.receiptOriginList === true;
+  const mine = (origin: string) =>
+    list || (defaultOrigin !== undefined && origin === defaultOrigin);
+  return {
+    keep: (origin) => {
+      if (!mine(origin)) return;
+      try {
+        module?.setReceiptOrigin?.(origin);
+      } catch {
+        // An app binary from before receipts has no such call.
+      }
+    },
+    forget: (origin) => {
+      if (!mine(origin)) return;
+      try {
+        if (list) module?.clearReceiptOrigin?.(origin);
+        else module?.clearReceiptOrigin?.();
+      } catch {
+        // Never in sign-out's way.
+      }
+    },
+  };
 }
 
 /** Never in registration's way: without it the extension only sends no receipts. */

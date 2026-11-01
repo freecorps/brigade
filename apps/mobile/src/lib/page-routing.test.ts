@@ -11,6 +11,52 @@ import {
   type AckDeps,
 } from "./page-action";
 
+import { pairing } from "./device";
+
+function nativeModule(list: boolean) {
+  const calls: string[] = [];
+  return {
+    calls,
+    module: {
+      ...(list ? { receiptOriginList: true } : {}),
+      setReceiptOrigin: (origin: string) => {
+        calls.push(`set ${origin}`);
+        return true;
+      },
+      clearReceiptOrigin: (...args: string[]) => {
+        // An older binary's function takes no argument: Expo refuses one.
+        if (!list && args.length > 0) throw new Error("Received 1 arguments, but 0 was expected");
+        calls.push(`clear ${args[0] ?? "all"}`);
+      },
+    },
+  };
+}
+
+test("a binary with the list pairs and forgets each instance", () => {
+  const native = nativeModule(true);
+  const paired = pairing(native.module, "https://brigade.example.com");
+  paired.keep("https://brigade.example.com");
+  paired.keep("https://brigade.acme.example");
+  paired.forget("https://brigade.acme.example");
+  expect(native.calls).toEqual([
+    "set https://brigade.example.com",
+    "set https://brigade.acme.example",
+    "clear https://brigade.acme.example",
+  ]);
+});
+
+test("an older binary keeps one origin: only the build's instance is paired and forgotten there", () => {
+  const native = nativeModule(false);
+  const paired = pairing(native.module, "https://brigade.example.com");
+  paired.keep("https://brigade.acme.example");
+  paired.keep("https://brigade.example.com");
+  paired.forget("https://brigade.acme.example");
+  paired.forget("https://brigade.example.com");
+  expect(native.calls).toEqual(["set https://brigade.example.com", "clear all"]);
+  // No module (web): nothing, and nothing thrown.
+  pairing(null, undefined).keep("https://brigade.example.com");
+});
+
 const shown = { id: "default", origin: "https://brigade.example.com" };
 const acme = { id: "acme1", origin: "https://brigade.acme.example" };
 const instances = [shown, acme];

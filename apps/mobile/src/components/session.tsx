@@ -27,6 +27,7 @@ import {
   devicePresent,
   pagingCycle,
   pagingNudges,
+  tokenFanOut,
   removalWatch,
   type RemovalVerdict,
   type RemovalWatch as Watch,
@@ -35,6 +36,7 @@ import { dropQueues, openQueue } from "@/lib/pending";
 import {
   finishDeps,
   keptSignOuts,
+  nativePairing,
   oneShotMutate,
   permissions,
   phoneDeps,
@@ -54,7 +56,6 @@ import {
 import { knownWorkspace, memberActor, settledRole, type Server } from "@/lib/sync";
 import { createWorkspaceSync, setCurrentSync, type WorkspaceSync } from "@/lib/sync-client";
 import { clearWidget, WidgetSnapshot } from "@/components/widget";
-import { BrigadePush } from "../../modules/brigade-push";
 import { BrigadeCall } from "../../modules/brigade-call";
 
 /** The signed-in member in their active workspace: what every signed-in screen reads. */
@@ -120,6 +121,12 @@ function useLatest<T>(value: T): { readonly current: T } {
   });
   return ref;
 }
+
+/** New APNs or FCM tokens, told to every instance's registration cycle. */
+const newPushTokens = tokenFanOut(pushTokens, (heard) => {
+  const subscription = Notifications.addPushTokenListener(heard);
+  return () => subscription.remove();
+});
 
 const finishing = new Map<string, Promise<FinishResult>>();
 
@@ -187,11 +194,12 @@ function usePaging(
     );
     const foreground = AppState.addEventListener("change", nudges.appState);
     const voipToken = BrigadeCall?.addListener("onVoipToken", nudges.voipToken);
-    const pushToken = Notifications.addPushTokenListener(nudges.pushToken);
+    // One listener for every instance: a new token reaches each of them (src/lib/paging.ts `tokenFanOut`).
+    const leaveTokens = newPushTokens.add(made);
     return () => {
       foreground.remove();
       voipToken?.remove();
-      pushToken.remove();
+      leaveTokens();
       void made.stop();
       if (cycle.current === made) cycle.current = null;
     };
@@ -409,11 +417,7 @@ function drainKey(instanceId: string, userId: string, workspaceId: string): stri
  */
 async function forgetMember(clients: InstanceClients): Promise<void> {
   draining.closeAll(`${clients.instance.id} `);
-  try {
-    BrigadePush?.clearReceiptOrigin?.(clients.instance.origin);
-  } catch {
-    // Never in sign-out's way.
-  }
+  nativePairing.forget(clients.instance.origin);
   await clients.phoneWorkspaces.clear();
 }
 
@@ -716,7 +720,14 @@ function ActiveWorkspace({
         origin={server.auth}
         watch={watch}
         registered={paging === "on"}
-        onRemoved={(verdict) => removed(workspaceId, verdict)}
+        onRemoved={(verdict) => {
+          // The shard dropped the device: the relay may have refused its handle (`handle_not_yours` expires the
+          // device), so the next registration asks for a new one rather than send the same handle again.
+          const drop = relayDeps(clients).dropHandle ?? (async () => {});
+          void drop()
+            .catch(() => {})
+            .finally(() => removed(workspaceId, verdict));
+        }}
       />
       <SessionContext value={value}>{children(true)}</SessionContext>
     </SyncProvider>

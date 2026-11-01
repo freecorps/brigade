@@ -145,8 +145,9 @@ class EnvelopeV2Test {
     // A v2 page sealed by one paired instance naming another paired instance's receipt URL sends nothing.
     val crossed = v2.copy(receipt = PushReceipt("$other/api/receipts", "tok"))
     assertNull(PushChecks.receiptToSend(crossed, listOf(other, origin)))
-    // Version 1 goes to any paired instance its URL is on.
-    assertEquals(receipt, PushChecks.receiptToSend(v2.copy(sealed = null), listOf(other, origin)))
+    // Version 1 seals no origin: only the first paired instance (the one from before several instances) gets it.
+    assertEquals(receipt, PushChecks.receiptToSend(v2.copy(sealed = null), listOf(origin, other)))
+    assertNull(PushChecks.receiptToSend(v2.copy(sealed = null), listOf(other, origin)))
   }
 
   @Test

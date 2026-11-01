@@ -131,7 +131,32 @@ test("today's instance, without a relay in /config, keeps getting the raw tokens
   ]);
 });
 
-test.each(["invalid_args", "bad_handle", "handle_not_yours"])(
+test("another member's device (`forbidden`) is not the handle's fault: it is kept, nothing else sent", async () => {
+  const sent: object[] = [];
+  let stored: string | null = null;
+  const relay = withHandleDeps(
+    async () => relayConfig,
+    () => stored,
+    (raw) => (stored = raw),
+  );
+  const deps = phone(async () => ({ ok: true }), {
+    ...relay,
+    registerAll: async (args, workspaces) => {
+      sent.push(args);
+      return {
+        ok: true,
+        workspaces: Object.fromEntries(workspaces.map((id) => [id, "forbidden"])),
+      };
+    },
+  });
+  expect(await registerEverywhere(deps, [], "ws_one")).toEqual({ ws_one: "taken" });
+  expect(sent).toHaveLength(1);
+  expect(stored).not.toBeNull();
+});
+
+// `device.register` refuses a handle only with `invalid_args`; the relay's `bad_handle`/`handle_not_yours` come at
+// send time and reach the phone as its device leaving the shard (src/components/session.tsx).
+test.each(["invalid_args"])(
   "a handle refused with %s is dropped, the raw tokens sent at once, and a new handle asked for next time",
   async (code) => {
     const sent: object[] = [];

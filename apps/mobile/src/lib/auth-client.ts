@@ -5,16 +5,11 @@
 import { expoClient } from "@better-auth/expo/client";
 import { inferAdditionalFields, organizationClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
-import Constants from "expo-constants";
 import type * as SecureStore from "expo-secure-store";
-import { buildOrigin } from "@/lib/sync";
+import { defaultBuildOrigin } from "@/lib/build-origin";
 
 /** The origin of the build's default instance; undefined for a release build without EXPO_PUBLIC_BRIGADE_URL. */
-export const defaultOrigin = buildOrigin({
-  override: process.env.EXPO_PUBLIC_BRIGADE_URL,
-  hostUri: Constants.expoConfig?.hostUri,
-  dev: __DEV__,
-});
+export const defaultOrigin = defaultBuildOrigin();
 
 /** Where `@better-auth/expo` keeps the session: expo-secure-store, or a fake one in tests. */
 export type SessionStorage = Pick<

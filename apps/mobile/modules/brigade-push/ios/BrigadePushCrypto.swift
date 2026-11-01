@@ -137,12 +137,18 @@ public enum BrigadePushCrypto {
       return "\(scheme)://\(host):\(port)"
     }
 
-    /// Whether this receipt goes to an instance the app registered the phone with (`receiptOrigins()`). A page names
-    /// its own receipt URL; only one on such an origin is ever posted to, so a page sealed by anyone else holding the
-    /// device's public key cannot make the phone call out elsewhere.
+    /// Whether this version 1 receipt goes to the first paired instance (`receiptOrigin()`, the one from before several
+    /// instances). A v1 page names its own receipt URL and seals no origin, so only that instance's is ever posted
+    /// to: a page sealed by anyone else holding a device key cannot make the phone call out to another paired
+    /// instance. An instance added later that still seals v1 gets no receipts; its pages still show.
     public var isForRegisteredInstance: Bool {
-      guard let origin = Self.origin(of: url) else { return false }
-      return BrigadePushCrypto.receiptOrigins().contains(origin)
+      return Self.isFor(url: url, first: BrigadePushCrypto.receiptOrigin())
+    }
+
+    /// `isForRegisteredInstance` with the first paired origin given, for tests.
+    static func isFor(url: URL, first: String?) -> Bool {
+      guard let first, let origin = Self.origin(of: url) else { return false }
+      return origin == first
     }
   }
 

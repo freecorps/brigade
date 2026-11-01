@@ -213,18 +213,19 @@ object PushChecks {
     if (sealed != null && refusal != "expired") sealed.isPage else clearIsPage
 
   /**
-   * The receipt to post, if any: v1 to an instance the phone registered with (as before), v2 only to its sealed origin,
-   * when the phone is paired with it.
+   * The receipt to post, if any: v2 only to its sealed origin, when the phone is paired with it; v1, which seals no
+   * origin, only to the first paired instance (the one from before several instances), so a v1 page sealed by anyone
+   * holding a device key cannot make the phone call out to another paired instance. An instance added later that
+   * still seals v1 gets no receipts; its pages still show.
    */
-  fun receiptToSend(content: PushContent, paired: Collection<String>): PushReceipt? {
+  fun receiptToSend(content: PushContent, paired: List<String>): PushReceipt? {
     val receipt = content.receipt ?: return null
-    val sealed = content.sealed ?: return receipt.takeIf { paired.any(it::isFor) }
+    val sealed = content.sealed ?: return receipt.takeIf { it.isFor(paired.firstOrNull()) }
     return receipt.takeIf { it.origin == sealed.origin && sealed.origin in paired }
   }
 
   /** [receiptToSend] for a phone paired with one instance, or none. */
-  fun receiptToSend(content: PushContent, paired: String?): PushReceipt? =
-    receiptToSend(content, listOfNotNull(paired))
+  fun receiptToSend(content: PushContent, paired: String?): PushReceipt? = receiptToSend(content, listOfNotNull(paired))
 }
 
 /**

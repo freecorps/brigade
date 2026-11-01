@@ -153,8 +153,9 @@ describe("what a v2 page decides", () => {
   test("signing out of an instance forgets only that one on the native side", () => {
     const session = read("../components/session.tsx");
     expect(session).toMatch(
-      /async function forgetMember[\s\S]*?BrigadePush\?\.clearReceiptOrigin\?\.\(clients\.instance\.origin\)/,
+      /async function forgetMember[\s\S]*?nativePairing\.forget\(clients\.instance\.origin\)/,
     );
+    expect(read("./device.ts")).toContain("if (list) module?.clearReceiptOrigin?.(origin);");
     expect(read("../../modules/brigade-push/ios/BrigadePushModule.swift")).toContain(
       'Function("clearReceiptOrigin") { (origin: String?) in',
     );

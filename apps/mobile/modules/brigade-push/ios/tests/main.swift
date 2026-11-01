@@ -145,6 +145,11 @@ check("added once", BrigadePushCrypto.withOrigin(paired, other) == paired)
 check("old one merged in front", BrigadePushCrypto.decodeOrigins(list: [other, origin], legacy: origin) == [origin, other])
 check("one removed, the other kept", BrigadePushCrypto.withoutOrigin(paired, origin) == [other])
 check("nothing kept", BrigadePushCrypto.decodeOrigins(list: nil, legacy: nil).isEmpty)
+// A v1 receipt (no sealed origin) goes only to the first paired instance.
+let v1Receipt = URL(string: "\(origin)/api/receipts")!
+check("v1 receipt to the first paired", BrigadePushCrypto.Receipt.isFor(url: v1Receipt, first: origin))
+check("v1 receipt not to a later paired", !BrigadePushCrypto.Receipt.isFor(url: v1Receipt, first: other))
+check("v1 receipt not when unpaired", !BrigadePushCrypto.Receipt.isFor(url: v1Receipt, first: nil))
 
 // Sealed times past JavaScript's safe integers are refused (an `exp` that never comes).
 check("unsafe exp refused", BrigadePushCrypto.integer(NSNumber(value: Int64(9_007_199_254_740_992))) == nil)

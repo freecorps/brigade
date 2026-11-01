@@ -484,10 +484,13 @@ describe("QR sign-in", () => {
     expect((await approve(created.id, ana.cookie, phoneSide.number)).status).toBe(200);
     const out = await api("/auth/sign-out", { method: "POST", headers: { Cookie: ana.cookie } });
     expect(out.status).toBe(200);
-    expect(await (await poll(phoneSide.claimId, phoneSide.secret)).json()).toEqual({
-      status: "expired",
-      reason: "signed_out",
-    });
+    // And it stays so: the next poll says the same, not `delivered`.
+    for (let i = 0; i < 2; i++) {
+      expect(await (await poll(phoneSide.claimId, phoneSide.secret)).json()).toEqual({
+        status: "expired",
+        reason: "signed_out",
+      });
+    }
   });
 
   test("a new code ends the session's code not claimed yet", async () => {

@@ -96,7 +96,14 @@ export function cleanDeviceName(value: unknown): string | undefined {
   return cleaned;
 }
 
-type State = "issued" | "claimed" | "approved" | "delivered" | "denied" | "wrong_number";
+type State =
+  | "issued"
+  | "claimed"
+  | "approved"
+  | "delivered"
+  | "denied"
+  | "wrong_number"
+  | "signed_out";
 
 type Row = {
   id: string;
@@ -372,7 +379,9 @@ async function pollClaim(
     const now = Date.now();
     const ended = (reason: ClaimEndReason) => json({ status: "expired", reason }, 200, NO_STORE);
     if (row.state === "delivered") return ended("delivered");
-    if (row.state === "denied" || row.state === "wrong_number") return ended(row.state);
+    if (row.state === "denied" || row.state === "wrong_number" || row.state === "signed_out") {
+      return ended(row.state);
+    }
     if (row.expiresAt <= now) return ended("timeout");
     if (row.state === "claimed") {
       return json(
@@ -381,22 +390,34 @@ async function pollClaim(
         NO_STORE,
       );
     }
-    // Approved: only the poll that moves it to `delivered` gets a session.
-    const taken = await env.DB.prepare(
-      `update app_sign_in set state = 'delivered', "endedAt" = ?2
-       where id = ?1 and state = 'approved' and "expiresAt" > ?2 returning id`,
-    )
-      .bind(id, now)
-      .first<{ id: string }>();
-    if (!taken)
-      return ended((await readRow(env.DB, id))?.state === "delivered" ? "delivered" : "timeout");
-    // Bound to the dashboard session that asked: signed out there since, no session here.
+    // Bound to the dashboard session that asked: signed out there since, no session here. Read before the claim
+    // moves, so a failure here leaves it `approved` for the next poll; signed out ends it for good.
     const asker = await env.DB.prepare(
       `select "expiresAt" from "session" where id = ? and "userId" = ?`,
     )
       .bind(row.sessionId, row.userId)
       .first<{ expiresAt: string | number }>();
-    if (!asker || new Date(asker.expiresAt).getTime() <= now) return ended("signed_out");
+    const signedOut = !asker || new Date(asker.expiresAt).getTime() <= now;
+    // Approved: only the poll that moves it on gets a session (or the `signed_out` answer).
+    const taken = await env.DB.prepare(
+      `update app_sign_in set state = ?3, "endedAt" = ?2
+       where id = ?1 and state = 'approved' and "expiresAt" > ?2 returning id`,
+    )
+      .bind(id, now, signedOut ? "signed_out" : "delivered")
+      .first<{ id: string }>();
+    if (!taken) {
+      // Another poll, a deny or the clock got there first: answer with what it became.
+      const state = (await readRow(env.DB, id))?.state;
+      return ended(
+        state === "delivered" ||
+          state === "denied" ||
+          state === "wrong_number" ||
+          state === "signed_out"
+          ? state
+          : "timeout",
+      );
+    }
+    if (signedOut) return ended("signed_out");
     try {
       return json(await newSession(env, auth, row, request), 200, NO_STORE);
     } catch (error) {
@@ -471,11 +492,11 @@ function view(row: Row, now: number) {
       ? "signed_in"
       : row.state === "denied" || row.state === "wrong_number"
         ? row.state
-        : !open
+        : !open || row.state === "signed_out"
           ? "expired"
           : row.state === "issued"
             ? "waiting"
-            : row.state;
+            : (row.state as "claimed" | "approved");
   return {
     id: row.id,
     status,

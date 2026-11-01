@@ -341,7 +341,10 @@ version 2 for a device registered with `envelope: 2`, version 1 for any other; t
   stored session cannot be read (secure storage failing): its sign-out is tried, and it stays listed ("Couldn't
   remove"), since it may still be live there; and so does one whose sign-out was neither heard by the server nor
   kept to finish later (the shown instance's `stuck`, a background one whose `/sign-out` failed with nothing kept).
-  Its unsent changes stay until it is actually removed. The last instance is never removed, the build's default
+  Such a stuck sign-out is recorded per instance with its session (`brigade.<id>.unfinished`, `UnfinishedSignOut`),
+  since the client forgets its cookie whatever the server answers: the next Remove retries it first (a session the
+  server no longer knows counts as done) and keeps the instance until it is heard (`removeWith`). Its unsent changes
+  stay until it is actually removed. The last instance is never removed, the build's default
   included: signing out is what is left, and the app would have nothing to sign in to. That is decided on the stored
   list, in turn with every other change (`removeUnlessLast`), so two removals at once never leave none; the relay
   handle is deleted only once the list took the removal.

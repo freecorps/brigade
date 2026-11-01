@@ -31,7 +31,8 @@ import {
 import {
   backgroundSignOut,
   keptSession,
-  removalOutcome,
+  parseUnfinished,
+  removeWith,
   shownSignOut,
   type InstanceState,
 } from "@/lib/switcher";
@@ -526,16 +527,27 @@ export async function removeInstance(
   const instance = list.instances.find((one) => one.id === id);
   if (!instance || list.instances.length <= 1) return "failed";
   const clients = clientsFor(instance);
+  const key = clients.storage.unfinished;
+  const finish = finishDeps(clients.server);
   try {
-    // Its unsent changes stay until the instance is gone: a removal refused keeps everything it had.
-    const session = await signOutInstance(instance, signOutShown, { keepQueues: true });
-    // Anything kept from an offline sign-out there is finished now, or the instance stays; a session that could not
-    // be read, or a sign-out nothing heard nor kept, may still be live there, so the instance stays too
-    // (src/lib/switcher.ts `removalOutcome`).
-    const outcome = removalOutcome(session, await finishLeftover(clients.server));
+    // src/lib/switcher.ts `removeWith`: an unfinished sign-out recorded there is retried first; a stuck one is
+    // recorded; anything kept from offline is finished; the row goes last, never the last one. Its unsent changes stay
+    // until the instance is gone: a removal refused keeps everything it had.
+    const outcome = await removeWith({
+      cookie: () => clients.authClient.getCookie(),
+      signOut: () => signOutInstance(instance, signOutShown, { keepQueues: true }),
+      finishLeftover: () => finishLeftover(clients.server),
+      readUnfinished: async () => parseUnfinished(await SecureStore.getItemAsync(key)),
+      writeUnfinished: (record) => SecureStore.setItemAsync(key, JSON.stringify(record)),
+      clearUnfinished: () => SecureStore.deleteItemAsync(key),
+      sessionLive: async (cookie) => {
+        const live = await finish.session(cookie).catch(() => null);
+        return live === null ? null : live !== false;
+      },
+      signOutWith: (cookie) => finish.signOut(cookie).catch(() => false),
+      removeRow: () => instances.removeUnlessLast(id),
+    });
     if (outcome !== "removed") return outcome;
-    // Decided on the stored list, in turn with every other change: never the last one.
-    if ((await instances.removeUnlessLast(id)) !== "removed") return "failed";
     await SecureStore.deleteItemAsync(clients.storage.handle).catch(() => {});
     await dropQueues(clients.pendingFiles).catch(() => {});
     board.forget(id);

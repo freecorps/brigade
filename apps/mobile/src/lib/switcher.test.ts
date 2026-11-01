@@ -3,6 +3,9 @@ import { DEFAULT_INSTANCE, type Instances } from "./instances";
 import { FREECORPS_BRIGADE, FREECORPS_RELAY } from "./relay";
 import {
   alreadyChoices,
+  parseUnfinished,
+  removeWith,
+  type RemovalDeps,
   backgroundSignOut,
   instanceBoard,
   shownSignOut,
@@ -327,6 +330,90 @@ test("already signed in: a way on whether the session's instance is listed or no
     full: false,
     signOutFirst: true,
   });
+});
+
+/** An instance on the server and the phone, for removing it: what each step answers, and what was stored. */
+function removalWorld() {
+  const world = {
+    cookie: "better-auth.session_token=s1",
+    signOut: "unknown" as "kept" | "none" | "unknown",
+    leftover: "none" as "none" | "finished" | "pending",
+    unfinished: null as string | null,
+    live: true as boolean | null,
+    heard: false,
+    rows: 2,
+    retried: [] as string[],
+  };
+  const deps: RemovalDeps = {
+    cookie: async () => world.cookie,
+    signOut: async () => {
+      // The client forgets the stored session whatever the server answers.
+      const answer = world.cookie === "" ? "none" : world.signOut;
+      world.cookie = "";
+      return answer;
+    },
+    finishLeftover: async () => world.leftover,
+    readUnfinished: async () => parseUnfinished(world.unfinished),
+    writeUnfinished: async (record) => {
+      world.unfinished = JSON.stringify(record);
+    },
+    clearUnfinished: async () => {
+      world.unfinished = null;
+    },
+    sessionLive: async () => world.live,
+    signOutWith: async (cookie) => {
+      world.retried.push(cookie);
+      return world.heard;
+    },
+    removeRow: async () => (world.rows > 1 ? ((world.rows -= 1), "removed") : "last"),
+  };
+  return { world, deps };
+}
+
+test("a stuck sign-out is recorded: a second Remove retries it rather than drop the row", async () => {
+  const { world, deps } = removalWorld();
+  // First Remove: nothing heard the sign-out, nothing kept it; the client forgot its cookie all the same.
+  expect(await removeWith(deps)).toBe("failed");
+  expect(world.cookie).toBe("");
+  expect(parseUnfinished(world.unfinished)).toEqual({ cookie: "better-auth.session_token=s1" });
+  expect(world.rows).toBe(2);
+  // Second Remove, still offline: no session on the client, no leftover, but the record says it may be live.
+  world.live = null;
+  expect(await removeWith(deps)).toBe("failed");
+  expect(world.rows).toBe(2);
+  // Online, the server still knows it and hears the retried sign-out now: cleared, and removed.
+  world.live = true;
+  world.heard = true;
+  expect(await removeWith(deps)).toBe("removed");
+  expect(world.retried).toEqual(["better-auth.session_token=s1"]);
+  expect(world.unfinished).toBeNull();
+  expect(world.rows).toBe(1);
+});
+
+test("an unfinished sign-out whose session the server no longer knows is done", async () => {
+  const { world, deps } = removalWorld();
+  world.unfinished = JSON.stringify({ cookie: "better-auth.session_token=old" });
+  world.cookie = "";
+  world.live = false;
+  expect(await removeWith(deps)).toBe("removed");
+  expect(world.retried).toEqual([]);
+  expect(world.unfinished).toBeNull();
+});
+
+test("a record that cannot be read, or has nothing to retry with, keeps the instance", async () => {
+  const { world, deps } = removalWorld();
+  world.unfinished = "not json";
+  expect(await removeWith(deps)).toBe("failed");
+  const locked = { ...deps, readUnfinished: () => Promise.reject(new Error("locked")) };
+  world.unfinished = null;
+  expect(await removeWith(locked)).toBe("failed");
+  expect(world.rows).toBe(2);
+  // A clean sign-out with nothing left: removed, never the last.
+  world.signOut = "kept";
+  world.cookie = "better-auth.session_token=s2";
+  expect(await removeWith(deps)).toBe("removed");
+  world.cookie = "x";
+  expect(await removeWith(deps)).toBe("failed");
 });
 
 test("the board tells its readers only of changes", () => {

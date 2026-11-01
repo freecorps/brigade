@@ -35,6 +35,7 @@ describe("an install from before several instances", () => {
       workspaces: PHONE_WORKSPACES_KEY,
       workspace: WORKSPACE_KEY,
       handle: "brigade.handle",
+      unfinished: "brigade.unfinished",
     });
   });
 

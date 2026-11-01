@@ -45,7 +45,11 @@ export function withDeadline<T>(ms: number, run: (signal: AbortSignal) => Promis
       reject(new Error("Timed out"));
     }, ms);
   });
-  return Promise.race([run(abort.signal), late]).finally(() => clearTimeout(timer));
+  const running = run(abort.signal);
+  // The loser of the race (an aborted fetch rejecting after the deadline) is nobody's to handle: no unhandled
+  // rejection. The race still sees `running`'s own outcome when it wins.
+  running.catch(() => {});
+  return Promise.race([running, late]).finally(() => clearTimeout(timer));
 }
 
 /**

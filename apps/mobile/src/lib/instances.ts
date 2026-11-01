@@ -37,6 +37,8 @@ export type InstanceStorage = {
   workspace: string;
   /** The relay handle (src/lib/relay.ts `HandleRecord`). */
   handle: string;
+  /** A sign-out nobody heard nor kept (src/lib/switcher.ts `UnfinishedSignOut`), which removing it retries. */
+  unfinished: string;
 };
 
 export function instanceStorage(id: string): InstanceStorage {
@@ -47,6 +49,7 @@ export function instanceStorage(id: string): InstanceStorage {
       workspaces: PHONE_WORKSPACES_KEY,
       workspace: WORKSPACE_KEY,
       handle: "brigade.handle",
+      unfinished: "brigade.unfinished",
     };
   }
   return {
@@ -54,6 +57,7 @@ export function instanceStorage(id: string): InstanceStorage {
     workspaces: `brigade.${id}.workspaces`,
     workspace: `brigade_${id}_workspace`,
     handle: `brigade.${id}.handle`,
+    unfinished: `brigade.${id}.unfinished`,
   };
 }
 

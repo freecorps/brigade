@@ -311,6 +311,78 @@ export function removalOutcome(
 }
 
 /**
+ * A sign-out that was neither heard by the server nor kept to finish later, recorded per instance in secure storage
+ * with the session it was for, so the next Remove does not take "no session here" (the client forgot it) for "signed
+ * out": it tries that sign-out again first.
+ */
+export type UnfinishedSignOut = { cookie: string };
+
+export function parseUnfinished(raw: string | null): UnfinishedSignOut | null {
+  if (raw === null) return null;
+  try {
+    const value = JSON.parse(raw) as { cookie?: unknown };
+    return { cookie: typeof value.cookie === "string" ? value.cookie : "" };
+  } catch {
+    // Something is there: treated as an unfinished sign-out with nothing to retry with.
+    return { cookie: "" };
+  }
+}
+
+export type RemovalDeps = {
+  /** The stored session's cookie before signing out (`""` when none; throws when it cannot be read). */
+  cookie: () => Promise<string>;
+  /** Signs out the way the account section does (src/components/session.tsx `signOutInstance`). */
+  signOut: () => Promise<"kept" | "none" | "unknown">;
+  /** Finishes the sign-outs kept from offline at that instance (src/lib/sign-out.ts `finishSignOut`). */
+  finishLeftover: () => Promise<"none" | "finished" | "pending">;
+  /** The unfinished sign-out recorded there (`parseUnfinished`); throws when storage cannot be read. */
+  readUnfinished: () => Promise<UnfinishedSignOut | null>;
+  writeUnfinished: (record: UnfinishedSignOut) => Promise<void>;
+  clearUnfinished: () => Promise<void>;
+  /**
+   * Whether the server still knows `cookie`'s session: false when it does not (expired, revoked: nothing left to
+   * sign out), null when it could not be asked.
+   */
+  sessionLive: (cookie: string) => Promise<boolean | null>;
+  /** `/sign-out` with `cookie` and the phone's device id; true when the server answered. */
+  signOutWith: (cookie: string) => Promise<boolean>;
+  /** The member's Remove on the stored list (src/lib/instances.ts `removeUnlessLast`). */
+  removeRow: () => Promise<"removed" | "last">;
+};
+
+/**
+ * Removing an instance (RFC 0015 section 5 "Removing one"): an unfinished sign-out recorded there is tried again
+ * first (gone on the server, or heard now: cleared; otherwise the instance stays). Then the sign-out; one stuck
+ * (`unknown` with a session read) is recorded with its cookie, so a second Remove, which finds the client signed out,
+ * still knows. Then the kept sign-outs are finished, and the row goes only when all of it is done
+ * (`removalOutcome`), on the stored list (never the last). What is deleted after (handle, queues) is the caller's.
+ */
+export async function removeWith(deps: RemovalDeps): Promise<"removed" | "kept" | "failed"> {
+  let unfinished: UnfinishedSignOut | null;
+  try {
+    unfinished = await deps.readUnfinished();
+  } catch {
+    return "failed";
+  }
+  if (unfinished) {
+    const live = unfinished.cookie === "" ? null : await deps.sessionLive(unfinished.cookie);
+    const done = live === false || (live === true && (await deps.signOutWith(unfinished.cookie)));
+    if (!done) return "failed";
+    await deps.clearUnfinished();
+  }
+  const cookie = await deps.cookie().catch(() => null);
+  const session = await deps.signOut();
+  if (session === "unknown") {
+    // Stuck with a session read: recorded, so the next Remove tries this sign-out again rather than drop the row.
+    if (cookie) await deps.writeUnfinished({ cookie }).catch(() => {});
+    return "failed";
+  }
+  const outcome = removalOutcome(session, await deps.finishLeftover());
+  if (outcome !== "removed") return outcome;
+  return (await deps.removeRow()) === "removed" ? "removed" : "failed";
+}
+
+/**
  * What the board holds for every instance but the active one, published by each background instance
  * (src/components/session.tsx `BackgroundInstance`), so the switcher shows their paging without a socket of its own.
  */

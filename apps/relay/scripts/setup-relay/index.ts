@@ -20,6 +20,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
+  childEnv,
   setupRelay,
   Stop,
   type Choice,
@@ -157,12 +158,10 @@ function run(command: Command): Promise<{ code: number; stdout: string; stderr: 
     ".bin",
     command.tool,
   );
-  // Not this script's `--conditions=@freecorps/source` (vite.config.ts): wrangler and vp run as they do by hand.
-  const { NODE_OPTIONS: _ours, ...inherited } = process.env;
   return new Promise((done, fail) => {
     const child = spawn(bin, command.args, {
       cwd: command.cwd,
-      env: { ...inherited, ...command.env },
+      env: childEnv(process.env, command.env),
       stdio: [
         command.input === undefined ? "inherit" : "pipe",
         command.capture ? "pipe" : "inherit",

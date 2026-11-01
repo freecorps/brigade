@@ -866,6 +866,19 @@ function replacedRelaySecrets(existing: Set<string>, switched: boolean): Record<
   return removed;
 }
 
+/**
+ * The environment of a command this script starts. Not this script's `--conditions=@freecorps/source`
+ * (vite.config.ts): wrangler and vp run as they do by hand. Nor a CLOUDFLARE_ENV left in the shell: the environment
+ * is `--env`'s alone, passed per command, so a production run never builds or deploys the dev config.
+ */
+export function childEnv(
+  parent: NodeJS.ProcessEnv,
+  extra?: Record<string, string>,
+): NodeJS.ProcessEnv {
+  const { NODE_OPTIONS: _ours, CLOUDFLARE_ENV: _shell, ...inherited } = parent;
+  return { ...inherited, ...extra };
+}
+
 function bindingSource(env: Environment): string {
   return env === "production"
     ? "apps/api/vite.config.ts PRODUCTION_BINDINGS"

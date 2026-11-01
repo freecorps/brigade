@@ -6,6 +6,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { generateInstanceKey, importInstanceKey } from "@freecorps/brigade-push/instance";
 import { describe, expect, test } from "vite-plus/test";
 import {
+  childEnv,
   setupRelay,
   Stop,
   TERMS_VERSION,
@@ -912,5 +913,20 @@ describe("an own relay that stops halfway keeps paging", () => {
       "RELAY_ADMIN_TOKEN",
       "RELAY_SEND_TOKEN",
     ]);
+  });
+});
+
+describe("the commands it starts", () => {
+  test("never inherit the shell's CLOUDFLARE_ENV or this script's NODE_OPTIONS; --env alone picks the config", () => {
+    const shell = {
+      PATH: "/bin",
+      CLOUDFLARE_ENV: "dev",
+      NODE_OPTIONS: "--conditions=@freecorps/source",
+    } as unknown as NodeJS.ProcessEnv; // the Worker's own env types augment ProcessEnv
+    expect(childEnv(shell)).toEqual({ PATH: "/bin" });
+    expect(childEnv(shell, { CLOUDFLARE_ENV: "dev" })).toEqual({
+      PATH: "/bin",
+      CLOUDFLARE_ENV: "dev",
+    });
   });
 });

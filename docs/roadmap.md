@@ -604,5 +604,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
       contact confirmed by email) or the company's own; which relay is in use shown on the dashboard and in the app;
       our instance and the apps in the field moved off raw tokens. Before the store release.
 - [ ] App Store / Play Store release (after CLA is in place)
+  - [x] iOS production builds from the Mobile workflow go to TestFlight (`eas submit`, App Store Connect app
+        6829554691) when the `ASC_API_KEY_P8`, `ASC_API_KEY_ID` and `ASC_API_ISSUER_ID` secrets exist
+  - Left: the App Store release itself and its listing; Google Play submission (a Play service account in
+    `eas.json`)
 - [ ] Public site + docs (en, pt-BR); contribution guide; community translations
 - [ ] More chat providers (Teams, Discord, Mattermost), UnifiedPush

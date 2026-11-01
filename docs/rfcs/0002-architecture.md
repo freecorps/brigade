@@ -469,7 +469,8 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     deploy).
   - `.github/workflows/mobile.yml`: when the app or a package it bundles changed, per platform, an EAS Update to the
     `production` channel if a build with the same native fingerprint (the runtime version) was made before, else a
-    new production build with `eas build --local` on GitHub's runners, kept as a run artifact (no EAS build credits).
+    new production build with `eas build --local` on GitHub's runners, kept as a run artifact (no EAS build credits);
+    a new iOS build goes on to TestFlight with `eas submit` when the App Store Connect API key secrets are set.
   - `.github/workflows/release-sdk.yml`: `@freecorps/brigade-sdk` to npm when its version is not published yet and
     its CHANGELOG heading is no longer "(unreleased)" (packages/sdk README "Releasing"). The other packages are not
     published.

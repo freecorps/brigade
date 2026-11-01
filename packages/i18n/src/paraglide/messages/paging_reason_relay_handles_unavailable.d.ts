@@ -5,7 +5,7 @@ export type Paging_Reason_Relay_Handles_UnavailableInputs = {};
 /**
 * | output |
 * | --- |
-* | "The push relay can't open its phone handles, so phones registered through the relay can't be paged." |
+* | "The push relay can't page phones registered through it (it predates them, or its handle keys aren't set), so those phones can't be paged." |
 *
 * @param {Paging_Reason_Relay_Handles_UnavailableInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

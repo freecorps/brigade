@@ -542,7 +542,9 @@ export function pagingStatus(
   if (times.fcm === "error") reasons.push("fcm_failing");
   if (times.d1 === "error") reasons.push("d1_failing");
   if (reasons.length > 0) return { status: "degraded", reasons };
-  return { status: lastProvedAt === null ? "unknown" : "ok", reasons };
+  // A relay not known yet (every proof so far met only its limits, `relayCheck`) proves nothing: the beat pinged
+  // nothing either, so the dashboard and the external check agree.
+  return { status: lastProvedAt === null || relay === null ? "unknown" : "ok", reasons };
 }
 
 /**

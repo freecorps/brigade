@@ -164,6 +164,8 @@ function publicOrigin(raw: string | undefined, whole = false): string | undefine
   } catch {
     return undefined;
   }
+  // `GET /config` is public and cached: a link with credentials in it is left out, never served.
+  if (whole && (url.username || url.password)) return undefined;
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
   if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) return undefined;
   return whole ? url.href : url.origin;

@@ -383,8 +383,8 @@ no deeper check (APNs, FCM, D1) failed: a refused key or account at once, a tran
 read) only on the 3rd proved beat in a row (`TRANSIENT_FAILURES_TO_DEGRADE`). With `RELAY_INSTANCE_KEY` it asks the
 relay's signed `GET /v1/health?deep=1` instead (RFC 0015): `401` is `relay_bad_signature` (a key that does not read
 too, without asking), `403` `relay_instance_unregistered` or `relay_instance_revoked`, `429` `relay_rate_limited`, an
-answer with `handles: false` `relay_handles_unavailable`; a relay without `/v1` (`404`) falls back to the send token's
-check when there is one. With the send token set too, its check (`POST /send`, no body) runs beside the signed one
+answer with `handles: false` `relay_handles_unavailable`; a relay without `/v1` (`404`) is `relay_handles_unavailable`, with the send
+token's old check for the providers (and its reasons) when there is one. With the send token set too, its check (`POST /send`, no body) runs beside the signed one
 and both reasons count, since raw-token phones still page through `/send`. `429` counts only from its 3rd proved beat
 in a row (the relay limits the signed check per caller IP, and instances on Workers may share egress addresses, Q28). The external check
 (any service or self-hosted checker that alerts on a missed URL ping; period 1 minute, grace about 5) pages the

@@ -325,7 +325,7 @@ The address-only QR (`brigade://connect?server=<origin>`) stays for an instance 
 - **The watchdog** asks the signed `GET /v1/health?deep=1` when the instance key is set: `relay_bad_signature` (also
   for a key that does not read), `relay_instance_unregistered`, `relay_instance_revoked`, `relay_rate_limited` and
   `relay_handles_unavailable` (the relay answers `handles: false`), each but the limits degrading at once; a relay without `/v1`
-  falls back to the send token's check. With `RELAY_SEND_TOKEN` set too, the send token's cheap check runs beside it
+  is `relay_handles_unavailable` too, with the send token's old check for the providers and the raw-token phones. With `RELAY_SEND_TOKEN` set too, the send token's cheap check runs beside it
   and both reasons count (section 9: most phones still page through `/send`). `rate_limited` degrades only on the 3rd
   beat in a row: the signed check is limited per caller IP (`HEALTH_LIMIT`), and instances on Workers may share
   Cloudflare's egress addresses (Q28). The relay has no pending state to answer (registration completes with the

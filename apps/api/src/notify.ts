@@ -479,7 +479,7 @@ function providersOf(body: unknown): { apns: BeatCheck; fcm: BeatCheck } | undef
  * Whether a page could get past this Worker right now, and on to the push providers. With an instance key
  * (`RELAY_INSTANCE_KEY`, RFC 0015) the signed `GET /v1/health?deep=1` (`signedRelayHealth`), and beside it the send
  * token's cheap check when `RELAY_SEND_TOKEN` is set too (`sendToken`); a relay without `/v1`
- * falls back to the send token's check when there is one. Otherwise `GET /health?deep=1` with the send token
+ * is `handles_unavailable`, with the send token's old check (`sendToken`) when there is one. Otherwise `GET /health?deep=1` with the send token
  * (apps/relay src/deep-health.ts): `401` is a refused token (a rotated or mistyped `RELAY_SEND_TOKEN`); an answer
  * naming `apns` means the relay took the token, and says whether APNs took the relay's provider token and FCM gave it
  * an access token, without a push to anyone. Anything else is a relay not answering as one. A relay from before the
@@ -511,8 +511,26 @@ async function relayHealth(
       env.RELAY_SEND_TOKEN ? relayTokenHealth(env, send) : undefined,
     ]);
     if (signed !== "no_v1") return sendToken === undefined ? signed : { ...signed, sendToken };
-    if (!env.RELAY_SEND_TOKEN) return { relay: "unreachable", ...UNKNOWN_PROVIDERS };
+    // A relay without `/v1` (an older one): raw-token phones page through `/send` as before, which its old check
+    // proves (`sendToken`); phones with a handle alone cannot be paged at all, which that check must not hide.
+    log("relay has no /v1: phones registered with a handle cannot be paged", {});
+    if (!env.RELAY_SEND_TOKEN) return { relay: "handles_unavailable", ...UNKNOWN_PROVIDERS };
+    const legacy = await tokenDeepHealth(env, send);
+    return {
+      relay: "handles_unavailable",
+      apns: legacy.apns,
+      fcm: legacy.fcm,
+      sendToken: legacy.relay,
+    };
   }
+  return tokenDeepHealth(env, send);
+}
+
+/** The send token's deep check (`relayHealth` without an instance key). */
+async function tokenDeepHealth(
+  env: Pick<NotifyEnv, "RELAY" | "RELAY_URL" | "RELAY_SEND_TOKEN">,
+  send: Fetch,
+): Promise<RelayCheck> {
   if (!env.RELAY_SEND_TOKEN || !relayReachable(env)) {
     return { relay: "not_configured", ...UNKNOWN_PROVIDERS };
   }

@@ -258,6 +258,21 @@ describe("GET /config", () => {
     expect(await own.json()).toMatchObject({
       relay: { app: "https://apps.example.com/acme-brigade" },
     });
+    // A link with credentials in it is left out of the public, cached answer.
+    const leaky = await (
+      await under(
+        "open",
+        "/config",
+        {},
+        {
+          ...relay,
+          RELAY_APP_URL: "https://user:secret@apps.example.com/acme-brigade",
+        },
+      )
+    ).json();
+    expect(Reflect.get(Object(leaky), "relay")).toMatchObject({ instance: key.instance });
+    expect(Reflect.get(Object(leaky), "relay")).not.toHaveProperty("app");
+    expect(JSON.stringify(leaky)).not.toContain("secret");
   });
 
   test("after a key rotation, the instance's first id (RELAY_INSTANCE_ID), never the new key's", async () => {

@@ -404,8 +404,14 @@ results (a new monitor is up on its first success).
      token for `FCM_SERVICE_ACCOUNT`, a fresh one each time (each provider gets 3 s, inside the consumer's 5 s) (`not_configured` without it: a relay serving iOS only). A relay from
      before the deep check answers its plain `/health` there; then the consumer falls back to proving the token as
      before (`POST /send` with no body: `400 invalid_body` means accepted, before any APNs call or log), and the
-     providers are `unknown`. Beside it the consumer makes **one cheap D1 read** (`select 1`, 3 s). It reports all of
-     it back to the watchdog (`proved`).
+     providers are `unknown`. **With an instance key** (`RELAY_INSTANCE_KEY`, RFC 0015 sections 3 and 7) the consumer
+     asks the signed `GET /v1/health?deep=1` instead, signed like every `/v1` call (no bearer token): `401` is a
+     signature the relay refuses (a wrong key or `RELAY_INSTANCE_ID`, or a clock more than 5 minutes off), `403` an
+     instance unregistered or revoked, `429` the relay's limits, and an admitted answer carries the same providers plus
+     `handles`. Only when `RELAY_SEND_TOKEN` is set too does the send token's cheap check (`POST /send`, no body) run
+     beside it, for the raw-token phones still paged through `/send` (RFC 0015 section 9); both count. A relay without
+     `/v1` (`404`) is `relay_handles_unavailable`, with the send token's old deep check for the providers. Beside it the
+     consumer makes **one cheap D1 read** (`select 1`, 3 s). It reports all of it back to the watchdog (`proved`).
   4. The watchdog pings `DEAD_MAN_URL` (one `GET`, 5 s timeout) only when that beat is newer than any proved before,
      came back within 2 minutes, the relay took the token, and none of the deeper checks failed: a revoked APNs key,
      an FCM account Google refuses, or a D1 that does not answer stops the pings, so the operators hear of it (a
@@ -438,8 +444,9 @@ results (a new monitor is up on its first success).
   (`pipeline_slow`, which is also why it pinged nothing, so the dashboard and the external check agree); or the relay
   refused the token (`relay_unauthorized`), did not answer (`relay_unreachable`) or is not configured
   (`relay_not_configured`) on the last proof, or, for an instance with a relay key (RFC 0015 section 7), its signed
-  deep check refused the instance (`relay_bad_signature`, `relay_instance_unregistered`, `relay_instance_revoked`,
-  `relay_rate_limited`) or the relay cannot open handles (`relay_handles_unavailable`); or its deeper checks failed as above (at once, or on the 3rd beat in a
+  deep check refused the instance (`relay_bad_signature`, `relay_instance_unregistered`, `relay_instance_revoked`;
+  `relay_rate_limited` only on the 3rd proved beat in a row, as the check is limited per caller IP and instances may
+  share egress addresses, Q28) or the relay cannot page handle phones (`relay_handles_unavailable`); or its deeper checks failed as above (at once, or on the 3rd beat in a
   row): APNs (`apns_failing`), FCM (`fcm_failing`) or the D1 read (`d1_failing`). `unknown` is before the first proof (a new deployment; local runs, where
   the cron only fires by hand). The watchdog itself unreachable is a 503, which the dashboard shows as "couldn't
   check". Each change of status or reasons on a beat or a proof is a `brigade.status_changed` event in the watchdog's

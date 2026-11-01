@@ -5,7 +5,7 @@ export type Paging_Reason_Relay_Bad_SignatureInputs = {};
 /**
 * | output |
 * | --- |
-* | "The push relay refused this instance's key (RELAY_INSTANCE_KEY), so phones registered through the relay can't be paged." |
+* | "The push relay refused this instance's signature: its key (RELAY_INSTANCE_KEY or RELAY_INSTANCE_ID) is wrong, or this server's clock is more than 5 minutes o..." |
 *
 * @param {Paging_Reason_Relay_Bad_SignatureInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

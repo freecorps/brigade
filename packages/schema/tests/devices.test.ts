@@ -365,8 +365,8 @@ describe("device.expireVoip", () => {
 describe("devices with a relay handle", () => {
   const HANDLE = `k1.${"h".repeat(120)}`;
   const OTHER_HANDLE = `k1.${"j".repeat(120)}`;
-  const TAG = "t".repeat(43);
-  const OTHER_TAG = "u".repeat(43);
+  const TAG = `${"t".repeat(42)}A`;
+  const OTHER_TAG = `${"u".repeat(42)}w`;
   const handleArgs = (id: string, overrides: Record<string, unknown> = {}) => ({
     id,
     platform: "ios",
@@ -437,6 +437,8 @@ describe("devices with a relay handle", () => {
       args(deviceId(), { voip: true }),
       handleArgs(deviceId(), { handle: "no-key-id" }),
       handleArgs(deviceId(), { tag: "short" }),
+      // Not canonical: the last character's 2 unused bits are set (the same bytes as a tag ending in "A").
+      handleArgs(deviceId(), { tag: `${"t".repeat(42)}B` }),
       handleArgs(deviceId(), { envelope: 1 }),
     ]) {
       expect(run(store, ana, "device.register", input), JSON.stringify(input)).toMatchObject({
@@ -541,6 +543,13 @@ describe("devices with a relay handle", () => {
     const id = deviceId();
     expect(run(store, ana, "device.register", handleArgs(id, { envelope: 3 })).ok).toBe(true);
     expect(store.get("devices", id)?.envelope).toBe(2);
+    // However far ahead the app is.
+    const later = deviceId();
+    expect(
+      run(store, ana, "device.register", handleArgs(later, { envelope: 1001, tag: OTHER_TAG })).ok,
+    ).toBe(true);
+    expect(store.get("devices", later)?.envelope).toBe(2);
+    expect(store.get("devices", id)?.envelope).toBe(2);
     expect(run(store, ana, "device.register", handleArgs(id, { envelope: 2 }))).toMatchObject({
       ok: false,
       error: { code: "conflict" },
@@ -550,6 +559,22 @@ describe("devices with a relay handle", () => {
         run(store, ana, "device.register", handleArgs(deviceId(), { envelope })),
       ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
     }
+  });
+
+  test("device.expireVoip of a raw PushKit token keeps a handle device ringing through its handle, and says so", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const id = deviceId();
+    run(
+      store,
+      ana,
+      "device.register",
+      handleArgs(id, { pushToken: "a".repeat(64), voipToken: "b".repeat(64), voip: true }),
+    );
+    expect(
+      run(store, NOTIFIER_ACTOR, "device.expireVoip", { id, voipToken: "b".repeat(64) }).ok,
+    ).toBe(true);
+    expect(store.get("devices", id)).toMatchObject({ voipToken: null, voip: true });
+    expect(store.get("member_devices", id)?.voip).toBe(true);
   });
 
   test("device.expireVoip by handle stops the device ringing, unless it registered again since", () => {

@@ -1694,6 +1694,19 @@ export class Pager {
     this.options.storage.sql.exec("delete from page_pending where event_id = ?", eventId);
   }
 
+  /**
+   * Holds a leased page (`overdue`) back until at least `until`: the relay asked for its `Retry-After`, which can be
+   * longer than the lease's `PAGE_LOCAL_RETRY_MS`. Never brings it forward.
+   */
+  postpone(eventId: string, until: number): void {
+    this.options.storage.sql.exec(
+      "update page_pending set due = max(due, ?) where event_id = ?",
+      until,
+      eventId,
+    );
+    this.options.wake(until);
+  }
+
   /** When the next queued page again is due; null with none. */
   replayAt(): number | null {
     const row = this.options.storage.sql

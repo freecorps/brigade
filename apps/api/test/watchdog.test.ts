@@ -973,7 +973,7 @@ describe("the signed deep check (RFC 0015)", () => {
     expect(await stub.health()).toMatchObject({ status: "ok" });
   });
 
-  test("a relay without /v1 falls back to the send token's check, and is unreachable without one", async () => {
+  test("a relay without /v1: the send token's check still runs for raw-token phones, but handle phones are a reason", async () => {
     const { stub, heartbeats, notifyEnv } = watchdog();
     const { beat } = deepBeats(stub, heartbeats, notifyEnv);
     const old: Fetch = async (request) =>
@@ -981,13 +981,49 @@ describe("the signed deep check (RFC 0015)", () => {
         ? Response.json({ error: "not_found" }, { status: 404 })
         : Response.json({ ok: true, ...PROVIDERS });
     await beat(old, { RELAY_INSTANCE_KEY: key.privateKey, DB: env.DB });
-    expect(await stub.health()).toMatchObject({ status: "ok", reasons: [] });
+    // The old deep check took the send token: no reason of its own, but phones with a handle cannot be paged.
+    expect(await stub.health()).toMatchObject({
+      status: "degraded",
+      reasons: ["relay_handles_unavailable"],
+      lastOkAt: null,
+    });
+    // The send token refused too: both.
+    await beat(old, {
+      RELAY_INSTANCE_KEY: key.privateKey,
+      RELAY_SEND_TOKEN: "rotated",
+      DB: env.DB,
+    });
+    await beat(
+      async (request) =>
+        new URL(request.url).pathname.startsWith("/v1/")
+          ? Response.json({ error: "not_found" }, { status: 404 })
+          : Response.json({ error: "unauthorized" }, { status: 401 }),
+      { RELAY_INSTANCE_KEY: key.privateKey, DB: env.DB },
+    );
+    expect((await stub.health()).reasons).toEqual([
+      "relay_unauthorized",
+      "relay_handles_unavailable",
+    ]);
     await beat(old, {
       RELAY_INSTANCE_KEY: key.privateKey,
       RELAY_SEND_TOKEN: undefined,
       DB: env.DB,
     });
-    expect((await stub.health()).reasons).toEqual(["relay_unreachable"]);
+    expect((await stub.health()).reasons).toEqual(["relay_handles_unavailable"]);
+    expect(pings()).toEqual([]);
+  });
+
+  test("a new watchdog whose proofs met only the relay's limits is unknown, as it pinged nothing", async () => {
+    const { stub, heartbeats, notifyEnv } = watchdog();
+    const { beat } = deepBeats(stub, heartbeats, notifyEnv);
+    const limited = signedRelay(() =>
+      Response.json({ error: "rate_limited", limit: "ip" }, { status: 429 }),
+    );
+    for (const n of [1, 2]) {
+      await beat(limited.send, { RELAY_INSTANCE_KEY: key.privateKey, DB: env.DB });
+      expect(await stub.health(), `beat ${n}`).toMatchObject({ status: "unknown", reasons: [] });
+    }
+    expect(pings()).toEqual([]);
   });
 });
 

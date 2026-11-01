@@ -184,9 +184,12 @@ const handle: Validator<string> = (input, path = "") =>
     ? { ok: true, value: input }
     : { ok: false, issues: [{ path, message: "Expected a relay handle" }] };
 
-/** A relay tag: base64url of an HMAC-SHA-256, 43 characters. */
+/**
+ * A relay tag: base64url of an HMAC-SHA-256 (32 bytes), 43 characters, written canonically: the last character carries
+ * 2 unused bits, which must be zero, so one tag has one spelling and `samePushToken` never takes it for two phones.
+ */
 const tag: Validator<string> = (input, path = "") =>
-  typeof input === "string" && /^[A-Za-z0-9_-]{43}$/.test(input)
+  typeof input === "string" && /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(input)
     ? { ok: true, value: input }
     : { ok: false, issues: [{ path, message: "Expected a relay tag" }] };
 
@@ -217,7 +220,7 @@ export const registerDevice = defineMutation({
     // Whether the handle can ring as a call; only with a handle.
     voip: v.omittable(v.boolean()),
     // The newest envelope version the app opens; a later one (3, …) is stored as 2, the newest this instance seals.
-    envelope: v.omittable(v.integer({ min: 2, max: 1000 })),
+    envelope: v.omittable(v.integer({ min: 2, max: Number.MAX_SAFE_INTEGER })),
     publicKey,
     // Whether Critical Alerts are allowed (RFC 0006 "Critical Alerts"). Optional, so apps from before it still
     // register; left out reads as not allowed.
@@ -506,8 +509,10 @@ export const expireVoipToken = defineMutation({
       }
       store.update("devices", args.id, { voipToken: null });
     }
+    // What the device rings through now: a handle device whose raw PushKit token went may still ring by its handle.
     const summary = store.get("member_devices", args.id);
-    if (summary) store.update("member_devices", args.id, { voip: false });
+    const after = store.get("devices", args.id);
+    if (summary && after) store.update("member_devices", args.id, { voip: canRing(after) });
     const event: DeviceVoipCleared = {
       type: "device.voip_cleared",
       subject: args.id,

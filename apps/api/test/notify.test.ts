@@ -3049,6 +3049,33 @@ describe("a page the Queue does not bring", () => {
     expect((await ws.timeline(incident)).map((row) => row.kind)).toEqual(["declared", "escalated"]);
   });
 
+  test("a page the shard sends itself waits out the relay's Retry-After when longer than its minute", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const { event } = await declareInShard(ws);
+    const limited = relay(() =>
+      Response.json(
+        { error: "rate_limited", limit: "instance" },
+        { status: 429, headers: { "Retry-After": "200" } },
+      ),
+    );
+    const before = Date.now();
+    await graceOver(ws, limited.send);
+    expect(limited.requests).toHaveLength(1);
+    const [row] = await pending(ws);
+    expect(row).toMatchObject({ event_id: event.id, tries: 1 });
+    expect(row!.due).toBeGreaterThanOrEqual(before + 200_000);
+    // A Retry-After under the minute leaves the lease as it is.
+    const short = relay(() =>
+      Response.json({ error: "rate_limited" }, { status: 429, headers: { "Retry-After": "5" } }),
+    );
+    const again = Date.now();
+    await graceOver(ws, short.send);
+    const [next] = await pending(ws);
+    expect(next!.due).toBeGreaterThanOrEqual(again + 55_000);
+    expect(next!.due).toBeLessThan(again + 120_000);
+  });
+
   test("a page the Queue brings in time is not sent by the shard", async () => {
     const ws = await workspace();
     await ws.device(bia);

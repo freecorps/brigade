@@ -23,11 +23,16 @@
       "@freecorps/source": "./src/index.ts",
       "default": "./dist/index.mjs"
     },
+    "./instance": {
+      "@freecorps/source": "./src/instance.ts",
+      "default": "./dist/instance.mjs"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
     "exports": {
       ".": "./dist/index.mjs",
+      "./instance": "./dist/instance.mjs",
       "./package.json": "./package.json"
     },
     "access": "public"

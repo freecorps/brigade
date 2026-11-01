@@ -71,6 +71,13 @@ Decided (see the table below). Still open:
   date?
 - Should an instance operator be able to pick another Workers AI model for drafts without a deploy?
 
+## Q27 — Codes to a relay contact address that someone else keeps using up (RFC 0015)
+
+The hosted relay emails a registration code to an instance's contact address, at most 3 an hour and 10 a day per
+address, and 5 requests a minute per IP. Instance ids are free, so someone who knows an address can use up its 10
+codes every day, and its owner has to register with another address or a plus-address until they stop. Is that
+acceptable, or should the daily cap also count per IP or per network, at the cost of a shared office IP's owners?
+
 # Decided
 
 | #   | Question                       | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |

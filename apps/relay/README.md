@@ -3,7 +3,9 @@
 The push relay (RFC 0006): a Cloudflare Worker that forwards encrypted pushes to APNs (iPhones) and FCM (Android). It
 never sees content, only a device token, an envelope sealed with
 [`@freecorps/brigade-push`](../../packages/push/README.md) and an urgency. For now it is spike S1's relay
-([write-up](../../docs/spikes/s1-apns-encryption.md)) plus FCM: no instance registration, handles or rate limits yet.
+([write-up](../../docs/spikes/s1-apns-encryption.md)) plus FCM, and instance registration (RFC 0015, see "Instance
+registration"); no handles or `/v1/send` yet, and so no limit on sends: the per-IP limit covers the instance routes
+only.
 
 | Route                | Response                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -64,6 +66,63 @@ HTTP/1.1, so unlike APNs it also works from `vp dev`.
 4. Set it on the relay as the `FCM_SERVICE_ACCOUNT` secret: the whole JSON text, e.g. in the secrets file passed to
    `wrangler deploy --secrets-file` (as a JSON string value) or with `wrangler secret put FCM_SERVICE_ACCOUNT <
    key.json`. A relay without it still serves iPhones.
+
+## Instance registration
+
+RFC 0015 section 1: each instance has an Ed25519 key pair and an id derived from its first public key
+(`ins_` + 22 base64url characters of its SHA-256). Every `/v1/` call is signed with it: `Brigade-Instance`,
+`Brigade-Key`, `Brigade-Timestamp`, `Brigade-Signature`, made and checked by `signRequest`/`verifyRequest` in
+[`@freecorps/brigade-push`](../../packages/push/src/instance.ts), which documents the signed string (method, path
+with query, instance id, timestamp, body hash). A bad signature is `401 bad_signature`, a missing header `401
+missing_signature`, a timestamp more than 5 minutes off `401 stale_timestamp`. Bodies are JSON, at most 8 KB.
+
+| Route                        | Body                         | Answers                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /v1/instances/contact` | `{ contact }`                | Emails a 6-digit code to `contact` (valid 15 minutes, 5 tries; limits below): `200 { sent, expiresInSeconds }`; `400 invalid_contact`, `409 already_registered`, `429 too_many_codes` (with `Retry-After`), `502 email_failed`, `503 not_configured` without `EMAIL`/`EMAIL_FROM`                                                                                                                                                         |
+| `POST /v1/instances`         | `{ terms, contact, code }`   | Registers the original key: `201 { instance, status, terms, termsCurrent }`, `200` when already registered (and `terms`, if current, is recorded as accepted); `409 terms_outdated { terms }` unless `terms` is `RELAY_TERMS_VERSION`; `400 code_invalid { triesLeft }` or `code_expired`; `403 instance_revoked`                                                                                                                         |
+| `POST /v1/instances/keys`    | `{ add?, proof?, retire? }`  | Signed with a key in the record. Adds a raw public key (base64url, 32 bytes, at most 3 keys, `409 too_many_keys`) with `proof`, the new key's signature over `"brigade add-key\n" + instance id` (`signKeyProof`; `400 invalid_proof`); retires one other than the signer's (`409 cannot_retire_signer`, `400 unknown_key`); a key retired in the last 10 minutes cannot come back (`409 key_recently_retired`): `200 { instance, keys }` |
+| `GET /v1/instances/me`       | none (signed as empty bytes) | `200 { instance, status, terms, termsCurrent }`; `403 instance_unregistered` or `instance_revoked`                                                                                                                                                                                                                                                                                                                                        |
+
+The registry is a Durable Object, `RegistryDO` (`src/registry.ts`): one object per instance holds its record (status,
+keys, terms, contact) and its pending code (hashed with the instance id), and one per contact address (named by the
+SHA-256 of the address) counts the codes sent to it. Each check-and-change (a code compared and its try counted, a
+key added or retired, a registration) is one synchronous call to the object, so parallel requests cannot interleave.
+Keys are compared in one encoding (unpadded base64url of the 32 bytes), however a caller wrote them. An alarm an hour
+after an instance's last code (a day after an address's) deletes an object with no record, and a registered
+instance's spent code.
+
+**Limits on codes.** Instance ids and keys are free, so: per caller IP (`CF-Connecting-IP`), 5 calls a minute on
+every `/v1/instances*` route (`429 rate_limited`, the `CODE_LIMIT` rate limiting binding); per instance, 3 codes an
+hour; per address (lowercased), 3 an hour and 10 a day from every instance together. An instance refused for itself
+(revoked, already registered, over its own limit) costs the address nothing, and a slot is given back when no code
+went (the instance lost a race for its last code, or the email failed). The address limit bounds one address string,
+not a mailbox: plus-addressing and aliases count apart, which the per-IP limit covers.
+
+**Known limit:** since instance ids are free, anyone can use up an address's 10 codes for the day. Its owner may then
+have to register with another address, or a plus-address of the same mailbox, until the day passes; the per-IP limit
+slows such an attacker but does not stop one with many addresses.
+
+A key missing from a cached record is looked up again before it is refused (another isolate may have added it); if
+that lookup fails, the answer is `503 registry_unavailable`.
+
+Every `/v1/` path answers `503 not_configured` without the `REGISTRY` binding, and `503 registry_unavailable` when
+the object cannot be reached: registration and anything that grants a capability fail closed. Only the send path's
+revocation check (`isRevoked`, for `/v1/send` later) fails open, so a registry outage never stops a page. Records that
+exist are cached per isolate for 60 s (a revocation takes up to a minute to apply); a missing one is never cached.
+`/send` and `/health` do not use any of this.
+
+Nothing to create by hand: the binding, its migration and `CODE_LIMIT` are in `wrangler.jsonc` (top level and
+`env.dev`), and the deploy creates the class. `CODE_LIMIT` may be dropped from the config (an own relay, say): the code
+treats it as optional and then limits nothing per IP. For the hosted relay's contact code, the `send_email` binding
+(`"send_email": [{ "name": "EMAIL" }]`) and `EMAIL_FROM`, a bare address on a domain onboarded to Cloudflare Email
+Sending (as `apps/api`), are still to be added; until then `/v1/instances/contact` answers `503 not_configured`.
+`RELAY_TERMS_VERSION` is a var (`draft-2026-11`, RFC 0015 decision D5).
+
+**Closed registration** (`RELAY_REGISTRATION=closed`, a company's own relay): `/v1/instances/contact` answers
+`403 registration_closed`, and so does `POST /v1/instances` for an instance not registered yet (a registered one gets
+its record, `200`). The setup script will register the relay's one instance
+through a closed-mode registration authorized by a relay admin secret, in a later slice; until then a closed relay
+refuses every registration.
 
 ## Configuration
 

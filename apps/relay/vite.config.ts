@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { cloudflare } from "@cloudflare/vite-plugin";
 import { defineConfig } from "vite-plus";
 import { workspaceSource } from "../../vite.workspace.ts";
@@ -7,5 +8,16 @@ import { workspaceSource } from "../../vite.workspace.ts";
 // the deployed Worker was checked against APNs by hand (docs/spikes/s1-apns-encryption.md).
 export default defineConfig(({ mode }) => ({
   plugins: mode === "test" ? [workspaceSource()] : [cloudflare(), workspaceSource()],
+  // `cloudflare:workers` exists only in workerd: the tests get a stand-in for `DurableObject` (src/registry.ts).
+  resolve:
+    mode === "test"
+      ? {
+          alias: {
+            "cloudflare:workers": fileURLToPath(
+              new URL("test/cloudflare-workers.ts", import.meta.url).href,
+            ),
+          },
+        }
+      : {},
   test: { include: ["test/**/*.test.ts"] },
 }));

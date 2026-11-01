@@ -18,12 +18,17 @@ import {
   type ServiceAccount,
 } from "./fcm.ts";
 import { deepHealth } from "./deep-health.ts";
+import { readJson } from "./body.ts";
 import { sendWithin, within } from "./deadline.ts";
+import { instanceRoutes, type InstanceEnv } from "./instances.ts";
+
+export { RegistryDO } from "./registry.ts";
 
 /**
  * Spike S1 relay (RFC 0006): `POST /send` takes a device token and an already encrypted envelope and forwards
- * it to APNs, or to FCM for an Android device (`platform: "android"`). Instance registration, handles and rate limits come later; until then the only caller is whoever
- * holds `RELAY_SEND_TOKEN`.
+ * it to APNs, or to FCM for an Android device (`platform: "android"`). Its only caller is whoever holds
+ * `RELAY_SEND_TOKEN`. `/v1/instances*` registers instances (RFC 0015, src/instances.ts); handles, `/v1/send` and rate
+ * limits come later.
  */
 
 /** The bindings `handle` reads, from the generated `Env`, so tests can pass plain values. */
@@ -41,7 +46,7 @@ export type RelayEnv = Pick<
    * answers an Android send `500 relay_misconfigured`.
    */
   FCM_SERVICE_ACCOUNT?: string;
-};
+} & InstanceEnv;
 
 export type Platform = "ios" | "android";
 const PLATFORMS: readonly Platform[] = ["ios", "android"];
@@ -66,8 +71,6 @@ const KINDS: readonly PushKind[] = ["alert", "call"];
 const ENVIRONMENTS: readonly ApnsEnvironment[] = ["sandbox", "production"];
 /** APNs keeps an undelivered push for at most about 30 days. */
 const MAX_TTL_SECONDS = 30 * 24 * 60 * 60;
-/** A request body far above any valid send: a device token and a sealed 2 KB plaintext. */
-const MAX_BODY_BYTES = 8 * 1024;
 /**
  * How long APNs or FCM gets to answer one send: under the API's own 10 s for the whole call (apps/api
  * `RELAY_TIMEOUT_MS`), token exchange included, so a provider that hangs is a 502 the API can retry, not a call it
@@ -116,6 +119,8 @@ export async function handle(
     return json(health, health.ok ? 200 : 503);
   }
   if (pathname === "/health") return json({ ok: true });
+  // The instance protocol (RFC 0015); `/send` above and below keeps working without its bindings.
+  if (pathname.startsWith("/v1/")) return instanceRoutes(request, env, Date.now());
   if (pathname !== "/send") return json({ error: "not_found" }, 404);
   if (request.method !== "POST")
     return json({ error: "method_not_allowed" }, 405, { Allow: "POST" });
@@ -359,41 +364,6 @@ async function authorized(request: Request, expected: string): Promise<boolean> 
   let diff = 0;
   for (let i = 0; i < x.length; i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
   return diff === 0;
-}
-
-/** Reads at most `MAX_BODY_BYTES`, whether or not the request declares its length. */
-async function readJson(request: Request): Promise<unknown> {
-  if (Number(request.headers.get("Content-Length") ?? "0") > MAX_BODY_BYTES) return null;
-  if (request.body === null) return null;
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_BODY_BYTES) {
-        await reader.cancel();
-        return null;
-      }
-      chunks.push(value);
-    }
-  } catch {
-    // The client's stream broke mid-body: a bad request, not a relay error.
-    return null;
-  }
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    return JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
-    return null;
-  }
 }
 
 function parseReason(text: string): string {

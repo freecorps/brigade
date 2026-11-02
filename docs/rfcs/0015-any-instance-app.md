@@ -352,9 +352,19 @@ version 2 for a device registered with `envelope: 2`, version 1 for any other; t
   handle is deleted only once the list took the removal.
 - **Which relay** is read once per instance and launch; an answer that failed or said nothing is asked again when a
   screen showing it comes into focus or the app comes back to the foreground.
+- **Where they open.** Add an instance, connect, the scanner and an instance's details are root-stack screens outside
+  both guards, so they open signed in or not and stay open while the session under them changes. Both guards name
+  where a hidden screen goes (`redirectTo`: sign-in, or `/` for the tabs). Without it Expo Router sends it to the
+  first route file not hidden in its own sort (groups and index first, then the shortest name), which signed out was
+  `scan`: until the session was read a cold start counts as signed out, so it opened the scanner and, once signed in,
+  stayed there (TestFlight build 22). The launch screen stays up while the session is first read (at most 3 s), so
+  a signed-in launch goes straight to the tabs. A link opened on a cold start lands on connect with nothing under it;
+  leaving it goes to `/`, which is the tabs or sign-in.
 - **Tests:** apps/mobile `instance-address.test.ts` (each answer), `connect-link.test.ts`, `switcher.test.ts`
   (grouping, labels, relays, the notice, on call now, removal rules), `instances.test.ts` (the default instance
-  added back), `plugins/camera-usage.test.ts`.
+  added back), `plugins/camera-usage.test.ts`; `src/routing.test.tsx` (Jest, `expo-router/testing-library`, the real
+  root layout over every route file): cold starts signed in, signed out and from a link, a session that ends or is
+  read again while open, the instance screens from sign-in and from the account section.
 - **Left out:** an unacknowledged page in another instance in the notice (the board has no incidents: each instance
   would need its sync socket open, which only the shown one has); the widget and "I'm on call" across instances; the
   instance's own name (`/config` has none).

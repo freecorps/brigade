@@ -2,11 +2,12 @@ import { getLocale, m, setLocale } from "@freecorps/brigade-i18n";
 import { fontWeight } from "@freecorps/brigade-ui";
 import { useCalendars, useLocales } from "expo-localization";
 import { Stack } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import * as SystemUI from "expo-system-ui";
 import { useEffect, useMemo } from "react";
-import { Session } from "@/components/session";
-import { useIncomingCalls } from "@/hooks/use-incoming-calls";
+import { Session, useSessionView } from "@/components/session";
+import { useAnsweredCallScreen, useIncomingCalls } from "@/hooks/use-incoming-calls";
 import { usePageActions } from "@/hooks/use-page-actions";
 import { usePageTaps } from "@/hooks/use-page-taps";
 import { LocaleContext } from "@/hooks/use-locale";
@@ -17,6 +18,12 @@ import { useSystemColors } from "@/theme/system-colors";
 
 // An incident opened from a page or a link lands above the tabs, so Back goes to the list rather than out of the app.
 export const unstable_settings = { anchor: "(tabs)" };
+
+// The launch screen stays up while the session is first read (LaunchSplash), so a signed-in cold start goes straight
+// to the tabs instead of passing through sign-in's loading state.
+void SplashScreen.preventAutoHideAsync().catch(() => {});
+/** At most this long: a read that hangs shows sign-in's own loading state rather than a frozen launch screen. */
+const SPLASH_HOLD_MS = 3000;
 
 /**
  * A form sheet with its grabber; on Android with Material's rounded top corners (28 dp), which the system's sheet
@@ -57,7 +64,9 @@ export default function RootLayout() {
       <Session>
         {(signedIn) => (
           <>
+            <LaunchSplash />
             <PageTaps />
+            <AnsweredCall />
             <Stack
               key={locale}
               screenOptions={{
@@ -76,8 +85,11 @@ export default function RootLayout() {
                 animation: reducedMotion ? "fade" : "default",
               }}
             >
-              {/* The member's workspace: only with a session, an active workspace and its socket. */}
-              <Stack.Protected guard={signedIn}>
+              {/* The member's workspace: only with a session, an active workspace and its socket. Each guard names
+                where a screen it hides goes. Left out, Expo Router picks the first screen not hidden in its own sort
+                (groups and index, then the shortest name): signed out that was `scan`, so a cold start, signed out
+                until the session was read, opened the scanner and stayed there (RFC 0015, section 5). */}
+              <Stack.Protected guard={signedIn} redirectTo="/sign-in">
                 {/* The sections, in the system tab bar; each tab draws its own header. */}
                 <Stack.Screen name="(tabs)" options={{ headerShown: false, title: "" }} />
                 <Stack.Screen name="incidents/[number]/index" options={{ title: "" }} />
@@ -122,8 +134,8 @@ export default function RootLayout() {
                 />
               </Stack.Protected>
               {/* Signing in, and every state before a member is ready (loading, no workspace, offline), and signing
-                up: sign-in is first, so a guarded route always lands there. */}
-              <Stack.Protected guard={!signedIn}>
+                up; once the member is ready, the tabs. */}
+              <Stack.Protected guard={!signedIn} redirectTo="/">
                 {/* No header: the form heads itself with the app's icon and its title (NativeForm's `brand`), and
                   has nothing to go back to. */}
                 <Stack.Screen
@@ -133,7 +145,8 @@ export default function RootLayout() {
                 <Stack.Screen name="sign-up" options={{ title: m.auth_sign_up_title() }} />
               </Stack.Protected>
               {/* Instances (RFC 0015): open signed in or not, from the sign-in screen, the account section or a
-                dashboard link (`brigade://connect`), and kept open while the instance shown changes under them. */}
+                dashboard link (`brigade://connect`), and kept open while the instance shown changes under them. Never
+                where a guard sends a screen: both guards above name theirs. */}
               <Stack.Screen
                 name="add-instance"
                 options={{
@@ -170,14 +183,37 @@ export default function RootLayout() {
   );
 }
 
+/** Hides the launch screen once the session is first known, or after SPLASH_HOLD_MS; later reads leave it hidden. */
+function LaunchSplash() {
+  const loading = useSessionView().kind === "loading";
+  useEffect(() => {
+    if (!loading) {
+      SplashScreen.hide();
+      return;
+    }
+    const timer = setTimeout(() => SplashScreen.hide(), SPLASH_HOLD_MS);
+    return () => clearTimeout(timer);
+  }, [loading]);
+  return null;
+}
+
 /** Under the session, which it reads: a tapped page opens its incident in its workspace (Android). */
 function PageTaps() {
   usePageTaps();
   return null;
 }
 
-/** Needs the router, so it renders inside the layout rather than running in it. */
+/**
+ * Above the session, so a call answered while it is read or switched is still heard, and once only: the call's
+ * native events reach the call session.
+ */
 function IncomingCalls() {
   useIncomingCalls();
+  return null;
+}
+
+/** Under the session, which it reads: an answered call opens its screen once a member is ready (a cold start). */
+function AnsweredCall() {
+  useAnsweredCallScreen();
   return null;
 }

@@ -180,6 +180,7 @@ the generated folders.
 
 ```bash
 vp test                 # locale, theme, Intl-probe, server URLs, device registration, incident wording, widget snapshot and config plugins (Node)
+vp run test             # those, then src/*.test.tsx in Jest (jest-expo): the root layout's routing, with expo-router/testing-library
 vp run build            # cached expo export of the Android and iOS JS bundles into dist/: proves Metro resolves everything
 ```
 

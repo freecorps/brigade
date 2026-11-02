@@ -7,7 +7,7 @@ import { StatusBar } from "expo-status-bar";
 import * as SystemUI from "expo-system-ui";
 import { useEffect, useMemo } from "react";
 import { Session, useSessionView } from "@/components/session";
-import { useIncomingCalls } from "@/hooks/use-incoming-calls";
+import { useAnsweredCallScreen, useIncomingCalls } from "@/hooks/use-incoming-calls";
 import { usePageActions } from "@/hooks/use-page-actions";
 import { usePageTaps } from "@/hooks/use-page-taps";
 import { LocaleContext } from "@/hooks/use-locale";
@@ -66,6 +66,7 @@ export default function RootLayout() {
           <>
             <LaunchSplash />
             <PageTaps />
+            <AnsweredCall />
             <Stack
               key={locale}
               screenOptions={{
@@ -202,8 +203,17 @@ function PageTaps() {
   return null;
 }
 
-/** Needs the router, so it renders inside the layout rather than running in it. */
+/**
+ * Above the session, so a call answered while it is read or switched is still heard, and once only: the call's
+ * native events reach the call session.
+ */
 function IncomingCalls() {
   useIncomingCalls();
+  return null;
+}
+
+/** Under the session, which it reads: an answered call opens its screen once a member is ready (a cold start). */
+function AnsweredCall() {
+  useAnsweredCallScreen();
   return null;
 }

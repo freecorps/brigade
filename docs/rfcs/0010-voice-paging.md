@@ -73,16 +73,20 @@ the fallback the bot keeps when the audio session cannot start.
 
 ### Fallbacks (paging paths need one)
 
-| Situation                                                                         | What the phone does                                                                           |
-| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Android: full-screen intents not allowed, Telecom refuses, call channel muted     | Page notification on `brigade_pages` (alarm), or on `brigade_calls` if pages are muted        |
-| Android: notifications off                                                        | Nothing can show; the route is `blocked` (report it, below)                                   |
-| iOS: CallKit refuses the call                                                     | Time-sensitive notification with the decrypted page                                           |
-| iOS: the VoIP push cannot be decrypted                                            | Still rings, as "Brigade on-call" with the fallback text                                      |
-| Android: Telecom throws, creates no connection, or the ringing notification fails | The call ends; page notification on `brigade_pages`, or on `brigade_calls` if pages are muted |
-| Nobody answers in 60 s, or the call is declined                                   | The call ends; escalation continues on its own timeout                                        |
+| Situation                                                                         | What the phone does                                                                            |
+| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Android: full-screen intents not allowed, Telecom refuses, call channel muted     | Page notification on `brigade_pages` (alarm), or on `brigade_calls` if pages are muted         |
+| Android: notifications off                                                        | Nothing can show; the route is `blocked` (report it, below)                                    |
+| iOS: CallKit refuses the call                                                     | Time-sensitive notification with the decrypted page                                            |
+| iOS: the VoIP push cannot be decrypted                                            | Still rings, as "Brigade on-call" with the fallback text                                       |
+| Android: Telecom throws, creates no connection, or the ringing notification fails | The call ends; page notification on `brigade_pages`, or on `brigade_calls` if pages are muted  |
+| Nobody answers in 60 s, or the call is declined                                   | The call ends; escalation continues on its own timeout                                         |
+| Answered on a cold start, before the session was read                             | The call screen opens once a member is ready; signed out, or ended first: CallKit/Telecom only |
 
-The Android decision, the fallback channel and the handling of repeated pushes are pure functions in
+The call screen is a signed-in screen (the root layout's guard), so an answered call waits for it
+(`apps/mobile/src/lib/answered-call.ts`): opened at once, a cold start sent it to sign-in and lost it. Meanwhile the
+system's call screen has the call, and 1 on CallKit's keypad still acknowledges; `src/routing.test.tsx` covers
+both cold starts. The Android decision, the fallback channel and the handling of repeated pushes are pure functions in
 `apps/mobile/src/lib/call-route.ts`, tested in CI; the Kotlin and Swift copies mirror them. Every VoIP push is
 reported to CallKit, repeats of a page included. An answered call hangs up natively after 3 minutes; each native
 timer acts only on the call that started it, never on a later call that reuses its id.

@@ -1,0 +1,6 @@
+[install]
+# Bun's isolated linker puts every package's link in node_modules/.bun/node_modules, where TypeScript finds what a
+# declaration imports. apps/mobile's Jest (jest-expo, through jest-environment-jsdom) installs @types/jsdom, which
+# references the DOM lib; Vitest's optional types import `jsdom`, so with it there the DOM's SubtleCrypto, Request
+# and CacheStorage reach apps/api and clash with the Workers types. Nothing outside jest-environment-jsdom uses it.
+hoistPattern = ["*", "!@types/jsdom"]

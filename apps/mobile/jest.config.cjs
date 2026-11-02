@@ -5,6 +5,9 @@
 module.exports = {
   preset: "jest-expo",
   testMatch: ["<rootDir>/src/**/*.test.tsx"],
+  // The first test loads and transforms the whole layout (React Native, Expo Router, the workspace packages): about
+  // 7 s on CI's runners, past Jest's 5 s default. The others take well under a second.
+  testTimeout: 30_000,
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
     // Babel adds its helpers to workspace packages too, which do not depend on them.

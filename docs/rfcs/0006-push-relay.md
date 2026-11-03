@@ -776,7 +776,8 @@ build:
 (Identifiers → the App ID → Additional Capabilities; the App Store Connect API cannot, and the extensions do not need
 it), regenerate the App ID's provisioning profiles (`bunx eas-cli@latest credentials`, or Xcode for local builds),
 set `BRIGADE_CRITICAL_ALERTS=1` where the build runs (the repository variable for the release workflow, which also
-computes the fingerprint with it; the shell for a local or EAS-hosted build), and build. Then check on an iPhone: allow Critical Alerts when asked (or in Settings), sign in, put the
+computes the fingerprint with it; the shell for a local build; the profile's `env` in `eas.json`, or an Expo environment variable, for an
+EAS-hosted build, whose builder never sees the shell), and build. Then check on an iPhone: allow Critical Alerts when asked (or in Settings), sign in, put the
 phone on silent with a Focus on, declare a SEV1 and hear it ring; a SEV2 must stay time-sensitive. Self-hosters with
 their own app build need their own grant from Apple.
 

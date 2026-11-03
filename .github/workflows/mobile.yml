@@ -12,7 +12,8 @@
 #
 # Repository settings: secrets EXPO_TOKEN (an EAS robot token of the freecorps organisation) and GOOGLE_SERVICES_JSON
 # (the Firebase file, apps/mobile/README.md "Android pages"); variable EXPO_PUBLIC_BRIGADE_URL (the hosted
-# dashboard's origin). Nothing ships without them: a build without a server cannot sign in, and an Android one
+# dashboard's origin), and BRIGADE_CRITICAL_ALERTS (`1` once Apple granted Critical Alerts to the app id, RFC 0006).
+# Nothing ships without them: a build without a server cannot sign in, and an Android one
 # without Firebase cannot be paged. Optional secrets ASC_API_KEY_P8 (the .p8 file's contents), ASC_API_KEY_ID and
 # ASC_API_ISSUER_ID: an App Store Connect API key (App Manager role) that submits iOS builds to TestFlight; without
 # all three, iOS builds are only kept as artifacts.
@@ -87,6 +88,10 @@ jobs:
       # register phones with the APNs sandbox, where no page reaches them.
       # The Android job also sets GOOGLE_SERVICES_FILE, in the runner's temp directory: the same path every run.
       BRIGADE_APS_ENVIRONMENT: production
+      # Critical Alerts (RFC 0006): `1` once Apple granted the entitlement to the app's bundle id and its App Store
+      # profile carries it (Freecorps' store app does). A variable, not a constant, so a fork building its own app id
+      # without the grant still builds. Pinned here like the rest: the fingerprint computed here is the build's.
+      BRIGADE_CRITICAL_ALERTS: ${{ vars.BRIGADE_CRITICAL_ALERTS }}
     steps:
       - uses: actions/checkout@v5
         with:

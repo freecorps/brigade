@@ -222,9 +222,12 @@ vp run build            # cached expo export of the Android and iOS JS bundles i
   credentials step. A local build (`mobile:install`) has Xcode create the App ID, but without the App Group: assign
   `group.<BRIGADE_APP_ID>` to `<BRIGADE_APP_ID>.Widget` once in the Developer portal (Identifiers → App Groups →
   Configure), or the build stops on the widget's profile.
-- **Critical Alerts (off):** `BRIGADE_CRITICAL_ALERTS=1` at build time adds the entitlement, asks for Critical Alerts
-  with the notification permission and reports them in `device.register`; SEV1 pages then ring through silent mode
-  on phones that allow them. Leave it unset until Apple grants the entitlement (RFC 0006 "Critical Alerts").
+- **Critical Alerts (store builds):** `BRIGADE_CRITICAL_ALERTS=1` at build time adds the entitlement, asks for
+  Critical Alerts with the notification permission and reports them in `device.register`; SEV1 pages then ring
+  through silent mode on phones that allow them. Apple granted it to `app.freecorps.brigade`: the release workflow
+  sets it from the repository variable `BRIGADE_CRITICAL_ALERTS`. Development, preview and local builds leave it unset, since their
+  profiles may lack it; set it there once the App ID's profiles are regenerated. An app with its own bundle id needs
+  its own grant (RFC 0006 "Critical Alerts").
 - **Pages as calls (spike S6):** the local module `modules/brigade-call` rings a page natively (Android: a
   self-managed `ConnectionService`, a `CallStyle` notification and a full-screen ringing screen; iOS: PushKit and
   CallKit), reads it aloud and takes the ack ("press 1"), and `plugins/incoming-call.ts` adds the `voip` background

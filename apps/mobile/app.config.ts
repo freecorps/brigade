@@ -26,8 +26,9 @@ const APS_ENVIRONMENT =
     : "development";
 
 // Critical Alerts (RFC 0006 "Critical Alerts"): `BRIGADE_CRITICAL_ALERTS=1` adds the entitlement and has the app ask
-// for them. Off by default: Apple has not granted the entitlement to the team yet, and a profile without it fails
-// the build. Without it, pages are time-sensitive, as on every build so far.
+// for them. Apple granted it to `app.freecorps.brigade`; store builds set it (the repository variable
+// .github/workflows/mobile.yml passes on). Off by default: a profile without the entitlement fails the build, and an app with
+// its own bundle id needs its own grant. Without it, pages are time-sensitive.
 const CRITICAL_ALERTS = process.env.BRIGADE_CRITICAL_ALERTS === "1";
 
 // Android pages through FCM (RFC 0006): the Firebase project's `google-services.json`, from outside the repository.

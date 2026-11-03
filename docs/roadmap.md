@@ -403,7 +403,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Tried on an iPhone: the widget on the home and lock screens, and pages as time-sensitive notifications.
   - Done since: Android pages on the "Pages" channel (alarm sound, vibration), less urgent pushes on "Incident
     updates" (RFC 0006 "Android pages").
-  - Left: Apple's Critical Alerts grant (Q8), then turning it on and trying it; an Android widget; asking for Do Not
+  - Done since: Apple's Critical Alerts grant (Q8), on in store builds. Left: trying it on an iPhone; an Android widget; asking for Do Not
     Disturb access on Android (the pages channel already asks DND to let it through once granted).
 - [x] Delivery receipts and "why wasn't I paged" debugging view
   - Each page is a row per device (`deliveries`, synced to members): planned, handed to the relay, accepted by

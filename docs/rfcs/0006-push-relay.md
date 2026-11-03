@@ -738,19 +738,20 @@ Drivers: `relay` (default), `apns-direct`, `fcm-direct` (own app build), `unifie
 
 ## Paging semantics per platform
 
-| Need                      | iOS                                             | Android                                           |
-| ------------------------- | ----------------------------------------------- | ------------------------------------------------- |
-| Break through Focus / DND | `interruption-level: time-sensitive`            | High-importance channel + DND access (user grant) |
-| Ring on silent            | Critical Alerts (built, behind the entitlement) | Alarm-sound channel                               |
-| Act from the notification | Category actions: Ack (built) / Escalate        | Action buttons                                    |
-| Collapse repeats          | `apns-collapse-id`                              | Notification `tag`                                |
-| Full-screen alarm         | n/a                                             | `USE_FULL_SCREEN_INTENT` (Play policy review)     |
+| Need                      | iOS                                      | Android                                           |
+| ------------------------- | ---------------------------------------- | ------------------------------------------------- |
+| Break through Focus / DND | `interruption-level: time-sensitive`     | High-importance channel + DND access (user grant) |
+| Ring on silent            | Critical Alerts (store builds)           | Alarm-sound channel                               |
+| Act from the notification | Category actions: Ack (built) / Escalate | Action buttons                                    |
+| Collapse repeats          | `apns-collapse-id`                       | Notification `tag`                                |
+| Full-screen alarm         | n/a                                      | `USE_FULL_SCREEN_INTENT` (Play policy review)     |
 
 ## Critical Alerts
 
-Built and off: Freecorps has applied for `com.apple.developer.usernotifications.critical-alerts` and not been
-granted it yet (open question Q8). Everything that does not need the entitlement is in place, so turning it on is a
-build flag:
+Built and on: Apple granted `com.apple.developer.usernotifications.critical-alerts` to the App ID
+`app.freecorps.brigade` (decided Q8), and store builds set the build flag (the repository variable
+`BRIGADE_CRITICAL_ALERTS`, which `.github/workflows/mobile.yml` passes to the build). Off by default for any other
+build:
 
 - **The app.** `BRIGADE_CRITICAL_ALERTS=1` at build time (app.config.ts) adds the entitlement to the app
   (`plugins/notification-service.ts`) and has it ask for `.criticalAlert` with the notification permission. Unset
@@ -771,10 +772,11 @@ build flag:
 - **The relay can raise urgency.** Like `interruption-level`, `critical` is in clear in the payload the relay builds;
   the hardening above (urgency sealed in the plaintext, the extension deciding the level) covers it too.
 
-**Once Apple grants it:** enable Critical Alerts on the App ID `app.freecorps.brigade` in the developer portal (the
-extensions do not need it), regenerate the provisioning profiles (`bunx eas-cli@latest credentials`, or Xcode for
-local builds), set `BRIGADE_CRITICAL_ALERTS=1` in the EAS build profiles' `env` (eas.json) and in local build
-environments, and build. Then check on an iPhone: allow Critical Alerts when asked (or in Settings), sign in, put the
+**Turning it on (done for the store app):** enable Critical Alerts on the App ID in the developer portal
+(Identifiers → the App ID → Additional Capabilities; the App Store Connect API cannot, and the extensions do not need
+it), regenerate the App ID's provisioning profiles (`bunx eas-cli@latest credentials`, or Xcode for local builds),
+set `BRIGADE_CRITICAL_ALERTS=1` where the build runs (the repository variable for the release workflow, which also
+computes the fingerprint with it; the shell for a local or EAS-hosted build), and build. Then check on an iPhone: allow Critical Alerts when asked (or in Settings), sign in, put the
 phone on silent with a Focus on, declare a SEV1 and hear it ring; a SEV2 must stay time-sensitive. Self-hosters with
 their own app build need their own grant from Apple.
 

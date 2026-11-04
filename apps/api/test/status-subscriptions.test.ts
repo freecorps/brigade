@@ -1521,9 +1521,9 @@ describe("the page", () => {
       "@container uptime (max-width:17rem){.scale{gap:.5rem}.scale::before,.scale::after{display:none}}",
     );
     // Zoomed text (a large root font) leaves the labels no room beside each other: the percentage
-    // takes a line of its own instead of breaking one glyph per line.
+    // takes a line of its own instead of breaking one glyph per line, and "today" stays at the bar's end.
     expect(html).toContain(
-      "@container uptime (max-width:13rem){.scale{flex-wrap:wrap}.scale .pct{order:6;flex-basis:100%}}",
+      "@container uptime (max-width:13rem){.scale{flex-wrap:wrap}.scale .to{margin-left:auto}.scale .pct{order:6;flex-basis:100%}}",
     );
   });
 

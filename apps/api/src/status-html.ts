@@ -311,7 +311,7 @@ ${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.group>summary .c-${s} .dot
 .scale .from,.scale .to{flex:none;white-space:nowrap}
 .scale .pct{min-width:0;text-align:center;overflow-wrap:anywhere}
 @container uptime (max-width:17rem){.scale{gap:.5rem}.scale::before,.scale::after{display:none}}
-@container uptime (max-width:13rem){.scale{flex-wrap:wrap}.scale .pct{order:6;flex-basis:100%}}
+@container uptime (max-width:13rem){.scale{flex-wrap:wrap}.scale .to{margin-left:auto}.scale .pct{order:6;flex-basis:100%}}
 .scale .short{display:none}
 @media (max-width:39.99rem){.bars span:nth-child(-n+${UPTIME_DAYS - PHONE_UPTIME_DAYS}){display:none}.scale .long{display:none}.scale .short{display:inline}}
 .window{color:var(--muted);font-size:.875rem;margin-top:.25rem}

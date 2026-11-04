@@ -261,6 +261,21 @@
       }
     }
   ],
+  "incidents_show_lower": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Mostrar {countFormatted} incidente de severidade menor",
+        "countPlural=*": "Mostrar {countFormatted} incidentes de severidade menor"
+      }
+    }
+  ],
+  "incidents_hide_lower": "Ocultar incidentes de severidade menor",
   "declare_open": "Declarar incidente",
   "declare_title_invalid": "O título precisa de texto visível: só caracteres invisíveis não contam.",
   "sync_refused": "Não carregado",

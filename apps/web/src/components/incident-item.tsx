@@ -10,7 +10,7 @@ import {
 import { Link, useRouter } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ChevronDownIcon, ClockIcon, CloudUploadIcon } from "lucide-react";
-import type { MouseEvent, ReactNode } from "react";
+import { useState, type AnimationEvent, type MouseEvent, type ReactNode } from "react";
 import { SeverityBadge, STATUS_ICONS, StatusBadge } from "@/components/incident-badges";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,12 +34,14 @@ export const INCIDENT_COLUMNS =
 const UNSAVED = "rounded-sm outline-1 outline-offset-2 outline-current outline-dashed";
 
 /**
- * One incident. Phones stack number and time, the title, then the two menus; from `md` the number, title,
- * severity and status sit in fixed columns so the badges line up down the list.
+ * One incident. Below `md` the number and the two menus share the first line, then the title, then when it was
+ * declared (as from `md`, under the title); from `md` the number, title, severity and status sit in fixed columns
+ * so the badges line up down the list.
  */
 export function IncidentItem({
   row,
   arrived = false,
+  folded = false,
   pending,
   online,
   locale,
@@ -52,6 +54,8 @@ export function IncidentItem({
   row: IncidentRow;
   /** Arrived while the list was on screen: it settles in rather than appearing. */
   arrived?: boolean;
+  /** Folded behind the list's "Show N lower-severity incidents" toggle: not drawn on a phone, drawn from `sm`. */
+  folded?: boolean;
   /** Which of its changes the shard has not confirmed yet. */
   pending: { any: boolean; status: boolean; severity: boolean };
   online: boolean;
@@ -68,22 +72,32 @@ export function IncidentItem({
   // The shard's clock can be a little ahead of the last tick: never say "in 3 seconds".
   const declared = formatAge(Math.min(row.declaredAt, now), now, locale);
   const PendingIcon = online ? CloudUploadIcon : ClockIcon;
+  // The arrival cue plays once: off when its highlight ends, so a re-sort or an unfold (which re-insert the row)
+  // never plays it again. Under reduced motion nothing plays, and nothing needs turning off.
+  const [cue, setCue] = useState(arrived);
+  const onAnimationEnd = (event: AnimationEvent<HTMLLIElement>) => {
+    // React bubbles the menus' own animations up from their portals: only the row's highlight counts.
+    if (event.target === event.currentTarget) setCue(false);
+  };
   return (
     // `id` and `tabIndex`: a monitor's "Open INC-n" link scrolls here and focuses the row.
     <li
       id={`incident-${row.id}`}
       tabIndex={-1}
       data-incident={row.id}
+      data-folded={folded || undefined}
+      onAnimationEnd={cue ? onAnimationEnd : undefined}
       className={cn(
         // The title's link is stretched over the row (as on the services list); the two menus sit above it.
-        "relative scroll-mt-4 outline-none focus-visible:ring-3 focus-visible:ring-ring focus-visible:ring-inset grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 px-4 py-3 transition-colors duration-150 ease-out has-[a[data-incident-link]:hover]:bg-muted/50 has-[a[data-incident-link]:focus-visible]:ring-3 has-[a[data-incident-link]:focus-visible]:ring-ring has-[a[data-incident-link]:focus-visible]:ring-inset sm:px-6",
+        "relative scroll-mt-4 outline-none focus-visible:ring-3 focus-visible:ring-ring focus-visible:ring-inset grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-4 py-3 transition-colors md:gap-y-1.5 duration-150 ease-out has-[a[data-incident-link]:hover]:bg-muted/50 has-[a[data-incident-link]:focus-visible]:ring-3 has-[a[data-incident-link]:focus-visible]:ring-ring has-[a[data-incident-link]:focus-visible]:ring-inset sm:px-6",
         INCIDENT_COLUMNS,
         "md:items-start",
-        arrived && "enter",
+        cue && "enter arrive",
+        folded && "max-sm:hidden",
       )}
     >
       {/* Not numbered until the shard has it: a glyph and a short word, never wrapped. */}
-      <div className="whitespace-nowrap md:row-span-2">
+      <div className="whitespace-nowrap max-md:row-start-1 md:row-span-2">
         {number ? (
           <span className="font-mono text-[0.8125rem] leading-5 text-muted-foreground">
             {number}
@@ -97,7 +111,7 @@ export function IncidentItem({
       </div>
       {/* Pieces wrap whole, never mid-phrase. Below md the pending word always takes its own line, so the row's
           height changes when a change starts or settles, never when the connection flaps. */}
-      <p className="flex flex-wrap justify-end gap-x-1 text-right text-xs text-muted-foreground md:col-start-2 md:row-start-2 md:justify-start md:text-left">
+      <p className="flex flex-wrap gap-x-1 text-xs text-muted-foreground max-md:col-span-2 max-md:row-start-3 md:col-start-2 md:row-start-2">
         <time
           className="whitespace-nowrap"
           dateTime={new Date(row.declaredAt).toISOString()}
@@ -114,7 +128,7 @@ export function IncidentItem({
           </span>
         ) : null}
       </p>
-      <h3 className="col-span-2 font-semibold [overflow-wrap:anywhere] md:col-span-1 md:col-start-2 md:row-start-1">
+      <h3 className="col-span-2 font-semibold [overflow-wrap:anywhere] max-md:row-start-2 md:col-span-1 md:col-start-2 md:row-start-1">
         {/* The incident's page needs its number: an incident the shard has not numbered yet is not a link. */}
         {row.number === null ? (
           row.title
@@ -122,10 +136,11 @@ export function IncidentItem({
           <IncidentTitleLink number={row.number} title={row.title} />
         )}
       </h3>
-      {/* Phones: both menus on one line, and -mb-2 trims the space under the 44px triggers without shrinking
-          them. From md the wrapper dissolves and each menu fills its own column, badge at the start and chevron at
-          the end, so the chevrons line up down the list whatever each badge's width. */}
-      <div className="col-span-2 -mb-2 -ml-1.5 flex flex-wrap items-center gap-1 max-[374px]:-ml-1 md:contents">
+      {/* Below md: both menus on the number's line, and -my-2 lets the 44px triggers reach into the row's padding
+          instead of making the line 44px tall. A huge number or a long pt-BR status wraps the status under the
+          severity, never past the edge. From md the wrapper dissolves and each menu fills its own column, badge at
+          the start and chevron at the end, so the chevrons line up down the list whatever each badge's width. */}
+      <div className="-my-2 -ml-1.5 flex min-w-0 flex-wrap items-center gap-x-1 max-[374px]:-ml-1 max-md:col-start-2 max-md:row-start-1 md:contents">
         <div className="relative z-10 md:col-start-3 md:row-span-2 md:row-start-1 md:self-center md:[&>button]:w-full md:[&>button]:justify-between">
           <SeverityMenu
             severity={row.severity}
@@ -315,21 +330,21 @@ export function StatusMenu({
 }
 
 /**
- * A placeholder row with the real row's grid and heights (number and time, title, the two 44px menus), so the
- * list does not jump when the data arrives.
+ * A placeholder row with the real row's grid and heights (number and the two menus, title, time), so the list does
+ * not jump when the data arrives.
  */
 export function IncidentItemSkeleton() {
   return (
     <li
       aria-hidden
-      className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 px-4 py-3 sm:px-6 md:grid-cols-[--spacing(20)_minmax(0,1fr)_--spacing(38)_--spacing(38)] md:items-start"
+      className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-6 md:gap-y-1.5 md:grid-cols-[--spacing(20)_minmax(0,1fr)_--spacing(38)_--spacing(38)] md:items-start"
     >
-      <span className="my-0.5 block h-4 w-12 rounded-sm bg-muted md:row-span-2" />
-      <span className="my-0.5 block h-3 w-24 justify-self-end rounded-sm bg-muted md:col-start-2 md:row-start-2 md:justify-self-start" />
-      <span className="col-span-2 my-0.5 block h-4 w-3/4 max-w-md rounded-sm bg-muted md:col-span-1 md:col-start-2 md:row-start-1" />
-      <div className="col-span-2 -mb-2 flex h-11 items-center gap-3 md:contents">
-        <span className="block h-6 w-28 rounded-sm bg-muted md:col-start-3 md:row-span-2 md:row-start-1 md:my-2.5 md:ml-1.5" />
-        <span className="block h-6 w-28 rounded-sm bg-muted md:col-start-4 md:row-span-2 md:row-start-1 md:my-2.5 md:ml-1.5" />
+      <span className="my-0.5 block h-4 w-12 rounded-sm bg-muted max-md:row-start-1 md:row-span-2" />
+      <span className="my-0.5 block h-3 w-24 rounded-sm bg-muted max-md:col-span-2 max-md:row-start-3 md:col-start-2 md:row-start-2" />
+      <span className="col-span-2 my-0.5 block h-4 w-3/4 max-w-md rounded-sm bg-muted max-md:row-start-2 md:col-span-1 md:col-start-2 md:row-start-1" />
+      <div className="-my-2 flex h-11 items-center gap-3 max-md:col-start-2 max-md:row-start-1 md:contents">
+        <span className="block h-6 w-14 rounded-sm bg-muted md:col-start-3 md:w-28 md:row-span-2 md:row-start-1 md:my-2.5 md:ml-1.5" />
+        <span className="block h-6 w-24 rounded-sm bg-muted md:col-start-4 md:w-28 md:row-span-2 md:row-start-1 md:my-2.5 md:ml-1.5" />
       </div>
     </li>
   );

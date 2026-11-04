@@ -2,7 +2,12 @@
 // IncidentsCard mounted with react-dom against the reference shard server from packages/sync's tests, over its
 // fake network with manual delivery and fake timers: nothing reaches the "server" until a test flushes.
 import { setLocale as setI18nLocale, type Locale } from "@freecorps/brigade-i18n";
-import { newId, type Actor, type IncidentStatus } from "@freecorps/brigade-schema";
+import {
+  newId,
+  type Actor,
+  type IncidentStatus,
+  type Severity,
+} from "@freecorps/brigade-schema";
 import { createSyncClient, type SyncClient } from "@freecorps/brigade-sync";
 import { SyncProvider } from "@freecorps/brigade-sync/react";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
@@ -19,6 +24,7 @@ import {
 import { ANNOUNCE_MS, IncidentsCard } from "../src/components/incidents-card";
 import { routeTree } from "../src/routeTree.gen";
 import { PreferencesProvider, usePreferences } from "../src/components/preferences";
+import { rememberOpened } from "../src/lib/incidents";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -111,7 +117,7 @@ function mount({ clientAhead = 0, offline = false, maxPending = 500, app = false
     maxPending,
   });
   const shard = server.shard(SHARD);
-  const declare = (title: string, severity: "sev1" | "sev2" | "sev3", status?: IncidentStatus) => {
+  const declare = (title: string, severity: Severity, status?: IncidentStatus) => {
     const id = newId("inc", T0 + timers.now - 1000 * ++seed, randomBytes);
     shard.write(ops, "incident.declare", { id, title, severity });
     if (status) shard.write(ops, "incident.setStatus", { id, status });
@@ -413,6 +419,116 @@ test("the list puts SEV1 first, whatever its age", async () => {
   await view.flush();
   expect(titles()).toEqual(["Older, SEV1", "Newer, SEV3"]);
   expect($("#incidents-title")!.closest("section")!.textContent).toContain("1 is SEV1");
+});
+
+/** The list's own toggle (not a row's menu trigger, which also has aria-expanded). */
+const foldToggle = () => $$("button[aria-expanded]").find((b) => !b.closest("li"));
+const folded = () => $$("li[data-folded]").map((li) => li.querySelector("h3")!.textContent);
+
+test("phones: SEV3 and SEV4 fold behind a 44px toggle that says how many, and unfold in place", async () => {
+  const view = mount();
+  const lowA = view.declare("Low A", "sev3");
+  const lowB = view.declare("Low B", "sev4");
+  view.declare("Low C", "sev3");
+  view.declare("Checkout down", "sev1");
+  await view.flush();
+  expect(titles()[0]).toBe("Checkout down");
+  expect(folded()).toHaveLength(3);
+  // Hidden by CSS below sm only: the rows stay in the DOM, so wider screens are untouched.
+  for (const li of $$("li[data-folded]")) expect(li.classList.contains("max-sm:hidden")).toBe(true);
+  expect(row("Checkout down")!.classList.contains("max-sm:hidden")).toBe(false);
+  const toggle = foldToggle()!;
+  expect(toggle.textContent).toBe("Show 3 lower-severity incidents");
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(toggle.getAttribute("aria-controls")).toBe(
+    $("ul[aria-labelledby='incidents-title']")!.id,
+  );
+  expect(toggle.className).toContain("min-h-11");
+  expect(toggle.parentElement!.classList.contains("sm:hidden")).toBe(true);
+
+  await click(toggle);
+  expect(folded()).toEqual([]);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(toggle.textContent).toBe("Hide lower-severity incidents");
+  await click(toggle);
+  expect(folded()).toHaveLength(3);
+
+  // Counted in the reader's language, with its plural.
+  await act(async () => switchLocale!("pt-BR"));
+  expect(foldToggle()!.textContent).toBe("Mostrar 3 incidentes de severidade menor");
+  view.shard.write(ops, "incident.setStatus", { id: lowA, status: "resolved" });
+  view.shard.write(ops, "incident.setStatus", { id: lowB, status: "resolved" });
+  await view.flush();
+  expect(foldToggle()!.textContent).toBe("Mostrar 1 incidente de severidade menor");
+});
+
+test("phones: with no SEV1 or SEV2 every row shows and there is no toggle", async () => {
+  const view = mount();
+  view.declare("Low A", "sev3");
+  view.declare("Low B", "sev4");
+  await view.flush();
+  expect(titles()).toHaveLength(2);
+  expect(folded()).toEqual([]);
+  expect(foldToggle()).toBeUndefined();
+});
+
+test("phones: the incident the user came back from, and one they re-rank, never fold away", async () => {
+  rememberOpened(1);
+  const view = mount();
+  view.declare("Opened, SEV3", "sev3");
+  view.declare("Other, SEV4", "sev4");
+  view.declare("Re-ranked", "sev2");
+  view.declare("Checkout down", "sev1");
+  await view.flush();
+  // INC-1 is the one the user opened: drawn, so focus can go back to its link.
+  expect(row("Opened, SEV3")!.hasAttribute("data-folded")).toBe(false);
+  expect(document.activeElement?.getAttribute("data-incident-link")).toBe("1");
+  expect(folded()).toEqual(["Other, SEV4"]);
+  expect(foldToggle()!.textContent).toBe("Show 1 lower-severity incident");
+  // Moved to SEV3 from its own menu: it re-sorts but stays in sight, before and after the shard confirms it.
+  await choose("Re-ranked", "Severity", /SEV3/);
+  expect(row("Re-ranked")!.hasAttribute("data-folded")).toBe(false);
+  await view.flush();
+  expect(row("Re-ranked")!.hasAttribute("data-folded")).toBe(false);
+  expect(folded()).toEqual(["Other, SEV4"]);
+});
+
+test("phones: a focused row demoted elsewhere stays shown after focus moves on", async () => {
+  const view = mount();
+  const id = view.declare("Focused", "sev2");
+  view.declare("Checkout down", "sev1");
+  await view.flush();
+  await act(async () => $(`[data-status-trigger="${id}"]`)!.focus());
+  view.shard.write(ops, "incident.setSeverity", { id, severity: "sev4" });
+  await view.flush();
+  expect(row("Focused")!.hasAttribute("data-folded")).toBe(false);
+  await act(async () => $(`[data-status-trigger="${id}"]`)!.blur());
+  expect(row("Focused")!.hasAttribute("data-folded")).toBe(false);
+  // Something else lower that was never focused folds as usual.
+  view.declare("Never focused", "sev3");
+  await view.flush();
+  expect(folded()).toEqual(["Never focused"]);
+});
+
+test("a row that arrives later gets the accent cue once; the first ones never do", async () => {
+  const view = mount();
+  view.declare("Already open", "sev2");
+  await view.flush();
+  expect(row("Already open")!.classList.contains("arrive")).toBe(false);
+  view.declare("Arrived later", "sev1");
+  await view.flush();
+  const arrived = row("Arrived later")!;
+  expect(arrived.classList.contains("arrive")).toBe(true);
+  // A menu's animation bubbling up from inside does not end the cue; the row's own does.
+  await act(async () => {
+    arrived.querySelector("button")!.dispatchEvent(new Event("animationend", { bubbles: true }));
+  });
+  expect(arrived.classList.contains("arrive")).toBe(true);
+  await act(async () => {
+    arrived.dispatchEvent(new Event("animationend", { bubbles: true }));
+  });
+  expect(arrived.classList.contains("arrive")).toBe(false);
+  expect(arrived.classList.contains("enter")).toBe(false);
 });
 
 test("only incidents that arrive after the list first showed settle in", async () => {

@@ -1,12 +1,15 @@
 import { setLocale } from "@freecorps/brigade-i18n";
 import type { WordedReason } from "@freecorps/brigade-i18n/incident";
 import type { SyncErrorCode } from "@freecorps/brigade-sync";
+import { SEVERITIES, type Severity } from "@freecorps/brigade-schema";
 import { MUTATION_ERROR_CODES } from "@freecorps/brigade-sync/protocol";
 import { afterEach, expect, expectTypeOf, test } from "vite-plus/test";
 import {
   adjustBusy,
   checkDeclare,
+  foldLowerSeverity,
   formatAge,
+  isLowerSeverity,
   mutationErrorReason,
   nextStatuses,
   noticeFor,
@@ -184,4 +187,35 @@ test("the client id is kept per tab and replaced when invalid or unreadable", ()
   expect(tabClientId(storage, create)).toBe("cli_2");
   expect(tabClientId(throwingStorage, create)).toBe("cli_3");
   expect(tabClientId(undefined, create)).toBe("cli_4");
+});
+
+const inc = (id: string, severity: Severity, number: number | null = 1) => ({ id, severity, number });
+
+test("phones fold SEV3 and SEV4 behind a toggle that counts them", () => {
+  const rows = [inc("a", "sev1"), inc("b", "sev2"), inc("c", "sev3"), inc("d", "sev4")];
+  const fold = foldLowerSeverity(rows, false, new Set());
+  expect([...fold.folded]).toEqual(["c", "d"]);
+  expect(fold).toMatchObject({ toggle: true, count: 2 });
+  // Unfolded: every row shows and the toggle stays, to fold them again, with the same count.
+  const open = foldLowerSeverity(rows, true, new Set());
+  expect(open.folded.size).toBe(0);
+  expect(open).toMatchObject({ toggle: true, count: 2 });
+  expect(SEVERITIES.map(isLowerSeverity)).toEqual([false, false, true, true]);
+});
+
+test("with no SEV1 or SEV2 nothing folds: never a toggle over an empty list", () => {
+  const fold = foldLowerSeverity([inc("c", "sev3"), inc("d", "sev4")], false, new Set());
+  expect(fold).toEqual({ folded: new Set(), toggle: false, count: 0 });
+  expect(foldLowerSeverity([], false, new Set()).toggle).toBe(false);
+  // Only higher severities: nothing to fold either.
+  expect(foldLowerSeverity([inc("a", "sev1")], false, new Set()).toggle).toBe(false);
+});
+
+test("kept and unnumbered rows never fold, and are not counted", () => {
+  const rows = [inc("a", "sev2"), inc("c", "sev3"), inc("d", "sev4"), inc("e", "sev3", null)];
+  const fold = foldLowerSeverity(rows, false, new Set(["c"]));
+  expect([...fold.folded]).toEqual(["d"]);
+  expect(fold.count).toBe(1);
+  // Every lower row kept: no toggle for nothing.
+  expect(foldLowerSeverity(rows, false, new Set(["c", "d"])).toggle).toBe(false);
 });

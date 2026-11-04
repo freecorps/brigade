@@ -25,6 +25,34 @@ export default defineConfig({
     ignorePatterns: [".agents/**", ".claude/**", "**/worker-configuration.d.ts", ...generated],
     jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
     rules: { "vite-plus/prefer-vite-plus-imports": "error" },
+    overrides: [
+      {
+        // Worker code renders messages per recipient (RFC 0008): the current locale is one variable per isolate,
+        // shared by concurrent requests. Messages come from ./messages, which requires `{ locale }` on every call.
+        files: ["apps/api/src/**", "apps/status-edge/src/**", "integrations/*/src/**"],
+        rules: {
+          "no-restricted-imports": [
+            "error",
+            {
+              paths: [
+                {
+                  name: "@freecorps/brigade-i18n",
+                  importNames: [
+                    "m",
+                    "getLocale",
+                    "setLocale",
+                    "overwriteGetLocale",
+                    "overwriteSetLocale",
+                  ],
+                  message:
+                    "Server code shares one locale per isolate: import messages from @freecorps/brigade-i18n/messages and pass { locale }.",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ],
     options: { typeAware: true, typeCheck: true },
   },
   run: {

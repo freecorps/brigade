@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { INCIDENT_STATUSES, SEVERITIES } from "@freecorps/brigade-schema";
 import { expect, test } from "vite-plus/test";
-import { compileMessages } from "../scripts/compile.ts";
+import { compileMessages, serverEntry, serverEntryPath } from "../scripts/compile.ts";
 import { baseLocale, getLocale, locales, m, setLocale, type Locale } from "../src/index.ts";
 import { incidentStatusLabels, severityLabels } from "../src/labels.ts";
 
@@ -78,7 +78,8 @@ test("match keys use the locale's plural categories and end in a catch-all", () 
 
 test("committed src/paraglide matches the message sources", async () => {
   const output = await compileMessages();
-  const stale = "src/paraglide is stale, run: vp run --filter @freecorps/brigade-i18n compile";
+  const stale =
+    "src/paraglide or src/messages.ts is stale, run: vp run --filter @freecorps/brigade-i18n compile";
   const onDisk = fs
     .readdirSync(outdir, { recursive: true, encoding: "utf8" })
     .filter((file) => fs.statSync(path.join(outdir, file)).isFile())
@@ -89,6 +90,8 @@ test("committed src/paraglide matches the message sources", async () => {
     const text = fs.readFileSync(path.join(outdir, file), "utf8").replaceAll("\r\n", "\n");
     expect(text, `${stale} (${file})`).toBe(content);
   }
+  const entry = fs.readFileSync(serverEntryPath, "utf8").replaceAll("\r\n", "\n");
+  expect(entry, `${stale} (src/messages.ts)`).toBe(serverEntry(output));
   // A full in-memory compile: about 1-2 s alone, past the 5 s default when `vp run -r test` runs it
   // alongside apps/web's tests, which start workerd.
 }, 30_000);

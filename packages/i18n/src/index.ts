@@ -1,7 +1,9 @@
-// Server code (Workers): import messages by name from "@freecorps/brigade-i18n/messages" (esbuild does
-// not tree-shake `m.x`), pass `{ locale }` on every call and never call `setLocale`.
-// The current locale is one variable per isolate (strategy "globalVariable"), so setting it for one
-// request leaks into every concurrent request served by the same isolate.
+// This entry is for UIs (web, mobile), where messages follow the current locale.
+// Server code (Workers) imports messages by name from "@freecorps/brigade-i18n/messages" instead (esbuild
+// does not tree-shake `m.x`), whose types require `{ locale }` on every call, and never reads or sets the
+// current locale: it is one variable per isolate (strategy "globalVariable"), so setting it for one request
+// leaks into every concurrent request served by the same isolate. A lint rule (root vite.config.ts) keeps
+// `m`, `getLocale` and `setLocale` from this entry out of apps/api, apps/status-edge and integrations.
 //
 // package.json declares `sideEffects: false` although the Paraglide runtime initialises
 // `globalThis.__paraglide` at import. That write is idempotent (`??=`-style) and only feeds

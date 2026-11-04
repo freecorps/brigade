@@ -1480,6 +1480,8 @@ describe("the page", () => {
     // A tooltip wraps at the bar's width instead of running off it on one line.
     const tip = rule(".bars span::after")!;
     expect(tip).toContain("width:max-content;max-width:calc(100vw - 4rem - 2px);max-width:100cqw");
+    // The padding counts inside that cap: `*{box-sizing}` does not reach pseudo-elements.
+    expect(tip).toContain("box-sizing:border-box");
     expect(tip).not.toContain("nowrap");
     // It sits at its day's place along the bar (0 to 1) and moves back by that share of its own width, so the first
     // day's starts at the bar's left edge and the last day's ends at its right edge, on a computer and on a phone.

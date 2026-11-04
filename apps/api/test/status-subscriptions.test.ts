@@ -1469,6 +1469,34 @@ describe("the page", () => {
     expect(html).toContain('<span class="pct">99.5% uptime</span>');
   });
 
+  test("a day's tooltip never widens the page, shown or hidden, in any language", () => {
+    const html = renderStatusPage({ ...base, locale: "pt-BR" }, { slug: "acme" });
+    const rule = (selector: string) =>
+      html.match(
+        new RegExp(`(?:^|[}\\n])${selector.replace(/[.*+?()[\]]/g, "\\$&")}\\{([^}]*)\\}`),
+      )?.[1];
+    // The bar is the tooltips' measure and clips sideways (only sideways: they still rise above it).
+    expect(rule(".bars")).toContain("container-type:inline-size;overflow-x:clip");
+    // A tooltip wraps at the bar's width instead of running off it on one line.
+    const tip = rule(".bars span::after")!;
+    expect(tip).toContain("width:max-content;max-width:calc(100vw - 2rem);max-width:100cqw");
+    expect(tip).not.toContain("nowrap");
+    // It sits at its day's place along the bar (0 to 1) and moves back by that share of its own width, so the first
+    // day's starts at the bar's left edge and the last day's ends at its right edge, on a computer and on a phone.
+    expect(tip).toContain("left:calc(var(--f) * 100%)");
+    expect(tip).toContain("transform:translate(calc(var(--f) * -100%),.25rem)");
+    expect(rule(".bars span")).toContain("--f:calc(var(--i,0) / 89)");
+    expect(html).toContain(
+      "@media (max-width:39.99rem){.bars span{--f:calc((var(--i,0) - 60) / 29)}}",
+    );
+    expect(html).toContain(".bars span:nth-child(-n+60){display:none}");
+    // Shown on hover or on a tap, it only rises; nothing anchors a tooltip to one side by position any more.
+    expect(html).toContain(
+      ".bars span.tip::after{opacity:1;transform:translate(calc(var(--f) * -100%),0)}",
+    );
+    expect(html).not.toMatch(/nth-(?:last-)?child\(-n\+(?:15|75)\)::after/);
+  });
+
   test("pt-BR", () => {
     const html = renderStatusPage({ ...base, locale: "pt-BR" }, { slug: "acme", subscribe: true });
     expect(html).toContain("de disponibilidade nos últimos 90 dias");

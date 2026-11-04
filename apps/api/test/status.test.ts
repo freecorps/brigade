@@ -411,6 +411,127 @@ describe("the snapshot", () => {
     expect(html).toContain("Todos os sistemas operacionais");
   });
 
+  /** The language tests' people, signed up once: sign-up is rate-limited, and each test needs only a page of its own. */
+  let languageCrew: Promise<Team> | undefined;
+  const languageTeam = async () => {
+    languageCrew ??= team();
+    const first = await languageCrew;
+    return team({ ana: first.ana, caio: first.caio, eva: first.eva });
+  };
+
+  test("in the visitor's language when Brigade has it, else the page's own", async () => {
+    const t = await languageTeam();
+    const address = slug();
+    await configure(t, t.ana, settings(address));
+    await t.push();
+    const get = (query = "", headers: Record<string, string> = {}, cf?: { country: string }) =>
+      exports.default.fetch(`${ORIGIN}/status/${address}${query}`, {
+        headers,
+        ...(cf ? { cf } : {}),
+      } as RequestInit);
+    const read = async (response: Response) => {
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      const lang = /<html lang="([^"]+)"/.exec(html)?.[1];
+      expect(response.headers.get("Content-Language")).toBe(lang);
+      expect(response.headers.get("Vary")).toBe("Accept-Language");
+      return { lang, html };
+    };
+    const portuguese = await read(await get("", { "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8" }));
+    expect(portuguese.lang).toBe("pt-BR");
+    expect(portuguese.html).toContain("Todos os sistemas operacionais");
+    // What the team wrote stays as written, marked as the page's own language.
+    expect(portuguese.html).toContain('<h1 lang="en">Acme</h1>');
+    // Cached in Portuguese now, an English reader still reads English: the key names the language.
+    const english = await read(await get("", { "Accept-Language": "en-GB,en;q=0.9" }));
+    expect(english.lang).toBe("en");
+    expect(english.html).toContain("All systems operational");
+    // A language Brigade lacks, no header, no country: the page's own.
+    expect((await read(await get("", { "Accept-Language": "fr-FR,de;q=0.5" }))).lang).toBe("en");
+    expect((await read(await get())).lang).toBe("en");
+    // ?lang (the switcher) wins over the header; an unknown one is ignored.
+    expect((await read(await get("?lang=pt-BR", { "Accept-Language": "en" }))).lang).toBe("pt-BR");
+    expect((await read(await get("?lang=klingon", { "Accept-Language": "pt" }))).lang).toBe(
+      "pt-BR",
+    );
+    expect((await read(await get("?lang=klingon"))).lang).toBe("en");
+    // The visitor's country when the header names nothing Brigade has.
+    expect((await read(await get("", { "Accept-Language": "fr" }, { country: "BR" }))).lang).toBe(
+      "pt-BR",
+    );
+    expect((await read(await get("", {}, { country: "US" }))).lang).toBe("en");
+    // A HEAD says the same.
+    const head = await exports.default.fetch(`${ORIGIN}/status/${address}`, {
+      method: "HEAD",
+      headers: { "Accept-Language": "pt-BR" },
+    });
+    expect(head.headers.get("Content-Language")).toBe("pt-BR");
+  });
+
+  test("a Portuguese page's own language is its default; an English visitor reads English", async () => {
+    const t = await languageTeam();
+    const address = slug();
+    await configure(t, t.ana, settings(address, { locale: "pt-BR" }));
+    await t.push();
+    const get = (headers: Record<string, string> = {}) =>
+      exports.default.fetch(`${ORIGIN}/status/${address}`, { headers });
+    expect(await (await get()).text()).toContain('lang="pt-BR"');
+    expect(await (await get({ "Accept-Language": "ja" })).text()).toContain('lang="pt-BR"');
+    const english = await get({ "Accept-Language": "en-US" });
+    expect(english.headers.get("Content-Language")).toBe("en");
+    expect(await english.text()).toContain("All systems operational");
+  });
+
+  test("the switcher: a plain link per language, named in itself, the current one marked; alternates in the head", async () => {
+    const t = await languageTeam();
+    const address = slug();
+    await configure(t, t.ana, settings(address));
+    await t.push();
+    const html = await (
+      await exports.default.fetch(`${ORIGIN}/status/${address}`, {
+        headers: { "Accept-Language": "pt-BR" },
+      })
+    ).text();
+    const nav = /<nav class="langs" aria-label="([^"]+)">([\s\S]*?)<\/nav>/.exec(html);
+    expect(nav?.[1]).toBe("Idioma");
+    expect(nav?.[2]).toContain('<a href="?lang=en" hreflang="en" lang="en">English</a>');
+    expect(nav?.[2]).toContain(
+      '<a href="?lang=pt-BR" hreflang="pt-BR" lang="pt-BR" aria-current="page">Português (Brasil)</a>',
+    );
+    expect(html.match(/aria-current="page"/g)).toHaveLength(1);
+    // Absolute, as search engines require, and x-default for the bare address, which follows the visitor.
+    const page = `${ORIGIN}/status/${address}`;
+    expect(html).toContain(`<link rel="alternate" hreflang="en" href="${page}?lang=en">`);
+    expect(html).toContain(`<link rel="alternate" hreflang="pt-BR" href="${page}?lang=pt-BR">`);
+    expect(html).toContain(`<link rel="alternate" hreflang="x-default" href="${page}">`);
+    // The page's wording follows the visitor; what the team wrote keeps the page's own language for screen readers.
+    expect(html).toContain('<html lang="pt-BR">');
+    expect(html).toMatch(/<h1 lang="en">/);
+    const own = await (await exports.default.fetch(`${ORIGIN}/status/${address}`)).text();
+    expect(own).toMatch(/<h1>/);
+    // Still the one script.
+    expect(html.match(/<script[\s>]/g) ?? []).toHaveLength(1);
+  });
+
+  test("feeds keep the page's own language whatever the visitor asks for", async () => {
+    const t = await languageTeam();
+    const address = slug();
+    await configure(t, t.ana, settings(address));
+    await t.push();
+    const feed = await exports.default.fetch(`${ORIGIN}/status/${address}/feed.atom?lang=pt-BR`, {
+      headers: { "Accept-Language": "pt-BR" },
+    });
+    expect(feed.status).toBe(200);
+    expect(feed.headers.get("Vary")).toBeNull();
+    expect(feed.headers.get("Content-Language")).toBeNull();
+    // The page's own (English here), not the visitor's, in both formats.
+    expect(await feed.text()).toContain('xml:lang="en"');
+    const json = await exports.default.fetch(`${ORIGIN}/status/${address}/feed.json?lang=pt-BR`, {
+      headers: { "Accept-Language": "pt-BR" },
+    });
+    expect(((await json.json()) as { language?: string }).language).toBe("en");
+  });
+
   test("a page that is not public is deleted from KV", async () => {
     const t = await team();
     const address = slug();

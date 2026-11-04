@@ -39,6 +39,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "powered" | "Status page by Brigade" |
 * | "feed_atom" | "Atom feed" |
 * | "feed_json" | "JSON feed" |
+* | "language" | "Language" |
 * | "component_maintenance" | "Under maintenance" |
 * | "overall_maintenance" | "Scheduled maintenance in progress" |
 * | "stale" | "This page may be out of date: it was last updated {time}." |
@@ -82,6 +83,7 @@ export const status_text = /** @type {((inputs: Status_TextInputs, options?: { l
 		if (i?.part === "powered") return /** @type {LocalizedString} */ (`Página de status do Brigade`);
 		if (i?.part === "feed_atom") return /** @type {LocalizedString} */ (`Feed Atom`);
 		if (i?.part === "feed_json") return /** @type {LocalizedString} */ (`Feed JSON`);
+		if (i?.part === "language") return /** @type {LocalizedString} */ (`Idioma`);
 		if (i?.part === "component_maintenance") return /** @type {LocalizedString} */ (`Em manutenção`);
 		if (i?.part === "overall_maintenance") return /** @type {LocalizedString} */ (`Manutenção programada em andamento`);
 		if (i?.part === "stale") return /** @type {LocalizedString} */ (`Esta página pode estar desatualizada: a última atualização foi em ${i?.time}.`);
@@ -119,6 +121,7 @@ export const status_text = /** @type {((inputs: Status_TextInputs, options?: { l
 		if (i?.part === "powered") return /** @type {LocalizedString} */ (`Status page by Brigade`);
 		if (i?.part === "feed_atom") return /** @type {LocalizedString} */ (`Atom feed`);
 		if (i?.part === "feed_json") return /** @type {LocalizedString} */ (`JSON feed`);
+		if (i?.part === "language") return /** @type {LocalizedString} */ (`Language`);
 		if (i?.part === "component_maintenance") return /** @type {LocalizedString} */ (`Under maintenance`);
 		if (i?.part === "overall_maintenance") return /** @type {LocalizedString} */ (`Scheduled maintenance in progress`);
 		if (i?.part === "stale") return /** @type {LocalizedString} */ (`This page may be out of date: it was last updated ${i?.time}.`);

@@ -38,6 +38,7 @@ export type Status_TextInputs = {
 * | "powered" | "Status page by Brigade" |
 * | "feed_atom" | "Atom feed" |
 * | "feed_json" | "JSON feed" |
+* | "language" | "Language" |
 * | "component_maintenance" | "Under maintenance" |
 * | "overall_maintenance" | "Scheduled maintenance in progress" |
 * | "stale" | "This page may be out of date: it was last updated {time}." |

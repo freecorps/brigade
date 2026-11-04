@@ -23,7 +23,8 @@ export type Status_CardInputs = {
 * | "slug_label" | "Address" |
 * | "slug_hint" | "3 to 40 lowercase letters, numbers and hyphens." |
 * | "slug_invalid" | "Use 3 to 40 lowercase letters, numbers and single hyphens, starting and ending with a letter or number." |
-* | "language_label" | "Language of the page" |
+* | "language_label" | "Default language" |
+* | "language_hint" | "Visitors see the page in their own language when Brigade has it, otherwise in this one. What you write isn't translated." |
 * | "enabled_label" | "Public" |
 * | "enabled_hint" | "Anyone with the address can read it. Off, it's a draft only members see here." |
 * | "save" | "Save" |

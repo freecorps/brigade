@@ -297,6 +297,7 @@ function Settings({ page, onSave }: Pick<PanelProps, "page" | "onSave">) {
         </label>
         <select
           id={languageId}
+          aria-describedby={`${languageId}-hint`}
           className={SELECT}
           value={locale}
           onChange={(event) => {
@@ -310,6 +311,9 @@ function Settings({ page, onSave }: Pick<PanelProps, "page" | "onSave">) {
             </option>
           ))}
         </select>
+        <p id={`${languageId}-hint`} className="text-sm text-muted-foreground">
+          {say("language_hint")}
+        </p>
       </div>
       <Field
         className="sm:col-span-2"

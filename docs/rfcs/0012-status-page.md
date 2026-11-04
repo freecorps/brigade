@@ -36,7 +36,7 @@ Visitor ──GET /status/:slug[/feed.atom|/feed.json]──▶ web Worker (forw
 ## What a page is
 
 - **One page per workspace** (`status_page`, one row): its name (the company's or product's, 1 to 80 characters),
-  its address (`/status/<slug>`), its language and whether it is public. A page that is not public is a draft:
+  its address (`/status/<slug>`), its default language ("Language") and whether it is public. A page that is not public is a draft:
   members see and fill it in the dashboard; the address answers 404.
 - **Components** (`status_components`, at most 50): the parts of the service the public knows by name (API, Website,
   Checkout), each with an optional group (components of a group are listed together under its name; ungrouped ones
@@ -356,12 +356,15 @@ reader skips fields it does not check, so they need no new version ("Feeds").
 - **Read defensively.** A snapshot is rendered only if it is the version the Worker knows, its language and every
   status one it has words for, and every time a real date (`isSnapshot`); anything else, or a render that throws,
   is the 503 page (not cached), so a Worker older or newer than the shard never shows half a page.
-- **Headers**: `Cache-Control: public, max-age=30` (404s 60 s), a Content-Security-Policy that allows nothing but
+- **Headers**: `Cache-Control: public, max-age=30` (404s 60 s), `Content-Language` (the language rendered) and
+  `Vary: Accept-Language` on the page ("Language"), a Content-Security-Policy that allows nothing but
   inline style, the local times script by its hash and a form posting to the page's own origin (`default-src 'none'`,
   `script-src 'sha256-…'`, `form-action 'self'`, no frames), `nosniff`, `no-referrer`. Every piece of text is
   escaped.
-- **Caching and abuse.** The response is kept in the edge cache (the Cache API, keyed by slug alone, so headers and
-  hosts never split it; a no-op on workers.dev) and the KV read uses `cacheTtl: 30`, so a busy page costs about one
+- **Caching and abuse.** The response is kept in the edge cache (the Cache API, keyed by slug, the language
+  rendered and the page's address, so raw headers never split it, a page at most once per locale plus once for "the
+  page's own" at each address it answers on;
+  a no-op on workers.dev) and the KV read uses `cacheTtl: 30`, so a busy page costs about one
   KV read per location every 30 s, and a flood of made-up addresses one cached 404 per address. Nothing on the read
   path touches D1 or a shard. **Misses are rate-limited per caller** (decided, Q23): every answer of the page and
   its feeds that would be the 404 (a bad slug, a cached 404, nothing in KV) first counts against the caller's
@@ -376,7 +379,7 @@ reader skips fields it does not check, so they need no new version ("Feeds").
 ## Local times
 
 - **Every time is UTC without script, the visitor's own with it.** Each time on the page is a `<time datetime>` whose
-  text is the time in UTC with the zone named ("Oct 27, 2026, 12:05 PM UTC", in the page's language); a script inline
+  text is the time in UTC with the zone named ("Oct 27, 2026, 12:05 PM UTC", in the language the page is rendered in); a script inline
   at the end of the page rewrites each in the visitor's zone with the same format ("9:05 AM GMT-3") and keeps the UTC
   text as its tooltip. Where script is off, blocked or fails, the page reads exactly as before.
 - **Why a script, on a page built to need none.** The Worker cannot know a visitor's zone (no header carries it, and
@@ -466,7 +469,7 @@ reader skips fields it does not check, so they need no new version ("Feeds").
 
 ## Email subscriptions
 
-Visitors subscribe on the page to hear of incidents and maintenance by email, in the page's language.
+Visitors subscribe on the page to hear of incidents and maintenance by email, in the page's default language.
 
 - **Subscribers live in D1** (`status_subscriber`, migration 0009: id `ssb_…`, workspace, lower-cased address with
   its domain in ASCII (an internationalized domain as punycode, so both spellings are one address), the inbox it
@@ -595,10 +598,53 @@ had and keeps (migration 0013 adds a nullable column).
 
 ## Language
 
-Chosen per page (`locale`, `en` or `pt-BR`; RFC 0008): a status page is one document every visitor reads, like a
-shared Slack channel, not text addressed to one person. The page's wording (`status_text`) is rendered in it on the
-server; what the team writes is not translated. The 404 and error pages, which have no page to take a language
-from, are in English.
+Each page has a default language (`locale`, `en` or `pt-BR`; RFC 0008), chosen by its owners. A visitor reads the
+page's wording (`status_text`) in their own language when Brigade has it (`STATUS_LOCALES`), otherwise in the
+default; what the team writes (titles, updates, component and group names) is never translated, and is marked with
+the page's own language (`lang`) when the wording is in another, so a screen reader pronounces each right. The language is picked per
+request on the server (src/status-locale.ts), in this order:
+
+1. `?lang=<locale>`, when it names one of `STATUS_LOCALES`: the visitor's explicit choice. Anything else is ignored.
+2. The best match of `Accept-Language` against `STATUS_LOCALES`: highest `q` first, `q=0` refusing a language, and a
+   tag Brigade lacks matched by its primary language (`pt`, `pt-PT` read `pt-BR`; `en-GB` reads `en`). The header is
+   the visitor's to send, so only its first 256 characters (up to the last whole entry) and 16 entries are read, and
+   an entry that does not parse is skipped. A refused language also refuses every tag that matches only through it
+   (`en;q=0, en-US` reads no English), which is stricter than RFC 4647's "more specific wins" and only matters for
+   headers no browser sends.
+3. The visitor's country (`request.cf.country`) where most people read a language Brigade has: the
+   Portuguese-speaking countries (BR, PT, AO, MZ, CV, GW, ST, TL) read `pt-BR`. A new locale adds its countries to the
+   table.
+4. The page's default.
+
+- **Cached per language, never per header.** The edge cache key names the language picked (or "the page's own" for
+  rule 4, which only the snapshot knows), and the page's address, so a page is cached at most `STATUS_LOCALES` + 1 times per address and location, and a
+  Portuguese render never reaches an English reader; a custom domain's key adds its workspace as before. The address is
+  fixed per page, not taken from how it was reached: a custom hostname's over HTTPS, else the dashboard's origin
+  (`DASHBOARD_URL`), with the request's path, so the addresses are the dashboard's `/status/<slug>` and each custom
+  hostname's `/` and `/status/<slug>`, all bounded (the API has no routes of its own; custom hostnames are the ones held
+  in D1). The response
+  says `Content-Language` and `<html lang>`, and `Vary: Accept-Language` for browsers and other caches; Cloudflare's
+  own cache ignores `Vary` (only `Vary: *` is refused by `cache.put`), which is why the key carries the language.
+  The country is not a header, so a shared cache other than Cloudflare's could serve a country's pick to a neighbour
+  sending the same `Accept-Language`; the switcher is the way out. A made-up address's cached 404 is the same in
+  every language but is now kept once per key, so a flood of them costs up to `STATUS_LOCALES` + 1 KV reads per
+  made-up address and location instead of one, still behind the miss rate limit. The country relies on `request.cf` reaching
+  the API: through the web Worker's service binding (`/status/*` on the dashboard's host) and the custom-domain hand-off
+  it is not checked by a test; where it does not arrive, rule 3 is skipped and rules 1, 2 and 4 still hold. A refusal
+  (`q=0`) past the 256-character cut is not read. The team's text is marked with the page's language wherever it is
+  its own element (titles, updates, names, the "Affects" names, the subscribe form's names); the uptime bar's label and
+  the document `<title>` mix both and cannot be marked in part.
+- **A switcher, no script.** The footer lists every language, each named in itself ("English", "Português
+  (Brasil)"), as plain links to `?lang=<locale>` relative to the page's own address (so it works at `/status/<slug>`
+  and at a custom domain's `/`), the current one marked `aria-current`; the head lists the same as `<link
+  rel="alternate" hreflang>`, absolute (the page's fixed address, below, which the cache key names too, so a
+  custom domain's `/` and `/status/<slug>` never serve each other's), with `x-default` for the bare
+  address, which follows the visitor. The choice is not remembered: it is the link's.
+- **What keeps the default.** The feeds, the subscription pages and every email stay in the page's default
+  language (one document for every reader, and an email has no request to take a language from). The 404 and error
+  pages, which have no page to take a language from, are in English.
+- **The country through a custom domain.** The edge Worker hands the visitor's `Request` to `StatusPages` over RPC;
+  rules 1 and 2 travel with it, while whether `request.cf` does is not relied on: without it rule 3 is skipped.
 
 ## Privacy
 

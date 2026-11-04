@@ -10,6 +10,7 @@ import {
   status_text,
   status_uptime,
 } from "@freecorps/brigade-i18n/messages";
+import { STATUS_LOCALES, type StatusLocale } from "@freecorps/brigade-schema";
 import type {
   ComponentStatus,
   PublicStatus,
@@ -289,6 +290,12 @@ button.secondary{color:var(--fg);background:transparent;border:1px solid var(--b
 .stale{margin-top:.75rem;padding:.75rem 1.25rem;border-radius:.75rem;font-size:.9375rem;overflow-wrap:anywhere}
 .feeds{display:flex;flex-wrap:wrap;gap:1rem}
 footer{margin-top:2.5rem;color:var(--muted);font-size:.875rem;display:flex;flex-wrap:wrap;justify-content:space-between;gap:.5rem}
+.langs{flex-basis:100%;display:flex;align-items:center;gap:.5rem;margin-top:.75rem;padding-top:.75rem;border-top:1px solid var(--border);min-width:0}
+.langs svg{flex:none;fill:none;stroke:currentColor;stroke-width:1.25;stroke-linecap:round}
+.langs ul{display:flex;flex-wrap:wrap;gap:.25rem;margin:0;padding:0;list-style:none;min-width:0}
+.langs a{display:inline-flex;align-items:center;min-height:2.75rem;padding:0 .75rem;border:1px solid transparent;border-radius:.5rem;text-decoration:none;overflow-wrap:anywhere;touch-action:manipulation;transition:color 120ms ease-out,background-color 120ms ease-out}
+.langs a[aria-current]{color:var(--fg);background:var(--card);border-color:var(--border);font-weight:600}
+@media (hover:hover) and (pointer:fine){.langs a:not([aria-current]):hover{color:var(--fg);background:var(--card)}}
 ${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.c-${s}{background:var(--c-${s}-bg);color:var(--c-${s}-fg)}`).join("")}
 ${PUBLIC_STATUSES.map((s) => `.p-${s}{background:var(--p-${s}-bg);color:var(--p-${s}-fg)}`).join("")}
 `;
@@ -314,30 +321,44 @@ const componentChip = (locale: Locale, status: ComponentStatus | "maintenance") 
 const publicChip = (locale: Locale, status: PublicStatus) =>
   `<span class="chip p-${status}">${say(locale, `public_${status}`)}</span>`;
 
-function incidentBody(locale: Locale, incident: SnapshotIncident): string {
-  const affects =
-    incident.components.length > 0
-      ? `<p class="meta">${say(locale, "affects", { list: incident.components.join(", ") })}</p>`
-      : "";
+/**
+ * ` lang="…"` for what the team wrote (titles, updates, names) when the page is read in another language than its own:
+ * the wording follows the visitor, the team's text stays in the page's language, so a screen reader pronounces each
+ * right. Empty when the two are the same.
+ */
+type Own = string;
+
+/** "Affects …" with the components' names, each marked with the page's own language when the wording is in another. */
+function affectsLine(locale: Locale, names: readonly string[], own: Own): string {
+  if (names.length === 0) return "";
+  if (own === "")
+    return `<p class="meta">${say(locale, "affects", { list: names.join(", ") })}</p>`;
+  const marker = "\uE000list\uE000";
+  const list = names.map((name) => `<span${own}>${escape(name)}</span>`).join(", ");
+  return `<p class="meta">${say(locale, "affects", { list: marker }).replace(marker, () => list)}</p>`;
+}
+
+function incidentBody(locale: Locale, incident: SnapshotIncident, own: Own): string {
+  const affects = affectsLine(locale, incident.components, own);
   const updates = incident.updates
     .map(
       (update) =>
-        `<li><p>${publicChip(locale, update.status)} <span class="meta">${sayAt(locale, "update_at", update.at)}</span></p><p class="body">${escape(update.body)}</p></li>`,
+        `<li><p>${publicChip(locale, update.status)} <span class="meta">${sayAt(locale, "update_at", update.at)}</span></p><p class="body"${own}>${escape(update.body)}</p></li>`,
     )
     .join("");
   return `${affects}<ol class="updates">${updates}</ol>`;
 }
 
-function activeIncident(locale: Locale, incident: SnapshotIncident): string {
-  return `<article class="incident"><header><h3>${escape(incident.title)}</h3>${publicChip(locale, incident.status)}</header>${incidentBody(locale, incident)}</article>`;
+function activeIncident(locale: Locale, incident: SnapshotIncident, own: Own): string {
+  return `<article class="incident"><header><h3${own}>${escape(incident.title)}</h3>${publicChip(locale, incident.status)}</header>${incidentBody(locale, incident, own)}</article>`;
 }
 
-function pastIncident(locale: Locale, incident: SnapshotIncident): string {
+function pastIncident(locale: Locale, incident: SnapshotIncident, own: Own): string {
   const resolved =
     incident.resolvedAt === null
       ? ""
       : `<p class="meta">${sayAt(locale, "resolved_at", incident.resolvedAt)}</p>`;
-  return `<details class="incident"><summary><h3>${escape(incident.title)}</h3>${resolved}</summary>${incidentBody(locale, incident)}</details>`;
+  return `<details class="incident"><summary><h3${own}>${escape(incident.title)}</h3>${resolved}</summary>${incidentBody(locale, incident, own)}</details>`;
 }
 
 const DAY_FORMAT = { dateStyle: "medium", timeZone: "UTC" } as const;
@@ -386,11 +407,13 @@ function uptimeBar(locale: Locale, component: SnapshotComponent): string {
   return `<div class="uptime"><div class="bars" role="img" aria-label="${escape(label)}">${bars}</div><p class="scale" aria-hidden="true"><span class="from"><span class="long">${escape(sayUptime(locale, "start"))}</span><span class="short">${escape(sayUptime(locale, "start_short"))}</span></span><span class="pct">${escape(share)}</span><span class="to">${escape(sayUptime(locale, "end"))}</span></p></div>`;
 }
 
-function maintenanceWindow(locale: Locale, window: SnapshotMaintenance, active: boolean): string {
-  const affects =
-    window.components.length > 0
-      ? `<p class="meta">${say(locale, "affects", { list: window.components.join(", ") })}</p>`
-      : "";
+function maintenanceWindow(
+  locale: Locale,
+  window: SnapshotMaintenance,
+  active: boolean,
+  own: Own,
+): string {
+  const affects = affectsLine(locale, window.components, own);
   const range = active
     ? sayWindowAt(locale, "window_active", { until: window.endsAt })
     : sayWindowAt(locale, "window_upcoming", { time: window.startsAt, until: window.endsAt });
@@ -401,7 +424,7 @@ function maintenanceWindow(locale: Locale, window: SnapshotMaintenance, active: 
       ? componentChip(locale, "maintenance")
       : "";
   const hint = window.outage ? `<p class="meta">${sayWindow(locale, "outage_hint")}</p>` : "";
-  return `<article class="incident"><header><h3>${escape(window.title)}</h3>${chip}</header><p class="window">${range}</p>${affects}${hint}<p class="body">${escape(window.body)}</p></article>`;
+  return `<article class="incident"><header><h3${own}>${escape(window.title)}</h3>${chip}</header><p class="window">${range}</p>${affects}${hint}<p class="body"${own}>${escape(window.body)}</p></article>`;
 }
 
 /** What the page's form offers to follow, from its snapshot: each group with its key and its components'. */
@@ -430,19 +453,22 @@ function followPicker(
   groups: FollowGroup[],
   checked: ReadonlySet<string>,
   open: boolean,
+  own: Own = "",
 ): string {
   const box = (key: string, label: string, all = false) =>
     `<label${all ? ' class="all"' : ""}><input type="checkbox" name="follow" value="${escape(key)}"${checked.has(key) ? " checked" : ""}><span>${label}</span></label>`;
   const sets = groups
     .map((group) => {
       const legend =
-        group.name === null ? saySubscribe(locale, "follow_ungrouped") : escape(group.name);
+        group.name === null
+          ? saySubscribe(locale, "follow_ungrouped")
+          : `<span${own}>${escape(group.name)}</span>`;
       const whole =
         group.name !== null && group.key
           ? box(group.key, saySubscribe(locale, "follow_group"), true)
           : "";
       const rows = group.components
-        .map((component) => box(component.key, escape(component.name)))
+        .map((component) => box(component.key, `<span${own}>${escape(component.name)}</span>`))
         .join("");
       return `<fieldset><legend>${legend}</legend><div class="list">${whole}${rows}</div></fieldset>`;
     })
@@ -450,8 +476,8 @@ function followPicker(
   return `<details class="follow"${open ? " open" : ""}><summary>${saySubscribe(locale, "follow_toggle")}</summary><p class="meta">${saySubscribe(locale, "follow_hint")}</p>${sets}</details>`;
 }
 
-function subscribeForm(locale: Locale, slug: string, groups: FollowGroup[]): string {
-  const picker = groups.length > 0 ? followPicker(locale, groups, new Set(), false) : "";
+function subscribeForm(locale: Locale, slug: string, groups: FollowGroup[], own: Own): string {
+  const picker = groups.length > 0 ? followPicker(locale, groups, new Set(), false, own) : "";
   return `<section class="subscribe" aria-labelledby="subscribe"><h2 id="subscribe">${saySubscribe(locale, "form_title")}</h2><p class="meta">${saySubscribe(locale, "form_hint")}</p><form method="post" action="/status/${escape(slug)}/subscribe"><label for="subscribe-email">${saySubscribe(locale, "email_label")}</label><input id="subscribe-email" name="email" type="email" required maxlength="254" autocomplete="email" autocapitalize="none" spellcheck="false" enterkeyhint="send"><span class="trap" aria-hidden="true"><label for="subscribe-website">${saySubscribe(locale, "honeypot")}</label><input id="subscribe-website" name="website" type="text" tabindex="-1" autocomplete="off"></span>${picker}<button type="submit">${saySubscribe(locale, "submit")}</button></form></section>`;
 }
 
@@ -477,14 +503,62 @@ function feedLinks(locale: Locale, slug: string | undefined): string {
 }
 
 /**
+ * Each language the page is offered in, named in itself: what a visitor looks for, whatever language the page is in
+ * now. Not messages, since they never change with the page's language.
+ */
+const LANGUAGE_NAMES: Record<StatusLocale, string> = {
+  en: "English",
+  "pt-BR": "Português (Brasil)",
+};
+
+/**
+ * The page in another language, relative to its own address (`?lang=`), so it works at `/status/<slug>` and at a
+ * custom domain's `/` alike; the route keeps it over what the browser asks for.
+ */
+const languageHref = (locale: StatusLocale) => `?lang=${encodeURIComponent(locale)}`;
+
+/**
+ * `<link rel="alternate" hreflang>` for each language, so search engines find each one, and `x-default` for the bare
+ * address, which follows the visitor. Absolute, as search engines require: none without the page's own address.
+ */
+const languageAlternates = (pageUrl: string | undefined) =>
+  pageUrl === undefined
+    ? ""
+    : [
+        ...STATUS_LOCALES.map(
+          (locale) =>
+            `\n<link rel="alternate" hreflang="${escape(locale)}" href="${escape(`${pageUrl}${languageHref(locale)}`)}">`,
+        ),
+        `\n<link rel="alternate" hreflang="x-default" href="${escape(pageUrl)}">`,
+      ].join("");
+
+/** The language switcher: plain links (no script), the current one marked. */
+function languageLinks(current: Locale): string {
+  const links = STATUS_LOCALES.map(
+    (locale) =>
+      `<li><a href="${escape(languageHref(locale))}" hreflang="${escape(locale)}" lang="${escape(locale)}"${locale === current ? ' aria-current="page"' : ""}>${escape(LANGUAGE_NAMES[locale])}</a></li>`,
+  ).join("");
+  return `<nav class="langs" aria-label="${say(current, "language")}"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="6.25"/><path d="M1.75 8h12.5M8 1.75c1.7 1.8 2.5 3.9 2.5 6.25S9.7 12.45 8 14.25M8 1.75C6.3 3.55 5.5 5.65 5.5 8s.8 4.45 2.5 6.25"/></svg><ul>${links}</ul></nav>`;
+}
+
+/**
  * The page for a snapshot. `slug` and `subscribe` add the email form, which only shows where email can be sent (a page
  * read from an older snapshot shows it too: subscribing does not depend on the snapshot's version).
  */
 export function renderStatusPage(
   snapshot: StatusSnapshot,
-  options: { slug?: string; subscribe?: boolean; now?: number } = {},
+  options: {
+    slug?: string;
+    subscribe?: boolean;
+    now?: number;
+    locale?: Locale;
+    /** The page's own absolute address, without a query, for the `hreflang` alternates. */
+    pageUrl?: string;
+  } = {},
 ): string {
-  const { locale } = snapshot;
+  // The visitor's language when the route found one (RFC 0012 "Language"), else the page's own.
+  const locale = options.locale ?? snapshot.locale;
+  const own: Own = locale === snapshot.locale ? "" : ` lang="${escape(snapshot.locale)}"`;
   // Rebuilt at least daily, so a snapshot this old means the shard or KV is stuck (decided, Q23): say so up top.
   const stale =
     (options.now ?? Date.now()) - snapshot.generatedAt > STATUS_STALE_MS
@@ -498,7 +572,7 @@ export function renderStatusPage(
             const rows = group.components
               .map(
                 (component) =>
-                  `<li${component.uptime ? ' class="with-bar"' : ""}><span class="name">${escape(component.name)}</span>${componentChip(locale, component.status)}${uptimeBar(locale, component)}</li>`,
+                  `<li${component.uptime ? ' class="with-bar"' : ""}><span class="name"${own}>${escape(component.name)}</span>${componentChip(locale, component.status)}${uptimeBar(locale, component)}</li>`,
               )
               .join("");
             if (group.name === null) return `<ul class="list">${rows}</ul>`;
@@ -506,27 +580,27 @@ export function renderStatusPage(
             const count = escape(
               status_group_count({ count: group.components.length }, { locale }),
             );
-            return `<details class="group" open><summary><span class="name">${escape(group.name)}</span><span class="count">${count}</span></summary><ul class="list">${rows}</ul></details>`;
+            return `<details class="group" open><summary><span class="name"${own}>${escape(group.name)}</span><span class="count">${count}</span></summary><ul class="list">${rows}</ul></details>`;
           })
           .join("");
   const active =
     snapshot.active.length === 0
       ? ""
-      : `<section aria-labelledby="active"><h2 id="active">${say(locale, "active_title")}</h2>${snapshot.active.map((incident) => activeIncident(locale, incident)).join("")}</section>`;
+      : `<section aria-labelledby="active"><h2 id="active">${say(locale, "active_title")}</h2>${snapshot.active.map((incident) => activeIncident(locale, incident, own)).join("")}</section>`;
   const maintenance = snapshot.maintenance ?? [];
   const upcoming = snapshot.upcoming ?? [];
   const inProgress =
     maintenance.length === 0
       ? ""
-      : `<section aria-labelledby="maintenance"><h2 id="maintenance">${sayWindow(locale, "active_title")}</h2>${maintenance.map((window) => maintenanceWindow(locale, window, true)).join("")}</section>`;
+      : `<section aria-labelledby="maintenance"><h2 id="maintenance">${sayWindow(locale, "active_title")}</h2>${maintenance.map((window) => maintenanceWindow(locale, window, true, own)).join("")}</section>`;
   const planned =
     upcoming.length === 0
       ? ""
-      : `<section aria-labelledby="upcoming"><h2 id="upcoming">${sayWindow(locale, "upcoming_title")}</h2>${upcoming.map((window) => maintenanceWindow(locale, window, false)).join("")}</section>`;
+      : `<section aria-labelledby="upcoming"><h2 id="upcoming">${sayWindow(locale, "upcoming_title")}</h2>${upcoming.map((window) => maintenanceWindow(locale, window, false, own)).join("")}</section>`;
   const history =
     snapshot.history.length === 0
       ? `<p class="empty">${say(locale, "history_empty")}</p>`
-      : snapshot.history.map((incident) => pastIncident(locale, incident)).join("");
+      : snapshot.history.map((incident) => pastIncident(locale, incident, own)).join("");
   // All operational while a window is under way: say maintenance, not "all systems operational".
   const banner =
     snapshot.status === "operational" && maintenance.length > 0
@@ -534,9 +608,9 @@ export function renderStatusPage(
       : `<p class="banner c-${snapshot.status}" role="status"><span class="dot"></span>${say(locale, `overall_${snapshot.status}`)}</p>`;
   const form =
     options.subscribe && options.slug
-      ? subscribeForm(locale, options.slug, followGroups(snapshot))
+      ? subscribeForm(locale, options.slug, followGroups(snapshot), own)
       : "";
-  const body = `<h1>${escape(snapshot.title)}</h1>
+  const body = `<h1${own}>${escape(snapshot.title)}</h1>
 ${banner}
 ${stale}
 ${inProgress}
@@ -545,12 +619,12 @@ ${active}
 ${planned}
 <section aria-labelledby="history"><h2 id="history">${say(locale, "history_title")}</h2><p class="meta hint">${say(locale, "history_hint")}</p>${history}</section>
 ${form}
-<footer><span>${sayAt(locale, "updated", snapshot.generatedAt)}</span>${feedLinks(locale, options.slug)}<span>${say(locale, "powered")}</span></footer>`;
+<footer><span>${sayAt(locale, "updated", snapshot.generatedAt)}</span>${feedLinks(locale, options.slug)}<span>${say(locale, "powered")}</span>${languageLinks(locale)}</footer>`;
   return document(
     locale,
     `${escape(snapshot.title)} · ${say(locale, "*")}`,
     body,
-    feedAlternates(snapshot.title, options.slug),
+    `${feedAlternates(snapshot.title, options.slug)}${languageAlternates(options.pageUrl)}`,
     true,
   );
 }

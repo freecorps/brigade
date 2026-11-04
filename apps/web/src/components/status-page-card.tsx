@@ -770,8 +770,11 @@ function ComponentRow({
                 onChange={(event) => setFollow(event.target.checked)}
                 className="mt-0.5 size-5 shrink-0 accent-primary disabled:opacity-50"
               />
-              <label htmlFor={followId} className="flex min-w-0 flex-col gap-0.5">
-                <span className="text-sm font-medium">{say("follow_label")}</span>
+              <div className="flex min-w-0 flex-col gap-0.5">
+                {/* The name is the title alone; the hint is its description (aria-describedby), read once. */}
+                <label htmlFor={followId} className="text-sm font-medium">
+                  {say("follow_label")}
+                </label>
                 <span id={followHintId} className="text-sm text-muted-foreground">
                   {say(
                     chosen.length > 0
@@ -781,7 +784,7 @@ function ComponentRow({
                         : "follow_no_monitors",
                   )}
                 </span>
-              </label>
+              </div>
             </div>
           </fieldset>
         ) : null}

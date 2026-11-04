@@ -312,8 +312,9 @@ reader skips fields it does not check, so they need no new version ("Feeds").
   so every visit would be an R2 read unless the Cache API sat in front anyway. The Cache API alone is per location
   and cannot be pushed to globally, so it cannot be the store, only a layer in front (used below). A Durable Object
   per page would put a single location behind every visitor, which is what this design avoids.
-- **The push.** Every commit that changes `status_page`, `status_components` or `status_incidents` marks the snapshot
-  dirty (`status_dirty` in `shard_meta`, the version of the change) **in the change's own transaction**, so a change
+- **The push.** Every commit that changes `status_page`, `status_components`, `status_incidents`,
+  `status_maintenance` or `status_domain`, and the alerts and monitor changes named under "Uptime" and "Status from
+  monitors" (`touchesStatusPage`), marks the snapshot dirty (`status_dirty` in `shard_meta`, the version of the change) **in the change's own transaction**, so a change
   is never lost to the object dying before it is published. The mutation's outbox hook brings the shard's one alarm
   forward; the alarm, after the escalations and the outbox drain, builds the snapshot and puts it (or deletes the key
   when the page is not public), then deletes retired slugs' keys and releases them in D1 after their grace. It clears

@@ -1501,6 +1501,32 @@ describe("the page", () => {
     expect(html).not.toMatch(/nth-(?:last-)?child\(-n\+(?:15|75)\)::after/);
   });
 
+  test("the scale under a bar never widens the page on a 320 px phone, in any language", () => {
+    const html = renderStatusPage({ ...base, locale: "pt-BR" }, { slug: "acme" });
+    const rule = (selector: string) =>
+      html.match(
+        new RegExp(`(?:^|[}\\n])${selector.replace(/[.*+?()[\]]/g, "\\$&")}\\{([^}]*)\\}`),
+      )?.[1];
+    // "30 dias atrás – 99,42% de disponibilidade – Hoje" is wider than a 320 px screen on one line (#171).
+    // The scale is sized by the card, not by its text, so nothing in it can push the card wider.
+    expect(rule(".uptime")).toContain("min-width:0");
+    expect(rule(".uptime")).toContain("container:uptime/inline-size");
+    // Only the edge labels stay on one line; the percentage wraps between them when it has to.
+    expect(rule(".scale")).not.toContain("nowrap");
+    expect(rule(".scale .from,.scale .to")).toContain("flex:none;white-space:nowrap");
+    expect(html).toContain(".scale .pct{min-width:0;text-align:center;overflow-wrap:anywhere}");
+    // The rules give way to the text: they shrink to nothing, and a narrow card drops them and their gaps.
+    expect(rule(".scale::before,.scale::after")).toContain("min-width:0");
+    expect(html).toContain(
+      "@container uptime (max-width:17rem){.scale{gap:.5rem}.scale::before,.scale::after{display:none}}",
+    );
+    // Zoomed text (a large root font) leaves the labels no room beside each other: the percentage
+    // takes a line of its own instead of breaking one glyph per line, and "today" stays at the bar's end.
+    expect(html).toContain(
+      "@container uptime (max-width:13rem){.scale{flex-wrap:wrap}.scale .to{margin-left:auto}.scale .pct{order:6;flex-basis:100%}}",
+    );
+  });
+
   test("pt-BR", () => {
     const html = renderStatusPage({ ...base, locale: "pt-BR" }, { slug: "acme", subscribe: true });
     expect(html).toContain("de disponibilidade nos últimos 90 dias");

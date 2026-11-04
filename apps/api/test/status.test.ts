@@ -91,6 +91,17 @@ async function addMember(workspaceId: string, userId: string, role: string) {
  * Ana owns a workspace; Caio is a responder there, Eva an outsider. `crew` casts people signed up earlier in those
  * parts: signing up hashes passwords, the slowest part of a team.
  */
+/**
+ * A team of people signed up once and shared by the tests that call it: sign-up is rate-limited, and each of those
+ * tests needs only a workspace of its own.
+ */
+let sharedCrew: ReturnType<typeof team> | undefined;
+async function sharedTeam() {
+  sharedCrew ??= team();
+  const first = await sharedCrew;
+  return team({ ana: first.ana, caio: first.caio, eva: first.eva });
+}
+
 async function team(crew?: { ana: Person; caio: Person; eva: Person }) {
   const [ana, caio, eva] = crew
     ? [crew.ana, crew.caio, crew.eva]
@@ -764,7 +775,7 @@ describe("the snapshot", () => {
   });
 
   test("a component following its monitors goes down on the page when one turns down, and back when it recovers", async () => {
-    const t = await team();
+    const t = await sharedTeam();
     const address = slug();
     await configure(t, t.ana, settings(address));
     const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
@@ -879,7 +890,7 @@ describe("the snapshot", () => {
   });
 
   test("a followed monitor's flip marks the page; a routine report or an unfollowed monitor does not", async () => {
-    const t = await team();
+    const t = await sharedTeam();
     await configure(t, t.ana, settings(slug()));
     const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
     const component = newId("cmp", Date.now(), random);
@@ -1318,7 +1329,7 @@ describe("the snapshot", () => {
   });
 
   test("the feeds come from the snapshot in KV, cached like the page", async () => {
-    const t = await team();
+    const t = await sharedTeam();
     const address = slug();
     await configure(t, t.ana, settings(address));
     const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };

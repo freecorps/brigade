@@ -266,7 +266,7 @@ p{margin:0}
 .group>summary .head{flex:1;min-width:0;display:flex;align-items:center;gap:.125rem .75rem}
 .group>summary .name{flex:1 1 auto}
 .group>summary .state{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:.125rem .75rem;flex:none;max-width:100%}
-@media (max-width:39.99rem){.group>summary .head{flex-direction:column;align-items:flex-start}.group>summary .name{flex:none}.group>summary .state{justify-content:flex-start}}
+@media (max-width:39.99rem){.group>summary .head{flex-direction:column;align-items:flex-start}.group>summary .name{flex:none;max-width:100%}.group>summary .state{justify-content:flex-start}}
 .group>summary .count{color:var(--muted);font-size:.8125rem;font-weight:400;font-variant-numeric:tabular-nums;white-space:nowrap}
 .group>.list{border:0;border-top:1px solid var(--border);border-radius:0}
 :root{interpolate-size:allow-keywords}

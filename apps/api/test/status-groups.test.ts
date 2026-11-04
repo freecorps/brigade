@@ -115,4 +115,9 @@ describe("a named group's header", () => {
       expect(html).toContain(`.group>summary .c-${status} .dot{color:var(--c-${status}-dot)}`);
     }
   });
+
+  test("on a phone a long name wraps within the header instead of being clipped", () => {
+    const html = renderStatusPage(page([group("GroceryOps", "operational")]));
+    expect(html).toContain(".group>summary .name{flex:none;max-width:100%}");
+  });
 });

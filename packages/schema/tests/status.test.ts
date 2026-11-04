@@ -3,6 +3,7 @@ import {
   componentsForServices,
   componentStatus,
   createMemoryStore,
+  groupStatus,
   MAX_COMPONENT_SERVICES,
   isStatusSlug,
   MAX_COMPONENTS,
@@ -258,6 +259,17 @@ describe("components", () => {
       events: [{ type: "status_component.deleted", data: { id: api, incidents: 1 } }],
     });
     expect(store.get("status_incidents", incident)?.componentIds).toEqual([web]);
+  });
+});
+
+describe("groupStatus", () => {
+  test("is the worst of its components, maintenance only while nothing is worse", () => {
+    expect(groupStatus([])).toBe("operational");
+    expect(groupStatus(["operational", "operational"])).toBe("operational");
+    expect(groupStatus(["operational", "degraded"])).toBe("degraded");
+    expect(groupStatus(["major_outage", "operational", "partial_outage"])).toBe("major_outage");
+    expect(groupStatus(["operational", "maintenance"])).toBe("maintenance");
+    expect(groupStatus(["maintenance", "degraded"])).toBe("degraded");
   });
 });
 

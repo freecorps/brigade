@@ -189,6 +189,61 @@ describe("StatusPagePanel", () => {
     expect(created).toEqual([{ name: "Checkout", group: "Apps" }]);
   });
 
+  test("a group's heading shows its worst component status, as the public page does", () => {
+    const { container } = card({
+      page,
+      components: [
+        { ...component("cmp_1", "Backend", "GroceryOps"), status: "major_outage" },
+        component("cmp_2", "Frontend", "GroceryOps"),
+        component("cmp_3", "Invoices", "Billing"),
+      ],
+    });
+    const headings = [...container.querySelectorAll("h4")].map((h4) => [
+      h4.textContent,
+      h4.nextElementSibling?.textContent,
+    ]);
+    expect(headings).toEqual([
+      ["GroceryOps", "Major outage"],
+      ["Billing", "Operational"],
+    ]);
+  });
+
+  test("a group's heading counts what its rows show: followed monitors, maintenance, a planned outage", () => {
+    const headings = (container: HTMLElement) =>
+      [...container.querySelectorAll("h4")].map((h4) => [
+        h4.textContent,
+        h4.nextElementSibling?.textContent,
+      ]);
+    const followed = card({
+      page,
+      components: [
+        {
+          ...component("cmp_1", "Backend", "GroceryOps"),
+          monitorIds: ["mon_1"],
+          followMonitors: true,
+        },
+        component("cmp_2", "Frontend", "GroceryOps"),
+      ],
+      monitors: [{ id: "mon_1", name: "API health", paused: false, status: "down" }],
+    });
+    expect(headings(followed.container)).toEqual([["GroceryOps", "Major outage"]]);
+    const windows = card({
+      page,
+      components: [
+        component("cmp_1", "Backend", "GroceryOps"),
+        component("cmp_2", "Ledger", "Billing"),
+      ],
+      windows: [
+        { componentIds: ["cmp_1"], outage: false, phase: "in_progress" },
+        { componentIds: ["cmp_2"], outage: true, phase: "in_progress" },
+      ],
+    });
+    expect(headings(windows.container)).toEqual([
+      ["GroceryOps", "Under maintenance"],
+      ["Billing", "Major outage"],
+    ]);
+  });
+
   test("components move up and down by keyboard, within their group, and groups move as a whole", async () => {
     const orders: string[][] = [];
     const { container } = card({

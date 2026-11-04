@@ -147,6 +147,21 @@ export function worseStatus(a: ComponentStatus, b: ComponentStatus): ComponentSt
 }
 
 /**
+ * What a named group shows in its header (RFC 0012 "The public page"): the worst of what its components show.
+ * "Under maintenance" only while none of them shows anything worse, as for a component and the page's banner, so
+ * planned work never hides a real outage and never reads as one.
+ */
+export function groupStatus(shown: readonly SnapshotComponentStatus[]): SnapshotComponentStatus {
+  let worst: ComponentStatus = "operational";
+  let maintenance = false;
+  for (const status of shown) {
+    if (status === "maintenance") maintenance = true;
+    else worst = worseStatus(worst, status);
+  }
+  return worst === "operational" && maintenance ? "maintenance" : worst;
+}
+
+/**
  * What a component's linked monitors say about it when it follows them (`followMonitors`, RFC 0012 "Status from
  * monitors"): of its monitors that still exist and are not paused, all down is `major_outage`, some `partial_outage`.
  * Null when it does not follow them, none is considered or none is down. Down is the monitor's own verdict

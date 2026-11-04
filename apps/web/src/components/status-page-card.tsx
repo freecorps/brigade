@@ -11,6 +11,7 @@ import {
   STATUS_LOCALES,
   STATUS_PAGE_TITLE_MAX,
   componentOrder,
+  groupStatus,
   statusFollowKey,
   type ComponentStatus,
   type MaintenanceRow,
@@ -469,6 +470,13 @@ function Components({
 }: PanelProps) {
   const [moved, setMoved] = useState<{ name: string } | { failed: true } | null>(null);
   const blocks = componentBlocks(components);
+  // What the public page shows for each component, worked out once for its row and its group's heading.
+  const shown = new Map(
+    components.map((component) => [
+      component.id,
+      shownComponent(component, incidents, monitors, windows),
+    ]),
+  );
   const firstGroup = blocks[0]?.group === null ? 1 : 0;
   const canMove = manage && onReorder !== undefined;
   const move = (ids: string[] | null, name: string) => {
@@ -495,9 +503,17 @@ function Components({
             <div key={block.group ?? ""} className="flex min-w-0 flex-col gap-1.5">
               {block.group !== null ? (
                 <div className="flex min-h-11 items-center justify-between gap-3">
-                  <h4 className="min-w-0 text-xs font-semibold text-muted-foreground [overflow-wrap:anywhere]">
-                    {block.group}
-                  </h4>
+                  {/* The group's status as its public header shows it: the worst of its components. */}
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                    <h4 className="min-w-0 text-xs font-semibold text-muted-foreground [overflow-wrap:anywhere]">
+                      {block.group}
+                    </h4>
+                    <ComponentChip
+                      status={groupStatus(
+                        block.components.map((component) => shown.get(component.id)!.status),
+                      )}
+                    />
+                  </div>
                   {canMove ? (
                     <MoveButtons
                       id={`group:${block.group}`}
@@ -519,7 +535,7 @@ function Components({
                     onUpdate={onUpdate}
                     onDelete={onDelete}
                     monitors={monitors}
-                    shown={shownComponent(component, incidents, monitors, windows)}
+                    shown={shown.get(component.id)!}
                     onLink={onLink}
                     services={services}
                     onLinkServices={onLinkServices}

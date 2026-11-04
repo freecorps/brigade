@@ -1453,13 +1453,13 @@ describe("the page", () => {
     expect(html).not.toContain("<form");
   });
 
-  test("a named group is a card that folds with its count; each day rises in turn and names itself", () => {
+  test("a named group is a card that folds with its status and count; each day rises in turn and names itself", () => {
     const html = renderStatusPage(
       { ...base, groups: [{ ...base.groups[0]!, name: "Payments <EU>" }] },
       { slug: "acme" },
     );
     expect(html).toContain(
-      '<details class="group" open><summary><span class="name">Payments &lt;EU&gt;</span><span class="count">1 component</span></summary>',
+      '<details class="group" open><summary><span class="head"><span class="name">Payments &lt;EU&gt;</span><span class="state"><span class="chip c-maintenance"><span class="dot"></span>Under maintenance</span><span class="count">1 component</span></span></span></summary>',
     );
     expect(html).toContain(
       '<span class="u-down" style="--i:1" data-tip="Oct 26, 2026: down for 90 min"></span>',

@@ -10,7 +10,12 @@ import {
   status_text,
   status_uptime,
 } from "@freecorps/brigade-i18n/messages";
-import { STATUS_LOCALES, UPTIME_DAYS, type StatusLocale } from "@freecorps/brigade-schema";
+import {
+  groupStatus,
+  STATUS_LOCALES,
+  UPTIME_DAYS,
+  type StatusLocale,
+} from "@freecorps/brigade-schema";
 import type {
   ComponentStatus,
   PublicStatus,
@@ -258,7 +263,11 @@ p{margin:0}
 .group>summary::-webkit-details-marker{display:none}
 .group>summary::before{content:"";flex:none;width:.4375rem;height:.4375rem;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(-45deg);margin:0 .25rem 0 .125rem;transition:transform 200ms cubic-bezier(.23,1,.32,1)}
 .group[open]>summary::before{transform:rotate(45deg)}
-.group>summary .count{margin-left:auto;color:var(--muted);font-size:.8125rem;font-weight:400;font-variant-numeric:tabular-nums}
+.group>summary .head{flex:1;min-width:0;display:flex;align-items:center;gap:.125rem .75rem}
+.group>summary .name{flex:1 1 auto}
+.group>summary .state{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:.125rem .75rem;flex:none;max-width:100%}
+@media (max-width:39.99rem){.group>summary .head{flex-direction:column;align-items:flex-start}.group>summary .name{flex:none;max-width:100%}.group>summary .state{justify-content:flex-start}}
+.group>summary .count{color:var(--muted);font-size:.8125rem;font-weight:400;font-variant-numeric:tabular-nums;white-space:nowrap}
 .group>.list{border:0;border-top:1px solid var(--border);border-radius:0}
 :root{interpolate-size:allow-keywords}
 .group::details-content{height:0;overflow:clip;opacity:0;transition:height 260ms cubic-bezier(.23,1,.32,1),opacity 200ms ease-out,content-visibility 260ms allow-discrete}
@@ -279,6 +288,10 @@ details.incident summary::-webkit-details-marker{display:none}
 .list .chip .dot{width:.5rem;height:.5rem}
 .list .chip:not(.c-operational){color:var(--fg)}
 ${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.list .c-${s} .dot{color:var(--c-${s}-dot)}`).join("")}
+.group>summary .chip{background:none;color:var(--muted);font-weight:500;padding:0}
+.group>summary .chip .dot{width:.5rem;height:.5rem}
+.group>summary .chip:not(.c-operational){color:var(--fg)}
+${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.group>summary .c-${s} .dot{color:var(--c-${s}-dot)}`).join("")}
 .uptime{flex-basis:100%;margin-top:.25rem}
 .bars{display:flex;gap:2px;height:2.25rem;container-type:inline-size;overflow-x:clip}
 .bars span{--f:calc(var(--i,0) / ${UPTIME_DAYS - 1});position:relative;flex:1;min-width:2px;border-radius:3px;background:var(--border);transform-origin:bottom;animation:rise 640ms cubic-bezier(.23,1,.32,1) backwards;animation-delay:calc(var(--i,0) * 6ms);transition:opacity 160ms ease-out,filter 160ms ease-out}
@@ -622,11 +635,13 @@ export function renderStatusPage(
               )
               .join("");
             if (group.name === null) return `<ul class="list">${rows}</ul>`;
-            // A named group is a card that folds (no script: a details element), open to start with.
+            // A named group is a card that folds (no script: a details element), open to start with. Its header
+            // says how the group is doing (the worst of its components), so each service reads as one block.
             const count = escape(
               status_group_count({ count: group.components.length }, { locale }),
             );
-            return `<details class="group" open><summary><span class="name"${own}>${escape(group.name)}</span><span class="count">${count}</span></summary><ul class="list">${rows}</ul></details>`;
+            const status = groupStatus(group.components.map((component) => component.status));
+            return `<details class="group" open><summary><span class="head"><span class="name"${own}>${escape(group.name)}</span><span class="state">${componentChip(locale, status)}<span class="count">${count}</span></span></span></summary><ul class="list">${rows}</ul></details>`;
           })
           .join("");
   const active =

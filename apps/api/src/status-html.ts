@@ -498,12 +498,20 @@ const LANGUAGE_NAMES: Record<StatusLocale, string> = {
  */
 const languageHref = (locale: StatusLocale) => `?lang=${encodeURIComponent(locale)}`;
 
-/** `<link rel="alternate" hreflang>` for each language, so search engines find each one. */
-const languageAlternates = () =>
-  STATUS_LOCALES.map(
-    (locale) =>
-      `\n<link rel="alternate" hreflang="${escape(locale)}" href="${escape(languageHref(locale))}">`,
-  ).join("");
+/**
+ * `<link rel="alternate" hreflang>` for each language, so search engines find each one, and `x-default` for the bare
+ * address, which follows the visitor. Absolute, as search engines require: none without the page's own address.
+ */
+const languageAlternates = (pageUrl: string | undefined) =>
+  pageUrl === undefined
+    ? ""
+    : [
+        ...STATUS_LOCALES.map(
+          (locale) =>
+            `\n<link rel="alternate" hreflang="${escape(locale)}" href="${escape(`${pageUrl}${languageHref(locale)}`)}">`,
+        ),
+        `\n<link rel="alternate" hreflang="x-default" href="${escape(pageUrl)}">`,
+      ].join("");
 
 /** The language switcher: plain links (no script), the current one marked. */
 function languageLinks(current: Locale): string {
@@ -520,7 +528,14 @@ function languageLinks(current: Locale): string {
  */
 export function renderStatusPage(
   snapshot: StatusSnapshot,
-  options: { slug?: string; subscribe?: boolean; now?: number; locale?: Locale } = {},
+  options: {
+    slug?: string;
+    subscribe?: boolean;
+    now?: number;
+    locale?: Locale;
+    /** The page's own absolute address, without a query, for the `hreflang` alternates. */
+    pageUrl?: string;
+  } = {},
 ): string {
   // The visitor's language when the route found one (RFC 0012 "Language"), else the page's own.
   const locale = options.locale ?? snapshot.locale;
@@ -589,7 +604,7 @@ ${form}
     locale,
     `${escape(snapshot.title)} · ${say(locale, "*")}`,
     body,
-    `${feedAlternates(snapshot.title, options.slug)}${languageAlternates()}`,
+    `${feedAlternates(snapshot.title, options.slug)}${languageAlternates(options.pageUrl)}`,
     true,
   );
 }

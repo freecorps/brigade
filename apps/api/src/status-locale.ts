@@ -51,9 +51,12 @@ export function acceptedLocale(header: string | null | undefined): StatusLocale 
   if (!header) return undefined;
   const entries: { locale: StatusLocale; q: number; exact: boolean }[] = [];
   const refused = new Set<string>();
-  for (const raw of header
-    .slice(0, ACCEPT_LANGUAGE_MAX_LENGTH)
-    .split(",", ACCEPT_LANGUAGE_MAX_ENTRIES)) {
+  // Cut at the bound, then drop the entry the cut went through: `en;q=0.9` cut to `en;q=0` would refuse English.
+  const read =
+    header.length > ACCEPT_LANGUAGE_MAX_LENGTH
+      ? header.slice(0, Math.max(0, header.lastIndexOf(",", ACCEPT_LANGUAGE_MAX_LENGTH)))
+      : header;
+  for (const raw of read.split(",", ACCEPT_LANGUAGE_MAX_ENTRIES)) {
     const [tag = "", ...params] = raw.split(";").map((part) => part.trim());
     if (!TAG.test(tag)) continue;
     let q = 1;

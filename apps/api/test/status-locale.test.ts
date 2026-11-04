@@ -84,6 +84,18 @@ describe("Accept-Language", () => {
     // Past the length limit: never reached, and fast.
     const long = `${"x".repeat(ACCEPT_LANGUAGE_MAX_LENGTH)},pt-BR`;
     expect(acceptedLocale(long)).toBeUndefined();
+    // One entry longer than the bound, no comma before it: nothing is read.
+    expect(acceptedLocale(`pt-BR;q=1${" ".repeat(ACCEPT_LANGUAGE_MAX_LENGTH)}`)).toBeUndefined();
+    // The cut never turns a weight into a refusal: `en;q=0.9` cut to `en;q=0` is dropped whole, so the English asked
+    // for earlier still counts.
+    const asked = "en;q=0.5,";
+    const filler = `de${"-abcdefg".repeat(29)}-abcde,`.slice(
+      0,
+      ACCEPT_LANGUAGE_MAX_LENGTH - 6 - asked.length,
+    );
+    const header = `${asked}${filler.slice(0, -1)},en;q=0.9`;
+    expect(header.slice(0, ACCEPT_LANGUAGE_MAX_LENGTH).endsWith(",en;q=0")).toBe(true);
+    expect(acceptedLocale(header)).toBe("en");
     const started = performance.now();
     expect(acceptedLocale(`pt-BR,${"en;q=0.1,".repeat(1_000_000)}`)).toBe("pt-BR");
     expect(performance.now() - started).toBeLessThan(500);

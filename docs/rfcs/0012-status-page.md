@@ -605,8 +605,10 @@ request on the server (src/status-locale.ts), in this order:
 1. `?lang=<locale>`, when it names one of `STATUS_LOCALES`: the visitor's explicit choice. Anything else is ignored.
 2. The best match of `Accept-Language` against `STATUS_LOCALES`: highest `q` first, `q=0` refusing a language, and a
    tag Brigade lacks matched by its primary language (`pt`, `pt-PT` read `pt-BR`; `en-GB` reads `en`). The header is
-   the visitor's to send, so only its first 256 characters and 16 entries are read, and an entry that does not parse
-   is skipped.
+   the visitor's to send, so only its first 256 characters (up to the last whole entry) and 16 entries are read, and
+   an entry that does not parse is skipped. A refused language also refuses every tag that matches only through it
+   (`en;q=0, en-US` reads no English), which is stricter than RFC 4647's "more specific wins" and only matters for
+   headers no browser sends.
 3. The visitor's country (`request.cf.country`) where most people read a language Brigade has: the
    Portuguese-speaking countries (BR, PT, AO, MZ, CV, GW, ST, TL) read `pt-BR`. A new locale adds its countries to the
    table.
@@ -618,11 +620,16 @@ request on the server (src/status-locale.ts), in this order:
   says `Content-Language` and `<html lang>`, and `Vary: Accept-Language` for browsers and other caches; Cloudflare's
   own cache ignores `Vary` (only `Vary: *` is refused by `cache.put`), which is why the key carries the language.
   The country is not a header, so a shared cache other than Cloudflare's could serve a country's pick to a neighbour
-  sending the same `Accept-Language`; the switcher is the way out.
+  sending the same `Accept-Language`; the switcher is the way out. A made-up address's cached 404 is the same in
+  every language but is now kept once per key, so a flood of them costs up to `STATUS_LOCALES` + 1 KV reads per
+  address and location instead of one, still behind the miss rate limit. The country relies on `request.cf` reaching
+  the API: through the web Worker's service binding (`/status/*` on the dashboard's host) and the custom-domain hand-off
+  it is not checked by a test; where it does not arrive, rule 3 is skipped and rules 1, 2 and 4 still hold.
 - **A switcher, no script.** The footer lists every language, each named in itself ("English", "Português
   (Brasil)"), as plain links to `?lang=<locale>` relative to the page's own address (so it works at `/status/<slug>`
   and at a custom domain's `/`), the current one marked `aria-current`; the head lists the same as `<link
-  rel="alternate" hreflang>`. The choice is not remembered: it is the link's.
+  rel="alternate" hreflang>`, absolute (the address the page was asked at), with `x-default` for the bare address,
+  which follows the visitor. The choice is not remembered: it is the link's.
 - **What keeps the default.** The feeds, the subscription pages and every email stay in the page's default
   language (one document for every reader, and an email has no request to take a language from). The 404 and error
   pages, which have no page to take a language from, are in English.

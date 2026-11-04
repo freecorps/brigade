@@ -126,7 +126,7 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "slug_hint") return /** @type {LocalizedString} */ (`De 3 a 40 letras minúsculas, números e hifens.`);
 		if (i?.part === "slug_invalid") return /** @type {LocalizedString} */ (`Use de 3 a 40 letras minúsculas, números e hifens simples, começando e terminando com letra ou número.`);
 		if (i?.part === "language_label") return /** @type {LocalizedString} */ (`Idioma padrão`);
-		if (i?.part === "language_hint") return /** @type {LocalizedString} */ (`Cada visitante vê a página no próprio idioma quando o Brigade o tem; senão, neste. O que você escreve não é traduzido.`);
+		if (i?.part === "language_hint") return /** @type {LocalizedString} */ (`Cada visitante vê a página no próprio idioma, se o Brigade tiver esse idioma; caso contrário, neste. O que você escreve não é traduzido.`);
 		if (i?.part === "enabled_label") return /** @type {LocalizedString} */ (`Pública`);
 		if (i?.part === "enabled_hint") return /** @type {LocalizedString} */ (`Qualquer pessoa com o endereço pode ler. Desligada, é um rascunho que só membros veem aqui.`);
 		if (i?.part === "save") return /** @type {LocalizedString} */ (`Salvar`);

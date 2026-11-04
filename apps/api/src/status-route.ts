@@ -78,8 +78,11 @@ export function serveStatusPage(
       // The subscribe form only where email can be sent: a page whose emails never go out promises nothing.
       const subscribe = emailSender(env) !== undefined;
       const locale = visitor ?? stored.locale;
+      // The address it was asked at, for the alternates. A custom domain's `/` and `/status/<slug>` share one cache
+      // entry, so its alternates may name either: both are the page.
+      const { origin, pathname } = new URL(request.url);
       const response = page(
-        renderStatusPage(stored, { slug, subscribe, locale }),
+        renderStatusPage(stored, { slug, subscribe, locale, pageUrl: `${origin}${pathname}` }),
         200,
         STATUS_MAX_AGE_S,
       );

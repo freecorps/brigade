@@ -450,7 +450,7 @@ Linked monitors feed a component's uptime bar ("Uptime"); a component may also t
   `followMonitors`: left out (a dashboard from before) keeps it as it is. `status_component.updated` carries it
   (`followMonitors`, the value after the change). One field on the update rather than a mutation of its own, since it
   is edited in the same form as the name and the hand-set status. Turning it on with no monitor linked is allowed and
-  does nothing until one is; the dashboard offers it only once one is ticked.
+  does nothing until one is; the dashboard offers to turn it on only once one is ticked, and always lets it be turned off.
 - **What counts** (`monitorsStatus`, packages/schema): of the component's linked monitors that still exist and are
   not paused, those down by their own verdict (`status` `down`, after their consecutive checks and quorum, RFC 0007).
   `pending` and `unknown` are not down: no data is not an outage. All of them down is `major_outage`, some
@@ -462,7 +462,8 @@ Linked monitors feed a component's uptime bar ("Uptime"); a component may also t
   or an incident says worse. The page's overall status is the worst of its components, monitor-driven ones included,
   and of its open incidents.
 - **Pushed when it moves**: a commit marks the snapshot dirty when a monitor some following component links turns
-  down or stops being down (recovered, paused, started over, deleted), read from the change's own before and after rows
+  down or stops being down, or starts or stops counting (recovered, paused, resumed, started over, deleted: pausing
+  one that is up still turns a partial outage into a major one), read from the change's own before and after rows
   (`touchesStatusPage`), so a followed monitor's routine reports never rebuild the page. Toggling the setting is a
   change to `status_components`, like any. The push then goes out as every other ("The snapshot": spaced, bounded,
   retried).

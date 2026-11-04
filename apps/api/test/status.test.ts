@@ -906,6 +906,10 @@ describe("the snapshot", () => {
     expect(await touches(followed, row(followed, "down"), row(followed, "up"))).toBe(true);
     expect(await touches(followed, row(followed, "down"), row(followed, "down", true))).toBe(true);
     expect(await touches(followed, row(followed, "down"), row(followed, "pending"))).toBe(true);
+    // Pausing or resuming one that is up still matters: it changes what a partial outage is judged against.
+    expect(await touches(followed, row(followed, "up"), row(followed, "up", true))).toBe(true);
+    expect(await touches(followed, row(followed, "up", true), row(followed, "up"))).toBe(true);
+    expect(await touches(followed, row(followed, "up"), undefined)).toBe(true);
     // Unknown is not down; a routine report changes nothing that shows.
     expect(await touches(followed, row(followed, "up"), row(followed, "unknown"))).toBe(false);
     expect(await touches(followed, row(followed, "down"), row(followed, "down"))).toBe(false);

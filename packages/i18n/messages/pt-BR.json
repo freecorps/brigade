@@ -2410,6 +2410,7 @@
         "part=follow_label": "Status pelos monitores",
         "part=follow_hint": "A página pública mostra sozinha uma indisponibilidade enquanto estes monitores estiverem fora do ar: alguns fora é indisponibilidade parcial, todos fora, grave. Ninguém precisa publicar nada, e nenhum e-mail é enviado.",
         "part=follow_no_monitors": "Vincule um monitor acima primeiro.",
+        "part=follow_nothing": "Nada para acompanhar até vincular um monitor acima. Você ainda pode desligar isto.",
         "part=order_hint": "A página pública mostra nesta ordem, os sem grupo primeiro; um grupo aparece onde está o primeiro componente dele.",
         "part=move_up": "Mover {name} para cima",
         "part=move_down": "Mover {name} para baixo",

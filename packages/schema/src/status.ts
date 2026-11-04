@@ -164,9 +164,20 @@ export function monitorsStatus(
   return down === considered.length ? "major_outage" : "partial_outage";
 }
 
-/** Whether `monitor` counts as down for a component that follows it (`monitorsStatus`). */
-export const followedDown = (monitor: Pick<MonitorRow, "paused" | "status"> | undefined): boolean =>
-  monitor !== undefined && !monitor.paused && monitor.status === "down";
+/**
+ * Where `monitor` stands for a component that follows it (`monitorsStatus`): not counted (gone or paused), counted and
+ * down, or counted and not down. A change between any two moves the component's status (a paused monitor that was
+ * up still shrinks the monitors a partial outage is judged against), so the page is pushed again; a change within one
+ * (up to pending, a routine report) moves nothing.
+ */
+export const followedState = (
+  monitor: Pick<MonitorRow, "paused" | "status"> | undefined,
+): "uncounted" | "down" | "counted" =>
+  monitor === undefined || monitor.paused
+    ? "uncounted"
+    : monitor.status === "down"
+      ? "down"
+      : "counted";
 
 /**
  * What the public sees for a component: the worst of its own status (set by hand), the impact of every published

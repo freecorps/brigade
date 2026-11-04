@@ -94,6 +94,7 @@ export type Status_CardInputs = {
 * | "follow_label" | "Status from monitors" |
 * | "follow_hint" | "The public page shows an outage on its own while these monitors are down: some down is a partial outage, all down a major one. Nobody has to publish anything..." |
 * | "follow_no_monitors" | "Link a monitor above first." |
+* | "follow_nothing" | "Nothing to follow until a monitor is linked above. You can still turn this off." |
 * | "order_hint" | "The public page lists them in this order, ungrouped ones first; a group comes where its first component is." |
 * | "move_up" | "Move {name} up" |
 * | "move_down" | "Move {name} down" |

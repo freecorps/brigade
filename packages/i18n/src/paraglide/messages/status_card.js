@@ -94,6 +94,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "follow_label" | "Status from monitors" |
 * | "follow_hint" | "The public page shows an outage on its own while these monitors are down: some down is a partial outage, all down a major one. Nobody has to publish anything..." |
 * | "follow_no_monitors" | "Link a monitor above first." |
+* | "follow_nothing" | "Nothing to follow until a monitor is linked above. You can still turn this off." |
 * | "order_hint" | "The public page lists them in this order, ungrouped ones first; a group comes where its first component is." |
 * | "move_up" | "Move {name} up" |
 * | "move_down" | "Move {name} down" |
@@ -200,6 +201,7 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "follow_label") return /** @type {LocalizedString} */ (`Status pelos monitores`);
 		if (i?.part === "follow_hint") return /** @type {LocalizedString} */ (`A página pública mostra sozinha uma indisponibilidade enquanto estes monitores estiverem fora do ar: alguns fora é indisponibilidade parcial, todos fora, grave. Ninguém precisa publicar nada, e nenhum e-mail é enviado.`);
 		if (i?.part === "follow_no_monitors") return /** @type {LocalizedString} */ (`Vincule um monitor acima primeiro.`);
+		if (i?.part === "follow_nothing") return /** @type {LocalizedString} */ (`Nada para acompanhar até vincular um monitor acima. Você ainda pode desligar isto.`);
 		if (i?.part === "order_hint") return /** @type {LocalizedString} */ (`A página pública mostra nesta ordem, os sem grupo primeiro; um grupo aparece onde está o primeiro componente dele.`);
 		if (i?.part === "move_up") return /** @type {LocalizedString} */ (`Mover ${i?.name} para cima`);
 		if (i?.part === "move_down") return /** @type {LocalizedString} */ (`Mover ${i?.name} para baixo`);
@@ -300,6 +302,7 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "follow_label") return /** @type {LocalizedString} */ (`Status from monitors`);
 		if (i?.part === "follow_hint") return /** @type {LocalizedString} */ (`The public page shows an outage on its own while these monitors are down: some down is a partial outage, all down a major one. Nobody has to publish anything, and no email goes out.`);
 		if (i?.part === "follow_no_monitors") return /** @type {LocalizedString} */ (`Link a monitor above first.`);
+		if (i?.part === "follow_nothing") return /** @type {LocalizedString} */ (`Nothing to follow until a monitor is linked above. You can still turn this off.`);
 		if (i?.part === "order_hint") return /** @type {LocalizedString} */ (`The public page lists them in this order, ungrouped ones first; a group comes where its first component is.`);
 		if (i?.part === "move_up") return /** @type {LocalizedString} */ (`Move ${i?.name} up`);
 		if (i?.part === "move_down") return /** @type {LocalizedString} */ (`Move ${i?.name} down`);

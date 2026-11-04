@@ -3,7 +3,7 @@
 // this to the WebSocket protocol. Everything is synchronous SQLite, so a caller never yields mid-operation.
 
 import {
-  followedDown,
+  followedState,
   lookup,
   mutations,
   newId,
@@ -48,7 +48,8 @@ const STATUS_TABLES: ReadonlySet<string> = new Set([
 /**
  * Whether `changes` put the public status page's snapshot out of date (RFC 0012): a change to its own tables, an
  * alert of a monitor some component is linked to (it moves that component's uptime bar, "Uptime"), or a monitor some
- * component follows turning down or no longer down (paused, recovered, started over: "Status from monitors"). Every
+ * component follows turning down or no longer down, or starting or stopping to count (paused, resumed, recovered,
+ * started over: "Status from monitors"). Every
  * other alert and monitor change leaves the page alone, so a busy monitor nobody shows, or a followed one's routine
  * reports, never rebuild it.
  */
@@ -62,8 +63,8 @@ export function touchesStatusPage(
   const flipped = changes.filter(
     (change) =>
       change.table === "monitors" &&
-      followedDown(change.before as MonitorRow | undefined) !==
-        followedDown(change.after as MonitorRow | undefined),
+      followedState(change.before as MonitorRow | undefined) !==
+        followedState(change.after as MonitorRow | undefined),
   );
   if (alerts.length === 0 && flipped.length === 0) return false;
   const components = store.scan("status_components");

@@ -773,7 +773,13 @@ function ComponentRow({
               <label htmlFor={followId} className="flex min-w-0 flex-col gap-0.5">
                 <span className="text-sm font-medium">{say("follow_label")}</span>
                 <span id={followHintId} className="text-sm text-muted-foreground">
-                  {say(chosen.length === 0 ? "follow_no_monitors" : "follow_hint")}
+                  {say(
+                    chosen.length > 0
+                      ? "follow_hint"
+                      : follow
+                        ? "follow_nothing"
+                        : "follow_no_monitors",
+                  )}
                 </span>
               </label>
             </div>

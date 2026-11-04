@@ -17,7 +17,8 @@ export function initials(name: string): string {
 
 /**
  * A member's initials in a circle, in the brand's accent; nobody (an unassigned role) is an outlined person glyph.
- * Decorative: the row names the member.
+ * Decorative: the row names the member. A fixed size, initials and glyph alike: it is a picture of the member, like
+ * Contacts' monogram, not a glyph in the text, and the row's name beside it grows instead.
  */
 export function AvatarView({ name }: { name: string | null }) {
   const colors = useTheme();

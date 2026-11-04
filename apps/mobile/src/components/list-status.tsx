@@ -4,7 +4,7 @@ import { fontWeight, spacing } from "@freecorps/brigade-ui";
 import { SymbolView } from "expo-symbols";
 import { Text, View } from "react-native";
 import { useConnection } from "@/components/incident-parts";
-import { useGlyphSize } from "@/components/badge";
+import { useGlyphSize } from "@/hooks/use-glyph-size";
 import { useSystemColors } from "@/theme/system-colors";
 
 /**

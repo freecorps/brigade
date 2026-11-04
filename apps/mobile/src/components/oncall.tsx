@@ -7,7 +7,7 @@ import { Link } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { useMemo } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
-import { useGlyphSize } from "@/components/badge";
+import { useGlyphSize } from "@/hooks/use-glyph-size";
 import type { Glyph } from "@/components/glyphs";
 import { useNow } from "@/components/incident-parts";
 import { useMember } from "@/components/session";

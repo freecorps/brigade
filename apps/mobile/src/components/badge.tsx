@@ -1,16 +1,8 @@
 import { fontSize, fontWeight, radius, spacing, type BadgeColors } from "@freecorps/brigade-ui";
 import { SymbolView } from "expo-symbols";
-import { Text, useWindowDimensions, View } from "react-native";
+import { Text, View } from "react-native";
 import type { Glyph } from "@/components/glyphs";
-
-/**
- * A glyph's size for text of `size`: glyphs do not follow the system text size by themselves, so next to larger
- * text they would look small and clip in their frame (Android at 130 %).
- */
-export function useGlyphSize(size: number): number {
-  const { fontScale } = useWindowDimensions();
-  return Math.round(size * Math.max(1, fontScale));
-}
+import { useGlyphSize } from "@/hooks/use-glyph-size";
 
 /**
  * A severity or status badge. The text always names the value, so colour is never the only signal;

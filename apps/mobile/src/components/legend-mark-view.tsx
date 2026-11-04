@@ -1,6 +1,7 @@
 import type { IncidentStatus, Severity } from "@freecorps/brigade-schema";
 import { View } from "react-native";
-import { Badge, useGlyphSize } from "@/components/badge";
+import { Badge } from "@/components/badge";
+import { useGlyphSize } from "@/hooks/use-glyph-size";
 import { SEV1_GLYPH, STATUS_GLYPHS } from "@/components/glyphs";
 import { useTheme } from "@/hooks/use-theme";
 
@@ -17,7 +18,8 @@ export type LegendMarkProps = { severity: Severity } | { status: IncidentStatus 
  */
 export function LegendMarkView(props: LegendMarkProps) {
   const colors = useTheme();
-  const width = useGlyphSize(COLUMN);
+  // The badge's text grows without a cap, so its column does too.
+  const width = useGlyphSize(COLUMN, Infinity);
   return (
     <View
       accessibilityElementsHidden

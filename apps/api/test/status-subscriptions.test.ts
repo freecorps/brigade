@@ -1477,6 +1477,8 @@ describe("the page", () => {
       )?.[1];
     // The bar is the tooltips' measure and clips sideways (only sideways: they still rise above it).
     expect(rule(".bars")).toContain("container-type:inline-size;overflow-x:clip");
+    // Sideways only: a vertical clip would hide the tooltips above the bar.
+    expect(rule(".bars")).not.toMatch(/overflow-y|[;{]overflow:/);
     // A tooltip wraps at the bar's width instead of running off it on one line.
     const tip = rule(".bars span::after")!;
     expect(tip).toContain("width:max-content;max-width:calc(100vw - 4rem - 2px);max-width:100cqw");

@@ -10,7 +10,7 @@ import {
   status_text,
   status_uptime,
 } from "@freecorps/brigade-i18n/messages";
-import { STATUS_LOCALES, type StatusLocale } from "@freecorps/brigade-schema";
+import { STATUS_LOCALES, UPTIME_DAYS, type StatusLocale } from "@freecorps/brigade-schema";
 import type {
   ComponentStatus,
   PublicStatus,
@@ -227,6 +227,15 @@ function themeVars(theme: ThemeName): string {
   return vars.join(";");
 }
 
+/** Days of the uptime bar a phone shows (the newest; the CSS hides the rest). */
+const PHONE_UPTIME_DAYS = 30;
+
+// An uptime day's tooltip never widens the page, shown or not, in any language. Each day carries `--f`, its place along
+// the visible bar from 0 (first) to 1 (last). The tooltip sits at that fraction across its own day and is shifted back by
+// the same fraction of its own width, so the first day's tooltip starts at the bar's left edge, the last day's ends at
+// its right edge, and every one in between stays inside the bar. It wraps at the bar's width (`100cqw`), and the bar
+// clips sideways (`overflow-x: clip`) as a backstop, while the tooltips still rise above it.
+
 const STYLE = `
 :root{${themeVars("light")};color-scheme:light dark}
 @media (prefers-color-scheme:dark){:root{${themeVars("dark")}}}
@@ -271,25 +280,23 @@ details.incident summary::-webkit-details-marker{display:none}
 .list .chip:not(.c-operational){color:var(--fg)}
 ${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.list .c-${s} .dot{color:var(--c-${s}-dot)}`).join("")}
 .uptime{flex-basis:100%;margin-top:.25rem}
-.bars{display:flex;gap:2px;height:2.25rem}
-.bars span{position:relative;flex:1;min-width:2px;border-radius:3px;background:var(--border);transform-origin:bottom;animation:rise 640ms cubic-bezier(.23,1,.32,1) backwards;animation-delay:calc(var(--i,0) * 6ms);transition:opacity 160ms ease-out,filter 160ms ease-out}
+.bars{display:flex;gap:2px;height:2.25rem;container-type:inline-size;overflow-x:clip}
+.bars span{--f:calc(var(--i,0) / ${UPTIME_DAYS - 1});position:relative;flex:1;min-width:2px;border-radius:3px;background:var(--border);transform-origin:bottom;animation:rise 640ms cubic-bezier(.23,1,.32,1) backwards;animation-delay:calc(var(--i,0) * 6ms);transition:opacity 160ms ease-out,filter 160ms ease-out}
 @keyframes rise{from{transform:scaleY(.12);opacity:0}}
 .bars .u-up{background:var(--u-up)}
 .bars .u-degraded{background:var(--u-degraded)}
 .bars .u-down{background:var(--u-down)}
 .bars .u-none{background:var(--border)}
-.bars span::after{content:attr(data-tip);position:absolute;bottom:calc(100% + .5rem);left:50%;transform:translate(-50%,.25rem);opacity:0;pointer-events:none;z-index:1;white-space:nowrap;font-size:.75rem;font-weight:500;line-height:1.4;padding:.25rem .5rem;border-radius:.375rem;background:var(--fg);color:var(--bg);transition:opacity 120ms ease-out,transform 160ms cubic-bezier(.23,1,.32,1)}
-.bars span:nth-child(-n+15)::after{left:0;transform:translate(0,.25rem)}
-.bars span:nth-last-child(-n+15)::after{left:auto;right:0;transform:translate(0,.25rem)}
-@media (hover:hover) and (pointer:fine){.bars:hover span{opacity:.45}.bars span:hover{opacity:1;filter:brightness(1.12)}.bars span:hover::after{opacity:1;transform:translate(-50%,0)}.bars span:nth-child(-n+15):hover::after,.bars span:nth-last-child(-n+15):hover::after{transform:translate(0,0)}}
-.bars:has(.tip) span{opacity:.45}.bars span.tip{opacity:1}.bars span.tip::after{opacity:1;transform:translate(-50%,0)}.bars span.tip:nth-child(-n+15)::after,.bars span.tip:nth-last-child(-n+15)::after{transform:translate(0,0)}
-@media (max-width:39.99rem){.bars span:nth-child(-n+75)::after{left:0;transform:translate(0,.25rem)}.bars span.tip:nth-child(-n+75)::after{transform:translate(0,0)}}
+.bars span::after{content:attr(data-tip);box-sizing:border-box;position:absolute;bottom:calc(100% + .5rem);left:calc(var(--f) * 100%);width:max-content;max-width:calc(100vw - 4rem - 2px);max-width:100cqw;transform:translate(calc(var(--f) * -100%),.25rem);opacity:0;pointer-events:none;z-index:1;overflow-wrap:anywhere;font-size:.75rem;font-weight:500;line-height:1.4;padding:.25rem .5rem;border-radius:.375rem;background:var(--fg);color:var(--bg);transition:opacity 120ms ease-out,transform 160ms cubic-bezier(.23,1,.32,1)}
+@media (hover:hover) and (pointer:fine){.bars:hover span{opacity:.45}.bars span:hover{opacity:1;filter:brightness(1.12)}.bars span:hover::after{opacity:1;transform:translate(calc(var(--f) * -100%),0)}}
+.bars:has(.tip) span{opacity:.45}.bars span.tip{opacity:1}.bars span.tip::after{opacity:1;transform:translate(calc(var(--f) * -100%),0)}
+@media (max-width:39.99rem){.bars span{--f:calc((var(--i,0) - ${UPTIME_DAYS - PHONE_UPTIME_DAYS}) / ${PHONE_UPTIME_DAYS - 1})}}
 .scale{display:flex;justify-content:space-between;align-items:center;gap:.75rem;color:var(--muted);font-size:.75rem;margin-top:.375rem;white-space:nowrap;font-variant-numeric:tabular-nums}
 .scale::before,.scale::after{content:"";order:2;flex:1;height:1px;background:var(--border)}
 .scale::after{order:4}
 .scale .from{order:1}.scale .pct{order:3}.scale .to{order:5}
 .scale .short{display:none}
-@media (max-width:39.99rem){.bars span:nth-child(-n+60){display:none}.scale .long{display:none}.scale .short{display:inline}}
+@media (max-width:39.99rem){.bars span:nth-child(-n+${UPTIME_DAYS - PHONE_UPTIME_DAYS}){display:none}.scale .long{display:none}.scale .short{display:inline}}
 .window{color:var(--muted);font-size:.875rem;margin-top:.25rem}
 .subscribe{background:var(--card);border:1px solid var(--border);border-radius:.75rem;padding:1rem;margin-top:2rem}
 .subscribe h2{margin:0 0 .25rem}
@@ -302,7 +309,7 @@ button:active{transform:scale(.97)}
 .trap{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}
 .actions{margin-top:1.5rem;display:flex;flex-wrap:wrap;align-items:center;gap:1rem}
 a{color:inherit}
-@media (prefers-reduced-motion:reduce){button{transition:none}.bars span{animation-name:fade}.group::details-content{transition-property:opacity,content-visibility}}
+@media (prefers-reduced-motion:reduce){button{transition:none}.bars span{animation-name:fade}.bars span::after{transition-property:opacity}.group::details-content{transition-property:opacity,content-visibility}}
 @keyframes fade{from{opacity:0}}
 .hint{margin:-.5rem 0 .75rem}
 .follow{flex-basis:100%;min-width:0}

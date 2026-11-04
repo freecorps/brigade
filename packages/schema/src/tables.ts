@@ -970,6 +970,11 @@ export type StatusComponentRow = {
    */
   monitorIds?: string[];
   /**
+   * Whether its linked monitors also set its status (RFC 0012 "Status from monitors"): some of them down is a partial
+   * outage, all of them a major one. Absent (rows from before) or false: they only feed the uptime bar.
+   */
+  followMonitors?: boolean;
+  /**
    * The services it stands for (RFC 0012 "Services"), at most `MAX_COMPONENT_SERVICES`; an incident naming one of them
    * pre-selects the component when publishing. Absent or empty: none. May name deleted services, which readers skip.
    */

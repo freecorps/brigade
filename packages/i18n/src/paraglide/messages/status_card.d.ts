@@ -43,7 +43,7 @@ export type Status_CardInputs = {
 * | "component_name_required" | "A component needs a name." |
 * | "component_group" | "Group (optional)" |
 * | "component_status" | "Status set by hand" |
-* | "component_status_hint" | "The page shows the worse of this and the impact of any open incident published on it." |
+* | "component_status_hint" | "The page shows the worst of this, any open incident published on it and, when it follows them, its monitors." |
 * | "add" | "Add component" |
 * | "adding" | "Adding…" |
 * | "add_failed" | "Couldn't add the component. Try again." |
@@ -85,11 +85,19 @@ export type Status_CardInputs = {
 * | "withdrawn" | "Taken off the page. Visitors may still see it for about 2 minutes." |
 * | "corrected" | "Corrected. Visitors may still see the old version for about 2 minutes." |
 * | "correct_failed" | "Couldn't change the status page. Try again." |
-* | "uptime_label" | "Uptime bar from monitors" |
+* | "uptime_label" | "Monitors" |
+* | "shown_from_maintenance" | "From a planned outage" |
+* | "shown_from_incident" | "From an open incident" |
+* | "shown_from_monitors" | "From its monitors" |
 * | "uptime_hint" | "The page shows 90 days of uptime from these monitors, from when they were created. Leave all unchecked for no bar." |
 * | "uptime_no_monitors" | "No monitors yet. Add one under Monitors to show an uptime bar." |
 * | "uptime_from" | "Uptime from {name}" |
 * | "uptime_limit" | "At most 5 monitors per component." |
+* | "status_from" | "Status and uptime from {name}" |
+* | "follow_label" | "Status from monitors" |
+* | "follow_hint" | "The public page shows an outage on its own while these monitors are down: some down is a partial outage, all down a major one. Nobody has to publish anything..." |
+* | "follow_no_monitors" | "Link a monitor above first." |
+* | "follow_nothing" | "Nothing to follow until a monitor is linked above. You can still turn this off." |
 * | "order_hint" | "The public page lists them in this order, ungrouped ones first; a group comes where its first component is." |
 * | "move_up" | "Move {name} up" |
 * | "move_down" | "Move {name} down" |

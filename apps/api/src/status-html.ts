@@ -165,7 +165,42 @@ const PUBLIC_STATUSES: readonly PublicStatus[] = [
   "resolved",
 ];
 
-/** One theme's custom properties, the badge colours included as `--c-<status>-bg` / `-fg`. */
+/** The uptime bars' colours: a day up, degraded or down. */
+const UPTIME = {
+  light: { up: "#2f9e5b", degraded: "#d99a06", down: "#d63c2f" },
+  dark: { up: "#3ccf86", degraded: "#f2b929", down: "#f05a4b" },
+} as const satisfies Record<ThemeName, Record<"up" | "degraded" | "down", string>>;
+
+/**
+ * The status dot in the components list, drawn on the card, not on its badge tint: the badge
+ * foregrounds are text colours for a tint (major outage's is white, for the red banner), so the dot
+ * gets its own signal colour per theme, each at least 3:1 against the card (WCAG 1.4.11; test-pinned).
+ * The hues follow the banners and the uptime bars: green, amber, orange, red, and the planned blue.
+ */
+export function componentDots(theme: ThemeName): Record<ComponentStatus | "maintenance", string> {
+  const t = themes[theme];
+  if (theme === "light") {
+    return {
+      operational: UPTIME.light.up,
+      degraded: t.chart3,
+      partial_outage: "#c2410c",
+      major_outage: t.severity.sev1.bg,
+      maintenance: t.chart2,
+    };
+  }
+  return {
+    operational: UPTIME.dark.up,
+    degraded: UPTIME.dark.degraded,
+    partial_outage: "#f08a4b",
+    major_outage: UPTIME.dark.down,
+    maintenance: t.chart2,
+  };
+}
+
+/**
+ * One theme's custom properties: the badge colours as `--c-<status>-bg` / `-fg`, the list's status
+ * dots as `--c-<status>-dot` and the uptime bars as `--u-<state>`.
+ */
 function themeVars(theme: ThemeName): string {
   const t = themes[theme];
   const vars = [
@@ -186,12 +221,15 @@ function themeVars(theme: ThemeName): string {
   // Maintenance reads as planned work, not trouble: the "monitoring" blue.
   const planned = t.status.monitoring;
   vars.push(`--c-maintenance-bg:${planned.bg}`, `--c-maintenance-fg:${planned.fg}`);
+  for (const [status, dot] of Object.entries(componentDots(theme)))
+    vars.push(`--c-${status}-dot:${dot}`);
+  for (const [state, color] of Object.entries(UPTIME[theme])) vars.push(`--u-${state}:${color}`);
   return vars.join(";");
 }
 
 const STYLE = `
-:root{${themeVars("light")};--u-up:#2f9e5b;--u-degraded:#d99a06;--u-down:#d63c2f;color-scheme:light dark}
-@media (prefers-color-scheme:dark){:root{${themeVars("dark")};--u-up:#3ccf86;--u-degraded:#f2b929;--u-down:#f05a4b}}
+:root{${themeVars("light")};color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{${themeVars("dark")}}}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-tap-highlight-color:transparent}
@@ -230,7 +268,8 @@ details.incident summary::-webkit-details-marker{display:none}
 .list li.with-bar{flex-wrap:wrap;padding-bottom:.875rem}
 .list .chip{background:none;color:var(--muted);font-weight:500;padding:0}
 .list .chip .dot{width:.5rem;height:.5rem}
-${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.list .c-${s} .dot{color:var(--c-${s}-fg)}`).join("")}
+.list .chip:not(.c-operational){color:var(--fg)}
+${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.list .c-${s} .dot{color:var(--c-${s}-dot)}`).join("")}
 .uptime{flex-basis:100%;margin-top:.25rem}
 .bars{display:flex;gap:2px;height:2.25rem}
 .bars span{position:relative;flex:1;min-width:2px;border-radius:3px;background:var(--border);transform-origin:bottom;animation:rise 640ms cubic-bezier(.23,1,.32,1) backwards;animation-delay:calc(var(--i,0) * 6ms);transition:opacity 160ms ease-out,filter 160ms ease-out}

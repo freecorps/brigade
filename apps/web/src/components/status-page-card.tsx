@@ -13,7 +13,11 @@ import {
   componentOrder,
   statusFollowKey,
   type ComponentStatus,
+  type MaintenanceRow,
+  type MonitorStatus,
+  type SnapshotComponentStatus,
   type StatusComponentRow,
+  type StatusIncidentRow,
   type StatusLocale,
   type StatusPageRow,
 } from "@freecorps/brigade-schema";
@@ -47,6 +51,7 @@ import {
   saveErrorPart,
   saveStatusPage,
   servicesToLink,
+  shownComponent,
   statusCardText as say,
   statusText,
   statusUrl,
@@ -60,15 +65,19 @@ const LANGUAGE_NAMES: Record<StatusLocale, () => string> = {
   "pt-BR": () => m.language_name_pt_br(),
 };
 
-/** A component status as a badge, coloured like the public page (green, then SEV3, SEV2, SEV1). */
+/**
+ * A component status as a badge, coloured like the public page (green, then SEV3, SEV2, SEV1; maintenance in the
+ * planned blue).
+ */
 const CHIP = {
   operational: "resolved",
   degraded: "sev3",
   partial_outage: "sev2",
   major_outage: "sev1",
-} as const satisfies Record<ComponentStatus, string>;
+  maintenance: "monitoring",
+} as const satisfies Record<SnapshotComponentStatus, string>;
 
-export function ComponentChip({ status }: { status: ComponentStatus }) {
+export function ComponentChip({ status }: { status: SnapshotComponentStatus }) {
   return <Badge variant={CHIP[status]}>{statusText(`component_${status}`)}</Badge>;
 }
 
@@ -96,6 +105,9 @@ function StatusPageLive({ onRetry }: { onRetry: () => void }) {
   // Monitors are only offered to link to those who manage the page (`monitor:read` covers every role).
   const monitors = useQuery("monitors.all", {});
   const services = useQuery("services.all", {});
+  // What else moves a component's public status, so the list shows what the public sees (`shownStatus`).
+  const incidents = useQuery("statusIncidents.open", {});
+  const windows = useQuery("maintenance.all", {});
   return (
     <StatusPagePanel
       page={page.rows[0] ?? null}
@@ -104,7 +116,14 @@ function StatusPageLive({ onRetry }: { onRetry: () => void }) {
       failed={page.status === "error"}
       manage={manage}
       origin={window.location.origin}
-      monitors={monitors.rows.map((row) => ({ id: row.id, name: row.name }))}
+      monitors={monitors.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        paused: row.paused,
+        status: row.status,
+      }))}
+      incidents={incidents.rows}
+      windows={windows.rows}
       onLink={async (id, monitorIds) => (await link({ id, monitorIds })).ok}
       services={
         services.status === "ready"
@@ -131,7 +150,9 @@ function StatusPageLive({ onRetry }: { onRetry: () => void }) {
   );
 }
 
-type ComponentEdit = Pick<StatusComponentRow, "id" | "name" | "group" | "status">;
+type ComponentEdit = Pick<StatusComponentRow, "id" | "name" | "group" | "status"> & {
+  followMonitors?: boolean;
+};
 
 type PanelProps = {
   page: StatusPageRow | null;
@@ -145,8 +166,14 @@ type PanelProps = {
   onUpdate: (row: ComponentEdit) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
   onRetry: () => void;
-  /** The workspace's monitors a component's uptime bar may come from. */
-  monitors?: readonly { id: string; name: string }[];
+  /**
+   * The workspace's monitors a component's uptime bar may come from and, when it follows them, its status (with
+   * `paused` and `status`; absent reads as not down).
+   */
+  monitors?: readonly { id: string; name: string; paused?: boolean; status?: MonitorStatus }[];
+  /** The published incidents not yet resolved, and the maintenance windows: with the monitors, what the public sees. */
+  incidents?: readonly Pick<StatusIncidentRow, "status" | "impact" | "componentIds">[];
+  windows?: readonly Pick<MaintenanceRow, "componentIds" | "outage" | "phase">[];
   onLink?: (id: string, monitorIds: string[]) => Promise<boolean>;
   /**
    * The workspace's services a component may stand for (RFC 0012 "Services"); undefined until they load, and no
@@ -437,6 +464,8 @@ function Components({
   services,
   onLinkServices,
   onReorder,
+  incidents = [],
+  windows = [],
 }: PanelProps) {
   const [moved, setMoved] = useState<{ name: string } | { failed: true } | null>(null);
   const blocks = componentBlocks(components);
@@ -490,6 +519,7 @@ function Components({
                     onUpdate={onUpdate}
                     onDelete={onDelete}
                     monitors={monitors}
+                    shown={shownComponent(component, incidents, monitors, windows)}
                     onLink={onLink}
                     services={services}
                     onLinkServices={onLinkServices}
@@ -534,12 +564,15 @@ function ComponentRow({
   services,
   onLinkServices,
   mover,
+  shown,
 }: Pick<
   PanelProps,
   "manage" | "onUpdate" | "onDelete" | "monitors" | "onLink" | "services" | "onLinkServices"
 > & {
   component: StatusComponentRow;
   mover?: ReactNode;
+  /** What the public page shows for it, and why when that is not the status set by hand. */
+  shown?: ReturnType<typeof shownComponent>;
 }) {
   const linked = component.monitorIds ?? [];
   // A deleted service stays on the row until the next change; it is skipped wherever it is read.
@@ -553,12 +586,16 @@ function ComponentRow({
   const [name, setName] = useState(component.name);
   const [group, setGroup] = useState(component.group ?? "");
   const [status, setStatus] = useState<ComponentStatus>(component.status);
+  const following = component.followMonitors === true;
+  const [follow, setFollow] = useState(following);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const [nameInvalid, setNameInvalid] = useState(false);
   const statusId = useId();
   const nameId = useId();
   const editId = useId();
+  const followId = useId();
+  const followHintId = useId();
 
   if (mode === "view") {
     return (
@@ -569,7 +606,7 @@ function ComponentRow({
           </span>
           {linked.length > 0 ? (
             <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-              {say("uptime_from", {
+              {say(following ? "status_from" : "uptime_from", {
                 name: linked
                   .map((id) => monitors.find((monitor) => monitor.id === id)?.name ?? "…")
                   .join(", "),
@@ -587,7 +624,11 @@ function ComponentRow({
           ) : null}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <ComponentChip status={component.status} />
+          {shown?.from ? (
+            // Why the badge is not the status set by hand, which the edit form still shows.
+            <span className="text-xs text-muted-foreground">{say(`shown_from_${shown.from}`)}</span>
+          ) : null}
+          <ComponentChip status={shown?.status ?? component.status} />
           {manage ? (
             <Button
               variant="ghost"
@@ -598,6 +639,7 @@ function ComponentRow({
                 setName(component.name);
                 setGroup(component.group ?? "");
                 setStatus(component.status);
+                setFollow(following);
                 setChosen(linked);
                 setChosenServices(serving);
                 setFailed(null);
@@ -649,7 +691,14 @@ function ComponentRow({
         className="grid min-w-0 gap-3 sm:grid-cols-3"
         onSubmit={(event) => {
           event.preventDefault();
-          const next = { id: component.id, name: name.trim(), group: group.trim() || null, status };
+          const next: ComponentEdit = {
+            id: component.id,
+            name: name.trim(),
+            group: group.trim() || null,
+            status,
+            // Sent only when it changes, so a save from before the switch never turns it off.
+            ...(follow !== following && { followMonitors: follow }),
+          };
           if (next.name === "") {
             setNameInvalid(true);
             return;
@@ -657,7 +706,8 @@ function ComponentRow({
           const fieldsChanged =
             next.name !== component.name ||
             next.group !== component.group ||
-            next.status !== component.status;
+            next.status !== component.status ||
+            follow !== following;
           const monitorsChanged = chosen.join() !== linked.join();
           const serviceIds = servicesToLink(component.serviceIds ?? [], services, chosenServices);
           if (!fieldsChanged && !monitorsChanged && !serviceIds) {
@@ -743,6 +793,49 @@ function ComponentRow({
             {chosen.length >= MAX_COMPONENT_MONITORS ? (
               <p className="text-sm text-muted-foreground">{say("uptime_limit")}</p>
             ) : null}
+            <div
+              className={
+                "mt-2 flex min-h-11 items-start gap-3 rounded-md border px-3 py-2.5 " +
+                "has-focus-visible:ring-3 has-focus-visible:ring-ring " +
+                // Unavailable, not gone: a muted ground and border, the title muted too, the box still drawn.
+                "has-disabled:border-border has-disabled:bg-muted " +
+                (follow ? "border-primary bg-primary/5" : "border-input")
+              }
+            >
+              <input
+                id={followId}
+                type="checkbox"
+                role="switch"
+                aria-describedby={followHintId}
+                // Nothing to follow without a monitor; one that already follows can still be turned off.
+                disabled={chosen.length === 0 && !follow}
+                checked={follow}
+                onChange={(event) => setFollow(event.target.checked)}
+                className="mt-0.5 size-5 shrink-0 accent-primary disabled:cursor-not-allowed"
+              />
+              <div className="flex min-w-0 flex-col gap-0.5">
+                {/* The name is the title alone; the hint is its description (aria-describedby), read once. */}
+                <label
+                  htmlFor={followId}
+                  className={
+                    chosen.length === 0 && !follow
+                      ? "cursor-not-allowed text-sm font-medium text-muted-foreground"
+                      : "cursor-pointer text-sm font-medium"
+                  }
+                >
+                  {say("follow_label")}
+                </label>
+                <span id={followHintId} className="text-sm text-muted-foreground">
+                  {say(
+                    chosen.length > 0
+                      ? "follow_hint"
+                      : follow
+                        ? "follow_nothing"
+                        : "follow_no_monitors",
+                  )}
+                </span>
+              </div>
+            </div>
           </fieldset>
         ) : null}
         {onLinkServices ? (

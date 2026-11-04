@@ -42,10 +42,11 @@ Visitor ──GET /status/:slug[/feed.atom|/feed.json]──▶ web Worker (forw
   Checkout), each with an optional group (components of a group are listed together under its name; ungrouped ones
   first) and a status set by hand: `operational`, `degraded`, `partial_outage`, `major_outage`. Listed in the
   order owners and admins set ("Order"), new ones last.
-- **A component's status is derived**: the worse of its hand-set status and the impact of every published incident
-  on it that is not resolved (`componentStatus`). So declaring an outage on the page needs no second step, and
-  resolving the incident brings the component back by itself; a component can still be marked degraded by hand
-  (planned work, a known slowness) without an incident.
+- **A component's status is derived**: the worst of its hand-set status, the impact of every published incident
+  on it that is not resolved and, for a component that follows its monitors, what they say (`componentStatus`,
+  "Status from monitors"). So declaring an outage on the page needs no second step, and resolving the incident
+  brings the component back by itself; a component can still be marked degraded by hand (planned work, a known
+  slowness) without an incident.
 - **The page's overall status** is the worst of its components and its open incidents ("All systems operational",
   "Some systems are slower than usual", "Some systems are down", "Major outage").
 - **History**: resolved incidents from the last 90 days (`STATUS_HISTORY_DAYS`), newest first, at most 50 in the
@@ -124,7 +125,7 @@ name, an internal hostname, the wrong incident) must not stay up:
 
 `status:manage`, owners and admins: the page's settings and its components (`statusComponent.create`, `.update`,
 `.delete`; deleting one takes it out of every published incident in the same transaction). Everyone reads them
-(`status:read`, queries `statusPage.config`, `statusComponents.all`, `statusIncident.byId`). What the page lists is
+(`status:read`, queries `statusPage.config`, `statusComponents.all`, `statusIncident.byId`, `statusIncidents.open`). What the page lists is
 the same kind of decision as what monitors watch, so it is an admin's call.
 
 ## Addresses
@@ -311,8 +312,9 @@ reader skips fields it does not check, so they need no new version ("Feeds").
   so every visit would be an R2 read unless the Cache API sat in front anyway. The Cache API alone is per location
   and cannot be pushed to globally, so it cannot be the store, only a layer in front (used below). A Durable Object
   per page would put a single location behind every visitor, which is what this design avoids.
-- **The push.** Every commit that changes `status_page`, `status_components` or `status_incidents` marks the snapshot
-  dirty (`status_dirty` in `shard_meta`, the version of the change) **in the change's own transaction**, so a change
+- **The push.** Every commit that changes `status_page`, `status_components`, `status_incidents`,
+  `status_maintenance` or `status_domain`, and the alerts and monitor changes named under "Uptime" and "Status from
+  monitors" (`touchesStatusPage`), marks the snapshot dirty (`status_dirty` in `shard_meta`, the version of the change) **in the change's own transaction**, so a change
   is never lost to the object dying before it is published. The mutation's outbox hook brings the shard's one alarm
   forward; the alarm, after the escalations and the outbox drain, builds the snapshot and puts it (or deletes the key
   when the page is not public), then deletes retired slugs' keys and releases them in D1 after their grace. It clears
@@ -438,6 +440,45 @@ reader skips fields it does not check, so they need no new version ("Feeds").
   it. On a phone, where there is no hover, a tap does the same through the page's one script; without it the bars and
   their text alternative are unchanged. Named groups are cards that fold (`<details>`, open to start with) with their
   component count.
+
+## Status from monitors
+
+Linked monitors feed a component's uptime bar ("Uptime"); a component may also take its status from them, so a group
+("GroceryOps") shows by itself which of its parts ("Backend", "Frontend") is down.
+
+- **Opt-in per component** (`followMonitors` on the component, off by default; components from before have no field
+  and read as off, so no page changed by itself). Set by `statusComponent.update`, `status:manage`, as an optional
+  `followMonitors`: left out (a dashboard from before) keeps it as it is. `status_component.updated` carries it
+  (`followMonitors`, the value after the change). One field on the update rather than a mutation of its own, since it
+  is edited in the same form as the name and the hand-set status. Turning it on with no monitor linked is allowed and
+  does nothing until one is; the dashboard offers to turn it on only once one is ticked, and always lets it be turned off.
+- **What counts** (`monitorsStatus`, packages/schema): of the component's linked monitors that still exist and are
+  not paused, those down by their own verdict (`status` `down`, after their consecutive checks and quorum, RFC 0007).
+  `pending` and `unknown` are not down: no data is not an outage. All of them down is `major_outage`, some
+  `partial_outage`; none down, or none to consider, adds nothing. The monitor's status rather than its alert, since
+  the alert ends when people close the incident it opened while the monitor may still be down.
+- **Precedence**: the component shows the worst of its hand-set status, its open published incidents and its
+  monitors. While a maintenance window touching it is under way, its monitors count for nothing: the work is why they
+  are down, so it shows "Under maintenance" (or, for a planned outage, `major_outage`, as before) unless its own status
+  or an incident says worse. The page's overall status is the worst of its components, monitor-driven ones included,
+  and of its open incidents.
+- **Pushed when it moves**: a commit marks the snapshot dirty when a monitor some following component links turns
+  down or stops being down, or starts or stops counting (recovered, paused, resumed, started over, deleted: pausing
+  one that is up still turns a partial outage into a major one), read from the change's own before and after rows
+  (`touchesStatusPage`), so a followed monitor's routine reports never rebuild the page. Toggling the setting is a
+  change to `status_components`, like any. The push then goes out as every other ("The snapshot": spaced, bounded,
+  retried).
+- **Not a person publishing.** It is the one way the page changes without someone pressing a button at that moment,
+  and only because an owner or admin chose it for that component. It shows a status only: no incident, no text and
+  no email. Subscribers are emailed for published updates and maintenance only ("Email subscriptions"); a
+  monitor-driven change sends nothing, and the feeds, which list incidents and windows, are unchanged. The snapshot
+  stays as it was: the derived status, no monitor, id or the setting (tested).
+- **On the dashboard**: in a component's edit form, in its "Monitors" section (the uptime bar's monitors), a "Status
+  from monitors" switch with what it does; disabled (drawn, muted), saying to link a monitor first, while none is
+  ticked. A component that follows reads "Status and uptime from …" in the list. The list's badge is what the public
+  sees (`shownStatus`, the snapshot's own derivation, over the synced monitors, `statusIncidents.open` and
+  `maintenance.all`), with a short note when it is not the status set by hand: from its monitors, from an open
+  incident or from a planned outage.
 
 ## Scheduled maintenance
 
@@ -650,7 +691,8 @@ request on the server (src/status-locale.ts), in this order:
 
 Nothing internal leaks: no member names (no "updated by"), no internal titles, severities, roles or timeline
 entries, no ids. Only what someone typed into the publish form or the components list reaches the public, and the
-form says so. Showing who published an update could become a per-page choice later.
+form says so; besides it, a component an owner or admin set to follow its monitors shows their verdict as its status,
+never their names, targets or checks ("Status from monitors"). Showing who published an update could become a per-page choice later.
 
 **Nothing is taken down at once.** A correction, a removed update, an incident taken off the page and a page turned
 private (or moved to another address) reach the shard at once but visitors only as caches expire: the push itself
@@ -662,8 +704,8 @@ cache purged by hand.
 
 ## Events
 
-`status_page.configured` (`slug`, `title`, `locale`, `enabled`, `previousSlug`), `status_component.created` and
-`.updated` (`id`, `name`, `group`, `status`), `status_component.reordered` (`ids`),
+`status_page.configured` (`slug`, `title`, `locale`, `enabled`, `previousSlug`), `status_component.created` (`id`,
+`name`, `group`, `status`) and `.updated` (the same and `followMonitors`, "Status from monitors"), `status_component.reordered` (`ids`),
 `status_component.services_linked` (`id`, `serviceIds`), `status_component.deleted` (`id`, `incidents`: how many published
 incidents named it), `incident.update_published` (`entryId`, `title`, `status`, `impact`, `componentIds`,
 `body`), `incident.published_update_edited` (`entryId`, `updateId`, `body`), `incident.published_update_removed`

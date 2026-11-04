@@ -187,6 +187,44 @@ describe("components", () => {
     });
   });
 
+  test("following monitors: status:manage, in the event, left out keeps it, rows from before read as off", () => {
+    const { store, api } = ready();
+    const args = { id: api, name: "API", group: null, status: "operational", followMonitors: true };
+    for (const role of ["responder", "viewer"] as const) {
+      expect(
+        runMutation(mutations, "statusComponent.update", args, store, ctx(role)),
+      ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    }
+    // A row from before has no field: off.
+    expect(store.get("status_components", api)!.followMonitors).toBeUndefined();
+    expect(
+      runMutation(mutations, "statusComponent.update", args, store, ctx("admin")),
+    ).toMatchObject({
+      ok: true,
+      events: [{ type: "status_component.updated", data: { id: api, followMonitors: true } }],
+    });
+    expect(store.get("status_components", api)!.followMonitors).toBe(true);
+    expect(run(store, "statusComponent.update", args)).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    // Left out (a client from before): unchanged, and said in the event.
+    const { followMonitors: _, ...rename } = args;
+    expect(run(store, "statusComponent.update", { ...rename, name: "Public API" })).toMatchObject({
+      ok: true,
+      events: [{ data: { name: "Public API", followMonitors: true } }],
+    });
+    expect(store.get("status_components", api)!.followMonitors).toBe(true);
+    expect(
+      run(store, "statusComponent.update", { ...args, name: "Public API", followMonitors: false }),
+    ).toMatchObject({ ok: true, events: [{ data: { followMonitors: false } }] });
+    expect(store.get("status_components", api)!.followMonitors).toBe(false);
+    expect(run(store, "statusComponent.update", { ...args, followMonitors: "yes" })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_args" },
+    });
+  });
+
   test("at most MAX_COMPONENTS", () => {
     const store = createMemoryStore<BrigadeTables>();
     for (let index = 0; index < MAX_COMPONENTS; index++) {
@@ -725,6 +763,27 @@ describe("statusSnapshot", () => {
     expect(runQuery(queries, "statusComponents.all", {}, store, "viewer")).toMatchObject({
       ok: true,
       rows: [{ name: "API" }, { name: "Website" }],
+    });
+  });
+
+  test("statusIncidents.open: the published incidents not resolved, to every reader", () => {
+    const { store } = ready();
+    const row = (id: string, status: "investigating" | "resolved") => ({
+      id,
+      title: id,
+      status,
+      impact: "major_outage" as const,
+      componentIds: [],
+      updates: [],
+      publishedAt: 1,
+      resolvedAt: status === "resolved" ? 2 : null,
+      updatedAt: 2,
+    });
+    store.insert("status_incidents", row("inc_open", "investigating"));
+    store.insert("status_incidents", row("inc_done", "resolved"));
+    expect(runQuery(queries, "statusIncidents.open", {}, store, "viewer")).toMatchObject({
+      ok: true,
+      rows: [{ id: "inc_open" }],
     });
   });
 });

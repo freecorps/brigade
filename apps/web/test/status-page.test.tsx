@@ -22,6 +22,7 @@ import {
   moveGroup,
   saveStatusPage,
   servicesToLink,
+  shownComponent,
 } from "../src/lib/status-page";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -299,6 +300,127 @@ describe("StatusPagePanel", () => {
     expect(linked).toEqual([]);
   });
 
+  test("a component follows its monitors only once one is linked, and the save says so", async () => {
+    const updated: unknown[] = [];
+    const linked: unknown[] = [];
+    const { container } = card({
+      page,
+      components: [component("cmp_1", "Backend", "GroceryOps")],
+      monitors: [{ id: "mon_1", name: "API health" }],
+      onUpdate: async (row) => {
+        updated.push(row);
+        return true;
+      },
+      onLink: async (id, monitorIds) => {
+        linked.push({ id, monitorIds });
+        return true;
+      },
+    });
+    act(() => button(container, "Edit").click());
+    const toggle = () => container.querySelector<HTMLInputElement>('input[role="switch"]')!;
+    // Nothing linked: off and disabled, saying what to do first.
+    expect(toggle().disabled).toBe(true);
+    expect(toggle().checked).toBe(false);
+    expect(container.textContent).toContain("Link a monitor above first.");
+    const monitor = [...container.querySelectorAll("label")].find(
+      (label) => label.textContent === "API health",
+    )!;
+    act(() => monitor.querySelector("input")!.click());
+    expect(toggle().disabled).toBe(false);
+    expect(
+      document.getElementById(toggle().getAttribute("aria-describedby")!)!.textContent,
+    ).toContain("shows an outage on its own");
+    act(() => toggle().click());
+    await act(async () => button(container.querySelector("li form")!, "Save").click());
+    expect(updated).toEqual([
+      {
+        id: "cmp_1",
+        name: "Backend",
+        group: "GroceryOps",
+        status: "operational",
+        followMonitors: true,
+      },
+    ]);
+    expect(linked).toEqual([{ id: "cmp_1", monitorIds: ["mon_1"] }]);
+  });
+
+  test("a component that follows its monitors says so, and a rename leaves the setting out", async () => {
+    const updated: unknown[] = [];
+    const { container } = card({
+      page,
+      components: [
+        { ...component("cmp_1", "Backend"), monitorIds: ["mon_1"], followMonitors: true },
+      ],
+      monitors: [{ id: "mon_1", name: "API health" }],
+      onLink: async () => true,
+      onUpdate: async (row) => {
+        updated.push(row);
+        return true;
+      },
+    });
+    expect(container.textContent).toContain("Status and uptime from API health");
+    act(() => button(container, "Edit").click());
+    expect(container.querySelector<HTMLInputElement>('input[role="switch"]')!.checked).toBe(true);
+    const name = container.querySelector<HTMLInputElement>("li form input")!;
+    act(() => type(name, "API"));
+    await act(async () => button(container.querySelector("li form")!, "Save").click());
+    expect(updated).toEqual([{ id: "cmp_1", name: "API", group: null, status: "operational" }]);
+  });
+
+  test("the list shows what the public sees, and says when its monitors moved it", () => {
+    const backend = {
+      ...component("cmp_1", "Backend"),
+      monitorIds: ["mon_1", "mon_2"],
+      followMonitors: true,
+    };
+    const { container } = card({
+      page,
+      components: [backend, component("cmp_2", "Web"), component("cmp_3", "Search")],
+      monitors: [
+        { id: "mon_1", name: "API health", paused: false, status: "down" },
+        { id: "mon_2", name: "DB health", paused: false, status: "down" },
+      ],
+      incidents: [{ status: "identified", impact: "degraded", componentIds: ["cmp_2"] }],
+      windows: [{ componentIds: ["cmp_3"], outage: false, phase: "in_progress" }],
+    });
+    const rows = [...container.querySelectorAll("li")];
+    // Set by hand to operational, but both of its monitors are down: the public sees a major outage.
+    expect(rows[0]!.textContent).toContain("Major outage");
+    expect(rows[0]!.textContent).toContain("From its monitors");
+    expect(rows[0]!.textContent).not.toContain("Operational");
+    expect(rows[1]!.textContent).toContain("Degraded performance");
+    expect(rows[1]!.textContent).toContain("From an open incident");
+    expect(rows[2]!.textContent).toContain("Under maintenance");
+    expect(rows[2]!.textContent).not.toContain("From");
+  });
+
+  test("a component that does not follow its monitors keeps its own status, with no note", () => {
+    const { container } = card({
+      page,
+      components: [{ ...component("cmp_1", "Backend"), monitorIds: ["mon_1"] }],
+      monitors: [{ id: "mon_1", name: "API health", paused: false, status: "down" }],
+    });
+    expect(container.querySelector("li")!.textContent).toContain("Operational");
+    expect(container.querySelector("li")!.textContent).not.toContain("From its monitors");
+  });
+
+  test("the edit form names the monitors section for both uses, and the hint mentions monitors", () => {
+    const { container } = card({
+      page,
+      components: [component("cmp_1", "Backend")],
+      monitors: [{ id: "mon_1", name: "API health" }],
+      onLink: async () => true,
+    });
+    act(() => button(container, "Edit").click());
+    expect(container.querySelector("legend")!.textContent).toBe("Monitors");
+    expect(container.textContent).toContain("when it follows them, its monitors");
+    // Disabled but drawn: muted box and title, no faded control.
+    const toggle = container.querySelector<HTMLInputElement>('input[role="switch"]')!;
+    expect(toggle.disabled).toBe(true);
+    expect(toggle.className).not.toContain("opacity");
+    expect(toggle.parentElement!.className).toContain("has-disabled:bg-muted");
+  });
+
   test("services are linked only when the choice differs from what is stored and still exists", () => {
     const known = [{ id: "svc_1" }, { id: "svc_2" }];
     // Not loaded yet: nothing to link or unlink, whatever the form holds.
@@ -548,5 +670,42 @@ describe("component order", () => {
     expect(moveGroup(rows, "Core", -1)).toEqual(["b", "c", "a", "d"]);
     expect(moveGroup(rows, "Apps", -1)).toBeNull();
     expect(moveGroup(rows, "Core", 1)).toBeNull();
+  });
+});
+
+describe("shownComponent", () => {
+  const component = {
+    id: "c",
+    status: "degraded" as const,
+    monitorIds: ["m"],
+    followMonitors: true,
+  };
+  test("a planned outage under way wins over the hand-set status and says so", () => {
+    expect(
+      shownComponent(
+        component,
+        [],
+        [],
+        [{ componentIds: ["c"], outage: true, phase: "in_progress" }],
+      ),
+    ).toEqual({ status: "major_outage", from: "maintenance" });
+  });
+  test("its monitors, an open incident, or nothing to explain", () => {
+    expect(shownComponent(component, [], [{ id: "m", status: "down" }], [])).toEqual({
+      status: "major_outage",
+      from: "monitors",
+    });
+    expect(
+      shownComponent(
+        component,
+        [{ status: "identified", impact: "partial_outage", componentIds: ["c"] }],
+        [],
+        [],
+      ),
+    ).toEqual({ status: "partial_outage", from: "incident" });
+    expect(shownComponent(component, [], [{ id: "m", status: "up" }], [])).toEqual({
+      status: "degraded",
+      from: null,
+    });
   });
 });

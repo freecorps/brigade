@@ -3,6 +3,7 @@
 import { env, exports } from "cloudflare:workers";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import {
+  MONITOR_ACTOR,
   newId,
   type Actor,
   type AlertRow,
@@ -90,6 +91,17 @@ async function addMember(workspaceId: string, userId: string, role: string) {
  * Ana owns a workspace; Caio is a responder there, Eva an outsider. `crew` casts people signed up earlier in those
  * parts: signing up hashes passwords, the slowest part of a team.
  */
+/**
+ * A team of people signed up once and shared by the tests that call it: sign-up is rate-limited, and each of those
+ * tests needs only a workspace of its own.
+ */
+let sharedCrew: ReturnType<typeof team> | undefined;
+async function sharedTeam() {
+  sharedCrew ??= team();
+  const first = await sharedCrew;
+  return team({ ana: first.ana, caio: first.caio, eva: first.eva });
+}
+
 async function team(crew?: { ana: Person; caio: Person; eva: Person }) {
   const [ana, caio, eva] = crew
     ? [crew.ana, crew.caio, crew.eva]
@@ -762,6 +774,159 @@ describe("the snapshot", () => {
     ).toBe(true);
   });
 
+  test("a component following its monitors goes down on the page when one turns down, and back when it recovers", async () => {
+    const t = await sharedTeam();
+    const address = slug();
+    await configure(t, t.ana, settings(address));
+    const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
+    const caio: Actor = { kind: "user", id: t.caio.id, role: "responder" };
+    const [backend, frontend] = [
+      newId("cmp", Date.now(), random),
+      newId("cmp", Date.now(), random),
+    ];
+    const [api, web] = [newId("mon", Date.now(), random), newId("mon", Date.now(), random)];
+    for (const [component, name] of [
+      [backend, "Backend"],
+      [frontend, "Frontend"],
+    ] as const) {
+      await t.run("statusComponent.create", { id: component, name, group: "GroceryOps" }, ana);
+    }
+    for (const [monitor, name] of [
+      [api, "groceryops-api health"],
+      [web, "groceryops-web health"],
+    ] as const) {
+      expect(
+        await t.run(
+          "monitor.createHeartbeat",
+          { id: monitor, name, intervalSeconds: 60, graceSeconds: 0, tokenHash: "a".repeat(64) },
+          ana,
+        ),
+      ).toMatchObject({ ok: true });
+    }
+    await t.run("statusComponent.linkMonitors", { id: backend, monitorIds: [api] }, ana);
+    await t.run("statusComponent.linkMonitors", { id: frontend, monitorIds: [web] }, ana);
+    const follow = (id: string, name: string, followMonitors?: boolean) => ({
+      id,
+      name,
+      group: "GroceryOps",
+      status: "operational",
+      ...(followMonitors === undefined ? {} : { followMonitors }),
+    });
+    // A row from before reads as off; only owners and admins turn it on, and it is an event.
+    expect(
+      await t.withShard((shard) => shard.store.get("status_components", backend)!.followMonitors),
+    ).toBeUndefined();
+    expect(
+      await t.run("statusComponent.update", follow(backend, "Backend", true), caio),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    expect(
+      await t.run("statusComponent.update", follow(backend, "Backend", true), ana),
+    ).toMatchObject({ ok: true });
+    expect(await events(t, "status_component.updated")).toMatchObject([
+      { data: { id: backend, followMonitors: true } },
+    ]);
+    await t.push();
+    expect(await t.withShard((shard) => shard.statusDirty())).toBeUndefined();
+
+    const report = (monitor: string, up: boolean) =>
+      t.withShard((shard) => {
+        const { result } = shard.mutate({
+          clientId: "probe",
+          mutationId: newId("mut", Date.now(), random),
+          actor: MONITOR_ACTOR,
+          name: "monitor.report",
+          args: {
+            id: monitor,
+            source: "heartbeat",
+            at: Date.now(),
+            up,
+            latencyMs: null,
+            colo: null,
+            httpStatus: null,
+            error: up ? null : "missed",
+            open: {
+              alertId: newId("alt", Date.now(), random),
+              incidentId: newId("inc", Date.now(), random),
+              title: "Heartbeat missed",
+            },
+          },
+          now: Date.now(),
+          internal: true,
+        });
+        return { result, dirty: shard.statusDirty() };
+      });
+    // The followed monitor turns down: the page is due a push, and shows the outage without anyone publishing.
+    expect(await report(api, false)).toMatchObject({
+      result: { ok: true },
+      dirty: expect.any(Number),
+    });
+    await t.push();
+    const down = (await snapshot(address))!;
+    expect(down.groups).toMatchObject([
+      {
+        name: "GroceryOps",
+        components: [
+          { name: "Backend", status: "major_outage" },
+          { name: "Frontend", status: "operational" },
+        ],
+      },
+    ]);
+    expect(down.active).toEqual([]);
+    const { workspaceId: _, ...shown } = down as { workspaceId?: string };
+    const text = JSON.stringify(shown);
+    for (const internal of [api, web, backend, frontend, "groceryops-api", "followMonitors"]) {
+      expect(text).not.toContain(internal);
+    }
+    // Still down, reported again: nothing new for the page.
+    expect(await report(api, false)).toMatchObject({ dirty: undefined });
+    // The monitor of a component that does not follow it: only the bar's alert moves the page, as before.
+    expect(await report(web, false)).toMatchObject({ dirty: expect.any(Number) });
+    await t.push();
+    expect((await snapshot(address))!.groups[0]!.components[1]!.status).toBe("operational");
+    // Back up: pushed again, operational.
+    expect(await report(api, true)).toMatchObject({ dirty: expect.any(Number) });
+    await t.push();
+    expect((await snapshot(address))!.groups[0]!.components[0]!.status).toBe("operational");
+  });
+
+  test("a followed monitor's flip marks the page; a routine report or an unfollowed monitor does not", async () => {
+    const t = await sharedTeam();
+    await configure(t, t.ana, settings(slug()));
+    const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
+    const component = newId("cmp", Date.now(), random);
+    const [followed, other] = [newId("mon", Date.now(), random), newId("mon", Date.now(), random)];
+    await t.run("statusComponent.create", { id: component, name: "API", group: null }, ana);
+    const row = (id: string, status: MonitorRow["status"], paused = false) =>
+      ({ id, createdAt: Date.now(), paused, pausedAt: null, status }) as MonitorRow;
+    await t.withShard((shard) => {
+      for (const id of [followed, other]) shard.store.insert("monitors", row(id, "up"));
+    });
+    await t.run("statusComponent.linkMonitors", { id: component, monitorIds: [followed] }, ana);
+    const touches = (id: string, before: MonitorRow, after: MonitorRow | undefined) =>
+      t.withShard((shard) =>
+        touchesStatusPage([{ table: "monitors", id, before, after }], shard.store),
+      );
+    // Linked but not followed: a flip only matters through its alert.
+    expect(await touches(followed, row(followed, "up"), row(followed, "down"))).toBe(false);
+    await t.run(
+      "statusComponent.update",
+      { id: component, name: "API", group: null, status: "operational", followMonitors: true },
+      ana,
+    );
+    expect(await touches(followed, row(followed, "up"), row(followed, "down"))).toBe(true);
+    expect(await touches(followed, row(followed, "down"), row(followed, "up"))).toBe(true);
+    expect(await touches(followed, row(followed, "down"), row(followed, "down", true))).toBe(true);
+    expect(await touches(followed, row(followed, "down"), row(followed, "pending"))).toBe(true);
+    // Pausing or resuming one that is up still matters: it changes what a partial outage is judged against.
+    expect(await touches(followed, row(followed, "up"), row(followed, "up", true))).toBe(true);
+    expect(await touches(followed, row(followed, "up", true), row(followed, "up"))).toBe(true);
+    expect(await touches(followed, row(followed, "up"), undefined)).toBe(true);
+    // Unknown is not down; a routine report changes nothing that shows.
+    expect(await touches(followed, row(followed, "up"), row(followed, "unknown"))).toBe(false);
+    expect(await touches(followed, row(followed, "down"), row(followed, "down"))).toBe(false);
+    expect(await touches(other, row(other, "up"), row(other, "down"))).toBe(false);
+  });
+
   test("a failed push keeps the change pending and backs off", async () => {
     const t = await team();
     const address = slug();
@@ -1164,7 +1329,7 @@ describe("the snapshot", () => {
   });
 
   test("the feeds come from the snapshot in KV, cached like the page", async () => {
-    const t = await team();
+    const t = await sharedTeam();
     const address = slug();
     await configure(t, t.ana, settings(address));
     const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };

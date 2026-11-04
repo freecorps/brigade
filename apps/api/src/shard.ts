@@ -3,6 +3,7 @@
 // this to the WebSocket protocol. Everything is synchronous SQLite, so a caller never yields mid-operation.
 
 import {
+  followedState,
   lookup,
   mutations,
   newId,
@@ -15,6 +16,7 @@ import {
   type AnyQuery,
   type BrigadeTables,
   type DomainEvent,
+  type MonitorRow,
   type MutationContext,
   type Permission,
   type QueryResult,
@@ -44,21 +46,36 @@ const STATUS_TABLES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Whether `changes` put the public status page's snapshot out of date (RFC 0012): a change to its own tables, or an
- * alert of a monitor some component is linked to (it moves that component's uptime bar, "Uptime"). Every other alert
- * leaves the page alone, so a busy monitor nobody shows never rebuilds it.
+ * Whether `changes` put the public status page's snapshot out of date (RFC 0012): a change to its own tables, an
+ * alert of a monitor some component is linked to (it moves that component's uptime bar, "Uptime"), or a monitor some
+ * component follows turning down or no longer down, or starting or stopping to count (paused, resumed, recovered,
+ * started over: "Status from monitors"). Every
+ * other alert and monitor change leaves the page alone, so a busy monitor nobody shows, or a followed one's routine
+ * reports, never rebuild it.
  */
 export function touchesStatusPage(
-  changes: readonly Pick<RowChange, "table" | "id">[],
+  changes: readonly (Pick<RowChange, "table" | "id"> &
+    Partial<Pick<RowChange, "before" | "after">>)[],
   store: Pick<SqlStore, "get" | "scan">,
 ): boolean {
   if (changes.some((change) => STATUS_TABLES.has(change.table))) return true;
   const alerts = changes.filter((change) => change.table === "alerts");
-  if (alerts.length === 0) return false;
-  const linked = new Set(
-    store.scan("status_components").flatMap((component) => component.monitorIds ?? []),
+  const flipped = changes.filter(
+    (change) =>
+      change.table === "monitors" &&
+      followedState(change.before as MonitorRow | undefined) !==
+        followedState(change.after as MonitorRow | undefined),
   );
+  if (alerts.length === 0 && flipped.length === 0) return false;
+  const components = store.scan("status_components");
+  const linked = new Set(components.flatMap((component) => component.monitorIds ?? []));
   if (linked.size === 0) return false;
+  const followed = new Set(
+    components
+      .filter((component) => component.followMonitors === true)
+      .flatMap((component) => component.monitorIds ?? []),
+  );
+  if (flipped.some((change) => followed.has(change.id))) return true;
   return alerts.some((change) => {
     const alert = store.get("alerts", change.id);
     return alert !== undefined && linked.has(alert.monitorId);

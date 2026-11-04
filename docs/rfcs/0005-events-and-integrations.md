@@ -87,7 +87,8 @@ viewer carries the schedule and policy events with
 carries them alone (no `member.*` event: that change happened outside Brigade).
 
 The status page (RFC 0012) emits `status_page.configured` (`slug`, `title`, `locale`, `enabled`, `previousSlug`),
-`status_component.created` and `status_component.updated` (`id`, `name`, `group`, `status`),
+`status_component.created` (`id`, `name`, `group`, `status`), `status_component.updated` (the same and
+`followMonitors`),
 `status_component.deleted` (`id`, `incidents`) and `incident.update_published` (`entryId`, `title`, `status`,
 `impact`, `componentIds`, `body`), with a `status_published` timeline entry for the last; its corrections emit
 `incident.published_update_edited` (`entryId`, `updateId`, `body`), `incident.published_update_removed` (`entryId`,

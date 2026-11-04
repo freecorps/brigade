@@ -292,7 +292,7 @@ ${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.list .c-${s} .dot{color:va
 .group>summary .chip .dot{width:.5rem;height:.5rem}
 .group>summary .chip:not(.c-operational){color:var(--fg)}
 ${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.group>summary .c-${s} .dot{color:var(--c-${s}-dot)}`).join("")}
-.uptime{flex-basis:100%;margin-top:.25rem}
+.uptime{flex-basis:100%;min-width:0;margin-top:.25rem;container:uptime/inline-size}
 .bars{display:flex;gap:2px;height:2.25rem;container-type:inline-size;overflow-x:clip}
 .bars span{--f:calc(var(--i,0) / ${UPTIME_DAYS - 1});position:relative;flex:1;min-width:2px;border-radius:3px;background:var(--border);transform-origin:bottom;animation:rise 640ms cubic-bezier(.23,1,.32,1) backwards;animation-delay:calc(var(--i,0) * 6ms);transition:opacity 160ms ease-out,filter 160ms ease-out}
 @keyframes rise{from{transform:scaleY(.12);opacity:0}}
@@ -304,10 +304,13 @@ ${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.group>summary .c-${s} .dot
 @media (hover:hover) and (pointer:fine){.bars:hover span{opacity:.45}.bars span:hover{opacity:1;filter:brightness(1.12)}.bars span:hover::after{opacity:1;transform:translate(calc(var(--f) * -100%),0)}}
 .bars:has(.tip) span{opacity:.45}.bars span.tip{opacity:1}.bars span.tip::after{opacity:1;transform:translate(calc(var(--f) * -100%),0)}
 @media (max-width:39.99rem){.bars span{--f:calc((var(--i,0) - ${UPTIME_DAYS - PHONE_UPTIME_DAYS}) / ${PHONE_UPTIME_DAYS - 1})}}
-.scale{display:flex;justify-content:space-between;align-items:center;gap:.75rem;color:var(--muted);font-size:.75rem;margin-top:.375rem;white-space:nowrap;font-variant-numeric:tabular-nums}
-.scale::before,.scale::after{content:"";order:2;flex:1;height:1px;background:var(--border)}
+.scale{display:flex;justify-content:space-between;align-items:center;gap:.75rem;color:var(--muted);font-size:.75rem;margin-top:.375rem;font-variant-numeric:tabular-nums}
+.scale::before,.scale::after{content:"";order:2;flex:1;min-width:0;height:1px;background:var(--border)}
 .scale::after{order:4}
 .scale .from{order:1}.scale .pct{order:3}.scale .to{order:5}
+.scale .from,.scale .to{flex:none;white-space:nowrap}
+.scale .pct{min-width:0;text-align:center;overflow-wrap:anywhere}
+@container uptime (max-width:17rem){.scale{gap:.5rem}.scale::before,.scale::after{display:none}}
 .scale .short{display:none}
 @media (max-width:39.99rem){.bars span:nth-child(-n+${UPTIME_DAYS - PHONE_UPTIME_DAYS}){display:none}.scale .long{display:none}.scale .short{display:inline}}
 .window{color:var(--muted);font-size:.875rem;margin-top:.25rem}

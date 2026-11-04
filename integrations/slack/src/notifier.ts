@@ -3,7 +3,10 @@
 // not bind to this Worker (no binding cycle), so the Slack code is shared as a module instead.
 
 import { incident_role, slack_text } from "@freecorps/brigade-i18n/messages";
-import { incidentStatusLabels, severityLabels } from "@freecorps/brigade-i18n/labels";
+import {
+  serverIncidentStatusLabels as incidentStatusLabels,
+  serverSeverityLabels as severityLabels,
+} from "@freecorps/brigade-i18n/labels";
 import {
   formatIncidentNumber,
   isBuiltinRole,

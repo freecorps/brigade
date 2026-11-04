@@ -263,9 +263,10 @@ p{margin:0}
 .group>summary::-webkit-details-marker{display:none}
 .group>summary::before{content:"";flex:none;width:.4375rem;height:.4375rem;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(-45deg);margin:0 .25rem 0 .125rem;transition:transform 200ms cubic-bezier(.23,1,.32,1)}
 .group[open]>summary::before{transform:rotate(45deg)}
-.group>summary{flex-wrap:wrap;row-gap:.25rem}
+.group>summary .head{flex:1;min-width:0;display:flex;align-items:center;gap:.125rem .75rem}
 .group>summary .name{flex:1 1 auto}
-.group>summary .state{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;column-gap:.75rem;row-gap:.125rem;margin-left:auto;min-width:0}
+.group>summary .state{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:.125rem .75rem;flex:none;max-width:100%}
+@media (max-width:39.99rem){.group>summary .head{flex-direction:column;align-items:flex-start}.group>summary .name{flex:none}.group>summary .state{justify-content:flex-start}}
 .group>summary .count{color:var(--muted);font-size:.8125rem;font-weight:400;font-variant-numeric:tabular-nums;white-space:nowrap}
 .group>.list{border:0;border-top:1px solid var(--border);border-radius:0}
 :root{interpolate-size:allow-keywords}
@@ -640,7 +641,7 @@ export function renderStatusPage(
               status_group_count({ count: group.components.length }, { locale }),
             );
             const status = groupStatus(group.components.map((component) => component.status));
-            return `<details class="group" open><summary><span class="name"${own}>${escape(group.name)}</span><span class="state">${componentChip(locale, status)}<span class="count">${count}</span></span></summary><ul class="list">${rows}</ul></details>`;
+            return `<details class="group" open><summary><span class="head"><span class="name"${own}>${escape(group.name)}</span><span class="state">${componentChip(locale, status)}<span class="count">${count}</span></span></span></summary><ul class="list">${rows}</ul></details>`;
           })
           .join("");
   const active =

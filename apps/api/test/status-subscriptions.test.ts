@@ -1459,7 +1459,7 @@ describe("the page", () => {
       { slug: "acme" },
     );
     expect(html).toContain(
-      '<details class="group" open><summary><span class="name">Payments &lt;EU&gt;</span><span class="state"><span class="chip c-maintenance"><span class="dot"></span>Under maintenance</span><span class="count">1 component</span></span></summary>',
+      '<details class="group" open><summary><span class="head"><span class="name">Payments &lt;EU&gt;</span><span class="state"><span class="chip c-maintenance"><span class="dot"></span>Under maintenance</span><span class="count">1 component</span></span></span></summary>',
     );
     expect(html).toContain(
       '<span class="u-down" style="--i:1" data-tip="Oct 26, 2026: down for 90 min"></span>',

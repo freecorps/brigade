@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vite-plus/test";
 import {
+  componentStatus,
   createMemoryStore,
+  monitorsStatus,
   MAX_OPEN_MAINTENANCE,
   mutations,
   newId,
@@ -337,5 +339,129 @@ describe("uptime", () => {
     const component = statusSnapshot(store, T)!.groups[0]!.components[0]!;
     expect(component.uptime?.days).toHaveLength(UPTIME_DAYS);
     expect(JSON.stringify(component)).not.toContain("mon_");
+  });
+});
+
+describe("status from monitors", () => {
+  const mon = (status: MonitorRow["status"], paused = false) =>
+    ({ id: id("mon", T - DAY), status, paused }) as Pick<MonitorRow, "id" | "status" | "paused">;
+  const component = (monitorIds: string[], followMonitors?: boolean) => ({
+    id: "cmp_x",
+    status: "operational" as const,
+    monitorIds,
+    ...(followMonitors === undefined ? {} : { followMonitors }),
+  });
+
+  test("off (and absent on rows from before), the monitors only feed the bar", () => {
+    const down = mon("down");
+    expect(monitorsStatus(component([down.id]), [down])).toBeNull();
+    expect(monitorsStatus(component([down.id], false), [down])).toBeNull();
+    expect(componentStatus(component([down.id]), [], [down])).toBe("operational");
+  });
+
+  test("on: none down is nothing, some is a partial outage, all a major one", () => {
+    const a = mon("up");
+    const b = mon("up");
+    expect(monitorsStatus(component([a.id, b.id], true), [a, b])).toBeNull();
+    expect(monitorsStatus(component([a.id, b.id], true), [{ ...a, status: "down" }, b])).toBe(
+      "partial_outage",
+    );
+    expect(
+      monitorsStatus(component([a.id, b.id], true), [
+        { ...a, status: "down" },
+        { ...b, status: "down" },
+      ]),
+    ).toBe("major_outage");
+    // No monitor linked: nothing to go by.
+    expect(monitorsStatus(component([], true), [a])).toBeNull();
+  });
+
+  test("paused and deleted monitors are skipped; pending and unknown are not down", () => {
+    const down = mon("down");
+    const paused = mon("down", true);
+    const gone = id("mon");
+    // The paused one and the deleted one are not considered: the only one left is down, so all are.
+    expect(monitorsStatus(component([down.id, paused.id, gone], true), [down, paused])).toBe(
+      "major_outage",
+    );
+    // Only a paused one: nothing considered.
+    expect(monitorsStatus(component([paused.id], true), [paused])).toBeNull();
+    const unknown = mon("unknown");
+    const pending = mon("pending");
+    expect(
+      monitorsStatus(component([unknown.id, pending.id], true), [unknown, pending]),
+    ).toBeNull();
+    expect(monitorsStatus(component([down.id, unknown.id], true), [down, unknown])).toBe(
+      "partial_outage",
+    );
+  });
+
+  test("the worst of the hand-set status, the incidents and the monitors", () => {
+    const a = { ...mon("down") };
+    const b = mon("up");
+    const row = { ...component([a.id, b.id], true), status: "major_outage" as const };
+    // The hand-set status is worse than a partial outage.
+    expect(componentStatus(row, [], [a, b])).toBe("major_outage");
+    expect(componentStatus({ ...row, status: "degraded" }, [], [a, b])).toBe("partial_outage");
+    const incident = {
+      status: "identified" as const,
+      impact: "major_outage" as const,
+      componentIds: ["cmp_x"],
+    };
+    expect(componentStatus({ ...row, status: "degraded" }, [incident], [a, b])).toBe(
+      "major_outage",
+    );
+    // A resolved incident no longer counts, the monitors still do.
+    expect(
+      componentStatus(
+        { ...row, status: "operational" },
+        [{ ...incident, status: "resolved" }],
+        [a, b],
+      ),
+    ).toBe("partial_outage");
+    // Under maintenance, the monitors count for nothing; the rest still does.
+    expect(componentStatus({ ...row, status: "degraded" }, [], [a, b], true)).toBe("degraded");
+  });
+
+  test("on the page: an outage without anyone publishing; maintenance explains it; nothing internal", () => {
+    const { store, api } = ready();
+    const monitorId = id("mon", T - DAY);
+    store.insert("monitors", {
+      id: monitorId,
+      name: "Backend health",
+      createdAt: T - DAY,
+      paused: false,
+      pausedAt: null,
+      status: "down",
+    } as MonitorRow);
+    run(store, "statusComponent.linkMonitors", { id: api, monitorIds: [monitorId] });
+    // Linked only: the bar, not the status.
+    expect(statusSnapshot(store, T)!.groups[0]!.components[0]!.status).toBe("operational");
+    expect(
+      run(store, "statusComponent.update", {
+        id: api,
+        name: "API",
+        group: null,
+        status: "operational",
+        followMonitors: true,
+      }),
+    ).toMatchObject({ ok: true });
+    const down = statusSnapshot(store, T)!;
+    expect(down.groups[0]!.components[0]!.status).toBe("major_outage");
+    expect(down.status).toBe("major_outage");
+    expect(down.active).toEqual([]);
+    expect(JSON.stringify(down)).not.toMatch(/mon_|cmp_|Backend health|followMonitors/);
+    // A window under way explains the monitor: maintenance, not an outage.
+    const args = window({ componentIds: [api], startsAt: T + HOUR });
+    run(store, "maintenance.schedule", args);
+    run(store, "maintenance.advance", { id: args.id }, ctx("admin", T + HOUR));
+    const during = statusSnapshot(store, T + 2 * HOUR)!;
+    expect(during.groups[0]!.components[0]!.status).toBe("maintenance");
+    expect(during.status).toBe("operational");
+    // A planned outage still says major outage, as it always has.
+    run(store, "maintenance.update", { ...args, outage: true }, ctx("admin", T + 2 * HOUR));
+    expect(statusSnapshot(store, T + 2 * HOUR)!.groups[0]!.components[0]!.status).toBe(
+      "major_outage",
+    );
   });
 });

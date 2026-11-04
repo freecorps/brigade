@@ -131,7 +131,9 @@ function StatusPageLive({ onRetry }: { onRetry: () => void }) {
   );
 }
 
-type ComponentEdit = Pick<StatusComponentRow, "id" | "name" | "group" | "status">;
+type ComponentEdit = Pick<StatusComponentRow, "id" | "name" | "group" | "status"> & {
+  followMonitors?: boolean;
+};
 
 type PanelProps = {
   page: StatusPageRow | null;
@@ -553,12 +555,16 @@ function ComponentRow({
   const [name, setName] = useState(component.name);
   const [group, setGroup] = useState(component.group ?? "");
   const [status, setStatus] = useState<ComponentStatus>(component.status);
+  const following = component.followMonitors === true;
+  const [follow, setFollow] = useState(following);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const [nameInvalid, setNameInvalid] = useState(false);
   const statusId = useId();
   const nameId = useId();
   const editId = useId();
+  const followId = useId();
+  const followHintId = useId();
 
   if (mode === "view") {
     return (
@@ -569,7 +575,7 @@ function ComponentRow({
           </span>
           {linked.length > 0 ? (
             <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-              {say("uptime_from", {
+              {say(following ? "status_from" : "uptime_from", {
                 name: linked
                   .map((id) => monitors.find((monitor) => monitor.id === id)?.name ?? "…")
                   .join(", "),
@@ -598,6 +604,7 @@ function ComponentRow({
                 setName(component.name);
                 setGroup(component.group ?? "");
                 setStatus(component.status);
+                setFollow(following);
                 setChosen(linked);
                 setChosenServices(serving);
                 setFailed(null);
@@ -649,7 +656,14 @@ function ComponentRow({
         className="grid min-w-0 gap-3 sm:grid-cols-3"
         onSubmit={(event) => {
           event.preventDefault();
-          const next = { id: component.id, name: name.trim(), group: group.trim() || null, status };
+          const next: ComponentEdit = {
+            id: component.id,
+            name: name.trim(),
+            group: group.trim() || null,
+            status,
+            // Sent only when it changes, so a save from before the switch never turns it off.
+            ...(follow !== following && { followMonitors: follow }),
+          };
           if (next.name === "") {
             setNameInvalid(true);
             return;
@@ -657,7 +671,8 @@ function ComponentRow({
           const fieldsChanged =
             next.name !== component.name ||
             next.group !== component.group ||
-            next.status !== component.status;
+            next.status !== component.status ||
+            follow !== following;
           const monitorsChanged = chosen.join() !== linked.join();
           const serviceIds = servicesToLink(component.serviceIds ?? [], services, chosenServices);
           if (!fieldsChanged && !monitorsChanged && !serviceIds) {
@@ -743,6 +758,25 @@ function ComponentRow({
             {chosen.length >= MAX_COMPONENT_MONITORS ? (
               <p className="text-sm text-muted-foreground">{say("uptime_limit")}</p>
             ) : null}
+            <div className="mt-2 flex items-start gap-3">
+              <input
+                id={followId}
+                type="checkbox"
+                role="switch"
+                aria-describedby={followHintId}
+                // Nothing to follow without a monitor; one that already follows can still be turned off.
+                disabled={chosen.length === 0 && !follow}
+                checked={follow}
+                onChange={(event) => setFollow(event.target.checked)}
+                className="mt-0.5 size-5 shrink-0 accent-primary disabled:opacity-50"
+              />
+              <label htmlFor={followId} className="flex min-w-0 flex-col gap-0.5">
+                <span className="text-sm font-medium">{say("follow_label")}</span>
+                <span id={followHintId} className="text-sm text-muted-foreground">
+                  {say(chosen.length === 0 ? "follow_no_monitors" : "follow_hint")}
+                </span>
+              </label>
+            </div>
           </fieldset>
         ) : null}
         {onLinkServices ? (

@@ -299,6 +299,73 @@ describe("StatusPagePanel", () => {
     expect(linked).toEqual([]);
   });
 
+  test("a component follows its monitors only once one is linked, and the save says so", async () => {
+    const updated: unknown[] = [];
+    const linked: unknown[] = [];
+    const { container } = card({
+      page,
+      components: [component("cmp_1", "Backend", "GroceryOps")],
+      monitors: [{ id: "mon_1", name: "API health" }],
+      onUpdate: async (row) => {
+        updated.push(row);
+        return true;
+      },
+      onLink: async (id, monitorIds) => {
+        linked.push({ id, monitorIds });
+        return true;
+      },
+    });
+    act(() => button(container, "Edit").click());
+    const toggle = () => container.querySelector<HTMLInputElement>('input[role="switch"]')!;
+    // Nothing linked: off and disabled, saying what to do first.
+    expect(toggle().disabled).toBe(true);
+    expect(toggle().checked).toBe(false);
+    expect(container.textContent).toContain("Link a monitor above first.");
+    const monitor = [...container.querySelectorAll("label")].find(
+      (label) => label.textContent === "API health",
+    )!;
+    act(() => monitor.querySelector("input")!.click());
+    expect(toggle().disabled).toBe(false);
+    expect(
+      document.getElementById(toggle().getAttribute("aria-describedby")!)!.textContent,
+    ).toContain("shows an outage on its own");
+    act(() => toggle().click());
+    await act(async () => button(container.querySelector("li form")!, "Save").click());
+    expect(updated).toEqual([
+      {
+        id: "cmp_1",
+        name: "Backend",
+        group: "GroceryOps",
+        status: "operational",
+        followMonitors: true,
+      },
+    ]);
+    expect(linked).toEqual([{ id: "cmp_1", monitorIds: ["mon_1"] }]);
+  });
+
+  test("a component that follows its monitors says so, and a rename leaves the setting out", async () => {
+    const updated: unknown[] = [];
+    const { container } = card({
+      page,
+      components: [
+        { ...component("cmp_1", "Backend"), monitorIds: ["mon_1"], followMonitors: true },
+      ],
+      monitors: [{ id: "mon_1", name: "API health" }],
+      onLink: async () => true,
+      onUpdate: async (row) => {
+        updated.push(row);
+        return true;
+      },
+    });
+    expect(container.textContent).toContain("Status and uptime from API health");
+    act(() => button(container, "Edit").click());
+    expect(container.querySelector<HTMLInputElement>('input[role="switch"]')!.checked).toBe(true);
+    const name = container.querySelector<HTMLInputElement>("li form input")!;
+    act(() => type(name, "API"));
+    await act(async () => button(container.querySelector("li form")!, "Save").click());
+    expect(updated).toEqual([{ id: "cmp_1", name: "API", group: null, status: "operational" }]);
+  });
+
   test("services are linked only when the choice differs from what is stored and still exists", () => {
     const known = [{ id: "svc_1" }, { id: "svc_2" }];
     // Not loaded yet: nothing to link or unlink, whatever the form holds.

@@ -15,6 +15,7 @@ import { defineQuery } from "./query.ts";
 import type {
   IncidentRow,
   MaintenanceRow,
+  MonitorRow,
   StatusComponentRow,
   StatusIncidentRow,
   StatusPageRow,
@@ -146,12 +147,38 @@ export function worseStatus(a: ComponentStatus, b: ComponentStatus): ComponentSt
 }
 
 /**
- * What the public sees for a component: the worse of its own status (set by hand) and the impact of every
- * published incident on it that is not resolved.
+ * What a component's linked monitors say about it when it follows them (`followMonitors`, RFC 0012 "Status from
+ * monitors"): of its monitors that still exist and are not paused, all down is `major_outage`, some `partial_outage`.
+ * Null when it does not follow them, none is considered or none is down. Down is the monitor's own verdict
+ * (`status`, after its consecutive checks, RFC 0007); `pending` and `unknown` are not down.
+ */
+export function monitorsStatus(
+  component: Pick<StatusComponentRow, "monitorIds" | "followMonitors">,
+  monitors: readonly Pick<MonitorRow, "id" | "paused" | "status">[],
+): ComponentStatus | null {
+  if (component.followMonitors !== true) return null;
+  const ids = component.monitorIds ?? [];
+  const considered = monitors.filter((monitor) => ids.includes(monitor.id) && !monitor.paused);
+  const down = considered.filter((monitor) => monitor.status === "down").length;
+  if (down === 0) return null;
+  return down === considered.length ? "major_outage" : "partial_outage";
+}
+
+/** Whether `monitor` counts as down for a component that follows it (`monitorsStatus`). */
+export const followedDown = (monitor: Pick<MonitorRow, "paused" | "status"> | undefined): boolean =>
+  monitor !== undefined && !monitor.paused && monitor.status === "down";
+
+/**
+ * What the public sees for a component: the worst of its own status (set by hand), the impact of every published
+ * incident on it that is not resolved and, when it follows them, its linked monitors (`monitorsStatus`). While a
+ * maintenance window touching it is under way (`maintenance`), its monitors count for nothing: the window is why they
+ * are down, and a planned outage says so itself (`statusSnapshot`).
  */
 export function componentStatus(
-  component: Pick<StatusComponentRow, "id" | "status">,
+  component: Pick<StatusComponentRow, "id" | "status" | "monitorIds" | "followMonitors">,
   incidents: readonly Pick<StatusIncidentRow, "status" | "impact" | "componentIds">[],
+  monitors: readonly Pick<MonitorRow, "id" | "paused" | "status">[] = [],
+  maintenance = false,
 ): ComponentStatus {
   let status = component.status;
   for (const incident of incidents) {
@@ -159,7 +186,8 @@ export function componentStatus(
       status = worseStatus(status, incident.impact);
     }
   }
-  return status;
+  const fromMonitors = maintenance ? null : monitorsStatus(component, monitors);
+  return fromMonitors ? worseStatus(status, fromMonitors) : status;
 }
 
 export type StatusPageConfigured = DomainEvent<
@@ -240,7 +268,7 @@ export type StatusComponentCreated = DomainEvent<
 >;
 export type StatusComponentUpdated = DomainEvent<
   "status_component.updated",
-  Pick<StatusComponentRow, "id" | "name" | "group" | "status">
+  Pick<StatusComponentRow, "id" | "name" | "group" | "status"> & { followMonitors: boolean }
 >;
 export type StatusComponentDeleted = DomainEvent<
   "status_component.deleted",
@@ -280,7 +308,10 @@ export const createStatusComponent = defineMutation({
   },
 });
 
-/** Renames or regroups a component, or sets its own status by hand; owners and admins. */
+/**
+ * Renames or regroups a component, sets its own status by hand, or has it follow its linked monitors
+ * (`followMonitors`, RFC 0012 "Status from monitors"; left out: unchanged); owners and admins.
+ */
 export const updateStatusComponent = defineMutation({
   name: "statusComponent.update",
   args: v.object({
@@ -288,15 +319,19 @@ export const updateStatusComponent = defineMutation({
     name: componentName,
     group: componentGroup,
     status: v.picklist(COMPONENT_STATUSES),
+    followMonitors: v.omittable(v.boolean()),
   }),
   permission: "status:manage",
   apply(store, args, ctx) {
     const current = store.get("status_components", args.id);
     if (!current) return fail("not_found", "Component not found");
+    const following = current.followMonitors === true;
+    const followMonitors = args.followMonitors ?? following;
     if (
       current.name === args.name &&
       current.group === args.group &&
-      current.status === args.status
+      current.status === args.status &&
+      followMonitors === following
     ) {
       return fail("conflict", "Component is unchanged");
     }
@@ -304,12 +339,20 @@ export const updateStatusComponent = defineMutation({
       name: args.name,
       group: args.group,
       status: args.status,
+      // Written only once set, so a row that never followed its monitors stays as it was.
+      ...(followMonitors !== following && { followMonitors }),
       updatedAt: ctx.now,
     });
     const event: StatusComponentUpdated = {
       type: "status_component.updated",
       subject: args.id,
-      data: args,
+      data: {
+        id: args.id,
+        name: args.name,
+        group: args.group,
+        status: args.status,
+        followMonitors,
+      },
     };
     return ok(event);
   },
@@ -849,9 +892,10 @@ export function statusSnapshot(store: SnapshotStore, now: number): StatusSnapsho
   const groups: SnapshotGroup[] = [];
   let overall: ComponentStatus = "operational";
   for (const component of components) {
-    const derived = componentStatus(component, incidents);
-    overall = worseStatus(overall, derived);
     const touching = inProgress.filter((row) => row.componentIds.includes(component.id));
+    // Its monitors count unless a window under way explains them (`componentStatus`).
+    const derived = componentStatus(component, incidents, monitors, touching.length > 0);
+    overall = worseStatus(overall, derived);
     // A planned outage takes its components down while it runs (decided, Q23); the page's overall status stays the
     // team's and the incidents', as for any maintenance, so the banner says maintenance rather than an outage.
     const status: SnapshotComponentStatus = touching.some((row) => row.outage === true)

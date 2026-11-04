@@ -90,6 +90,10 @@ export type Status_CardInputs = {
 * | "uptime_no_monitors" | "No monitors yet. Add one under Monitors to show an uptime bar." |
 * | "uptime_from" | "Uptime from {name}" |
 * | "uptime_limit" | "At most 5 monitors per component." |
+* | "status_from" | "Status and uptime from {name}" |
+* | "follow_label" | "Status from monitors" |
+* | "follow_hint" | "The public page shows an outage on its own while these monitors are down: some down is a partial outage, all down a major one. Nobody has to publish anything..." |
+* | "follow_no_monitors" | "Link a monitor above first." |
 * | "order_hint" | "The public page lists them in this order, ungrouped ones first; a group comes where its first component is." |
 * | "move_up" | "Move {name} up" |
 * | "move_down" | "Move {name} down" |

@@ -1488,6 +1488,15 @@ describe("the page", () => {
     expect(html).toContain('<html lang="pt-BR">');
     expect(html).toContain('<p class="meta">Afeta <span lang="en">API</span></p>');
     expect(html).toContain('<span><span lang="en">API</span></span></label>');
+    // A name with `$` patterns stays as written.
+    const dollars = renderStatusPage(
+      {
+        ...base,
+        maintenance: [{ ...base.maintenance![0]!, components: ["Pay $` $& $$"] }],
+      },
+      { slug: "acme", locale: "pt-BR" },
+    );
+    expect(dollars).toContain('Afeta <span lang="en">Pay $` $&amp; $$</span>');
     // Read in its own language, nothing extra is marked.
     expect(renderStatusPage(followable, { slug: "acme", subscribe: true })).not.toContain(
       '<span lang="en">',

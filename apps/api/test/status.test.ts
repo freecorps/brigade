@@ -496,9 +496,9 @@ describe("the snapshot", () => {
     expect(nav?.[1]).toBe("Idioma");
     expect(nav?.[2]).toContain('<a href="?lang=en" hreflang="en" lang="en">English</a>');
     expect(nav?.[2]).toContain(
-      '<a href="?lang=pt-BR" hreflang="pt-BR" lang="pt-BR" aria-current="true">Português (Brasil)</a>',
+      '<a href="?lang=pt-BR" hreflang="pt-BR" lang="pt-BR" aria-current="page">Português (Brasil)</a>',
     );
-    expect(html.match(/aria-current="true"/g)).toHaveLength(1);
+    expect(html.match(/aria-current="page"/g)).toHaveLength(1);
     // Absolute, as search engines require, and x-default for the bare address, which follows the visitor.
     const page = `${ORIGIN}/status/${address}`;
     expect(html).toContain(`<link rel="alternate" hreflang="en" href="${page}?lang=en">`);

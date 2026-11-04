@@ -637,8 +637,8 @@ request on the server (src/status-locale.ts), in this order:
 - **A switcher, no script.** The footer lists every language, each named in itself ("English", "Português
   (Brasil)"), as plain links to `?lang=<locale>` relative to the page's own address (so it works at `/status/<slug>`
   and at a custom domain's `/`), the current one marked `aria-current`; the head lists the same as `<link
-  rel="alternate" hreflang>`, absolute (the address the page was asked at, which the cache key names too, so a
-  custom domain's `/` and `/status/<slug>`, or two hosts, never serve each other's), with `x-default` for the bare
+  rel="alternate" hreflang>`, absolute (the page's fixed address, below, which the cache key names too, so a
+  custom domain's `/` and `/status/<slug>` never serve each other's), with `x-default` for the bare
   address, which follows the visitor. The choice is not remembered: it is the link's.
 - **What keeps the default.** The feeds, the subscription pages and every email stay in the page's default
   language (one document for every reader, and an email has no request to take a language from). The 404 and error

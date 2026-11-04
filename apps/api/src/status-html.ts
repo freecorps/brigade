@@ -335,7 +335,7 @@ function affectsLine(locale: Locale, names: readonly string[], own: Own): string
     return `<p class="meta">${say(locale, "affects", { list: names.join(", ") })}</p>`;
   const marker = "\uE000list\uE000";
   const list = names.map((name) => `<span${own}>${escape(name)}</span>`).join(", ");
-  return `<p class="meta">${say(locale, "affects", { list: marker }).replace(marker, list)}</p>`;
+  return `<p class="meta">${say(locale, "affects", { list: marker }).replace(marker, () => list)}</p>`;
 }
 
 function incidentBody(locale: Locale, incident: SnapshotIncident, own: Own): string {
@@ -536,7 +536,7 @@ const languageAlternates = (pageUrl: string | undefined) =>
 function languageLinks(current: Locale): string {
   const links = STATUS_LOCALES.map(
     (locale) =>
-      `<li><a href="${escape(languageHref(locale))}" hreflang="${escape(locale)}" lang="${escape(locale)}"${locale === current ? ' aria-current="true"' : ""}>${escape(LANGUAGE_NAMES[locale])}</a></li>`,
+      `<li><a href="${escape(languageHref(locale))}" hreflang="${escape(locale)}" lang="${escape(locale)}"${locale === current ? ' aria-current="page"' : ""}>${escape(LANGUAGE_NAMES[locale])}</a></li>`,
   ).join("");
   return `<nav class="langs" aria-label="${say(current, "language")}"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="6.25"/><path d="M1.75 8h12.5M8 1.75c1.7 1.8 2.5 3.9 2.5 6.25S9.7 12.45 8 14.25M8 1.75C6.3 3.55 5.5 5.65 5.5 8s.8 4.45 2.5 6.25"/></svg><ul>${links}</ul></nav>`;
 }

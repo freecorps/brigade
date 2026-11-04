@@ -125,7 +125,7 @@ name, an internal hostname, the wrong incident) must not stay up:
 
 `status:manage`, owners and admins: the page's settings and its components (`statusComponent.create`, `.update`,
 `.delete`; deleting one takes it out of every published incident in the same transaction). Everyone reads them
-(`status:read`, queries `statusPage.config`, `statusComponents.all`, `statusIncident.byId`). What the page lists is
+(`status:read`, queries `statusPage.config`, `statusComponents.all`, `statusIncident.byId`, `statusIncidents.open`). What the page lists is
 the same kind of decision as what monitors watch, so it is an admin's call.
 
 ## Addresses
@@ -473,9 +473,12 @@ Linked monitors feed a component's uptime bar ("Uptime"); a component may also t
   no email. Subscribers are emailed for published updates and maintenance only ("Email subscriptions"); a
   monitor-driven change sends nothing, and the feeds, which list incidents and windows, are unchanged. The snapshot
   stays as it was: the derived status, no monitor, id or the setting (tested).
-- **On the dashboard**: in a component's edit form, under the monitors, a "Status from monitors" switch with what it
-  does; disabled, saying to link a monitor first, while none is ticked. A component that follows reads "Status and
-  uptime from …" in the list.
+- **On the dashboard**: in a component's edit form, in its "Monitors" section (the uptime bar's monitors), a "Status
+  from monitors" switch with what it does; disabled (drawn, muted), saying to link a monitor first, while none is
+  ticked. A component that follows reads "Status and uptime from …" in the list. The list's badge is what the public
+  sees (`shownStatus`, the snapshot's own derivation, over the synced monitors, `statusIncidents.open` and
+  `maintenance.all`), with a short note when it is not the status set by hand: from its monitors, from an open
+  incident or from a planned outage.
 
 ## Scheduled maintenance
 

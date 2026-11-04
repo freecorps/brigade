@@ -66,6 +66,7 @@ import {
   configureStatusPage,
   statusComponents,
   statusIncidentById,
+  openStatusIncidents,
   statusMutations,
   statusPageConfig,
 } from "./status.ts";
@@ -165,6 +166,7 @@ export const queries = defineRegistry([
   statusPageConfig,
   statusComponents,
   statusIncidentById,
+  openStatusIncidents,
   allMaintenance,
   statusDomainQuery,
   allWebhooks,

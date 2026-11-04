@@ -2,7 +2,43 @@
 // claimed in D1, so it is not a socket mutation), its public address, and the card's wording. Pure apart from
 // `fetch`; tested in test/status-page.test.tsx.
 import { formatNumber, getLocale, m } from "@freecorps/brigade-i18n";
-import type { StatusLocale } from "@freecorps/brigade-schema";
+import {
+  componentStatus,
+  shownStatus,
+  type MaintenanceRow,
+  type MonitorRow,
+  type SnapshotComponentStatus,
+  type StatusComponentRow,
+  type StatusIncidentRow,
+  type StatusLocale,
+} from "@freecorps/brigade-schema";
+
+/**
+ * What the public page shows for a component (`shownStatus`, the snapshot's own derivation) and, when that is not its
+ * status set by hand, what moved it: a maintenance window under way, its monitors (it follows them) or an open
+ * published incident. Monitors without `paused` or `status` (not loaded) read as up, as they would not be down.
+ */
+export function shownComponent(
+  component: Pick<StatusComponentRow, "id" | "status" | "monitorIds" | "followMonitors">,
+  incidents: readonly Pick<StatusIncidentRow, "status" | "impact" | "componentIds">[],
+  monitors: readonly { id: string; paused?: boolean; status?: MonitorRow["status"] }[],
+  windows: readonly Pick<MaintenanceRow, "componentIds" | "outage" | "phase">[],
+): { status: SnapshotComponentStatus; from: "maintenance" | "monitors" | "incident" | null } {
+  const known = monitors.map((monitor) => ({
+    id: monitor.id,
+    paused: monitor.paused ?? false,
+    status: monitor.status ?? "pending",
+  }));
+  const inProgress = windows.filter((row) => row.phase === "in_progress");
+  const { derived, status } = shownStatus(component, incidents, known, inProgress);
+  // "Under maintenance" says why itself.
+  if (status === component.status || status === "maintenance") return { status, from: null };
+  if (status !== derived) return { status, from: "maintenance" };
+  return {
+    status,
+    from: derived !== componentStatus(component, incidents) ? "monitors" : "incident",
+  };
+}
 
 /** The card's text for `part` (packages/i18n `status_card`). */
 export function statusCardText(

@@ -43,7 +43,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "component_name_required" | "A component needs a name." |
 * | "component_group" | "Group (optional)" |
 * | "component_status" | "Status set by hand" |
-* | "component_status_hint" | "The page shows the worse of this and the impact of any open incident published on it." |
+* | "component_status_hint" | "The page shows the worst of this, any open incident published on it and, when it follows them, its monitors." |
 * | "add" | "Add component" |
 * | "adding" | "Adding…" |
 * | "add_failed" | "Couldn't add the component. Try again." |
@@ -85,7 +85,10 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "withdrawn" | "Taken off the page. Visitors may still see it for about 2 minutes." |
 * | "corrected" | "Corrected. Visitors may still see the old version for about 2 minutes." |
 * | "correct_failed" | "Couldn't change the status page. Try again." |
-* | "uptime_label" | "Uptime bar from monitors" |
+* | "uptime_label" | "Monitors" |
+* | "shown_from_maintenance" | "From a planned outage" |
+* | "shown_from_incident" | "From an open incident" |
+* | "shown_from_monitors" | "From its monitors" |
 * | "uptime_hint" | "The page shows 90 days of uptime from these monitors, from when they were created. Leave all unchecked for no bar." |
 * | "uptime_no_monitors" | "No monitors yet. Add one under Monitors to show an uptime bar." |
 * | "uptime_from" | "Uptime from {name}" |
@@ -150,7 +153,7 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "component_name_required") return /** @type {LocalizedString} */ (`Um componente precisa de um nome.`);
 		if (i?.part === "component_group") return /** @type {LocalizedString} */ (`Grupo (opcional)`);
 		if (i?.part === "component_status") return /** @type {LocalizedString} */ (`Status definido à mão`);
-		if (i?.part === "component_status_hint") return /** @type {LocalizedString} */ (`A página mostra o pior entre este e o impacto de qualquer incidente aberto publicado nele.`);
+		if (i?.part === "component_status_hint") return /** @type {LocalizedString} */ (`A página mostra o pior entre este, qualquer incidente aberto publicado nele e, quando os acompanha, seus monitores.`);
 		if (i?.part === "add") return /** @type {LocalizedString} */ (`Adicionar componente`);
 		if (i?.part === "adding") return /** @type {LocalizedString} */ (`Adicionando…`);
 		if (i?.part === "add_failed") return /** @type {LocalizedString} */ (`Não foi possível adicionar o componente. Tente de novo.`);
@@ -192,7 +195,10 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "withdrawn") return /** @type {LocalizedString} */ (`Tirado da página. Visitantes podem ainda vê-lo por cerca de 2 minutos.`);
 		if (i?.part === "corrected") return /** @type {LocalizedString} */ (`Corrigido. Visitantes podem ainda ver a versão anterior por cerca de 2 minutos.`);
 		if (i?.part === "correct_failed") return /** @type {LocalizedString} */ (`Não foi possível alterar a página de status. Tente de novo.`);
-		if (i?.part === "uptime_label") return /** @type {LocalizedString} */ (`Barra de disponibilidade a partir de monitores`);
+		if (i?.part === "uptime_label") return /** @type {LocalizedString} */ (`Monitores`);
+		if (i?.part === "shown_from_maintenance") return /** @type {LocalizedString} */ (`Por uma indisponibilidade planejada`);
+		if (i?.part === "shown_from_incident") return /** @type {LocalizedString} */ (`Por um incidente aberto`);
+		if (i?.part === "shown_from_monitors") return /** @type {LocalizedString} */ (`Pelos monitores`);
 		if (i?.part === "uptime_hint") return /** @type {LocalizedString} */ (`A página mostra 90 dias de disponibilidade destes monitores, desde quando foram criados. Deixe todos desmarcados para não ter barra.`);
 		if (i?.part === "uptime_no_monitors") return /** @type {LocalizedString} */ (`Ainda não há monitores. Adicione um em Monitores para mostrar uma barra de disponibilidade.`);
 		if (i?.part === "uptime_from") return /** @type {LocalizedString} */ (`Disponibilidade de ${i?.name}`);
@@ -251,7 +257,7 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "component_name_required") return /** @type {LocalizedString} */ (`A component needs a name.`);
 		if (i?.part === "component_group") return /** @type {LocalizedString} */ (`Group (optional)`);
 		if (i?.part === "component_status") return /** @type {LocalizedString} */ (`Status set by hand`);
-		if (i?.part === "component_status_hint") return /** @type {LocalizedString} */ (`The page shows the worse of this and the impact of any open incident published on it.`);
+		if (i?.part === "component_status_hint") return /** @type {LocalizedString} */ (`The page shows the worst of this, any open incident published on it and, when it follows them, its monitors.`);
 		if (i?.part === "add") return /** @type {LocalizedString} */ (`Add component`);
 		if (i?.part === "adding") return /** @type {LocalizedString} */ (`Adding…`);
 		if (i?.part === "add_failed") return /** @type {LocalizedString} */ (`Couldn't add the component. Try again.`);
@@ -293,7 +299,10 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "withdrawn") return /** @type {LocalizedString} */ (`Taken off the page. Visitors may still see it for about 2 minutes.`);
 		if (i?.part === "corrected") return /** @type {LocalizedString} */ (`Corrected. Visitors may still see the old version for about 2 minutes.`);
 		if (i?.part === "correct_failed") return /** @type {LocalizedString} */ (`Couldn't change the status page. Try again.`);
-		if (i?.part === "uptime_label") return /** @type {LocalizedString} */ (`Uptime bar from monitors`);
+		if (i?.part === "uptime_label") return /** @type {LocalizedString} */ (`Monitors`);
+		if (i?.part === "shown_from_maintenance") return /** @type {LocalizedString} */ (`From a planned outage`);
+		if (i?.part === "shown_from_incident") return /** @type {LocalizedString} */ (`From an open incident`);
+		if (i?.part === "shown_from_monitors") return /** @type {LocalizedString} */ (`From its monitors`);
 		if (i?.part === "uptime_hint") return /** @type {LocalizedString} */ (`The page shows 90 days of uptime from these monitors, from when they were created. Leave all unchecked for no bar.`);
 		if (i?.part === "uptime_no_monitors") return /** @type {LocalizedString} */ (`No monitors yet. Add one under Monitors to show an uptime bar.`);
 		if (i?.part === "uptime_from") return /** @type {LocalizedString} */ (`Uptime from ${i?.name}`);

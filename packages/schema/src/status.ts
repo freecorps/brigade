@@ -201,6 +201,30 @@ export function componentStatus(
   return fromMonitors ? worseStatus(status, fromMonitors) : status;
 }
 
+/**
+ * What the public page shows for one component (`status`) and the status it counts towards the page's overall one
+ * (`derived`, `componentStatus`), given the windows under way (`phase` `in_progress`). The snapshot and the dashboard's
+ * components list both read it, so the list shows what the public sees.
+ */
+export function shownStatus(
+  component: Pick<StatusComponentRow, "id" | "status" | "monitorIds" | "followMonitors">,
+  incidents: readonly Pick<StatusIncidentRow, "status" | "impact" | "componentIds">[],
+  monitors: readonly Pick<MonitorRow, "id" | "paused" | "status">[],
+  inProgress: readonly Pick<MaintenanceRow, "componentIds" | "outage">[],
+): { derived: ComponentStatus; status: SnapshotComponentStatus } {
+  const touching = inProgress.filter((row) => row.componentIds.includes(component.id));
+  // Its monitors count unless a window under way explains them (`componentStatus`).
+  const derived = componentStatus(component, incidents, monitors, touching.length > 0);
+  // A planned outage takes its components down while it runs (decided, Q23); the page's overall status stays the
+  // team's and the incidents', as for any maintenance, so the banner says maintenance rather than an outage.
+  const status: SnapshotComponentStatus = touching.some((row) => row.outage === true)
+    ? worseStatus(derived, "major_outage")
+    : derived === "operational" && touching.length > 0
+      ? "maintenance"
+      : derived;
+  return { derived, status };
+}
+
 export type StatusPageConfigured = DomainEvent<
   "status_page.configured",
   Pick<StatusPageRow, "slug" | "title" | "locale" | "enabled"> & { previousSlug: string | null }
@@ -796,6 +820,15 @@ export const statusComponents = defineQuery({
   sort: componentOrder,
 });
 
+/** The published incidents that are not resolved, which raise their components' status (`componentStatus`). */
+export const openStatusIncidents = defineQuery({
+  name: "statusIncidents.open",
+  args: v.object({}),
+  permission: "status:read",
+  table: "status_incidents",
+  filter: (row) => row.status !== "resolved",
+});
+
 /** What the status page says about one incident, if anything was published. */
 export const statusIncidentById = defineQuery({
   name: "statusIncident.byId",
@@ -903,17 +936,8 @@ export function statusSnapshot(store: SnapshotStore, now: number): StatusSnapsho
   const groups: SnapshotGroup[] = [];
   let overall: ComponentStatus = "operational";
   for (const component of components) {
-    const touching = inProgress.filter((row) => row.componentIds.includes(component.id));
-    // Its monitors count unless a window under way explains them (`componentStatus`).
-    const derived = componentStatus(component, incidents, monitors, touching.length > 0);
+    const { derived, status } = shownStatus(component, incidents, monitors, inProgress);
     overall = worseStatus(overall, derived);
-    // A planned outage takes its components down while it runs (decided, Q23); the page's overall status stays the
-    // team's and the incidents', as for any maintenance, so the banner says maintenance rather than an outage.
-    const status: SnapshotComponentStatus = touching.some((row) => row.outage === true)
-      ? worseStatus(derived, "major_outage")
-      : derived === "operational" && touching.length > 0
-        ? "maintenance"
-        : derived;
     let group = groups.find((candidate) => candidate.name === component.group);
     if (!group) {
       if (component.group === null) {

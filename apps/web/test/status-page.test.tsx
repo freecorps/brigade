@@ -366,6 +366,60 @@ describe("StatusPagePanel", () => {
     expect(updated).toEqual([{ id: "cmp_1", name: "API", group: null, status: "operational" }]);
   });
 
+  test("the list shows what the public sees, and says when its monitors moved it", () => {
+    const backend = {
+      ...component("cmp_1", "Backend"),
+      monitorIds: ["mon_1", "mon_2"],
+      followMonitors: true,
+    };
+    const { container } = card({
+      page,
+      components: [backend, component("cmp_2", "Web"), component("cmp_3", "Search")],
+      monitors: [
+        { id: "mon_1", name: "API health", paused: false, status: "down" },
+        { id: "mon_2", name: "DB health", paused: false, status: "down" },
+      ],
+      incidents: [{ status: "identified", impact: "degraded", componentIds: ["cmp_2"] }],
+      windows: [{ componentIds: ["cmp_3"], outage: false, phase: "in_progress" }],
+    });
+    const rows = [...container.querySelectorAll("li")];
+    // Set by hand to operational, but both of its monitors are down: the public sees a major outage.
+    expect(rows[0]!.textContent).toContain("Major outage");
+    expect(rows[0]!.textContent).toContain("From its monitors");
+    expect(rows[0]!.textContent).not.toContain("Operational");
+    expect(rows[1]!.textContent).toContain("Degraded performance");
+    expect(rows[1]!.textContent).toContain("From an open incident");
+    expect(rows[2]!.textContent).toContain("Under maintenance");
+    expect(rows[2]!.textContent).not.toContain("From");
+  });
+
+  test("a component that does not follow its monitors keeps its own status, with no note", () => {
+    const { container } = card({
+      page,
+      components: [{ ...component("cmp_1", "Backend"), monitorIds: ["mon_1"] }],
+      monitors: [{ id: "mon_1", name: "API health", paused: false, status: "down" }],
+    });
+    expect(container.querySelector("li")!.textContent).toContain("Operational");
+    expect(container.querySelector("li")!.textContent).not.toContain("From its monitors");
+  });
+
+  test("the edit form names the monitors section for both uses, and the hint mentions monitors", () => {
+    const { container } = card({
+      page,
+      components: [component("cmp_1", "Backend")],
+      monitors: [{ id: "mon_1", name: "API health" }],
+      onLink: async () => true,
+    });
+    act(() => button(container, "Edit").click());
+    expect(container.querySelector("legend")!.textContent).toBe("Monitors");
+    expect(container.textContent).toContain("when it follows them, its monitors");
+    // Disabled but drawn: muted box and title, no faded control.
+    const toggle = container.querySelector<HTMLInputElement>('input[role="switch"]')!;
+    expect(toggle.disabled).toBe(true);
+    expect(toggle.className).not.toContain("opacity");
+    expect(toggle.parentElement!.className).toContain("has-disabled:bg-muted");
+  });
+
   test("services are linked only when the choice differs from what is stored and still exists", () => {
     const known = [{ id: "svc_1" }, { id: "svc_2" }];
     // Not loaded yet: nothing to link or unlink, whatever the form holds.

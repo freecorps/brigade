@@ -46,7 +46,7 @@ export function over(color: string, alpha: number, base: string): string {
   return hex(channels(base).map((b, i) => Math.round(top[i]! * alpha + b * (1 - alpha))));
 }
 
-function lab(color: string): [number, number, number] {
+export function lab(color: string): [number, number, number] {
   const [r, g, b] = channels(color).map(toLinear) as [number, number, number];
   const x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047;
   const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;

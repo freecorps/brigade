@@ -13,7 +13,9 @@ solid badge fill in either theme, so a SEV1 badge reads from across the room; SE
 prominence, and SEV2 is louder than every status; on the dark card SEV2 stands at least 2:1 off it.
 Each status has a hue of its own (triage magenta, the loudest status because it needs a person;
 investigating teal, fixing violet, monitoring blue, resolved green, declined a quiet grey), and every
-pair stays at least ΔE 10 apart with normal vision and with protanopia or deuteranopia. Destructive is a
+pair of fills stays at least ΔE 10 apart with normal vision. With protanopia or deuteranopia pale
+tints converge, so there the badge as a whole (fill or text) stays ΔE 10 apart and the fills at least
+2.5: don't rely on a status fill alone (a dot with no label) to tell two statuses apart. Destructive is a
 deep crimson on light (a light salmon on dark) in a different lightness band from SEV1 under the same
 simulations, so a SEV1 badge never reads as a Delete button. Chart colours stay apart under the same
 simulations and avoid green, which means "resolved". Dark is designed on its own (a true neutral

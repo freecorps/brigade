@@ -11,7 +11,7 @@ import {
   themes,
   type ThemeColors,
 } from "../src/index.ts";
-import { VISIONS, deltaE, over, simulate } from "./color-vision.ts";
+import { VISIONS, deltaE, lab, over, simulate } from "./color-vision.ts";
 
 type Pair = [label: string, fg: string, bg: string];
 
@@ -24,6 +24,11 @@ const DISTINCT_DELTA_E = 20;
 // Status badges are pale tints read side by side in a list, with a glyph and a name: 10 is a clear,
 // at-a-glance difference without pushing tints louder than SEV2.
 const DISTINCT_STATUS_DELTA_E = 10;
+// With protanopia and deuteranopia the badge as a whole (fill or text) carries the difference, but
+// the fills must still not merge: below about 2.5 two tints read as the same colour.
+const STATUS_FILL_FLOOR_DELTA_E = 2.5;
+// CIELAB chroma: a tint below about 10 reads as a grey.
+const NOT_GREY_CHROMA = 10;
 
 const CHARTS = ["chart1", "chart2", "chart3", "chart4", "chart5"] as const;
 
@@ -124,9 +129,9 @@ describe.each(["light", "dark"] as const)("%s theme", (name) => {
         const fill = deltaE(seen(a.bg), seen(b.bg));
         const text = deltaE(seen(a.fg), seen(b.fg));
         const apart = vision === "normal" ? fill : Math.max(fill, text);
-        expect(apart, `${STATUS_KEYS[i]} vs ${STATUS_KEYS[j]}`).toBeGreaterThanOrEqual(
-          DISTINCT_STATUS_DELTA_E,
-        );
+        const pair = `${STATUS_KEYS[i]} vs ${STATUS_KEYS[j]}`;
+        expect(apart, pair).toBeGreaterThanOrEqual(DISTINCT_STATUS_DELTA_E);
+        expect(fill, `${pair} (fills)`).toBeGreaterThanOrEqual(STATUS_FILL_FLOOR_DELTA_E);
       }
     }
   });
@@ -137,9 +142,8 @@ describe.each(["light", "dark"] as const)("%s theme", (name) => {
     for (const k of STATUS_KEYS) {
       if (k !== "triage") expect(away(t.status.triage.bg), k).toBeGreaterThan(away(t.status[k].bg));
     }
-    expect(deltaE(t.status.triage.bg, t.status.declined.bg)).toBeGreaterThanOrEqual(
-      DISTINCT_STATUS_DELTA_E,
-    );
+    const [, a, b] = lab(t.status.triage.bg);
+    expect(Math.hypot(a, b)).toBeGreaterThanOrEqual(NOT_GREY_CHROMA);
   });
 
   // Both are reds and hue alone fails for red-blind users, so they must differ in lightness as seen

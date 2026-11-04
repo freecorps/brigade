@@ -20,7 +20,7 @@
     0 1px 2px rgb(11 100 103 / 0.35), 0 0 0 1px color-mix(in oklab, var(--primary), black 25%);
   --brigade-raised-destructive:
     inset 0 1px 0 rgb(255 255 255 / 0.18), inset 0 -1px 0 rgb(0 0 0 / 0.2),
-    0 1px 2px rgb(101 26 21 / 0.35), 0 0 0 1px color-mix(in oklab, var(--destructive), black 25%);
+    0 1px 2px rgb(132 0 13 / 0.35), 0 0 0 1px color-mix(in oklab, var(--destructive), black 25%);
   --brigade-inset: inset 0 1px 2px rgb(22 22 21 / 0.07);
 }
 

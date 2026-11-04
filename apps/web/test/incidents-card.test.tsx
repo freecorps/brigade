@@ -2,12 +2,7 @@
 // IncidentsCard mounted with react-dom against the reference shard server from packages/sync's tests, over its
 // fake network with manual delivery and fake timers: nothing reaches the "server" until a test flushes.
 import { setLocale as setI18nLocale, type Locale } from "@freecorps/brigade-i18n";
-import {
-  newId,
-  type Actor,
-  type IncidentStatus,
-  type Severity,
-} from "@freecorps/brigade-schema";
+import { newId, type Actor, type IncidentStatus, type Severity } from "@freecorps/brigade-schema";
 import { createSyncClient, type SyncClient } from "@freecorps/brigade-sync";
 import { SyncProvider } from "@freecorps/brigade-sync/react";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
@@ -440,9 +435,7 @@ test("phones: SEV3 and SEV4 fold behind a 44px toggle that says how many, and un
   const toggle = foldToggle()!;
   expect(toggle.textContent).toBe("Show 3 lower-severity incidents");
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
-  expect(toggle.getAttribute("aria-controls")).toBe(
-    $("ul[aria-labelledby='incidents-title']")!.id,
-  );
+  expect(toggle.getAttribute("aria-controls")).toBe($("ul[aria-labelledby='incidents-title']")!.id);
   expect(toggle.className).toContain("min-h-11");
   expect(toggle.parentElement!.classList.contains("sm:hidden")).toBe(true);
 
@@ -508,6 +501,32 @@ test("phones: a focused row demoted elsewhere stays shown after focus moves on",
   view.declare("Never focused", "sev3");
   await view.flush();
   expect(folded()).toEqual(["Never focused"]);
+});
+
+test("below md a row's badges share the number's line: the severity's name is read, not drawn", async () => {
+  const view = mount();
+  view.declare("Checkout down", "sev1", "investigating");
+  await view.flush();
+  const li = row("Checkout down")!;
+  const [severity, status] = $$("button[aria-haspopup]", li);
+  // The whole name is still in the trigger for screen readers; only phones stop drawing it.
+  expect(severity!.textContent).toBe("Severity: SEV1Critical");
+  expect($$("span", severity).find((s) => s.textContent === "Critical")!.className).toBe(
+    "max-md:sr-only",
+  );
+  // No chevrons below md, so both menus fit beside the number; from md they are back.
+  for (const trigger of [severity!, status!]) {
+    expect(
+      trigger.querySelector("svg.lucide-chevron-down")!.classList.contains("max-md:hidden"),
+    ).toBe(true);
+  }
+  // The menus sit on the number's line, the title under them, the time last; md keeps its columns.
+  const menus = severity!.closest("div.md\\:contents")!;
+  expect(menus.className).toContain("max-md:row-start-1");
+  expect(li.querySelector("h3")!.className).toContain("max-md:row-start-2");
+  expect(li.querySelector("time")!.parentElement!.className).toContain("max-md:row-start-3");
+  // The badges keep a minimum width beside the number, so a huge number breaks rather than pushing them out.
+  expect(li.className).toContain("grid-cols-[minmax(0,auto)_minmax(--spacing(32),1fr)]");
 });
 
 test("a row that arrives later gets the accent cue once; the first ones never do", async () => {

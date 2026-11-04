@@ -22,22 +22,26 @@ export const STATUS_ICONS: Record<IncidentStatus, LucideIcon> = {
   declined: CircleSlashIcon,
 };
 
-/** The code and the name ("SEV1 Critical"); SEV1 also gets the alert glyph and the only solid fill. */
-export function SeverityBadge({ severity }: { severity: Severity }) {
+/**
+ * The code and the name ("SEV1 Critical"); SEV1 also gets the alert glyph and the only solid fill. `compact`: below
+ * `md` the name is only read out, not drawn, so a list row's badges fit on its number's line.
+ */
+export function SeverityBadge({ severity, compact }: { severity: Severity; compact?: boolean }) {
   return (
     <Badge variant={severity}>
       {severity === "sev1" ? <OctagonAlertIcon aria-hidden /> : null}
       <span className="font-bold">{severity.toUpperCase()}</span>
-      <span>{severityLabels[severity]()}</span>
+      <span className={compact ? "max-md:sr-only" : undefined}>{severityLabels[severity]()}</span>
     </Badge>
   );
 }
 
-export function StatusBadge({ status }: { status: IncidentStatus }) {
+/** `compact`: below 375px the glyph goes, so a list row's two badges fit beside its number at 320px. */
+export function StatusBadge({ status, compact }: { status: IncidentStatus; compact?: boolean }) {
   const Icon = STATUS_ICONS[status];
   return (
     <Badge variant={status}>
-      <Icon aria-hidden />
+      <Icon aria-hidden className={compact ? "max-[374px]:hidden" : undefined} />
       {incidentStatusLabels[status]()}
     </Badge>
   );

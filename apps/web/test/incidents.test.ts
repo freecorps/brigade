@@ -189,7 +189,11 @@ test("the client id is kept per tab and replaced when invalid or unreadable", ()
   expect(tabClientId(undefined, create)).toBe("cli_4");
 });
 
-const inc = (id: string, severity: Severity, number: number | null = 1) => ({ id, severity, number });
+const inc = (id: string, severity: Severity, number: number | null = 1) => ({
+  id,
+  severity,
+  number,
+});
 
 test("phones fold SEV3 and SEV4 behind a toggle that counts them", () => {
   const rows = [inc("a", "sev1"), inc("b", "sev2"), inc("c", "sev3"), inc("d", "sev4")];

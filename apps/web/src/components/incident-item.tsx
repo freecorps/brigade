@@ -89,21 +89,22 @@ export function IncidentItem({
       onAnimationEnd={cue ? onAnimationEnd : undefined}
       className={cn(
         // The title's link is stretched over the row (as on the services list); the two menus sit above it.
-        "relative scroll-mt-4 outline-none focus-visible:ring-3 focus-visible:ring-ring focus-visible:ring-inset grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-4 py-3 transition-colors md:gap-y-1.5 duration-150 ease-out has-[a[data-incident-link]:hover]:bg-muted/50 has-[a[data-incident-link]:focus-visible]:ring-3 has-[a[data-incident-link]:focus-visible]:ring-ring has-[a[data-incident-link]:focus-visible]:ring-inset sm:px-6",
+        "relative scroll-mt-4 outline-none focus-visible:ring-3 focus-visible:ring-ring focus-visible:ring-inset grid grid-cols-[minmax(0,auto)_minmax(--spacing(32),1fr)] items-center gap-x-3 gap-y-2 px-4 py-3 transition-colors md:gap-y-1.5 duration-150 ease-out has-[a[data-incident-link]:hover]:bg-muted/50 has-[a[data-incident-link]:focus-visible]:ring-3 has-[a[data-incident-link]:focus-visible]:ring-ring has-[a[data-incident-link]:focus-visible]:ring-inset sm:px-6",
         INCIDENT_COLUMNS,
         "md:items-start",
         cue && "enter arrive",
         folded && "max-sm:hidden",
       )}
     >
-      {/* Not numbered until the shard has it: a glyph and a short word, never wrapped. */}
-      <div className="whitespace-nowrap max-md:row-start-1 md:row-span-2">
+      {/* Not numbered until the shard has it: a glyph and a short word, never wrapped. Below md the badges keep at
+          least 128px beside it (the grid's second column), so only an absurdly long number breaks, inside its cell. */}
+      <div className="whitespace-nowrap max-md:row-start-1 max-md:[overflow-wrap:anywhere] max-md:whitespace-normal md:row-span-2">
         {number ? (
           <span className="font-mono text-[0.8125rem] leading-5 text-muted-foreground">
             {number}
           </span>
         ) : (
-          <span className="inline-flex items-center gap-1 rounded-sm border border-dashed border-muted-foreground/60 px-1 text-xs leading-5 text-muted-foreground">
+          <span className="inline-flex items-center gap-1 rounded-sm border border-dashed whitespace-nowrap border-muted-foreground/60 px-1 text-xs leading-5 text-muted-foreground">
             <PendingIcon aria-hidden className="size-3 shrink-0" />
             {online ? m.incident_unnumbered_saving() : m.incident_unnumbered_not_sent()}
           </span>
@@ -143,6 +144,7 @@ export function IncidentItem({
       <div className="-my-2 -ml-1.5 flex min-w-0 flex-wrap items-center gap-x-1 max-[374px]:-ml-1 max-md:col-start-2 max-md:row-start-1 md:contents">
         <div className="relative z-10 md:col-start-3 md:row-span-2 md:row-start-1 md:self-center md:[&>button]:w-full md:[&>button]:justify-between">
           <SeverityMenu
+            compact
             severity={row.severity}
             pending={pending.severity}
             disabled={!editable}
@@ -151,6 +153,7 @@ export function IncidentItem({
         </div>
         <div className="relative z-10 md:col-start-4 md:row-span-2 md:row-start-1 md:self-center md:[&>button]:w-full md:[&>button]:justify-between">
           <StatusMenu
+            compact
             status={row.status}
             pending={pending.status}
             trigger={row.id}
@@ -206,11 +209,17 @@ export function SeverityMenu({
   severity,
   pending,
   disabled,
+  compact,
   onChange,
 }: {
   severity: Severity;
   pending: boolean;
   disabled?: boolean;
+  /**
+   * In a list row: below `md` the trigger shows the code alone (SeverityBadge `compact`) and no chevron, so both
+   * menus fit beside the number; its menu stays in full, and the badge still reads as a control by its fill.
+   */
+  compact?: boolean;
   onChange: (next: Severity) => void;
 }) {
   // Someone who may not change it (a viewer) gets the badge, not a control that does nothing.
@@ -218,7 +227,7 @@ export function SeverityMenu({
     return (
       <span className="inline-flex min-h-11 items-center px-1.5">
         <span className="sr-only">{m.incident_severity_label()}: </span>
-        <SeverityBadge severity={severity} />
+        <SeverityBadge severity={severity} compact={compact} />
       </span>
     );
   }
@@ -228,16 +237,26 @@ export function SeverityMenu({
         render={
           <Button
             variant="ghost"
-            className="gap-1 px-1.5 max-[374px]:min-w-11 max-[374px]:gap-0.5 max-[374px]:px-1"
+            className={cn(
+              "gap-1 px-1.5 max-[374px]:min-w-11 max-[374px]:gap-0.5 max-[374px]:px-1",
+              // A narrow window with a mouse keeps the phone's padding, not the desktop button's.
+              compact && "max-md:pointer-fine:px-1.5 max-[374px]:pointer-fine:px-1",
+            )}
           />
         }
       >
         <span className="sr-only">{m.incident_severity_label()}: </span>
         <span className={cn("inline-flex", pending && UNSAVED)}>
-          <SeverityBadge severity={severity} />
+          <SeverityBadge severity={severity} compact={compact} />
         </span>
         {/* Below 375px a smaller chevron and tighter spacing, so both menus usually fit one line at 320px. */}
-        <ChevronDownIcon aria-hidden className="size-4 text-muted-foreground max-[374px]:size-3" />
+        <ChevronDownIcon
+          aria-hidden
+          className={cn(
+            "size-4 text-muted-foreground max-[374px]:size-3",
+            compact && "max-md:hidden",
+          )}
+        />
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         <DropdownMenuGroup>
@@ -270,6 +289,7 @@ export function StatusMenu({
   pending,
   trigger,
   disabled,
+  compact,
   onChange,
 }: {
   status: IncidentStatus;
@@ -277,6 +297,8 @@ export function StatusMenu({
   /** `data-status-trigger`, which the list's focus keeping looks for. */
   trigger?: string;
   disabled?: boolean;
+  /** In a list row: no chevron below `md`, as SeverityMenu's `compact`. */
+  compact?: boolean;
   onChange: (next: IncidentStatus) => void;
 }) {
   if (disabled) {
@@ -294,15 +316,25 @@ export function StatusMenu({
         render={
           <Button
             variant="ghost"
-            className="gap-1 px-1.5 max-[374px]:min-w-11 max-[374px]:gap-0.5 max-[374px]:px-1"
+            className={cn(
+              "gap-1 px-1.5 max-[374px]:min-w-11 max-[374px]:gap-0.5 max-[374px]:px-1",
+              // A narrow window with a mouse keeps the phone's padding, not the desktop button's.
+              compact && "max-md:pointer-fine:px-1.5 max-[374px]:pointer-fine:px-1",
+            )}
           />
         }
       >
         <span className="sr-only">{m.incident_status_label()}: </span>
         <span className={cn("inline-flex", pending && UNSAVED)}>
-          <StatusBadge status={status} />
+          <StatusBadge status={status} compact={compact} />
         </span>
-        <ChevronDownIcon aria-hidden className="size-4 text-muted-foreground max-[374px]:size-3" />
+        <ChevronDownIcon
+          aria-hidden
+          className={cn(
+            "size-4 text-muted-foreground max-[374px]:size-3",
+            compact && "max-md:hidden",
+          )}
+        />
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         <DropdownMenuGroup>
@@ -337,7 +369,7 @@ export function IncidentItemSkeleton() {
   return (
     <li
       aria-hidden
-      className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-6 md:gap-y-1.5 md:grid-cols-[--spacing(20)_minmax(0,1fr)_--spacing(38)_--spacing(38)] md:items-start"
+      className="grid grid-cols-[minmax(0,auto)_minmax(--spacing(32),1fr)] items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-6 md:gap-y-1.5 md:grid-cols-[--spacing(20)_minmax(0,1fr)_--spacing(38)_--spacing(38)] md:items-start"
     >
       <span className="my-0.5 block h-4 w-12 rounded-sm bg-muted max-md:row-start-1 md:row-span-2" />
       <span className="my-0.5 block h-3 w-24 rounded-sm bg-muted max-md:col-span-2 max-md:row-start-3 md:col-start-2 md:row-start-2" />

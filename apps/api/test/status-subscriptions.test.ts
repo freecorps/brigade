@@ -1520,6 +1520,11 @@ describe("the page", () => {
     expect(html).toContain(
       "@container uptime (max-width:17rem){.scale{gap:.5rem}.scale::before,.scale::after{display:none}}",
     );
+    // Zoomed text (a large root font) leaves the labels no room beside each other: the percentage
+    // takes a line of its own instead of breaking one glyph per line.
+    expect(html).toContain(
+      "@container uptime (max-width:13rem){.scale{flex-wrap:wrap}.scale .pct{order:6;flex-basis:100%}}",
+    );
   });
 
   test("pt-BR", () => {

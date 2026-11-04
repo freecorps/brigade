@@ -23,7 +23,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "slug_label" | "Address" |
 * | "slug_hint" | "3 to 40 lowercase letters, numbers and hyphens." |
 * | "slug_invalid" | "Use 3 to 40 lowercase letters, numbers and single hyphens, starting and ending with a letter or number." |
-* | "language_label" | "Language of the page" |
+* | "language_label" | "Default language" |
+* | "language_hint" | "Visitors see the page in their own language when Brigade has it, otherwise in this one. What you write isn't translated." |
 * | "enabled_label" | "Public" |
 * | "enabled_hint" | "Anyone with the address can read it. Off, it's a draft only members see here." |
 * | "save" | "Save" |
@@ -124,7 +125,8 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "slug_label") return /** @type {LocalizedString} */ (`Endereço`);
 		if (i?.part === "slug_hint") return /** @type {LocalizedString} */ (`De 3 a 40 letras minúsculas, números e hifens.`);
 		if (i?.part === "slug_invalid") return /** @type {LocalizedString} */ (`Use de 3 a 40 letras minúsculas, números e hifens simples, começando e terminando com letra ou número.`);
-		if (i?.part === "language_label") return /** @type {LocalizedString} */ (`Idioma da página`);
+		if (i?.part === "language_label") return /** @type {LocalizedString} */ (`Idioma padrão`);
+		if (i?.part === "language_hint") return /** @type {LocalizedString} */ (`Cada visitante vê a página no próprio idioma quando o Brigade o tem; senão, neste. O que você escreve não é traduzido.`);
 		if (i?.part === "enabled_label") return /** @type {LocalizedString} */ (`Pública`);
 		if (i?.part === "enabled_hint") return /** @type {LocalizedString} */ (`Qualquer pessoa com o endereço pode ler. Desligada, é um rascunho que só membros veem aqui.`);
 		if (i?.part === "save") return /** @type {LocalizedString} */ (`Salvar`);
@@ -219,7 +221,8 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "slug_label") return /** @type {LocalizedString} */ (`Address`);
 		if (i?.part === "slug_hint") return /** @type {LocalizedString} */ (`3 to 40 lowercase letters, numbers and hyphens.`);
 		if (i?.part === "slug_invalid") return /** @type {LocalizedString} */ (`Use 3 to 40 lowercase letters, numbers and single hyphens, starting and ending with a letter or number.`);
-		if (i?.part === "language_label") return /** @type {LocalizedString} */ (`Language of the page`);
+		if (i?.part === "language_label") return /** @type {LocalizedString} */ (`Default language`);
+		if (i?.part === "language_hint") return /** @type {LocalizedString} */ (`Visitors see the page in their own language when Brigade has it, otherwise in this one. What you write isn't translated.`);
 		if (i?.part === "enabled_label") return /** @type {LocalizedString} */ (`Public`);
 		if (i?.part === "enabled_hint") return /** @type {LocalizedString} */ (`Anyone with the address can read it. Off, it's a draft only members see here.`);
 		if (i?.part === "save") return /** @type {LocalizedString} */ (`Save`);

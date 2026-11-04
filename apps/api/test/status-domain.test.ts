@@ -851,6 +851,24 @@ describe("serving a page at its own hostname", () => {
     const pages = (exports as unknown as { StatusPages: StatusPagesApi }).StatusPages;
     const viaRpc = await pages.serve(new Request(`https://${name}/`), host);
     expect(viaRpc.status).toBe(200);
+
+    // In the visitor's language at the domain's root too, and the switcher's relative links stay on it.
+    const portuguese = await visit(name, host, "/", { headers: { "Accept-Language": "pt-BR" } });
+    expect(portuguese.headers.get("Content-Language")).toBe("pt-BR");
+    expect(portuguese.headers.get("Vary")).toBe("Accept-Language");
+    const html = await portuguese.text();
+    expect(html).toContain("Todos os sistemas operacionais");
+    expect(html).toContain('<a href="?lang=en" hreflang="en" lang="en">English</a>');
+    const chosen = await visit(name, host, "/?lang=en", {
+      headers: { "Accept-Language": "pt-BR" },
+    });
+    expect(chosen.headers.get("Content-Language")).toBe("en");
+    expect(await chosen.text()).toContain("All systems operational");
+    const rpcPortuguese = await pages.serve(
+      new Request(`https://${name}/`, { headers: { "Accept-Language": "pt" } }),
+      host,
+    );
+    expect(rpcPortuguese.headers.get("Content-Language")).toBe("pt-BR");
   });
 
   test("a slug another workspace holds by now is the 404 page, never its page, nor its subscribe form", async () => {

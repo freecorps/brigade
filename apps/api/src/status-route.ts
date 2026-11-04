@@ -16,6 +16,7 @@ import { emailSender } from "./email.ts";
 import { dashboardLink } from "./email-templates.ts";
 import { feedUrls, renderAtomFeed, renderJsonFeed, type FeedFormat } from "./status-feed.ts";
 import { LOCAL_TIMES_SCRIPT_HASH, renderStatusMessage, renderStatusPage } from "./status-html.ts";
+import { requestLocale } from "./status-locale.ts";
 import { statusKey, type StatusConfigureResult } from "./status-page.ts";
 import { STATUS_PAGE_STATUS } from "./http.ts";
 import { checkMember } from "./member-route.ts";
@@ -52,6 +53,10 @@ export function statusPageHeaders(cache: "no-store" | number): Headers {
  * cache (the Cache API, where the Worker runs on a zone; a no-op on workers.dev), so a busy page costs about one KV read
  * per location every 30 s and never wakes the shard. An address with no page, or one that is not public, is a 404.
  * With `owner` (a custom hostname, src/status-pages.ts) a snapshot another workspace pushed is a 404 too.
+ *
+ * The page's wording is in the visitor's language when Brigade has it (src/status-locale.ts), else the page's own
+ * (RFC 0012 "Language"). The cache key names that language, never the raw header, so each page is cached at most once
+ * per locale plus once for "the page's own".
  */
 export function serveStatusPage(
   request: Request,
@@ -60,18 +65,29 @@ export function serveStatusPage(
   slug: string,
   owner?: string,
 ): Promise<Response> {
-  // A key of our own, not the request: the same page whatever host or headers it came with.
+  const visitor = requestLocale(request);
+  // A key of our own, not the request: the same page whatever host or headers it came with, but one per language.
   return serveFromSnapshot(
     request,
     env,
     ctx,
     slug,
-    ownedKey(`https://status.cache.invalid/${slug}`, owner),
+    ownedKey(`https://status.cache.invalid/${slug}?locale=${visitor ?? "default"}`, owner),
     owner,
     (stored) => {
       // The subscribe form only where email can be sent: a page whose emails never go out promises nothing.
       const subscribe = emailSender(env) !== undefined;
-      return page(renderStatusPage(stored, { slug, subscribe }), 200, STATUS_MAX_AGE_S);
+      const locale = visitor ?? stored.locale;
+      const response = page(
+        renderStatusPage(stored, { slug, subscribe, locale }),
+        200,
+        STATUS_MAX_AGE_S,
+      );
+      response.headers.set("Content-Language", locale);
+      // For browsers and other caches: the page differs by `Accept-Language`. Cloudflare's own cache ignores Vary
+      // (only `Vary: *` is refused by `cache.put`); the key above already names the language.
+      response.headers.set("Vary", "Accept-Language");
+      return response;
     },
   );
 }

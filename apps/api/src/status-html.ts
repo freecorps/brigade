@@ -10,6 +10,7 @@ import {
   status_text,
   status_uptime,
 } from "@freecorps/brigade-i18n/messages";
+import { STATUS_LOCALES, type StatusLocale } from "@freecorps/brigade-schema";
 import type {
   ComponentStatus,
   PublicStatus,
@@ -289,6 +290,12 @@ button.secondary{color:var(--fg);background:transparent;border:1px solid var(--b
 .stale{margin-top:.75rem;padding:.75rem 1.25rem;border-radius:.75rem;font-size:.9375rem;overflow-wrap:anywhere}
 .feeds{display:flex;flex-wrap:wrap;gap:1rem}
 footer{margin-top:2.5rem;color:var(--muted);font-size:.875rem;display:flex;flex-wrap:wrap;justify-content:space-between;gap:.5rem}
+.langs{flex-basis:100%;display:flex;align-items:center;gap:.5rem;margin-top:.75rem;padding-top:.75rem;border-top:1px solid var(--border);min-width:0}
+.langs svg{flex:none;fill:none;stroke:currentColor;stroke-width:1.25;stroke-linecap:round}
+.langs ul{display:flex;flex-wrap:wrap;gap:.25rem;margin:0;padding:0;list-style:none;min-width:0}
+.langs a{display:inline-flex;align-items:center;min-height:2.75rem;padding:0 .75rem;border:1px solid transparent;border-radius:.5rem;text-decoration:none;overflow-wrap:anywhere;touch-action:manipulation;transition:color 120ms ease-out,background-color 120ms ease-out}
+.langs a[aria-current]{color:var(--fg);background:var(--card);border-color:var(--border);font-weight:600}
+@media (hover:hover) and (pointer:fine){.langs a:not([aria-current]):hover{color:var(--fg);background:var(--card)}}
 ${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.c-${s}{background:var(--c-${s}-bg);color:var(--c-${s}-fg)}`).join("")}
 ${PUBLIC_STATUSES.map((s) => `.p-${s}{background:var(--p-${s}-bg);color:var(--p-${s}-fg)}`).join("")}
 `;
@@ -477,14 +484,46 @@ function feedLinks(locale: Locale, slug: string | undefined): string {
 }
 
 /**
+ * Each language the page is offered in, named in itself: what a visitor looks for, whatever language the page is in
+ * now. Not messages, since they never change with the page's language.
+ */
+const LANGUAGE_NAMES: Record<StatusLocale, string> = {
+  en: "English",
+  "pt-BR": "Português (Brasil)",
+};
+
+/**
+ * The page in another language, relative to its own address (`?lang=`), so it works at `/status/<slug>` and at a
+ * custom domain's `/` alike; the route keeps it over what the browser asks for.
+ */
+const languageHref = (locale: StatusLocale) => `?lang=${encodeURIComponent(locale)}`;
+
+/** `<link rel="alternate" hreflang>` for each language, so search engines find each one. */
+const languageAlternates = () =>
+  STATUS_LOCALES.map(
+    (locale) =>
+      `\n<link rel="alternate" hreflang="${escape(locale)}" href="${escape(languageHref(locale))}">`,
+  ).join("");
+
+/** The language switcher: plain links (no script), the current one marked. */
+function languageLinks(current: Locale): string {
+  const links = STATUS_LOCALES.map(
+    (locale) =>
+      `<li><a href="${escape(languageHref(locale))}" hreflang="${escape(locale)}" lang="${escape(locale)}"${locale === current ? ' aria-current="true"' : ""}>${escape(LANGUAGE_NAMES[locale])}</a></li>`,
+  ).join("");
+  return `<nav class="langs" aria-label="${say(current, "language")}"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="6.25"/><path d="M1.75 8h12.5M8 1.75c1.7 1.8 2.5 3.9 2.5 6.25S9.7 12.45 8 14.25M8 1.75C6.3 3.55 5.5 5.65 5.5 8s.8 4.45 2.5 6.25"/></svg><ul>${links}</ul></nav>`;
+}
+
+/**
  * The page for a snapshot. `slug` and `subscribe` add the email form, which only shows where email can be sent (a page
  * read from an older snapshot shows it too: subscribing does not depend on the snapshot's version).
  */
 export function renderStatusPage(
   snapshot: StatusSnapshot,
-  options: { slug?: string; subscribe?: boolean; now?: number } = {},
+  options: { slug?: string; subscribe?: boolean; now?: number; locale?: Locale } = {},
 ): string {
-  const { locale } = snapshot;
+  // The visitor's language when the route found one (RFC 0012 "Language"), else the page's own.
+  const locale = options.locale ?? snapshot.locale;
   // Rebuilt at least daily, so a snapshot this old means the shard or KV is stuck (decided, Q23): say so up top.
   const stale =
     (options.now ?? Date.now()) - snapshot.generatedAt > STATUS_STALE_MS
@@ -545,12 +584,12 @@ ${active}
 ${planned}
 <section aria-labelledby="history"><h2 id="history">${say(locale, "history_title")}</h2><p class="meta hint">${say(locale, "history_hint")}</p>${history}</section>
 ${form}
-<footer><span>${sayAt(locale, "updated", snapshot.generatedAt)}</span>${feedLinks(locale, options.slug)}<span>${say(locale, "powered")}</span></footer>`;
+<footer><span>${sayAt(locale, "updated", snapshot.generatedAt)}</span>${feedLinks(locale, options.slug)}<span>${say(locale, "powered")}</span>${languageLinks(locale)}</footer>`;
   return document(
     locale,
     `${escape(snapshot.title)} · ${say(locale, "*")}`,
     body,
-    feedAlternates(snapshot.title, options.slug),
+    `${feedAlternates(snapshot.title, options.slug)}${languageAlternates()}`,
     true,
   );
 }

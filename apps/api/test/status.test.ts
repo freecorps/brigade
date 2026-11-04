@@ -440,8 +440,8 @@ describe("the snapshot", () => {
     const portuguese = await read(await get("", { "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8" }));
     expect(portuguese.lang).toBe("pt-BR");
     expect(portuguese.html).toContain("Todos os sistemas operacionais");
-    // What the team wrote stays as written.
-    expect(portuguese.html).toContain("<h1>Acme</h1>");
+    // What the team wrote stays as written, marked as the page's own language.
+    expect(portuguese.html).toContain('<h1 lang="en">Acme</h1>');
     // Cached in Portuguese now, an English reader still reads English: the key names the language.
     const english = await read(await get("", { "Accept-Language": "en-GB,en;q=0.9" }));
     expect(english.lang).toBe("en");
@@ -504,6 +504,11 @@ describe("the snapshot", () => {
     expect(html).toContain(`<link rel="alternate" hreflang="en" href="${page}?lang=en">`);
     expect(html).toContain(`<link rel="alternate" hreflang="pt-BR" href="${page}?lang=pt-BR">`);
     expect(html).toContain(`<link rel="alternate" hreflang="x-default" href="${page}">`);
+    // The page's wording follows the visitor; what the team wrote keeps the page's own language for screen readers.
+    expect(html).toContain('<html lang="pt-BR">');
+    expect(html).toMatch(/<h1 lang="en">/);
+    const own = await (await exports.default.fetch(`${ORIGIN}/status/${address}`)).text();
+    expect(own).toMatch(/<h1>/);
     // Still the one script.
     expect(html.match(/<script[\s>]/g) ?? []).toHaveLength(1);
   });

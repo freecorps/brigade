@@ -599,7 +599,8 @@ had and keeps (migration 0013 adds a nullable column).
 
 Each page has a default language (`locale`, `en` or `pt-BR`; RFC 0008), chosen by its owners. A visitor reads the
 page's wording (`status_text`) in their own language when Brigade has it (`STATUS_LOCALES`), otherwise in the
-default; what the team writes (titles, updates, component names) is never translated. The language is picked per
+default; what the team writes (titles, updates, component and group names) is never translated, and is marked with
+the page's own language (`lang`) when the wording is in another, so a screen reader pronounces each right. The language is picked per
 request on the server (src/status-locale.ts), in this order:
 
 1. `?lang=<locale>`, when it names one of `STATUS_LOCALES`: the visitor's explicit choice. Anything else is ignored.
@@ -628,8 +629,9 @@ request on the server (src/status-locale.ts), in this order:
 - **A switcher, no script.** The footer lists every language, each named in itself ("English", "Português
   (Brasil)"), as plain links to `?lang=<locale>` relative to the page's own address (so it works at `/status/<slug>`
   and at a custom domain's `/`), the current one marked `aria-current`; the head lists the same as `<link
-  rel="alternate" hreflang>`, absolute (the address the page was asked at), with `x-default` for the bare address,
-  which follows the visitor. The choice is not remembered: it is the link's.
+  rel="alternate" hreflang>`, absolute (the address the page was asked at, which the cache key names too, so a
+  custom domain's `/` and `/status/<slug>`, or two hosts, never serve each other's), with `x-default` for the bare
+  address, which follows the visitor. The choice is not remembered: it is the link's.
 - **What keeps the default.** The feeds, the subscription pages and every email stay in the page's default
   language (one document for every reader, and an email has no request to take a language from). The 404 and error
   pages, which have no page to take a language from, are in English.

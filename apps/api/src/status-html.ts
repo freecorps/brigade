@@ -321,7 +321,14 @@ const componentChip = (locale: Locale, status: ComponentStatus | "maintenance") 
 const publicChip = (locale: Locale, status: PublicStatus) =>
   `<span class="chip p-${status}">${say(locale, `public_${status}`)}</span>`;
 
-function incidentBody(locale: Locale, incident: SnapshotIncident): string {
+/**
+ * ` lang="…"` for what the team wrote (titles, updates, names) when the page is read in another language than its own:
+ * the wording follows the visitor, the team's text stays in the page's language, so a screen reader pronounces each
+ * right. Empty when the two are the same.
+ */
+type Own = string;
+
+function incidentBody(locale: Locale, incident: SnapshotIncident, own: Own): string {
   const affects =
     incident.components.length > 0
       ? `<p class="meta">${say(locale, "affects", { list: incident.components.join(", ") })}</p>`
@@ -329,22 +336,22 @@ function incidentBody(locale: Locale, incident: SnapshotIncident): string {
   const updates = incident.updates
     .map(
       (update) =>
-        `<li><p>${publicChip(locale, update.status)} <span class="meta">${sayAt(locale, "update_at", update.at)}</span></p><p class="body">${escape(update.body)}</p></li>`,
+        `<li><p>${publicChip(locale, update.status)} <span class="meta">${sayAt(locale, "update_at", update.at)}</span></p><p class="body"${own}>${escape(update.body)}</p></li>`,
     )
     .join("");
   return `${affects}<ol class="updates">${updates}</ol>`;
 }
 
-function activeIncident(locale: Locale, incident: SnapshotIncident): string {
-  return `<article class="incident"><header><h3>${escape(incident.title)}</h3>${publicChip(locale, incident.status)}</header>${incidentBody(locale, incident)}</article>`;
+function activeIncident(locale: Locale, incident: SnapshotIncident, own: Own): string {
+  return `<article class="incident"><header><h3${own}>${escape(incident.title)}</h3>${publicChip(locale, incident.status)}</header>${incidentBody(locale, incident, own)}</article>`;
 }
 
-function pastIncident(locale: Locale, incident: SnapshotIncident): string {
+function pastIncident(locale: Locale, incident: SnapshotIncident, own: Own): string {
   const resolved =
     incident.resolvedAt === null
       ? ""
       : `<p class="meta">${sayAt(locale, "resolved_at", incident.resolvedAt)}</p>`;
-  return `<details class="incident"><summary><h3>${escape(incident.title)}</h3>${resolved}</summary>${incidentBody(locale, incident)}</details>`;
+  return `<details class="incident"><summary><h3${own}>${escape(incident.title)}</h3>${resolved}</summary>${incidentBody(locale, incident, own)}</details>`;
 }
 
 const DAY_FORMAT = { dateStyle: "medium", timeZone: "UTC" } as const;
@@ -393,7 +400,12 @@ function uptimeBar(locale: Locale, component: SnapshotComponent): string {
   return `<div class="uptime"><div class="bars" role="img" aria-label="${escape(label)}">${bars}</div><p class="scale" aria-hidden="true"><span class="from"><span class="long">${escape(sayUptime(locale, "start"))}</span><span class="short">${escape(sayUptime(locale, "start_short"))}</span></span><span class="pct">${escape(share)}</span><span class="to">${escape(sayUptime(locale, "end"))}</span></p></div>`;
 }
 
-function maintenanceWindow(locale: Locale, window: SnapshotMaintenance, active: boolean): string {
+function maintenanceWindow(
+  locale: Locale,
+  window: SnapshotMaintenance,
+  active: boolean,
+  own: Own,
+): string {
   const affects =
     window.components.length > 0
       ? `<p class="meta">${say(locale, "affects", { list: window.components.join(", ") })}</p>`
@@ -408,7 +420,7 @@ function maintenanceWindow(locale: Locale, window: SnapshotMaintenance, active: 
       ? componentChip(locale, "maintenance")
       : "";
   const hint = window.outage ? `<p class="meta">${sayWindow(locale, "outage_hint")}</p>` : "";
-  return `<article class="incident"><header><h3>${escape(window.title)}</h3>${chip}</header><p class="window">${range}</p>${affects}${hint}<p class="body">${escape(window.body)}</p></article>`;
+  return `<article class="incident"><header><h3${own}>${escape(window.title)}</h3>${chip}</header><p class="window">${range}</p>${affects}${hint}<p class="body"${own}>${escape(window.body)}</p></article>`;
 }
 
 /** What the page's form offers to follow, from its snapshot: each group with its key and its components'. */
@@ -539,6 +551,7 @@ export function renderStatusPage(
 ): string {
   // The visitor's language when the route found one (RFC 0012 "Language"), else the page's own.
   const locale = options.locale ?? snapshot.locale;
+  const own: Own = locale === snapshot.locale ? "" : ` lang="${escape(snapshot.locale)}"`;
   // Rebuilt at least daily, so a snapshot this old means the shard or KV is stuck (decided, Q23): say so up top.
   const stale =
     (options.now ?? Date.now()) - snapshot.generatedAt > STATUS_STALE_MS
@@ -552,7 +565,7 @@ export function renderStatusPage(
             const rows = group.components
               .map(
                 (component) =>
-                  `<li${component.uptime ? ' class="with-bar"' : ""}><span class="name">${escape(component.name)}</span>${componentChip(locale, component.status)}${uptimeBar(locale, component)}</li>`,
+                  `<li${component.uptime ? ' class="with-bar"' : ""}><span class="name"${own}>${escape(component.name)}</span>${componentChip(locale, component.status)}${uptimeBar(locale, component)}</li>`,
               )
               .join("");
             if (group.name === null) return `<ul class="list">${rows}</ul>`;
@@ -560,27 +573,27 @@ export function renderStatusPage(
             const count = escape(
               status_group_count({ count: group.components.length }, { locale }),
             );
-            return `<details class="group" open><summary><span class="name">${escape(group.name)}</span><span class="count">${count}</span></summary><ul class="list">${rows}</ul></details>`;
+            return `<details class="group" open><summary><span class="name"${own}>${escape(group.name)}</span><span class="count">${count}</span></summary><ul class="list">${rows}</ul></details>`;
           })
           .join("");
   const active =
     snapshot.active.length === 0
       ? ""
-      : `<section aria-labelledby="active"><h2 id="active">${say(locale, "active_title")}</h2>${snapshot.active.map((incident) => activeIncident(locale, incident)).join("")}</section>`;
+      : `<section aria-labelledby="active"><h2 id="active">${say(locale, "active_title")}</h2>${snapshot.active.map((incident) => activeIncident(locale, incident, own)).join("")}</section>`;
   const maintenance = snapshot.maintenance ?? [];
   const upcoming = snapshot.upcoming ?? [];
   const inProgress =
     maintenance.length === 0
       ? ""
-      : `<section aria-labelledby="maintenance"><h2 id="maintenance">${sayWindow(locale, "active_title")}</h2>${maintenance.map((window) => maintenanceWindow(locale, window, true)).join("")}</section>`;
+      : `<section aria-labelledby="maintenance"><h2 id="maintenance">${sayWindow(locale, "active_title")}</h2>${maintenance.map((window) => maintenanceWindow(locale, window, true, own)).join("")}</section>`;
   const planned =
     upcoming.length === 0
       ? ""
-      : `<section aria-labelledby="upcoming"><h2 id="upcoming">${sayWindow(locale, "upcoming_title")}</h2>${upcoming.map((window) => maintenanceWindow(locale, window, false)).join("")}</section>`;
+      : `<section aria-labelledby="upcoming"><h2 id="upcoming">${sayWindow(locale, "upcoming_title")}</h2>${upcoming.map((window) => maintenanceWindow(locale, window, false, own)).join("")}</section>`;
   const history =
     snapshot.history.length === 0
       ? `<p class="empty">${say(locale, "history_empty")}</p>`
-      : snapshot.history.map((incident) => pastIncident(locale, incident)).join("");
+      : snapshot.history.map((incident) => pastIncident(locale, incident, own)).join("");
   // All operational while a window is under way: say maintenance, not "all systems operational".
   const banner =
     snapshot.status === "operational" && maintenance.length > 0
@@ -590,7 +603,7 @@ export function renderStatusPage(
     options.subscribe && options.slug
       ? subscribeForm(locale, options.slug, followGroups(snapshot))
       : "";
-  const body = `<h1>${escape(snapshot.title)}</h1>
+  const body = `<h1${own}>${escape(snapshot.title)}</h1>
 ${banner}
 ${stale}
 ${inProgress}

@@ -869,6 +869,16 @@ describe("serving a page at its own hostname", () => {
       host,
     );
     expect(rpcPortuguese.headers.get("Content-Language")).toBe("pt-BR");
+
+    // The root and the slug's path share the language but not the cache entry: each names itself in its alternates,
+    // whichever was asked first.
+    const atPath = await (await visit(name, host, `/status/${t.slug}`)).text();
+    const atRoot = await (await visit(name, host, "/")).text();
+    expect(atPath).toContain(
+      `<link rel="alternate" hreflang="x-default" href="https://${name}/status/${t.slug}">`,
+    );
+    expect(atRoot).toContain(`<link rel="alternate" hreflang="x-default" href="https://${name}/">`);
+    expect(atRoot).not.toContain(`hreflang="x-default" href="https://${name}/status/`);
   });
 
   test("a slug another workspace holds by now is the 404 page, never its page, nor its subscribe form", async () => {

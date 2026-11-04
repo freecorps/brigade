@@ -72,17 +72,19 @@ export function serveStatusPage(
     env,
     ctx,
     slug,
-    ownedKey(`https://status.cache.invalid/${slug}?locale=${visitor ?? "default"}`, owner),
+    ownedKey(
+      `https://status.cache.invalid/${slug}?locale=${visitor ?? "default"}&page=${encodeURIComponent(pageAddress(request))}`,
+      owner,
+    ),
     owner,
     (stored) => {
       // The subscribe form only where email can be sent: a page whose emails never go out promises nothing.
       const subscribe = emailSender(env) !== undefined;
       const locale = visitor ?? stored.locale;
-      // The address it was asked at, for the alternates. A custom domain's `/` and `/status/<slug>` share one cache
-      // entry, so its alternates may name either: both are the page.
-      const { origin, pathname } = new URL(request.url);
+      // The address it was asked at, for the alternates; the cache key names it too (below), so one host's or one
+      // path's absolute URLs are never served at another.
       const response = page(
-        renderStatusPage(stored, { slug, subscribe, locale, pageUrl: `${origin}${pathname}` }),
+        renderStatusPage(stored, { slug, subscribe, locale, pageUrl: pageAddress(request) }),
         200,
         STATUS_MAX_AGE_S,
       );
@@ -94,6 +96,12 @@ export function serveStatusPage(
     },
   );
 }
+
+/** The page's own address as asked, without its query: what its `hreflang` alternates name. */
+const pageAddress = (request: Request) => {
+  const { origin, pathname } = new URL(request.url);
+  return `${origin}${pathname}`;
+};
 
 const FEED_TYPES: Record<FeedFormat, string> = {
   atom: "application/atom+xml; charset=utf-8",

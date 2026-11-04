@@ -287,7 +287,7 @@ ${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.list .c-${s} .dot{color:va
 .bars .u-degraded{background:var(--u-degraded)}
 .bars .u-down{background:var(--u-down)}
 .bars .u-none{background:var(--border)}
-.bars span::after{content:attr(data-tip);position:absolute;bottom:calc(100% + .5rem);left:calc(var(--f) * 100%);width:max-content;max-width:calc(100vw - 2rem);max-width:100cqw;transform:translate(calc(var(--f) * -100%),.25rem);opacity:0;pointer-events:none;z-index:1;overflow-wrap:anywhere;font-size:.75rem;font-weight:500;line-height:1.4;padding:.25rem .5rem;border-radius:.375rem;background:var(--fg);color:var(--bg);transition:opacity 120ms ease-out,transform 160ms cubic-bezier(.23,1,.32,1)}
+.bars span::after{content:attr(data-tip);position:absolute;bottom:calc(100% + .5rem);left:calc(var(--f) * 100%);width:max-content;max-width:calc(100vw - 4rem - 2px);max-width:100cqw;transform:translate(calc(var(--f) * -100%),.25rem);opacity:0;pointer-events:none;z-index:1;overflow-wrap:anywhere;font-size:.75rem;font-weight:500;line-height:1.4;padding:.25rem .5rem;border-radius:.375rem;background:var(--fg);color:var(--bg);transition:opacity 120ms ease-out,transform 160ms cubic-bezier(.23,1,.32,1)}
 @media (hover:hover) and (pointer:fine){.bars:hover span{opacity:.45}.bars span:hover{opacity:1;filter:brightness(1.12)}.bars span:hover::after{opacity:1;transform:translate(calc(var(--f) * -100%),0)}}
 .bars:has(.tip) span{opacity:.45}.bars span.tip{opacity:1}.bars span.tip::after{opacity:1;transform:translate(calc(var(--f) * -100%),0)}
 @media (max-width:39.99rem){.bars span{--f:calc((var(--i,0) - ${UPTIME_DAYS - PHONE_UPTIME_DAYS}) / ${PHONE_UPTIME_DAYS - 1})}}
@@ -309,7 +309,7 @@ button:active{transform:scale(.97)}
 .trap{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}
 .actions{margin-top:1.5rem;display:flex;flex-wrap:wrap;align-items:center;gap:1rem}
 a{color:inherit}
-@media (prefers-reduced-motion:reduce){button{transition:none}.bars span{animation-name:fade}.group::details-content{transition-property:opacity,content-visibility}}
+@media (prefers-reduced-motion:reduce){button{transition:none}.bars span{animation-name:fade}.bars span::after{transition-property:opacity}.group::details-content{transition-property:opacity,content-visibility}}
 @keyframes fade{from{opacity:0}}
 .hint{margin:-.5rem 0 .75rem}
 .follow{flex-basis:100%;min-width:0}

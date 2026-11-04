@@ -524,6 +524,12 @@ describe("the snapshot", () => {
     expect(feed.status).toBe(200);
     expect(feed.headers.get("Vary")).toBeNull();
     expect(feed.headers.get("Content-Language")).toBeNull();
+    // The page's own (English here), not the visitor's, in both formats.
+    expect(await feed.text()).toContain('xml:lang="en"');
+    const json = await exports.default.fetch(`${ORIGIN}/status/${address}/feed.json?lang=pt-BR`, {
+      headers: { "Accept-Language": "pt-BR" },
+    });
+    expect(((await json.json()) as { language?: string }).language).toBe("en");
   });
 
   test("a page that is not public is deleted from KV", async () => {

@@ -71,9 +71,11 @@ function deepFreeze<T extends object>(value: T): T {
 
 // Warm graphite neutrals with a petrol-teal brand hue. Colour is for state, not chrome: SEV1 is the
 // only solid badge fill in either theme, so it reads from across the room; every other badge is a
-// tint, and SEV2-4 step down in prominence. Destructive is a dark oxblood (a light salmon on dark), a
-// lightness band away from SEV1 even under protanopia and deuteranopia, so a SEV1 badge never reads as
-// a Delete button. Charts avoid green so a series never reads as "resolved". The sidebar and the
+// tint, and SEV2-4 step down in prominence. Each status has a hue of its own: triage, the one that
+// needs a person, is the loudest status tint (magenta); investigating teal, fixing violet, monitoring
+// blue, resolved green, and declined stays a quiet grey. Destructive is a deep crimson (a light salmon
+// on dark), a lightness band away from SEV1 even under protanopia and deuteranopia, so a SEV1 badge
+// never reads as a Delete button. Charts avoid green so a series never reads as "resolved". The sidebar and the
 // dashboard's frame sit on a ground one step darker than the page, which rests on it as an inset sheet.
 const light = {
   background: "#f7f7f5",
@@ -90,7 +92,7 @@ const light = {
   mutedForeground: "#5b5b55",
   accent: "#e2efed",
   accentForeground: "#0a4f52",
-  destructive: "#651a15",
+  destructive: "#84000d",
   destructiveForeground: "#ffffff",
   border: "#e2e2dd",
   input: "#85857d",
@@ -115,17 +117,18 @@ const light = {
     sev4: { bg: "#eef1f3", fg: "#3d4850" },
   },
   status: {
-    triage: { bg: "#e6e4dc", fg: "#22221f" },
-    investigating: { bg: "#dcefed", fg: "#0a4f52" },
-    fixing: { bg: "#d8eeeb", fg: "#063f41" },
-    monitoring: { bg: "#e2ebf6", fg: "#1d4673" },
-    resolved: { bg: "#dcf2e2", fg: "#145c2e" },
+    triage: { bg: "#ffcbe2", fg: "#74144d" },
+    investigating: { bg: "#c5f0ed", fg: "#00302e" },
+    fixing: { bg: "#e1dafe", fg: "#3b1971" },
+    monitoring: { bg: "#d8eaff", fg: "#1d4673" },
+    resolved: { bg: "#d5f7dd", fg: "#145c2e" },
     declined: { bg: "#ecece8", fg: "#5b5b55" },
   },
 } as const satisfies ThemeColors;
 
 // Dark is designed for a phone at 3 a.m.: a true neutral ground (no navy), surfaces lifted by
-// lightness alone, and every badge but SEV1 as light text on a dark tint of its hue.
+// lightness alone, and every badge but SEV1 as light text on a dark tint of its hue. SEV2-4 tints are
+// lifted enough to stand off the card (SEV2 at least 2:1) without reaching SEV1.
 const dark = {
   background: "#121211",
   foreground: "#ededea",
@@ -164,14 +167,14 @@ const dark = {
   sidebarRing: "#4cc3b8",
   severity: {
     sev1: { bg: "#d81b24", fg: "#ffffff" },
-    sev2: { bg: "#5a2a0f", fg: "#ffc29b" },
-    sev3: { bg: "#332a0d", fg: "#ecc65c" },
-    sev4: { bg: "#23282c", fg: "#b3bec6" },
+    sev2: { bg: "#7d3d10", fg: "#ffc29b" },
+    sev3: { bg: "#4e3a06", fg: "#ecc65c" },
+    sev4: { bg: "#2c343a", fg: "#b3bec6" },
   },
   status: {
-    triage: { bg: "#2b2b27", fg: "#ededea" },
-    investigating: { bg: "#123331", fg: "#8fd9d0" },
-    fixing: { bg: "#15302e", fg: "#a6ece3" },
+    triage: { bg: "#55243e", fg: "#fee2ee" },
+    investigating: { bg: "#113a38", fg: "#6ccac4" },
+    fixing: { bg: "#31254d", fg: "#ece7ff" },
     monitoring: { bg: "#16263a", fg: "#a9c7ee" },
     resolved: { bg: "#13301d", fg: "#86d9a2" },
     declined: { bg: "#262624", fg: "#a3a39b" },

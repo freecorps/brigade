@@ -22,6 +22,7 @@ import {
   moveGroup,
   saveStatusPage,
   servicesToLink,
+  shownComponent,
 } from "../src/lib/status-page";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -669,5 +670,42 @@ describe("component order", () => {
     expect(moveGroup(rows, "Core", -1)).toEqual(["b", "c", "a", "d"]);
     expect(moveGroup(rows, "Apps", -1)).toBeNull();
     expect(moveGroup(rows, "Core", 1)).toBeNull();
+  });
+});
+
+describe("shownComponent", () => {
+  const component = {
+    id: "c",
+    status: "degraded" as const,
+    monitorIds: ["m"],
+    followMonitors: true,
+  };
+  test("a planned outage under way wins over the hand-set status and says so", () => {
+    expect(
+      shownComponent(
+        component,
+        [],
+        [],
+        [{ componentIds: ["c"], outage: true, phase: "in_progress" }],
+      ),
+    ).toEqual({ status: "major_outage", from: "maintenance" });
+  });
+  test("its monitors, an open incident, or nothing to explain", () => {
+    expect(shownComponent(component, [], [{ id: "m", status: "down" }], [])).toEqual({
+      status: "major_outage",
+      from: "monitors",
+    });
+    expect(
+      shownComponent(
+        component,
+        [{ status: "identified", impact: "partial_outage", componentIds: ["c"] }],
+        [],
+        [],
+      ),
+    ).toEqual({ status: "partial_outage", from: "incident" });
+    expect(shownComponent(component, [], [{ id: "m", status: "up" }], [])).toEqual({
+      status: "degraded",
+      from: null,
+    });
   });
 });

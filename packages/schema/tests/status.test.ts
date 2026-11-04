@@ -765,6 +765,27 @@ describe("statusSnapshot", () => {
       rows: [{ name: "API" }, { name: "Website" }],
     });
   });
+
+  test("statusIncidents.open: the published incidents not resolved, to every reader", () => {
+    const { store } = ready();
+    const row = (id: string, status: "investigating" | "resolved") => ({
+      id,
+      title: id,
+      status,
+      impact: "major_outage" as const,
+      componentIds: [],
+      updates: [],
+      publishedAt: 1,
+      resolvedAt: status === "resolved" ? 2 : null,
+      updatedAt: 2,
+    });
+    store.insert("status_incidents", row("inc_open", "investigating"));
+    store.insert("status_incidents", row("inc_done", "resolved"));
+    expect(runQuery(queries, "statusIncidents.open", {}, store, "viewer")).toMatchObject({
+      ok: true,
+      rows: [{ id: "inc_open" }],
+    });
+  });
 });
 
 describe("following components", () => {

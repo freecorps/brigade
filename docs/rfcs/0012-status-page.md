@@ -361,8 +361,9 @@ reader skips fields it does not check, so they need no new version ("Feeds").
   inline style, the local times script by its hash and a form posting to the page's own origin (`default-src 'none'`,
   `script-src 'sha256-…'`, `form-action 'self'`, no frames), `nosniff`, `no-referrer`. Every piece of text is
   escaped.
-- **Caching and abuse.** The response is kept in the edge cache (the Cache API, keyed by slug and the language
-  rendered, so hosts and raw headers never split it, a page at most once per locale plus once for "the page's own";
+- **Caching and abuse.** The response is kept in the edge cache (the Cache API, keyed by slug, the language
+  rendered and the page's address, so raw headers never split it, a page at most once per locale plus once for "the
+  page's own" at each address it answers on;
   a no-op on workers.dev) and the KV read uses `cacheTtl: 30`, so a busy page costs about one
   KV read per location every 30 s, and a flood of made-up addresses one cached 404 per address. Nothing on the read
   path touches D1 or a shard. **Misses are rate-limited per caller** (decided, Q23): every answer of the page and
@@ -616,16 +617,23 @@ request on the server (src/status-locale.ts), in this order:
 4. The page's default.
 
 - **Cached per language, never per header.** The edge cache key names the language picked (or "the page's own" for
-  rule 4, which only the snapshot knows), so a page is cached at most `STATUS_LOCALES` + 1 times per location and a
-  Portuguese render never reaches an English reader; a custom domain's key adds its workspace as before. The response
+  rule 4, which only the snapshot knows), and the page's address, so a page is cached at most `STATUS_LOCALES` + 1 times per address and location, and a
+  Portuguese render never reaches an English reader; a custom domain's key adds its workspace as before. The address is
+  fixed per page, not taken from how it was reached: a custom hostname's over HTTPS, else the dashboard's origin
+  (`DASHBOARD_URL`), with the request's path, so the addresses are the dashboard's `/status/<slug>` and each custom
+  hostname's `/` and `/status/<slug>`, all bounded (the API has no routes of its own; custom hostnames are the ones held
+  in D1). The response
   says `Content-Language` and `<html lang>`, and `Vary: Accept-Language` for browsers and other caches; Cloudflare's
   own cache ignores `Vary` (only `Vary: *` is refused by `cache.put`), which is why the key carries the language.
   The country is not a header, so a shared cache other than Cloudflare's could serve a country's pick to a neighbour
   sending the same `Accept-Language`; the switcher is the way out. A made-up address's cached 404 is the same in
   every language but is now kept once per key, so a flood of them costs up to `STATUS_LOCALES` + 1 KV reads per
-  address and location instead of one, still behind the miss rate limit. The country relies on `request.cf` reaching
+  made-up address and location instead of one, still behind the miss rate limit. The country relies on `request.cf` reaching
   the API: through the web Worker's service binding (`/status/*` on the dashboard's host) and the custom-domain hand-off
-  it is not checked by a test; where it does not arrive, rule 3 is skipped and rules 1, 2 and 4 still hold.
+  it is not checked by a test; where it does not arrive, rule 3 is skipped and rules 1, 2 and 4 still hold. A refusal
+  (`q=0`) past the 256-character cut is not read. The team's text is marked with the page's language wherever it is
+  its own element (titles, updates, names, the "Affects" names, the subscribe form's names); the uptime bar's label and
+  the document `<title>` mix both and cannot be marked in part.
 - **A switcher, no script.** The footer lists every language, each named in itself ("English", "Português
   (Brasil)"), as plain links to `?lang=<locale>` relative to the page's own address (so it works at `/status/<slug>`
   and at a custom domain's `/`), the current one marked `aria-current`; the head lists the same as `<link

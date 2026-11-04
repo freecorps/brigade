@@ -328,11 +328,18 @@ const publicChip = (locale: Locale, status: PublicStatus) =>
  */
 type Own = string;
 
+/** "Affects …" with the components' names, each marked with the page's own language when the wording is in another. */
+function affectsLine(locale: Locale, names: readonly string[], own: Own): string {
+  if (names.length === 0) return "";
+  if (own === "")
+    return `<p class="meta">${say(locale, "affects", { list: names.join(", ") })}</p>`;
+  const marker = "\uE000list\uE000";
+  const list = names.map((name) => `<span${own}>${escape(name)}</span>`).join(", ");
+  return `<p class="meta">${say(locale, "affects", { list: marker }).replace(marker, list)}</p>`;
+}
+
 function incidentBody(locale: Locale, incident: SnapshotIncident, own: Own): string {
-  const affects =
-    incident.components.length > 0
-      ? `<p class="meta">${say(locale, "affects", { list: incident.components.join(", ") })}</p>`
-      : "";
+  const affects = affectsLine(locale, incident.components, own);
   const updates = incident.updates
     .map(
       (update) =>
@@ -406,10 +413,7 @@ function maintenanceWindow(
   active: boolean,
   own: Own,
 ): string {
-  const affects =
-    window.components.length > 0
-      ? `<p class="meta">${say(locale, "affects", { list: window.components.join(", ") })}</p>`
-      : "";
+  const affects = affectsLine(locale, window.components, own);
   const range = active
     ? sayWindowAt(locale, "window_active", { until: window.endsAt })
     : sayWindowAt(locale, "window_upcoming", { time: window.startsAt, until: window.endsAt });
@@ -449,19 +453,22 @@ function followPicker(
   groups: FollowGroup[],
   checked: ReadonlySet<string>,
   open: boolean,
+  own: Own = "",
 ): string {
   const box = (key: string, label: string, all = false) =>
     `<label${all ? ' class="all"' : ""}><input type="checkbox" name="follow" value="${escape(key)}"${checked.has(key) ? " checked" : ""}><span>${label}</span></label>`;
   const sets = groups
     .map((group) => {
       const legend =
-        group.name === null ? saySubscribe(locale, "follow_ungrouped") : escape(group.name);
+        group.name === null
+          ? saySubscribe(locale, "follow_ungrouped")
+          : `<span${own}>${escape(group.name)}</span>`;
       const whole =
         group.name !== null && group.key
           ? box(group.key, saySubscribe(locale, "follow_group"), true)
           : "";
       const rows = group.components
-        .map((component) => box(component.key, escape(component.name)))
+        .map((component) => box(component.key, `<span${own}>${escape(component.name)}</span>`))
         .join("");
       return `<fieldset><legend>${legend}</legend><div class="list">${whole}${rows}</div></fieldset>`;
     })
@@ -469,8 +476,8 @@ function followPicker(
   return `<details class="follow"${open ? " open" : ""}><summary>${saySubscribe(locale, "follow_toggle")}</summary><p class="meta">${saySubscribe(locale, "follow_hint")}</p>${sets}</details>`;
 }
 
-function subscribeForm(locale: Locale, slug: string, groups: FollowGroup[]): string {
-  const picker = groups.length > 0 ? followPicker(locale, groups, new Set(), false) : "";
+function subscribeForm(locale: Locale, slug: string, groups: FollowGroup[], own: Own): string {
+  const picker = groups.length > 0 ? followPicker(locale, groups, new Set(), false, own) : "";
   return `<section class="subscribe" aria-labelledby="subscribe"><h2 id="subscribe">${saySubscribe(locale, "form_title")}</h2><p class="meta">${saySubscribe(locale, "form_hint")}</p><form method="post" action="/status/${escape(slug)}/subscribe"><label for="subscribe-email">${saySubscribe(locale, "email_label")}</label><input id="subscribe-email" name="email" type="email" required maxlength="254" autocomplete="email" autocapitalize="none" spellcheck="false" enterkeyhint="send"><span class="trap" aria-hidden="true"><label for="subscribe-website">${saySubscribe(locale, "honeypot")}</label><input id="subscribe-website" name="website" type="text" tabindex="-1" autocomplete="off"></span>${picker}<button type="submit">${saySubscribe(locale, "submit")}</button></form></section>`;
 }
 
@@ -601,7 +608,7 @@ export function renderStatusPage(
       : `<p class="banner c-${snapshot.status}" role="status"><span class="dot"></span>${say(locale, `overall_${snapshot.status}`)}</p>`;
   const form =
     options.subscribe && options.slug
-      ? subscribeForm(locale, options.slug, followGroups(snapshot))
+      ? subscribeForm(locale, options.slug, followGroups(snapshot), own)
       : "";
   const body = `<h1${own}>${escape(snapshot.title)}</h1>
 ${banner}

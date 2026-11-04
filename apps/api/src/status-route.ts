@@ -55,8 +55,9 @@ export function statusPageHeaders(cache: "no-store" | number): Headers {
  * With `owner` (a custom hostname, src/status-pages.ts) a snapshot another workspace pushed is a 404 too.
  *
  * The page's wording is in the visitor's language when Brigade has it (src/status-locale.ts), else the page's own
- * (RFC 0012 "Language"). The cache key names that language, never the raw header, so each page is cached at most once
- * per locale plus once for "the page's own".
+ * (RFC 0012 "Language"). The cache key names that language, never the raw header, and the page's address
+ * (`pageAddress`), so each page is cached at most once per locale plus once for "the page's own", at each address it
+ * answers on.
  */
 export function serveStatusPage(
   request: Request,
@@ -66,14 +67,15 @@ export function serveStatusPage(
   owner?: string,
 ): Promise<Response> {
   const visitor = requestLocale(request);
-  // A key of our own, not the request: the same page whatever host or headers it came with, but one per language.
+  // A key of our own, not the request: the same page whatever headers it came with, but one per language and address.
+  const address = pageAddress(request, env as Env & { DASHBOARD_URL?: string }, owner);
   return serveFromSnapshot(
     request,
     env,
     ctx,
     slug,
     ownedKey(
-      `https://status.cache.invalid/${slug}?locale=${visitor ?? "default"}&page=${encodeURIComponent(pageAddress(request))}`,
+      `https://status.cache.invalid/${slug}?locale=${visitor ?? "default"}&page=${encodeURIComponent(address)}`,
       owner,
     ),
     owner,
@@ -81,10 +83,10 @@ export function serveStatusPage(
       // The subscribe form only where email can be sent: a page whose emails never go out promises nothing.
       const subscribe = emailSender(env) !== undefined;
       const locale = visitor ?? stored.locale;
-      // The address it was asked at, for the alternates; the cache key names it too (below), so one host's or one
-      // path's absolute URLs are never served at another.
+      // The page's address, for the alternates; the cache key names it too, so one address's absolute URLs are never
+      // served at another.
       const response = page(
-        renderStatusPage(stored, { slug, subscribe, locale, pageUrl: pageAddress(request) }),
+        renderStatusPage(stored, { slug, subscribe, locale, pageUrl: address }),
         200,
         STATUS_MAX_AGE_S,
       );
@@ -97,11 +99,19 @@ export function serveStatusPage(
   );
 }
 
-/** The page's own address as asked, without its query: what its `hreflang` alternates name. */
-const pageAddress = (request: Request) => {
-  const { origin, pathname } = new URL(request.url);
-  return `${origin}${pathname}`;
-};
+/**
+ * The page's own address, without its query: what its `hreflang` alternates name and part of its cache key. Fixed per
+ * page, not taken from how it was reached: a custom hostname's (`owner`) over HTTPS, else the dashboard's origin
+ * (`DASHBOARD_URL`, as the feeds use) when set, else the request's. Only the path is the request's, a valid page path.
+ */
+function pageAddress(request: Request, env: { DASHBOARD_URL?: string }, owner?: string): string {
+  const url = new URL(request.url);
+  const origin =
+    owner !== undefined
+      ? `https://${url.hostname}`
+      : new URL(dashboardLink("/", {}, env.DASHBOARD_URL, url.origin) ?? url.origin).origin;
+  return `${origin}${url.pathname}`;
+}
 
 const FEED_TYPES: Record<FeedFormat, string> = {
   atom: "application/atom+xml; charset=utf-8",

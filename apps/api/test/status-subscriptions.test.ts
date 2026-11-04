@@ -1475,4 +1475,22 @@ describe("the page", () => {
     expect(html).toContain("Manutenção em andamento");
     expect(html).toContain("Receba atualizações por email");
   });
+
+  test("read in another language, the team's names keep the page's own: affects line and subscribe form", () => {
+    const followable: StatusSnapshot = {
+      ...base,
+      groups: base.groups.map((group) => ({
+        ...group,
+        components: group.components.map((component) => ({ ...component, key: "cmpkey" })),
+      })),
+    };
+    const html = renderStatusPage(followable, { slug: "acme", subscribe: true, locale: "pt-BR" });
+    expect(html).toContain('<html lang="pt-BR">');
+    expect(html).toContain('<p class="meta">Afeta <span lang="en">API</span></p>');
+    expect(html).toContain('<span><span lang="en">API</span></span></label>');
+    // Read in its own language, nothing extra is marked.
+    expect(renderStatusPage(followable, { slug: "acme", subscribe: true })).not.toContain(
+      '<span lang="en">',
+    );
+  });
 });

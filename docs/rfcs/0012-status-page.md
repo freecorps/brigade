@@ -440,7 +440,9 @@ reader skips fields it does not check, so they need no new version ("Feeds").
   it. On a phone, where there is no hover, a tap does the same through the page's one script; without it the bars and
   their text alternative are unchanged. Named groups are cards that fold (`<details>`, open to start with); the
   header reads name, status, component count, where the status is the worst of its components' (`groupStatus` in
-  packages/schema; "Under maintenance" only while none shows anything worse, as for a component and the banner),
+  packages/schema; "Under maintenance" only while none shows anything worse, as for a component and the banner; a
+  planned outage shows as "Major outage" in its group, as on its components, while the banner still says
+  maintenance),
   drawn like a component's status (dot and label). It is worked out when the page renders, not stored in the
   snapshot. The dashboard's Status page card shows the same status next to each group's name.
 

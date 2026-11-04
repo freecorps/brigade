@@ -470,6 +470,13 @@ function Components({
 }: PanelProps) {
   const [moved, setMoved] = useState<{ name: string } | { failed: true } | null>(null);
   const blocks = componentBlocks(components);
+  // What the public page shows for each component, worked out once for its row and its group's heading.
+  const shown = new Map(
+    components.map((component) => [
+      component.id,
+      shownComponent(component, incidents, monitors, windows),
+    ]),
+  );
   const firstGroup = blocks[0]?.group === null ? 1 : 0;
   const canMove = manage && onReorder !== undefined;
   const move = (ids: string[] | null, name: string) => {
@@ -503,10 +510,7 @@ function Components({
                     </h4>
                     <ComponentChip
                       status={groupStatus(
-                        block.components.map(
-                          (component) =>
-                            shownComponent(component, incidents, monitors, windows).status,
-                        ),
+                        block.components.map((component) => shown.get(component.id)!.status),
                       )}
                     />
                   </div>
@@ -531,7 +535,7 @@ function Components({
                     onUpdate={onUpdate}
                     onDelete={onDelete}
                     monitors={monitors}
-                    shown={shownComponent(component, incidents, monitors, windows)}
+                    shown={shown.get(component.id)!}
                     onLink={onLink}
                     services={services}
                     onLinkServices={onLinkServices}

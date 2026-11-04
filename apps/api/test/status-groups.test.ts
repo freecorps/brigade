@@ -59,6 +59,24 @@ describe("a named group's header", () => {
     expect(read(header)).toBe(`GroceryOps ${label} ${statuses.length} components`);
   });
 
+  test("a planned outage shows as a major outage in its group, while the banner says maintenance", () => {
+    const html = renderStatusPage({
+      ...page([group("Payments", "major_outage", "operational")]),
+      maintenance: [
+        {
+          title: "Card network upgrade",
+          body: "Payments are off while we switch.",
+          components: ["Part 1"],
+          startsAt: Date.UTC(2026, 9, 27, 1),
+          endsAt: Date.UTC(2026, 9, 27, 3),
+          outage: true,
+        },
+      ],
+    });
+    expect(read(headers(html)[0])).toBe("Payments Major outage 2 components");
+    expect(html).toContain('<p class="banner c-maintenance" role="status">');
+  });
+
   test("each group has its own status", () => {
     const html = renderStatusPage(
       page([group("GroceryOps", "major_outage", "operational"), group("Billing", "operational")]),

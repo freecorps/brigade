@@ -36,6 +36,8 @@ reviews:
     - "!LICENSE"
     - "!**/dist/**"
     - "!**/*.gen.ts"
+    # Paraglide compiles one module per message; a staleness test and the CI clean-tree step check it.
+    - "!packages/i18n/src/paraglide/**"
 
   path_instructions:
     - path: "packages/**"

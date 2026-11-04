@@ -28,4 +28,9 @@ describe("glyphSize", () => {
     expect(glyphSize(72, 3, 1.5)).toBe(108);
     expect(glyphSize(72, 3, Infinity)).toBe(216);
   });
+
+  test("a cap never shrinks a glyph below its base size", () => {
+    expect(glyphSize(12, 2, 0.5)).toBe(12);
+    expect(glyphSize(12, 3, Number.NaN)).toBe(24);
+  });
 });

@@ -12,5 +12,6 @@ export const MAX_GLYPH_SCALE = 2;
  */
 export function glyphSize(size: number, fontScale: number, max: number = MAX_GLYPH_SCALE): number {
   const scale = Number.isFinite(fontScale) ? fontScale : 1;
-  return Math.round(size * Math.min(max, Math.max(1, scale)));
+  const cap = Number.isNaN(max) ? MAX_GLYPH_SCALE : Math.max(1, max);
+  return Math.round(size * Math.min(cap, Math.max(1, scale)));
 }

@@ -3,7 +3,7 @@
 // services); this Worker reads the submission (`view_submission`) and declares through the bridge.
 
 import { slack_text } from "@freecorps/brigade-i18n/messages";
-import { severityLabels } from "@freecorps/brigade-i18n/labels";
+import { serverSeverityLabels as severityLabels } from "@freecorps/brigade-i18n/labels";
 import {
   INCIDENT_TITLE_MAX,
   isId,

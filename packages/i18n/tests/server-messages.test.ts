@@ -2,6 +2,12 @@
 // `vp check` type-checks this file and fails if any of them stops being an error.
 import { expect, test } from "vite-plus/test";
 import { m as uiMessages } from "../src/index.ts";
+import {
+  incidentStatusLabels,
+  serverIncidentStatusLabels,
+  serverSeverityLabels,
+  severityLabels,
+} from "../src/labels.ts";
 import type * as server from "../src/messages.ts";
 import { app_name, incidents_active_count, m, theme_dark } from "../src/messages.ts";
 
@@ -41,4 +47,16 @@ test("every named message requires a locale", () => {
   const loose: [Loose] extends [never] ? "none" : Loose = "none";
   expect(loose).toBe("none");
   expect(Object.keys(m).length).toBeGreaterThan(400);
+});
+
+test("the server labels need a locale too, and are the UI labels at runtime", () => {
+  // @ts-expect-error no options.
+  expect(() => serverSeverityLabels.sev1()).not.toThrow();
+  // @ts-expect-error options without a locale.
+  expect(() => serverIncidentStatusLabels.triage({}, {})).not.toThrow();
+
+  expect(serverIncidentStatusLabels.investigating({}, { locale: "pt-BR" })).toBe(
+    incidentStatusLabels.investigating({}, { locale: "pt-BR" }),
+  );
+  expect(serverSeverityLabels).toBe(severityLabels);
 });

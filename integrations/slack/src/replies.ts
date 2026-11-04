@@ -3,7 +3,7 @@
 // `chat.postEphemeral`, since such a message has no `response_url`.
 
 import { incident_role, slack_text } from "@freecorps/brigade-i18n/messages";
-import { severityLabels } from "@freecorps/brigade-i18n/labels";
+import { serverSeverityLabels as severityLabels } from "@freecorps/brigade-i18n/labels";
 import { formatIncidentNumber, isBuiltinRole, type SlackLocale } from "@freecorps/brigade-schema";
 import type { SlackActResult, SlackRoleName } from "./bridge.ts";
 import { escapeMrkdwn, NO_ARGS } from "./notifier.ts";

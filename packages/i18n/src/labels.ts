@@ -13,6 +13,7 @@ import {
   severity_sev3,
   severity_sev4,
 } from "./paraglide/messages.js";
+import type { LocaleRequired } from "./server-messages.ts";
 
 /** Severity names ("Critical"). The code (`sev1` → "SEV1") is canonical and not translated. */
 export const severityLabels = {
@@ -30,3 +31,15 @@ export const incidentStatusLabels = {
   resolved: incident_status_resolved,
   declined: incident_status_declined,
 } as const;
+
+/** The same labels for server code (Workers), each requiring `{ locale }` (see src/server-messages.ts). */
+export const serverSeverityLabels: {
+  readonly [K in keyof typeof severityLabels]: LocaleRequired<(typeof severityLabels)[K]>;
+} = severityLabels;
+
+/** The same labels for server code (Workers), each requiring `{ locale }` (see src/server-messages.ts). */
+export const serverIncidentStatusLabels: {
+  readonly [K in keyof typeof incidentStatusLabels]: LocaleRequired<
+    (typeof incidentStatusLabels)[K]
+  >;
+} = incidentStatusLabels;

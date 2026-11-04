@@ -11,6 +11,7 @@ import {
   STATUS_LOCALES,
   STATUS_PAGE_TITLE_MAX,
   componentOrder,
+  groupStatus,
   statusFollowKey,
   type ComponentStatus,
   type MaintenanceRow,
@@ -495,9 +496,20 @@ function Components({
             <div key={block.group ?? ""} className="flex min-w-0 flex-col gap-1.5">
               {block.group !== null ? (
                 <div className="flex min-h-11 items-center justify-between gap-3">
-                  <h4 className="min-w-0 text-xs font-semibold text-muted-foreground [overflow-wrap:anywhere]">
-                    {block.group}
-                  </h4>
+                  {/* The group's status as its public header shows it: the worst of its components. */}
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                    <h4 className="min-w-0 text-xs font-semibold text-muted-foreground [overflow-wrap:anywhere]">
+                      {block.group}
+                    </h4>
+                    <ComponentChip
+                      status={groupStatus(
+                        block.components.map(
+                          (component) =>
+                            shownComponent(component, incidents, monitors, windows).status,
+                        ),
+                      )}
+                    />
+                  </div>
                   {canMove ? (
                     <MoveButtons
                       id={`group:${block.group}`}

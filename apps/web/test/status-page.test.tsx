@@ -189,6 +189,25 @@ describe("StatusPagePanel", () => {
     expect(created).toEqual([{ name: "Checkout", group: "Apps" }]);
   });
 
+  test("a group's heading shows its worst component status, as the public page does", () => {
+    const { container } = card({
+      page,
+      components: [
+        { ...component("cmp_1", "Backend", "GroceryOps"), status: "major_outage" },
+        component("cmp_2", "Frontend", "GroceryOps"),
+        component("cmp_3", "Invoices", "Billing"),
+      ],
+    });
+    const headings = [...container.querySelectorAll("h4")].map((h4) => [
+      h4.textContent,
+      h4.nextElementSibling?.textContent,
+    ]);
+    expect(headings).toEqual([
+      ["GroceryOps", "Major outage"],
+      ["Billing", "Operational"],
+    ]);
+  });
+
   test("components move up and down by keyboard, within their group, and groups move as a whole", async () => {
     const orders: string[][] = [];
     const { container } = card({

@@ -99,17 +99,21 @@ export function IncidentsCard() {
     (id: string) => setKept((current) => (current.has(id) ? current : new Set(current).add(id))),
     [],
   );
-  const [focusedRow, setFocusedRow] = useState<string | null>(null);
+  // The row holding focus, kept in a ref: moving focus re-renders nothing, and only a render (a re-rank, here or
+  // elsewhere) can fold a row away, which then reads it.
+  const focusedRow = useRef<string | null>(null);
   const keepNow = new Set(kept);
   for (const row of rows)
     if (row.number !== null && row.number === opened.current) keepNow.add(row.id);
-  if (focusedRow) keepNow.add(focusedRow);
+  if (focusedRow.current) keepNow.add(focusedRow.current);
   const fold = foldLowerSeverity(rows, expanded, keepNow);
-  // A focused row demoted to SEV3 or SEV4 (here or elsewhere) while the list is folded stays, after focus moves on.
-  const focusedLower = rows.some((row) => row.id === focusedRow && isLowerSeverity(row.severity));
+  // A focused row demoted to SEV3 or SEV4 while the list is folded stays, after focus moves on.
+  const demoted =
+    !expanded &&
+    rows.find((row) => row.id === focusedRow.current && isLowerSeverity(row.severity))?.id;
   useEffect(() => {
-    if (!expanded && focusedRow && focusedLower) keep(focusedRow);
-  }, [expanded, focusedRow, focusedLower, keep]);
+    if (demoted) keep(demoted);
+  }, [demoted, keep]);
   const listId = useId();
   const toggleRef = useRef<HTMLButtonElement>(null);
   const onToggle = () => {
@@ -253,7 +257,8 @@ export function IncidentsCard() {
     // React bubbles focus out of the menus' portals too; only controls drawn in the card count.
     if (element instanceof HTMLElement && cardRef.current?.contains(element)) {
       focused.current = { element, fallbacks: plan(element) };
-      setFocusedRow(element.closest<HTMLElement>("li[data-incident]")?.dataset.incident ?? null);
+      focusedRow.current =
+        element.closest<HTMLElement>("li[data-incident]")?.dataset.incident ?? null;
     }
   };
   // Focus leaving for somewhere else on the page (not one of the card's menus, which render in portals) ends
@@ -266,7 +271,7 @@ export function IncidentsCard() {
     queueMicrotask(() => {
       if (element.isConnected && focused.current?.element === element) focused.current = null;
     });
-    setFocusedRow(null);
+    focusedRow.current = null;
   };
   useLayoutEffect(() => {
     const last = focused.current;

@@ -9,6 +9,7 @@ import type { MutationOutcome } from "@freecorps/brigade-sync";
 import { useConnectionState, useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { cn } from "cn";
 import {
+  ChevronDownIcon,
   CircleAlertIcon,
   CircleCheckIcon,
   LoaderCircleIcon,
@@ -34,6 +35,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
   adjustBusy,
+  foldLowerSeverity,
+  isLowerSeverity,
   nextFailed,
   noticeFor,
   noticeSubject,
@@ -69,8 +72,10 @@ export function IncidentsCard() {
   // Viewers see the badges; without a session around the card (its tests) the menus stay.
   const member = useOptionalMember();
   const editable = member ? can(member.role, "incident:update") : true;
-  // Back from an incident's page: focus goes to its title link again, where the user left the list.
-  const returning = useRef(takeOpened());
+  // Back from an incident's page: focus goes to its title link again, where the user left the list. `opened` stays
+  // for the card's life, so that incident is never folded away on a phone, even before the rows arrive.
+  const opened = useRef(takeOpened());
+  const returning = useRef(opened.current);
   // The incidents already open when the list first showed: only those that arrive after it (declared here or
   // anywhere else) settle in, so opening the page never plays an entrance.
   const firstShown = useRef<ReadonlySet<string> | null>(null);
@@ -86,6 +91,38 @@ export function IncidentsCard() {
     link?.focus({ preventScroll: true });
     link?.scrollIntoView({ block: "nearest" });
   }, [rows.length]);
+  // On a phone, SEV3 and SEV4 fold behind a toggle (foldLowerSeverity). Folded again on every visit: nothing is
+  // remembered. Never folded: a row the user acted on here (`kept`), the one they came back from, the focused row.
+  const [expanded, setExpanded] = useState(false);
+  const [kept, setKept] = useState<ReadonlySet<string>>(new Set());
+  const keep = useCallback(
+    (id: string) => setKept((current) => (current.has(id) ? current : new Set(current).add(id))),
+    [],
+  );
+  // The row holding focus, kept in a ref: moving focus re-renders nothing, and only a render (a re-rank, here or
+  // elsewhere) can fold a row away, which then reads it.
+  const focusedRow = useRef<string | null>(null);
+  const keepNow = new Set(kept);
+  for (const row of rows)
+    if (row.number !== null && row.number === opened.current) keepNow.add(row.id);
+  if (focusedRow.current) keepNow.add(focusedRow.current);
+  const fold = foldLowerSeverity(rows, expanded, keepNow);
+  // A focused row demoted to SEV3 or SEV4 while the list is folded stays, after focus moves on.
+  const demoted =
+    !expanded &&
+    rows.find((row) => row.id === focusedRow.current && isLowerSeverity(row.severity))?.id;
+  useEffect(() => {
+    if (demoted) keep(demoted);
+  }, [demoted, keep]);
+  const listId = useId();
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const onToggle = () => {
+    setExpanded(!expanded);
+    // Folding takes rows out from above the toggle: bring it back into view, where the user's finger is.
+    if (expanded)
+      requestAnimationFrame(() => toggleRef.current?.scrollIntoView({ block: "nearest" }));
+  };
+
   const [failed, setFailed] = useState(false);
   const latched = nextFailed(failed, status, connection);
   if (latched !== failed) setFailed(latched);
@@ -121,6 +158,8 @@ export function IncidentsCard() {
         ? [target.incidentId, `${target.incidentId}/${field}`]
         : [target.incidentId];
       setBusy((current) => adjustBusy(current, keys, 1));
+      // Declared, re-ranked or moved here: it never folds away from the user who just changed it.
+      keep(target.incidentId);
       return outcome.then((result) => {
         setBusy((current) => adjustBusy(current, keys, -1));
         const notice = noticeFor(result, target, `n${nextKey.current++}`);
@@ -134,7 +173,7 @@ export function IncidentsCard() {
         return notice;
       });
     },
-    [],
+    [keep],
   );
 
   const target = (row: IncidentRow, kind: "status" | "severity", to: string): NoticeTarget => ({
@@ -218,6 +257,8 @@ export function IncidentsCard() {
     // React bubbles focus out of the menus' portals too; only controls drawn in the card count.
     if (element instanceof HTMLElement && cardRef.current?.contains(element)) {
       focused.current = { element, fallbacks: plan(element) };
+      focusedRow.current =
+        element.closest<HTMLElement>("li[data-incident]")?.dataset.incident ?? null;
     }
   };
   // Focus leaving for somewhere else on the page (not one of the card's menus, which render in portals) ends
@@ -230,6 +271,7 @@ export function IncidentsCard() {
     queueMicrotask(() => {
       if (element.isConnected && focused.current?.element === element) focused.current = null;
     });
+    focusedRow.current = null;
   };
   useLayoutEffect(() => {
     const last = focused.current;
@@ -245,7 +287,9 @@ export function IncidentsCard() {
       if (active && active !== document.body && active.isConnected) return;
       for (const selector of last.fallbacks) {
         const next = cardRef.current?.querySelector<HTMLElement>(selector);
-        if (next) return next.focus();
+        next?.focus();
+        // A neighbour folded away on a phone is not drawn and takes no focus: try the next one.
+        if (next && document.activeElement === next) return;
       }
     });
   });
@@ -347,12 +391,13 @@ export function IncidentsCard() {
               <span className="border border-transparent px-3">{m.incident_severity_label()}</span>
               <span className="border border-transparent px-3">{m.incident_status_label()}</span>
             </div>
-            <ul aria-labelledby="incidents-title" className="divide-y">
+            <ul id={listId} aria-labelledby="incidents-title" className="divide-y">
               {rows.map((row) => (
                 <IncidentItem
                   key={row.id}
                   row={row}
                   arrived={firstShown.current !== null && !firstShown.current.has(row.id)}
+                  folded={fold.folded.has(row.id)}
                   pending={{
                     any: busy.has(row.id),
                     status: busy.has(`${row.id}/status`),
@@ -371,6 +416,31 @@ export function IncidentsCard() {
                 />
               ))}
             </ul>
+            {/* Phones only (below md, where rows go compact): from md every row shows and there is nothing to toggle. A full-width 44px row, under
+                the list because the folded rows are its tail. */}
+            {fold.toggle ? (
+              <div className="border-t px-2 py-1 md:hidden">
+                <Button
+                  ref={toggleRef}
+                  variant="ghost"
+                  aria-expanded={expanded}
+                  aria-controls={listId}
+                  onClick={onToggle}
+                  className="h-auto min-h-11 w-full justify-start px-2 text-left whitespace-normal text-muted-foreground pointer-fine:h-auto pointer-fine:px-2"
+                >
+                  <ChevronDownIcon
+                    aria-hidden
+                    className={cn(
+                      "transition-transform duration-(--brigade-duration-fast) ease-out",
+                      expanded && "rotate-180",
+                    )}
+                  />
+                  {expanded
+                    ? m.incidents_hide_lower()
+                    : m.incidents_show_lower({ count: fold.count })}
+                </Button>
+              </div>
+            ) : null}
           </div>
         ) : view === "connecting" ? (
           <ul aria-hidden className="-mx-4 -mb-5 divide-y border-t sm:-mx-6 sm:-mb-6">

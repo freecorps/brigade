@@ -173,7 +173,9 @@ export declare const incidents_active_count: ServerMessages["incidents_active_co
 export declare const incidents_all_clear: ServerMessages["incidents_all_clear"];
 export declare const incidents_all_clear_hint: ServerMessages["incidents_all_clear_hint"];
 export declare const incidents_all_clear_title: ServerMessages["incidents_all_clear_title"];
+export declare const incidents_hide_lower: ServerMessages["incidents_hide_lower"];
 export declare const incidents_sev1_count: ServerMessages["incidents_sev1_count"];
+export declare const incidents_show_lower: ServerMessages["incidents_show_lower"];
 export declare const incidents_title: ServerMessages["incidents_title"];
 export declare const intl_description: ServerMessages["intl_description"];
 export declare const intl_engine: ServerMessages["intl_engine"];

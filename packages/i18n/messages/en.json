@@ -261,6 +261,21 @@
       }
     }
   ],
+  "incidents_show_lower": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Show {countFormatted} lower-severity incident",
+        "countPlural=*": "Show {countFormatted} lower-severity incidents"
+      }
+    }
+  ],
+  "incidents_hide_lower": "Hide lower-severity incidents",
   "declare_open": "Declare incident",
   "declare_title_invalid": "A title needs visible text: invisible characters alone don't count.",
   "sync_refused": "Not loaded",

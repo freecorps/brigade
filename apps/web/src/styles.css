@@ -114,6 +114,28 @@
   }
 }
 
+/*
+ * An incident that arrives while the list is on screen: its row starts on the accent ground and fades back to the
+ * card's over 600ms, so the eye finds what just pushed the rows down. A one-shot cue the row turns off when it ends
+ * (onAnimationEnd); no fill mode, so hover and focus tints apply as soon as it is over, and nothing waits on it.
+ * Skipped entirely under reduced motion: `enter` already keeps a short fade there, and a colour flash is the kind of
+ * attention-grabbing change that setting asks us to drop.
+ */
+@keyframes brigade-arrive {
+  from {
+    background-color: var(--accent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+@utility arrive {
+  @media (prefers-reduced-motion: no-preference) {
+    animation: brigade-arrive 600ms var(--brigade-ease-in-out);
+  }
+}
+
 /* A mark that confirms a press (a follow-up's check): it grows in from 80%, never from nothing. */
 @utility enter-pop {
   transition-property: opacity, scale;

@@ -1,5 +1,5 @@
 import { RNHostView } from "@expo/ui";
-import { SymbolView } from "expo-symbols";
+import { SizedSymbol } from "@/components/sized-symbol";
 import { useGlyphSize } from "@/hooks/use-glyph-size";
 import { useSystemColors } from "@/theme/system-colors";
 import type { RowIconProps } from "./row-icon";
@@ -15,7 +15,7 @@ export function RowIcon({ glyph, color, plain = false }: RowIconProps) {
   const size = useGlyphSize(24);
   return (
     <RNHostView matchContents>
-      <SymbolView
+      <SizedSymbol
         name={glyph}
         tintColor={(plain ? color : undefined) ?? (system.secondaryLabel as string)}
         size={size}

@@ -6,7 +6,7 @@ import { incidentStatusLabels, severityLabels } from "@freecorps/brigade-i18n/la
 import type { IncidentStatus, Severity } from "@freecorps/brigade-schema";
 import type { SyncView } from "@freecorps/brigade-sync";
 import { fontFamily, fontSize, radius, spacing } from "@freecorps/brigade-ui";
-import { SymbolView } from "expo-symbols";
+import { SizedSymbol } from "@/components/sized-symbol";
 import { useEffect, useState, type ReactNode } from "react";
 import { Platform, Pressable, StyleSheet, View } from "react-native";
 import { Badge } from "@/components/badge";
@@ -81,7 +81,7 @@ export function Choice({
     >
       {children}
       {disabled ? null : (
-        <SymbolView name={CHANGE_GLYPH} tintColor={colors.mutedForeground} size={glyph} />
+        <SizedSymbol name={CHANGE_GLYPH} tintColor={colors.mutedForeground} size={glyph} />
       )}
     </Pressable>
   );
@@ -181,7 +181,7 @@ export function ConnectionStatus({ view }: { view: SyncView }) {
       style={{ flexDirection: "row", alignItems: "center", gap: spacing[2] }}
     >
       {glyph ? (
-        <SymbolView name={glyph} tintColor={color} size={glyphSize} />
+        <SizedSymbol name={glyph} tintColor={color} size={glyphSize} />
       ) : (
         <View
           style={{

@@ -1,4 +1,4 @@
-import { SymbolView } from "expo-symbols";
+import { SizedSymbol } from "@/components/sized-symbol";
 import { Text, View } from "react-native";
 import { useTheme } from "@/hooks/use-theme";
 
@@ -46,7 +46,7 @@ export function AvatarView({ name }: { name: string | null }) {
           {letters}
         </Text>
       ) : (
-        <SymbolView
+        <SizedSymbol
           name={{ ios: "person", android: "person", web: "person" }}
           tintColor={colors.mutedForeground}
           size={16}

@@ -1,5 +1,5 @@
 import { fontSize, fontWeight, radius, spacing, type BadgeColors } from "@freecorps/brigade-ui";
-import { SymbolView } from "expo-symbols";
+import { SizedSymbol } from "@/components/sized-symbol";
 import { Text, View } from "react-native";
 import type { Glyph } from "@/components/glyphs";
 import { useGlyphSize } from "@/hooks/use-glyph-size";
@@ -40,7 +40,7 @@ export function Badge({
       }}
     >
       {icon ? (
-        <SymbolView
+        <SizedSymbol
           name={icon}
           tintColor={colors.fg}
           size={glyph}

@@ -308,7 +308,7 @@ export function StatusMenu({
     return (
       <span className="inline-flex min-h-11 items-center px-1.5">
         <span className="sr-only">{m.incident_status_label()}: </span>
-        <StatusBadge status={status} />
+        <StatusBadge status={status} compact={compact} />
       </span>
     );
   }

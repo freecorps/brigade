@@ -113,24 +113,44 @@ transport with the real `.p8` and service account, which is Ember's R12 (section
   concurrent sends), the fallback, its stickiness and the way back, a key only Ember can read, both signers refused,
   the expired-token rule, a refused access token never reused, and the deep health check's fallback.
 
-### Step 2: the instance sends directly, the relay as fallback
+### Step 2: the instance sends directly, the relay as fallback (built, off until configured)
 
 For an instance that holds the app's credentials (Freecorps' hosted instance, or a company with its own build, RFC
-0015 "Your own relay"), the relay is a hop that can fail on its own. The API gains a third route next to `/send` and
-`/v1/send` (`apps/api/src/notify.ts` `RelayRoutes`): `direct`, the same payload builders and the same Ember transport,
-called in the notifier's own invocation, chosen when the API Worker has `APNS_KEY`, `APNS_KEY_ID`, `APNS_TEAM_ID`
-(and `FCM_SERVICE_ACCOUNT` for Android) and the device has a raw token.
+0015 "Your own relay"), the relay is a hop that can fail on its own. The API has a third route next to `/send` and
+`/v1/send` (`apps/api/src/notify.ts` `RelayRoutes`): `direct` (`apps/api/src/direct-push.ts`), which runs the relay's
+own `/send` code in the notifier's invocation (`sendBody`, exported by `apps/relay` as `@freecorps/brigade-relay/send`:
+the same validation, payloads and envelopes, Ember's transport for the tokens, the same answers), so the rest of the
+notifier (refusals, retries, the Critical Alert fallback, calls, delivery rows) reads a direct send exactly as a
+relay's. It is on when the API Worker has `APNS_KEY`, `APNS_KEY_ID`, `APNS_TEAM_ID` and `APNS_TOPIC` (the relay's
+names), and taken for a device with a raw token; Android goes direct only with `FCM_SERVICE_ACCOUNT` too.
 
-- **Fallback, per device.** A direct send that fails as a transport or a configuration (unreachable, 5xx, 429,
-  `InvalidProviderToken`, a bad key, `relay_misconfigured`-like answers, a token of another topic or Firebase project)
-  goes on through the relay route the device would have used, in the same attempt; one APNs or FCM refuses for the
-  device itself (`BadDeviceToken`, `Unregistered`, `UNREGISTERED`) is handled as today (the device dropped, the page
-  retried). A device with only a relay handle (RFC 0015) always goes through the relay: its raw token is the relay's.
-- **Tests.** The notifier's suite runs every page case with the direct route on a fake APNs and FCM, and the fallback
-  cases (direct unreachable, refused credentials, wrong topic) reach the fake relay with the same envelope.
+- **Fallback, per device, inside the route.** A direct send settles by itself only when the provider took it or said
+  the device's token is gone (`BadDeviceToken`, `Unregistered`, `410`, FCM's `UNREGISTERED`, or a token FCM marks
+  done): then the device is dropped and the page retried, as today. Anything else (a key APNs refuses, APNs or Google
+  out of reach or slower than `DIRECT_BUDGET_MS`, 6 s, 5xx, 429, a body refused, a topic or Firebase project that is
+  not the app's) goes to the relay's `/send` with the same body in the same attempt, and the relay's answer is the
+  route's; when that fails too, or there is no `/send`, the device's relay handle takes it, as before direct sends.
+  Answers the instance gave itself carry `Brigade-Sent-By: direct`, and on those a `DeviceTokenNotForTopic` never
+  drops a device (a mistyped `APNS_TOPIC` would otherwise drop every phone): with nothing to fall back on it is a
+  failure on the timeline (`apns_refused`). An Android phone on an instance without a Firebase service account goes
+  straight to the relay. A device with only a relay handle (RFC 0015) always goes through the relay. An instance with
+  no relay at all pages directly, with the instance's own retries as its only fallback, as a relay-only instance has
+  today. A send that runs past the budget may still reach the phone and the relay's copy follows it: the page's
+  collapse id (a call's id) makes it replace it rather than stack.
+- **Tests.** `apps/api/test/direct-push.test.ts`: a page reaches APNs from the instance with the envelope the phone
+  opens and never the relay; a refused key, APNs out of reach and a wrong topic page through the relay with the same
+  envelope and drop no phone; APNs that never answers hands over within the budget; a token gone is settled directly;
+  without a relay, a wrong topic keeps the phone and a gone token drops it; a Critical Alert goes direct; Android
+  without the service account, and an instance without all four secrets, page through the relay as before; an
+  instance without a relay retries. Not covered yet: calls and the handle fallback through the direct route. The relay's suites
+  run the same `sendBody`.
+- **Not yet.** The watchdog's beat (RFC 0007 "Watching the watcher") still proves the relay's providers, not the
+  instance's own key; a broken direct key costs nothing (pages fall back) but is only seen in the logs (`direct send
+  failed, paging the device through the relay`). Proving it in the beat comes with turning direct sends on in
+  production (Q33).
 - **Owner action.** The API Worker's secrets cannot be read from the relay's (Worker secrets are write-only), so
-  step 2 needs the owner to set the four secrets on `brigade-api-dev` from their own copy of the files (section
-  "Real-device check"). Until then the route is off and pages go through the relay as today.
+  turning it on needs the owner to set the four secrets (and `FCM_SERVICE_ACCOUNT`) on `brigade-api-dev` from their own
+  copy of the files (section "Real-device check"). Until then the route is off and pages go through the relay as today.
 
 ### The push component, later
 
@@ -404,7 +424,7 @@ What Brigade needs that Ember does not have, each worked around here and propose
 
 1. **Relay on Ember's transport** (built). Proves Ember's provider-token and access-token layer with the
    real credentials on `dev`.
-2. **Direct sends from the API** with the relay as fallback, off until the API has the credentials.
+2. **Direct sends from the API** with the relay as fallback (built), off until the API has the credentials.
 3. **The workspace shard on Ember behind `workspace.engine`**: tables, the Ember-backed `Store`, mutations and
    queries through `brigadeMutation`/`brigadeQuery`, events and pages as scheduler jobs with the page lease, the
    auth hook. Brigade's existing mutation and paging tests run against both engines.

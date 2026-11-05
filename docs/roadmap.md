@@ -623,6 +623,9 @@ the old path removed only at the end. Order and details: RFC 0016 "Order of work
   - Left for later: a Critical Alert on a build whose profile carries the entitlement, and the `BadDeviceToken` /
     `DeviceTokenNotForTopic` rules (item 2 of the check).
 - [ ] Direct sends from the API with the relay as fallback (needs the APNs and FCM secrets on `brigade-api-dev`)
+  - Done: the `direct` route with the relay as the fallback per device (`apps/api/src/direct-push.ts`), off until
+    configured.
+  - Left: the secrets on `brigade-api-dev` (Heitor), the real-device check, the watchdog proving the instance's own key.
 - [ ] The workspace shard on Ember behind `workspace.engine`, with the page lease and the D1 auth hook
 - [ ] Dashboard on Ember's React client
 - [ ] App on Ember's React Native client, picked per instance from `/config`

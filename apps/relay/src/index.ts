@@ -1,19 +1,7 @@
-import type { ApnsEnvironment } from "./apns.ts";
 import { bearerMatches } from "./auth.ts";
 import { readJson } from "./body.ts";
 import { instanceRoutes, type InstanceEnv } from "./instances.ts";
-import {
-  deliver,
-  ENVIRONMENTS,
-  isRecord,
-  json,
-  parsePush,
-  PLATFORMS,
-  providerHealth,
-  type Platform,
-  type ProviderEnv,
-  type Send,
-} from "./send.ts";
+import { json, providerHealth, sendBody, type ProviderEnv, type Send } from "./send.ts";
 import { V1_PATHS, v1Routes, type V1Env } from "./v1.ts";
 
 export { RegistryDO } from "./registry.ts";
@@ -69,28 +57,5 @@ export async function handle(request: Request, env: RelayEnv, send: Send): Promi
     return json({ error: "unauthorized" }, 401, { "WWW-Authenticate": "Bearer" });
   }
 
-  const body = await readJson(request);
-  if (!isRecord(body)) return json({ error: "invalid_body" }, 400);
-  const platform = body.platform ?? "ios";
-  if (
-    typeof body.deviceToken !== "string" ||
-    !PLATFORMS.includes(platform as Platform) ||
-    (body.environment !== undefined && !ENVIRONMENTS.includes(body.environment as ApnsEnvironment))
-  ) {
-    return json({ error: "invalid_body" }, 400);
-  }
-  const push = parsePush(body, platform as Platform);
-  if (push === null) return json({ error: "invalid_body" }, 400);
-  return deliver(
-    {
-      platform: platform as Platform,
-      token: body.deviceToken,
-      ...(body.environment === undefined
-        ? {}
-        : { environment: body.environment as ApnsEnvironment }),
-    },
-    push,
-    env,
-    send,
-  );
+  return sendBody(await readJson(request), env, send);
 }

@@ -45,6 +45,13 @@ import {
   type RelayInstanceEnv,
 } from "./relay-instance.ts";
 import {
+  directConfigured,
+  directPost,
+  directSettles,
+  SENT_BY_HEADER,
+  type DirectPushEnv,
+} from "./direct-push.ts";
+import {
   asksForPage,
   type CallOutcome,
   type DeviceOutcome,
@@ -133,7 +140,8 @@ export type NotifyEnv = EmailEnv &
   SlackNotifyEnv &
   StatusNotifyEnv &
   WebhookNotifyEnv &
-  RelayInstanceEnv & {
+  RelayInstanceEnv &
+  DirectPushEnv & {
     WORKSPACE: Env["WORKSPACE"];
     /** The status pages' snapshots and custom hostname lookups (src/status-domain.ts `syncStatusHost`). */
     STATUS?: Env["STATUS"];
@@ -809,6 +817,7 @@ type RelayAnswer = { error?: string; status?: number; reason?: string; tokenInva
 function refusal(
   httpStatus: number,
   answer: RelayAnswer,
+  direct = false,
 ): { error: DeliveryError; apnsReason?: string; gone: boolean; permanent: boolean } {
   // The push service's own reason, for the delivery row: letters only as APNs sends them, or FCM's codes
   // (`QUOTA_EXCEEDED`).
@@ -817,11 +826,15 @@ function refusal(
       ? answer.reason
       : undefined;
   const reason = apnsReason === undefined ? {} : { apnsReason };
+  // From this instance's own direct send only what `directSettles` takes says the token is gone: a topic APNs refuses
+  // there is this instance's `APNS_TOPIC`, and dropping on it would drop every phone (RFC 0016 step 2).
+  const goneHere = !direct || directSettles(httpStatus, answer);
   if (
-    answer.status === 410 ||
-    TOKEN_GONE.includes(answer.reason as string) ||
-    // A token of another Firebase project is the relay's service account, not a dead phone: never dropped.
-    (answer.tokenInvalid === true && answer.reason !== "SENDER_ID_MISMATCH")
+    goneHere &&
+    (answer.status === 410 ||
+      TOKEN_GONE.includes(answer.reason as string) ||
+      // A token of another Firebase project is the relay's service account, not a dead phone: never dropped.
+      (answer.tokenInvalid === true && answer.reason !== "SENDER_ID_MISMATCH"))
   ) {
     return { error: "token_invalid", ...reason, gone: true, permanent: true };
   }
@@ -854,14 +867,17 @@ function refusal(
 type Sent = { outcome: DeviceOutcome; retry: boolean; retryAfter?: number };
 
 /**
- * One way to the relay: `token` is `POST /send` with the send token and a device's raw tokens (RFC 0006), `handle`
- * is `POST /v1/send` with a device's relay handle, signed with the instance key (RFC 0015). `post` takes the JSON body.
+ * One way to the phone: `token` is the relay's `POST /send` with the send token and a device's raw tokens (RFC 0006),
+ * `handle` is `POST /v1/send` with a device's relay handle, signed with the instance key (RFC 0015), and `direct` is
+ * this instance sending a device's raw tokens itself with the app's own credentials, falling back to `token` (RFC
+ * 0016 step 2, src/direct-push.ts). `post` takes the JSON body (`/send`'s for `token` and `direct`) and answers as the
+ * relay does.
  */
 type RelayRoute = {
-  kind: "token" | "handle";
+  kind: "token" | "handle" | "direct";
   post: (body: Record<string, unknown>) => Promise<Response>;
 };
-type RelayRoutes = { token?: RelayRoute; handle?: RelayRoute };
+type RelayRoutes = { token?: RelayRoute; handle?: RelayRoute; direct?: RelayRoute };
 
 /**
  * The ways to the relay this instance has: `/send` with `RELAY_SEND_TOKEN`, `/v1/send` with `RELAY_INSTANCE_KEY`,
@@ -870,21 +886,23 @@ type RelayRoutes = { token?: RelayRoute; handle?: RelayRoute };
 async function relayRoutes(env: NotifyEnv, send: Fetch): Promise<RelayRoutes> {
   const post = relayPost(env, send);
   const key = relayReachable(env) ? await instanceKey(env) : undefined;
+  const token: RelayRoute | undefined = post && {
+    kind: "token",
+    post: (body) =>
+      post({
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.RELAY_SEND_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
+      }),
+  };
   return {
-    ...(post && {
-      token: {
-        kind: "token",
-        post: (body) =>
-          post({
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${env.RELAY_SEND_TOKEN}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(body),
-            signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
-          }),
-      },
+    ...(token && { token }),
+    ...(directConfigured(env) && {
+      direct: { kind: "direct", post: directPost(env, send, token?.post, log) },
     }),
     ...(key && {
       handle: {
@@ -910,12 +928,23 @@ export const PUSH_TTL_SECONDS: Record<Urgency, number> = { page: 15 * 60, high: 
 export const CALL_TTL_SECONDS = 60;
 
 /** The relay's answer to one send, read once: whether it took it, and if not what it said. */
-type RelayResult = { ok: boolean; status: number; answer: RelayAnswer; retryAfter?: number };
+/**
+ * The relay's answer to one send, read once. `direct`: this instance sent it itself (the direct route without its
+ * fallback, src/direct-push.ts), so a refusal naming the topic is this instance's configuration, not the phone.
+ */
+type RelayResult = {
+  ok: boolean;
+  status: number;
+  answer: RelayAnswer;
+  retryAfter?: number;
+  direct?: true;
+};
 
 async function settle(response: Response): Promise<RelayResult> {
+  const direct = response.headers.get(SENT_BY_HEADER) === "direct" ? { direct: true as const } : {};
   if (response.ok) {
     await response.body?.cancel();
-    return { ok: true, status: response.status, answer: {} };
+    return { ok: true, status: response.status, answer: {}, ...direct };
   }
   const answer = (await response.json().catch(() => ({}))) as RelayAnswer;
   const header = Number(response.headers.get("Retry-After"));
@@ -924,6 +953,7 @@ async function settle(response: Response): Promise<RelayResult> {
     status: response.status,
     answer: typeof answer === "object" && answer !== null ? answer : {},
     ...(Number.isFinite(header) && header > 0 ? { retryAfter: Math.ceil(header) } : {}),
+    ...direct,
   };
 }
 
@@ -1007,7 +1037,10 @@ async function pushOne(
   let ms: number | undefined;
   const viaHandle = target.handle !== undefined ? routes.handle : undefined;
   const viaToken = target.pushToken !== null ? routes.token : undefined;
-  let route = viaHandle ?? viaToken;
+  // This instance's own credentials first when it has them and the device's raw token (RFC 0016 step 2): the relay is
+  // then the fallback, inside the route.
+  const viaDirect = target.pushToken !== null ? routes.direct : undefined;
+  let route = viaDirect ?? viaHandle ?? viaToken;
   // Set when `/v1/send` said the handle is not this instance's and the page went on through `/send`.
   let notYours: HandleExpiry = {};
   const failed = (
@@ -1147,6 +1180,18 @@ async function pushOne(
       route = viaToken;
       result = await attempt(route);
     }
+    if (
+      route.kind === "direct" &&
+      !result.ok &&
+      viaHandle &&
+      !directSettles(result.status, result.answer)
+    ) {
+      // A direct send that failed on this instance's side, and the relay's `/send` behind it too (or there is none):
+      // the device's relay handle takes it, as it did before direct sends.
+      log("direct send failed, paging the device through its relay handle", { device: deviceId });
+      route = viaHandle;
+      result = await attempt(route);
+    }
   } catch (error) {
     ms = Date.now() - started;
     // The relay is down or slow: the paging path's first fallback is trying again.
@@ -1179,6 +1224,7 @@ async function pushOne(
   log("relay refused a push", {
     device: deviceId,
     route: route.kind,
+    sentBy: result.direct ? "direct" : "relay",
     status: result.status,
     error: answer.error,
     apnsStatus: answer.status,
@@ -1208,7 +1254,7 @@ async function pushOne(
       ...(result.retryAfter === undefined ? {} : { retryAfter: result.retryAfter }),
     });
   }
-  const { error, apnsReason, gone, permanent } = refusal(result.status, answer);
+  const { error, apnsReason, gone, permanent } = refusal(result.status, answer, result.direct);
   // APNs says the token is gone: drop the device, and retry the page while attempts remain, so the next plan sees
   // this member without that device (a commander's page then falls back to everyone who can respond).
   if (gone) {
@@ -1282,7 +1328,7 @@ async function ringOne(
       apnsStatus: answer.status,
       reason: answer.reason,
     });
-    const { error, apnsReason, gone } = refusal(result.status, answer);
+    const { error, apnsReason, gone } = refusal(result.status, answer, result.direct);
     return {
       ok: false,
       error,

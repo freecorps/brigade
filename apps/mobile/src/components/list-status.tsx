@@ -1,10 +1,10 @@
 import { RNHostView } from "@expo/ui";
 import type { SyncView } from "@freecorps/brigade-sync";
 import { fontWeight, spacing } from "@freecorps/brigade-ui";
-import { SymbolView } from "expo-symbols";
+import { SizedSymbol } from "@/components/sized-symbol";
 import { Text, View } from "react-native";
 import { useConnection } from "@/components/incident-parts";
-import { useGlyphSize } from "@/components/badge";
+import { useGlyphSize } from "@/hooks/use-glyph-size";
 import { useSystemColors } from "@/theme/system-colors";
 
 /**
@@ -26,7 +26,7 @@ export function ListStatus({ view, summary }: { view: SyncView; summary: string 
         style={{ flexDirection: "row", alignItems: "center", gap: spacing[2] }}
       >
         {glyph ? (
-          <SymbolView name={glyph} tintColor={color} size={glyphSize} />
+          <SizedSymbol name={glyph} tintColor={color} size={glyphSize} />
         ) : (
           <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />
         )}

@@ -4,10 +4,10 @@ import { m } from "@freecorps/brigade-i18n";
 import { useQuery } from "@freecorps/brigade-sync/react";
 import { fontSize, fontWeight, radius, spacing } from "@freecorps/brigade-ui";
 import { Link } from "expo-router";
-import { SymbolView } from "expo-symbols";
+import { SizedSymbol } from "@/components/sized-symbol";
 import { useMemo } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
-import { useGlyphSize } from "@/components/badge";
+import { useGlyphSize } from "@/hooks/use-glyph-size";
 import type { Glyph } from "@/components/glyphs";
 import { useNow } from "@/components/incident-parts";
 import { useMember } from "@/components/session";
@@ -93,7 +93,7 @@ export function OnCallStatus() {
               opacity: pressed ? 0.7 : 1,
             }}
           >
-            <SymbolView name={on ? ON_CALL_GLYPH : OFF_CALL_GLYPH} tintColor={tint} size={glyph} />
+            <SizedSymbol name={on ? ON_CALL_GLYPH : OFF_CALL_GLYPH} tintColor={tint} size={glyph} />
             <View style={{ flex: 1, gap: spacing[0.5] }}>
               <ThemedText
                 variant={on ? "body" : "caption"}
@@ -121,7 +121,7 @@ export function OnCallStatus() {
                 </ThemedText>
               ) : null}
             </View>
-            <SymbolView name={OPEN_GLYPH} tintColor={tint} size={glyph} />
+            <SizedSymbol name={OPEN_GLYPH} tintColor={tint} size={glyph} />
           </View>
         )}
       </Pressable>

@@ -100,8 +100,9 @@ export function IncidentItem({
       {/* Not numbered until the shard has it: a glyph and a short word, never wrapped. Below md the badges keep at
           least 128px beside it (the grid's second column), so only an absurdly long number breaks, inside its cell. */}
       <div className="whitespace-nowrap max-md:row-start-1 max-md:[overflow-wrap:anywhere] max-md:whitespace-normal md:row-span-2">
+        {/* At least "INC-24" wide below md, so the badges beside it line up down the list. */}
         {number ? (
-          <span className="font-mono text-[0.8125rem] leading-5 text-muted-foreground">
+          <span className="font-mono text-[0.8125rem] leading-5 text-muted-foreground max-md:inline-block max-md:min-w-[6ch]">
             {number}
           </span>
         ) : (

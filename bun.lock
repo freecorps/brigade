@@ -92,6 +92,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@freecorps/brigade-push": "workspace:*",
+        "@freecorps/ember-push": "0.2.0",
       },
       "devDependencies": {
         "@cloudflare/vite-plugin": "^1.65.0",
@@ -714,6 +715,12 @@
     "@freecorps/brigade-ui": ["@freecorps/brigade-ui@workspace:packages/ui"],
 
     "@freecorps/brigade-web": ["@freecorps/brigade-web@workspace:apps/web"],
+
+    "@freecorps/ember-push": ["@freecorps/ember-push@0.2.0", "", { "dependencies": { "@freecorps/ember-server": "0.2.0", "@freecorps/ember-values": "0.2.0" } }, "sha512-OOr34dmXYpJqC5nQcyW8LMq8KtV/qgWx89TFndXeWn8s05hzEVt9+S+/YPM8GixnlBfCBwL/fGe1cAGWxaEs7w=="],
+
+    "@freecorps/ember-server": ["@freecorps/ember-server@0.2.0", "", { "dependencies": { "@freecorps/ember-values": "0.2.0" } }, "sha512-OOkxnH+gUIV3kRwLHu6O4jR42e1zy42yjkc/4k8jm+jRdW79bpiNNYhWL4aGiubuAjZjVCGVQCrHwMQdWcyjzg=="],
+
+    "@freecorps/ember-values": ["@freecorps/ember-values@0.2.0", "", {}, "sha512-md38krXyW3LOUJFH0xX/fKlobutSpIPWGczK7ND7RLq5pfzw3ujqcSqyN/XoblkzeTl3JPOrXKd+dR13XHOsSQ=="],
 
     "@hono/node-server": ["@hono/node-server@2.1.5", "", { "peerDependencies": { "hono": "^4 || ^5.0.0-0" } }, "sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q=="],
 

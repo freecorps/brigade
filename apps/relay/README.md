@@ -41,13 +41,25 @@ topic `<topic>.voip` (the topic is `RELAY_APNS_TOPIC`, else `APNS_TOPIC`), `apns
 call, so the relay refuses anything the app could not ring for. The App ID needs the VoIP Services capability; the
 same `.p8` token key signs for the `.voip` topic.
 
+## Provider and access tokens
+
+The APNs provider token and Google's access token come from Ember's push transport (`@freecorps/ember-push`,
+`src/provider-tokens.ts`; RFC 0016 "Push"): an APNs token is reused for 40 minutes per isolate and key, an access
+token until 5 minutes before it expires, each shared by concurrent sends. The relay's payloads, envelopes and answers
+are its own and unchanged. **Fallback:** the relay's own signers stay. When APNs refuses a token Ember signed as
+invalid (`InvalidProviderToken`), when Ember cannot sign with the key, or when Google refuses Ember's assertion, the
+send is tried again at once with the relay's own; if it can sign, the isolate keeps to it for at least an hour and
+until its APNs token is due anyway (never two token updates within APNs' 20 minutes). The log says so (`Ember's push
+transport was refused`), and every `APNs response` line names its `signer`. The deep health check asks Google with a
+cache of its own.
+
 ## Android (FCM)
 
 `platform: "android"` sends through FCM's HTTP v1 API (`src/fcm.ts`) as a data message only: `data` is `{ v, enc, ct,
 kind, urgency, callId?, tag? }` (`tag` is `collapseId`, the app's notification tag), `android.priority` is `HIGH`
 (`NORMAL` for `low`) and `android.ttl` the same `ttlSeconds` defaults as APNs. The relay signs an RS256 JWT with the
 service account's key and exchanges it at Google's token endpoint for an access token, kept until 5 minutes before it
-expires (and fetched again if FCM answers 401). Answers: `200 { status, fcmId, ms }`; `502 { status, reason,
+expires (and fetched again if FCM answers 401; above). Answers: `200 { status, fcmId, ms }`; `502 { status, reason,
 tokenInvalid? }` with FCM's error code (`UNREGISTERED`, `QUOTA_EXCEEDED`, `UNAVAILABLE`, …), `tokenInvalid: true`
 when the token is gone (the instance drops the device; never for `SENDER_ID_MISMATCH`, which is logged as an error:
 `FCM_SERVICE_ACCOUNT` is not the app's Firebase project); `502 {"error":"fcm_unreachable"}` when FCM or the token

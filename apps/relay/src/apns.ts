@@ -196,6 +196,11 @@ export class ApnsTokenCache {
   clear(): void {
     this.#token = undefined;
   }
+
+  /** When the cached token was signed, if there is one (src/provider-tokens.ts: when to hand back to Ember's). */
+  issuedAt(): number | undefined {
+    return this.#token?.issuedAt;
+  }
 }
 
 /** A PKCS #8 PEM's DER bytes (the APNs `.p8` key, a Google service account's key). */

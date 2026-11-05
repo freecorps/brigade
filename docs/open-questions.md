@@ -121,6 +121,23 @@ The Custom Domain is attached to `brigade-relay`, and the contact code is sent f
 
 - **The final terms,** reviewed by counsel, published in place of the template (D5).
 
+## Q32 — Whether auth moves to Ember's `Auth` object (RFC 0016 "Auth")
+
+Owner: Heitor. Decided for the migration: Better Auth stays on D1 and Ember's `ctx.auth` trusts a short-lived token
+minted from the D1 session. Open: whether to move users and sessions to Ember's `Auth` Durable Object once the engine
+has moved. For: one auth stack maintained in Ember, sign-in served next to the shards. Against: every custom rule in
+RFC 0002 "Auth" re-tested on a new store, a live session migration (or every phone signed out, and with it its
+pages), and D1's `member` table is needed anyway for cross-workspace reads. Proposal: decide after step 8 of RFC 0016,
+with a spike that migrates sessions on `dev` without signing anyone out.
+
+## Q33 — Whether the hosted instance stops going through the relay (RFC 0016 "Push")
+
+Owner: Heitor. Once the API sends directly with Ember's transport (RFC 0016 step 2), Freecorps' own instance no
+longer needs its relay hop, but the relay stays for every instance using the store app (RFC 0015). Keep the hosted
+instance on the relay too, so the relay always carries real traffic and its failures show first on our own pages, or
+send directly and keep the relay only as the fallback? Proposal: direct first, relay as the per-device fallback, and
+the watchdog's deep check (RFC 0007) keeps proving the relay every minute either way.
+
 # Decided
 
 | #   | Question                       | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |

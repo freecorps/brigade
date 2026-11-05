@@ -211,7 +211,7 @@ Object is possible later (Ember runs Better Auth too) but not part of this migra
 clients get it from `/auth/token` and send it in Ember's `hello`; the Ember hook verifies it against the instance's
 JWKS (Ember's `remoteAuth({ from })` shape) and its `sensitive` mutations (removing a member, changing a role,
 acknowledging from a notification) check the session in D1. A revoked session closes the socket with
-`authExpired` (RFC 0004 "Session revocation", now Ember's). Revisit (Q32) once the migration is done.
+`authExpired` (RFC 0004 "Session revocation", now Ember's). Revisit (Q33) once the migration is done.
 
 ## Monitoring, crons and the edges
 
@@ -323,5 +323,5 @@ What Brigade needs that Ember does not have, each worked around here and propose
 8. **Removal** of `WorkspaceDO`'s engine, `packages/sync`'s protocol and server parts and the Queue consumer's page path,
    once every workspace of an environment has run on Ember for the keep window.
 
-Open questions: Q32 (when, if ever, auth moves to Ember's `Auth`), Q33 (whether the hosted instance stops using the
+Open questions: Q33 (when, if ever, auth moves to Ember's `Auth`), Q34 (whether the hosted instance stops using the
 relay once direct sends are proven).

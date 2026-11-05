@@ -121,7 +121,7 @@ The Custom Domain is attached to `brigade-relay`, and the contact code is sent f
 
 - **The final terms,** reviewed by counsel, published in place of the template (D5).
 
-## Q32 — Whether auth moves to Ember's `Auth` object (RFC 0016 "Auth")
+## Q33 — Whether auth moves to Ember's `Auth` object (RFC 0016 "Auth")
 
 Owner: Heitor. Decided for the migration: Better Auth stays on D1 and Ember's `ctx.auth` trusts a short-lived token
 minted from the D1 session. Open: whether to move users and sessions to Ember's `Auth` Durable Object once the engine
@@ -130,7 +130,7 @@ RFC 0002 "Auth" re-tested on a new store, a live session migration (or every pho
 pages), and D1's `member` table is needed anyway for cross-workspace reads. Proposal: decide after step 8 of RFC 0016,
 with a spike that migrates sessions on `dev` without signing anyone out.
 
-## Q33 — Whether the hosted instance stops going through the relay (RFC 0016 "Push")
+## Q34 — Whether the hosted instance stops going through the relay (RFC 0016 "Push")
 
 Owner: Heitor. Once the API sends directly with Ember's transport (RFC 0016 step 2), Freecorps' own instance no
 longer needs its relay hop, but the relay stays for every instance using the store app (RFC 0015). Keep the hosted

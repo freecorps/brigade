@@ -147,7 +147,7 @@ names), and taken for a device with a raw token; Android goes direct only with `
 - **Not yet.** The watchdog's beat (RFC 0007 "Watching the watcher") still proves the relay's providers, not the
   instance's own key; a broken direct key costs nothing (pages fall back) but is only seen in the logs (`direct send
   failed, paging the device through the relay`). Proving it in the beat comes with turning direct sends on in
-  production (Q33).
+  production (Q34).
 - **Owner action.** The API Worker's secrets cannot be read from the relay's (Worker secrets are write-only), so
   turning it on needs the owner to set the four secrets (and `FCM_SERVICE_ACCOUNT`) on `brigade-api-dev` from their own
   copy of the files (section "Real-device check"). Until then the route is off and pages go through the relay as today.

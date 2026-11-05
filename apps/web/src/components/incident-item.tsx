@@ -73,7 +73,8 @@ export function IncidentItem({
   const declared = formatAge(Math.min(row.declaredAt, now), now, locale);
   const PendingIcon = online ? CloudUploadIcon : ClockIcon;
   // The arrival cue plays once: off when its highlight ends, so a re-sort or an unfold (which re-insert the row)
-  // never plays it again. Under reduced motion nothing plays, and nothing needs turning off.
+  // never plays it again. Under reduced motion the highlight never plays, so the class stays on, inert: its animation
+  // lives inside the no-preference media query.
   const [cue, setCue] = useState(arrived);
   const onAnimationEnd = (event: AnimationEvent<HTMLLIElement>) => {
     // React bubbles the menus' own animations up from their portals: only the row's highlight counts.
@@ -93,7 +94,7 @@ export function IncidentItem({
         INCIDENT_COLUMNS,
         "md:items-start",
         cue && "enter arrive",
-        folded && "max-sm:hidden",
+        folded && "max-md:hidden",
       )}
     >
       {/* Not numbered until the shard has it: a glyph and a short word, never wrapped. Below md the badges keep at
@@ -216,8 +217,9 @@ export function SeverityMenu({
   pending: boolean;
   disabled?: boolean;
   /**
-   * In a list row: below `md` the trigger shows the code alone (SeverityBadge `compact`) and no chevron, so both
-   * menus fit beside the number; its menu stays in full, and the badge still reads as a control by its fill.
+   * In a list row: below `md` the trigger shows the code alone (SeverityBadge `compact`), so both menus fit beside
+   * the number; its menu stays in full. The chevron that marks it as a menu goes only below 375px, where it would
+   * push the status onto a second line.
    */
   compact?: boolean;
   onChange: (next: Severity) => void;
@@ -249,12 +251,12 @@ export function SeverityMenu({
         <span className={cn("inline-flex", pending && UNSAVED)}>
           <SeverityBadge severity={severity} compact={compact} />
         </span>
-        {/* Below 375px a smaller chevron and tighter spacing, so both menus usually fit one line at 320px. */}
+        {/* Below 375px a smaller chevron and tighter spacing (a compact row drops it there), so both menus fit one line. */}
         <ChevronDownIcon
           aria-hidden
           className={cn(
             "size-4 text-muted-foreground max-[374px]:size-3",
-            compact && "max-md:hidden",
+            compact && "max-[374px]:hidden",
           )}
         />
       </DropdownMenuTrigger>
@@ -297,7 +299,7 @@ export function StatusMenu({
   /** `data-status-trigger`, which the list's focus keeping looks for. */
   trigger?: string;
   disabled?: boolean;
-  /** In a list row: no chevron below `md`, as SeverityMenu's `compact`. */
+  /** In a list row: no chevron below 375px, as SeverityMenu's `compact`. */
   compact?: boolean;
   onChange: (next: IncidentStatus) => void;
 }) {
@@ -332,7 +334,7 @@ export function StatusMenu({
           aria-hidden
           className={cn(
             "size-4 text-muted-foreground max-[374px]:size-3",
-            compact && "max-md:hidden",
+            compact && "max-[374px]:hidden",
           )}
         />
       </DropdownMenuTrigger>

@@ -430,14 +430,14 @@ test("phones: SEV3 and SEV4 fold behind a 44px toggle that says how many, and un
   expect(titles()[0]).toBe("Checkout down");
   expect(folded()).toHaveLength(3);
   // Hidden by CSS below sm only: the rows stay in the DOM, so wider screens are untouched.
-  for (const li of $$("li[data-folded]")) expect(li.classList.contains("max-sm:hidden")).toBe(true);
-  expect(row("Checkout down")!.classList.contains("max-sm:hidden")).toBe(false);
+  for (const li of $$("li[data-folded]")) expect(li.classList.contains("max-md:hidden")).toBe(true);
+  expect(row("Checkout down")!.classList.contains("max-md:hidden")).toBe(false);
   const toggle = foldToggle()!;
   expect(toggle.textContent).toBe("Show 3 lower-severity incidents");
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
   expect(toggle.getAttribute("aria-controls")).toBe($("ul[aria-labelledby='incidents-title']")!.id);
   expect(toggle.className).toContain("min-h-11");
-  expect(toggle.parentElement!.classList.contains("sm:hidden")).toBe(true);
+  expect(toggle.parentElement!.classList.contains("md:hidden")).toBe(true);
 
   await click(toggle);
   expect(folded()).toEqual([]);
@@ -448,11 +448,11 @@ test("phones: SEV3 and SEV4 fold behind a 44px toggle that says how many, and un
 
   // Counted in the reader's language, with its plural.
   await act(async () => switchLocale!("pt-BR"));
-  expect(foldToggle()!.textContent).toBe("Mostrar 3 incidentes de severidade menor");
+  expect(foldToggle()!.textContent).toBe("Mostrar 3 incidentes de menor severidade");
   view.shard.write(ops, "incident.setStatus", { id: lowA, status: "resolved" });
   view.shard.write(ops, "incident.setStatus", { id: lowB, status: "resolved" });
   await view.flush();
-  expect(foldToggle()!.textContent).toBe("Mostrar 1 incidente de severidade menor");
+  expect(foldToggle()!.textContent).toBe("Mostrar 1 incidente de menor severidade");
 });
 
 test("phones: with no SEV1 or SEV2 every row shows and there is no toggle", async () => {
@@ -514,10 +514,10 @@ test("below md a row's badges share the number's line: the severity's name is re
   expect($$("span", severity).find((s) => s.textContent === "Critical")!.className).toBe(
     "max-md:sr-only",
   );
-  // No chevrons below md, so both menus fit beside the number; from md they are back.
+  // The chevrons go only below 375px, so both menus fit beside the number at 320px; from 375px they mark the menus.
   for (const trigger of [severity!, status!]) {
     expect(
-      trigger.querySelector("svg.lucide-chevron-down")!.classList.contains("max-md:hidden"),
+      trigger.querySelector("svg.lucide-chevron-down")!.classList.contains("max-[374px]:hidden"),
     ).toBe(true);
   }
   // The menus sit on the number's line, the title under them, the time last; md keeps its columns.

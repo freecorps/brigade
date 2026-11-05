@@ -416,10 +416,10 @@ export function IncidentsCard() {
                 />
               ))}
             </ul>
-            {/* Phones only: from sm every row shows and there is nothing to toggle. A full-width 44px row, under
+            {/* Phones only (below md, where rows go compact): from md every row shows and there is nothing to toggle. A full-width 44px row, under
                 the list because the folded rows are its tail. */}
             {fold.toggle ? (
-              <div className="border-t px-2 py-1 sm:hidden">
+              <div className="border-t px-2 py-1 md:hidden">
                 <Button
                   ref={toggleRef}
                   variant="ghost"

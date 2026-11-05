@@ -23,8 +23,8 @@ export const incidents_show_lower = /** @type {((inputs: Incidents_Show_LowerInp
 	if (locale === "pt-BR") {
 		const countPlural = registry.plural("pt-BR", i?.count, {}, true);
 		const countFormatted = registry.number("pt-BR", i?.count, {}, true);
-		if (countPlural === "one") return /** @type {LocalizedString} */ (`Mostrar ${countFormatted} incidente de severidade menor`);
-		return /** @type {LocalizedString} */ (`Mostrar ${countFormatted} incidentes de severidade menor`)
+		if (countPlural === "one") return /** @type {LocalizedString} */ (`Mostrar ${countFormatted} incidente de menor severidade`);
+		return /** @type {LocalizedString} */ (`Mostrar ${countFormatted} incidentes de menor severidade`)
 	}
 	{
 		const countPlural = registry.plural("en", i?.count, {}, true);

@@ -19,6 +19,6 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 export const incidents_hide_lower = /** @type {((inputs?: Incidents_Hide_LowerInputs, options?: { locale?: "en" | "pt-BR" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Incidents_Hide_LowerInputs, { locale?: "en" | "pt-BR" }, {}>} */ ((inputs = {}, options = {}) => {
 	void inputs;
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
-	if (locale === "pt-BR") return /** @type {LocalizedString} */ ("Ocultar incidentes de severidade menor")
+	if (locale === "pt-BR") return /** @type {LocalizedString} */ ("Ocultar incidentes de menor severidade")
 	return /** @type {LocalizedString} */ ("Hide lower-severity incidents")
 });

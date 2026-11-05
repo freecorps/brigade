@@ -270,12 +270,12 @@
       ],
       "selectors": ["countPlural"],
       "match": {
-        "countPlural=one": "Mostrar {countFormatted} incidente de severidade menor",
-        "countPlural=*": "Mostrar {countFormatted} incidentes de severidade menor"
+        "countPlural=one": "Mostrar {countFormatted} incidente de menor severidade",
+        "countPlural=*": "Mostrar {countFormatted} incidentes de menor severidade"
       }
     }
   ],
-  "incidents_hide_lower": "Ocultar incidentes de severidade menor",
+  "incidents_hide_lower": "Ocultar incidentes de menor severidade",
   "declare_open": "Declarar incidente",
   "declare_title_invalid": "O título precisa de texto visível: só caracteres invisíveis não contam.",
   "sync_refused": "Não carregado",

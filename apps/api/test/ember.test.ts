@@ -533,3 +533,43 @@ describe("member writes without the Durable Object's lock", () => {
     ).toBe(true);
   });
 });
+
+describe("events from an Ember workspace", () => {
+  test("go to the events Queue after the mutation, and leave the shard's events table", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const minted = await api(`/ember-token/${workspaceId}`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    const { token, shard } = (await minted.json()) as { token: string; shard: string };
+    const id = newId("inc", Date.now(), (n) => crypto.getRandomValues(new Uint8Array(n)));
+    const declared = await api("/ember/api/mutation", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        fn: "workspace:mutate",
+        shard,
+        args: { name: "incident.declare", args: { id, title: "Checkout is down" } },
+      }),
+    });
+    expect(await declared.json()).toMatchObject({ ok: true, value: { ok: true } });
+    const stub = env.SHARD.getByName(shard) as unknown as {
+      query(
+        s: string,
+        fn: string,
+        args: unknown,
+        identity: null,
+        internal: boolean,
+      ): Promise<Outcome>;
+    };
+    // The drain runs in the shard (no actions Queue is bound), from its alarm right after the commit.
+    let left: unknown = "pending";
+    for (let i = 0; i < 50 && left !== null; i++) {
+      left = (await stub.query(shard, "events:pending", {}, null, true)).value;
+      if (left !== null) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(left).toBeNull();
+  });
+});

@@ -35,6 +35,7 @@ import {
   type Store,
 } from "@freecorps/brigade-schema";
 import type { BrigadeEvent } from "../src/outbox.ts";
+import { nextSeq, scheduleDrain } from "./events.ts";
 import { BRIGADE_TABLES } from "./schema.ts";
 
 const TABLE_SET: ReadonlySet<string> = new Set(BRIGADE_TABLES);
@@ -145,6 +146,7 @@ export function run(
   // Event rows are written straight to `ctx.db`, outside the store's undo log: if writing them fails, the mutation
   // must not commit its rows' rollback next to the events already written, so the whole Ember mutation fails instead.
   let committing = false;
+  const seq: { seq?: number } = {};
   const outcome = runMutation(
     registry,
     name,
@@ -171,6 +173,7 @@ export function run(
           };
           (ctx.db as never as EventsWriter).insert("events", {
             id: envelope.id,
+            seq: nextSeq(ctx.db, seq),
             type: envelope.type,
             at: ctx.now,
             event: JSON.stringify(envelope),
@@ -186,11 +189,16 @@ export function run(
   if (committing && !outcome.ok) {
     throw new Error(`${String(name)}: its events could not be written`, { cause: outcome.error });
   }
+  // The events go out after this transaction commits (ember/events.ts).
+  if (seq.seq !== undefined) scheduleDrain(ctx);
   return outcome.ok ? { ok: true } : { ok: false, error: outcome.error };
 }
 
 type EventsWriter = {
-  insert(table: "events", value: { id: string; type: string; at: number; event: string }): string;
+  insert(
+    table: "events",
+    value: { id: string; seq: number; type: string; at: number; event: string },
+  ): string;
 };
 
 /** A client's mutation (`mutations`), as the caller's identity. */

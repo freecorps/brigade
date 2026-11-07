@@ -4,6 +4,7 @@ import { newId, type Actor } from "@freecorps/brigade-schema";
 import { describe, expect, test } from "vite-plus/test";
 import schema from "../schema.ts";
 import * as sessions from "../sessions.ts";
+import * as events from "../events.ts";
 import * as workspace from "../workspace.ts";
 
 const T = Date.UTC(2026, 10, 7, 12, 0, 0);
@@ -26,7 +27,7 @@ function shard(members: { id: string; name: string }[] = [{ id: ANA, name: "Ana"
   const engine = createEngine({
     schema,
     driver: createNodeSqliteDriver(),
-    functions: { workspace, sessions, test: { rows } },
+    functions: { workspace, events, sessions, test: { rows } },
     now: () => clock,
   });
   engine.migrate();

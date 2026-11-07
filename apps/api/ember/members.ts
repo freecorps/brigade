@@ -302,6 +302,7 @@ async function repairOnce(
             args: { id: input.targetId, role: before.copy?.role ?? null, reason: "reconciled" },
           }),
     })) as ApplyResult;
+    if (!out.ok && out.error.code === "stale") return STALE_RETRY_MS;
     if (!out.ok && out.error.code !== "conflict")
       throw new Error(`member repair: ${out.error.code}`);
     return null;

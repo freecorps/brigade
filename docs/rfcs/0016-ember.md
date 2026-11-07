@@ -82,7 +82,7 @@ Brigade's own payload builders. The envelope, the payloads, the phones and the N
 on a phone receives and decrypts a page sent this way. The higher layers become usable once Ember takes an app-owned
 payload (gap G1); until then the component is not on the paging path.
 
-### Step 1: the relay sends through Ember's transport
+### Step 1: the relay sends through Ember's transport (built)
 
 `apps/relay` gets its APNs provider token from `apnsProviderToken` and its FCM access tokens from `fcmAccessToken`
 (`retries: 0`, the relay's own `fetch` and its 4 s exchange deadline), in place of its `ApnsTokenCache` and
@@ -100,15 +100,18 @@ transport with the real `.p8` and service account, which is Ember's R12 (section
   fcm_unreachable`, retried by the instance, as before. A 401 from FCM fetches a new token unless another send already
   did, and sends once more within the call's 9 s.
 - **Fallback (paging path).** The relay's own signers stay. When APNs refuses a token Ember signed as
-  `InvalidProviderToken`, when Ember cannot import the key, or when Google refuses Ember's assertion, the isolate
-  switches to the relay's own signer for an hour and the same send (or deep health check) goes again at once with it.
-  The switch is sticky so the two signers never alternate on one key (APNs answers that with
-  `TooManyProviderTokenUpdates`); a key that is simply wrong fails both and answers as before. Logged as
-  `Ember's push transport was refused`, and every `APNs response` line names its `signer`. Removed in step 8, once
-  Ember's tokens have run in production.
+  `InvalidProviderToken`, when Ember cannot import the key, or when Google refuses Ember's assertion (or Ember's
+  exchange fails in any way but Google being out of reach), the same send (not the deep health check, which keeps a
+  cache of its own for Google) goes again at once with the relay's own signer. If that one can sign, the isolate keeps
+  to it for at least an hour, and goes back to Ember's only once the relay's APNs token is due for renewal anyway, so
+  the two signers never make two token updates on one key within APNs' 20 minutes (`TooManyProviderTokenUpdates`). If
+  the relay's own signer cannot read the key either, or APNs refuses its token too, nothing switches and the answer
+  is as before. Logged as `Ember's push transport was refused`, and every `APNs response` line names its `signer`.
+  Removed in step 8, once Ember's tokens have run in production.
 - **Tests.** The relay's suites (fake APNs, fake Google token endpoint and FCM) run unchanged against Ember's code;
-  `apps/relay/test/provider-tokens.test.ts` checks the tokens (verifiable with the keys, reused), the fallback and its
-  stickiness, the expired-token rule and the deep health check's fallback.
+  `apps/relay/test/provider-tokens.test.ts` checks the tokens (verifiable with the keys, reused, one signing for
+  concurrent sends), the fallback, its stickiness and the way back, a key only Ember can read, both signers refused,
+  the expired-token rule, a refused access token never reused, and the deep health check's fallback.
 
 ### Step 2: the instance sends directly, the relay as fallback
 
@@ -343,6 +346,22 @@ What proves Ember's push on real hardware, with what the steps above built:
 3. **Direct (step 2).** With the four secrets set on `brigade-api-dev`, the same page goes out without the relay
    (the API's log says `direct`), and with `APNS_KEY_ID` set wrong it still arrives (the relay fallback).
 
+**Result, step 1 (2026-11-06).** `dev` running this step, release builds of the app pointed at it, a workspace with
+one declaring member and three paged ones:
+
+- **iPhone 15 Pro Max (iOS 27.2), locked:** a SEV1 rang through CallKit and its alert showed the incident's title (the
+  extension opened the envelope); answering acknowledged the incident. A SEV2 with the app closed arrived as an alert
+  only, and opened the incident when tapped.
+- **iOS Simulator:** the same alert, opened by the extension, `Delivered` in "Who was paged". With no CallKit there,
+  the call ends as `failed` and the app posts the page again (RFC 0010, Q14), as designed.
+- **Android emulator (Google APIs image, FCM):** a SEV1 rang (Answer / Decline) and its alert arrived opened in the
+  background, with the app swiped away (no process, not force-stopped) and in the foreground.
+- **The relay's logs:** every `APNs response` signed by Ember (`signer: ember`) and answered 200, sandbox; every `FCM
+  response` 200 with Ember's access token; 12 pages in a minute (26 pushes) reused the token, with no
+  `TooManyProviderTokenUpdates`, `ExpiredProviderToken` or fallback to the relay's own signers.
+- **Not checked:** a Critical Alert (Xcode's development profile cannot carry the entitlement; it needs an ad hoc or
+  store build), item 2's refusals, and `Unregistered` after an uninstall, which APNs reports only some time later.
+
 ## Ember gaps
 
 What Brigade needs that Ember does not have, each worked around here and proposed for Ember, clean-room:
@@ -373,6 +392,9 @@ What Brigade needs that Ember does not have, each worked around here and propose
 - **G7 — Timeouts on the token layer.** `fcmAccessToken` retries the exchange with backoff and has no deadline; a
   caller with a budget wraps it and the exchange runs on. Proposed: `signal` or `timeoutMs` in `FcmOptions` and
   `ApnsOptions`. Workaround: `retries: 0` and Brigade's own deadline around the call.
+  `fcmAccessToken(options, force)` takes no token, unlike `apnsProviderToken`'s `force`, so a send FCM answered 401
+  forces an exchange even when another send already replaced the token. Proposed: `force` may be the refused token.
+  Workaround: the relay remembers the refused token and forces only while the cache still holds it.
 - **G8 — Closing an identity's sockets from the server.** Ember ends a socket's access when its token expires, but
   nothing outside the socket can close it sooner. Proposed: an internal call on the shard that closes (or marks
   `authExpired`) every socket whose identity matches a claim (`sid`, `sub`), used by an app's session-end hook.
@@ -380,7 +402,7 @@ What Brigade needs that Ember does not have, each worked around here and propose
 
 ## Order of work
 
-1. **Relay on Ember's transport**. Proves Ember's provider-token and access-token layer with the
+1. **Relay on Ember's transport** (built). Proves Ember's provider-token and access-token layer with the
    real credentials on `dev`.
 2. **Direct sends from the API** with the relay as fallback, off until the API has the credentials.
 3. **The workspace shard on Ember behind `workspace.engine`**: tables, the Ember-backed `Store`, mutations and

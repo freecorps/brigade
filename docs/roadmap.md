@@ -616,8 +616,12 @@ Validate the risky assumptions before writing product code. Each spike produces 
 Brigade moves onto [Ember](https://github.com/freecorps/ember) step by step, each step with a fallback and a test,
 the old path removed only at the end. Order and details: RFC 0016 "Order of work".
 
-- [ ] Relay sends through `@freecorps/ember-push`'s transport (provider token, FCM access token), Brigade's envelope
-      and payloads unchanged, then the real-device check on `dev` (RFC 0016 "Real-device check"; needs Heitor's phones)
+- [x] Relay sends through `@freecorps/ember-push`'s transport (provider token, FCM access token), Brigade's envelope
+      and payloads unchanged, then the real-device check on `dev` (RFC 0016 "Real-device check")
+  - Done: the relay on Ember's transport, with its own signers as the fallback (`apps/relay/src/provider-tokens.ts`).
+  - Done: the real-device check on `dev`, 2026-11-06 (RFC 0016 "Real-device check", "Result").
+  - Left for later: a Critical Alert on a build whose profile carries the entitlement, and the `BadDeviceToken` /
+    `DeviceTokenNotForTopic` rules (item 2 of the check).
 - [ ] Direct sends from the API with the relay as fallback (needs the APNs and FCM secrets on `brigade-api-dev`)
 - [ ] The workspace shard on Ember behind `workspace.engine`, with the page lease and the D1 auth hook
 - [ ] Dashboard on Ember's React client

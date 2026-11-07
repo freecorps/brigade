@@ -118,6 +118,8 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   their names (`apns_refused`, `apns_unavailable` mean the push service, Apple's or Google's) and FCM's code as the
   reason. Tests: `apps/relay/test/fcm.test.ts` (a fake token endpoint and a fake FCM), `apps/api/test/notify.test.ts`.
 - **The relay is part of this repo** (`apps/relay`). Anyone can run their own with their own store credentials.
+  Its APNs provider token and FCM access token come from Ember's push transport (`@freecorps/ember-push`), with the
+  relay's own signers as the fallback when APNs or Google refuses one Ember made (RFC 0016 "Push", step 1).
 - **How the instance reaches it.** An instance whose relay runs on the same Cloudflare account binds it as a service
   (`RELAY`, apps/api wrangler.jsonc): Cloudflare answers a Worker's fetch to another workers.dev Worker on the same
   account with 404. Any other instance, such as a self-hosted one using Freecorps' hosted relay, posts to `RELAY_URL`

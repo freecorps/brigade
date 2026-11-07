@@ -4,7 +4,6 @@
 
 import { parsePushEnvelope, type PushEnvelope } from "@freecorps/brigade-push";
 import {
-  ApnsTokenCache,
   buildApnsRequest,
   CALL_ID,
   type ApnsCredentials,
@@ -17,12 +16,12 @@ import {
   buildFcmRequest,
   checkFcmPush,
   GoogleAuthError,
-  GoogleTokenCache,
   parseFcmError,
   parseServiceAccount,
   type ServiceAccount,
 } from "./fcm.ts";
 import { sendWithin, within } from "./deadline.ts";
+import { providerTokens, type ApnsToken } from "./provider-tokens.ts";
 
 /** What delivery reads of the environment. */
 export type ProviderEnv = {
@@ -86,11 +85,8 @@ const APNS_CALL_BUDGET_MS = 9000;
 const FCM_CALL_BUDGET_MS = 9000;
 /** The least of that budget worth a retry after a 401; with less, the instance retries instead. */
 const FCM_RETRY_MIN_MS = 1000;
-
-// One per isolate: the provider token is the same for every request (APNs throttles frequent refreshes).
-const tokens = new ApnsTokenCache();
-// Likewise Google's access token for FCM, reused until shortly before it expires.
-const googleTokens = new GoogleTokenCache();
+/** Likewise for APNs, after it refused a provider token Ember's transport signed. */
+const APNS_RETRY_MIN_MS = 1000;
 
 /** A push as both routes take it, validated; where it goes (`Target`) comes from the route. */
 export type Push = {
@@ -191,71 +187,91 @@ export async function deliver(
   // both.
   const environment: ApnsEnvironment =
     target.environment ?? (env.APNS_ENVIRONMENT === "production" ? "production" : "sandbox");
-  // Signing fails only on a broken APNS_KEY: the relay's fault, not the caller's.
-  let jwt: string;
-  try {
-    jwt = await tokens.get(credentials(env), Date.now());
-  } catch (error) {
-    console.error(JSON.stringify({ message: "APNs token signing failed", error: String(error) }));
-    return json({ error: "relay_misconfigured" }, 500);
-  }
-  let apnsRequest: Request;
-  try {
-    apnsRequest = buildApnsRequest(
-      {
-        deviceToken: target.token,
-        envelope: push.envelope,
-        urgency: push.urgency,
-        kind: push.kind,
-        ...(push.callId === undefined ? {} : { callId: push.callId }),
-        ...(push.critical ? { critical: true } : {}),
-        // 0 keeps APNs' "try once"; otherwise an absolute time.
-        expiration: push.ttlSeconds === 0 ? 0 : Math.floor(Date.now() / 1000) + push.ttlSeconds,
-        ...(push.collapseId === undefined ? {} : { collapseId: push.collapseId }),
-      },
-      { environment, topic: apnsTopic(env), jwt },
-    );
-  } catch (error) {
-    return json({ error: "invalid_body", detail: String(error) }, 400);
-  }
-
   const started = Date.now();
-  let response: Response;
-  try {
-    response = await sendWithin(send, apnsRequest, PROVIDER_TIMEOUT_MS);
-  } catch (error) {
-    // Never logs the device token or the envelope.
-    console.error(JSON.stringify({ message: "APNs fetch failed", ...log, error: String(error) }));
-    return json({ error: "apns_unreachable", detail: String(error) }, 502);
-  }
-  // APNs answers 200 with an empty body, or an error status with `{ "reason": "..." }`.
-  let text: string;
-  try {
-    text = await readWithin(
-      response,
-      APNS_CALL_BUDGET_MS - (Date.now() - started),
-      "APNs body not read in time",
+  // At most twice: again only when APNs refused a provider token Ember's transport signed, with the relay's own
+  // (src/provider-tokens.ts), within what is left of the call's time.
+  for (let attempt = 0; ; attempt++) {
+    // Signing fails only on a broken APNS_KEY: the relay's fault, not the caller's.
+    let token: ApnsToken;
+    try {
+      token = await providerTokens.apns(credentials(env), Date.now());
+    } catch (error) {
+      console.error(JSON.stringify({ message: "APNs token signing failed", error: String(error) }));
+      return json({ error: "relay_misconfigured" }, 500);
+    }
+    let apnsRequest: Request;
+    try {
+      apnsRequest = buildApnsRequest(
+        {
+          deviceToken: target.token,
+          envelope: push.envelope,
+          urgency: push.urgency,
+          kind: push.kind,
+          ...(push.callId === undefined ? {} : { callId: push.callId }),
+          ...(push.critical ? { critical: true } : {}),
+          // 0 keeps APNs' "try once"; otherwise an absolute time.
+          expiration: push.ttlSeconds === 0 ? 0 : Math.floor(Date.now() / 1000) + push.ttlSeconds,
+          ...(push.collapseId === undefined ? {} : { collapseId: push.collapseId }),
+        },
+        { environment, topic: apnsTopic(env), jwt: token.jwt },
+      );
+    } catch (error) {
+      return json({ error: "invalid_body", detail: String(error) }, 400);
+    }
+
+    let response: Response;
+    try {
+      response = await sendWithin(
+        send,
+        apnsRequest,
+        Math.min(PROVIDER_TIMEOUT_MS, APNS_CALL_BUDGET_MS - (Date.now() - started)),
+      );
+    } catch (error) {
+      // Never logs the device token or the envelope.
+      console.error(JSON.stringify({ message: "APNs fetch failed", ...log, error: String(error) }));
+      return json({ error: "apns_unreachable", detail: String(error) }, 502);
+    }
+    // APNs answers 200 with an empty body, or an error status with `{ "reason": "..." }`.
+    let text: string;
+    try {
+      text = await readWithin(
+        response,
+        APNS_CALL_BUDGET_MS - (Date.now() - started),
+        "APNs body not read in time",
+      );
+    } catch (error) {
+      console.error(
+        JSON.stringify({ message: "APNs body read failed", ...log, error: String(error) }),
+      );
+      return json({ error: "apns_unreachable", detail: String(error) }, 502);
+    }
+    const reason = response.ok ? undefined : parseReason(text);
+    const again =
+      !response.ok &&
+      (await providerTokens.apnsRefused(credentials(env), token, reason, Date.now()));
+    if (again && attempt === 0 && Date.now() - started < APNS_CALL_BUDGET_MS - APNS_RETRY_MIN_MS) {
+      continue;
+    }
+    const result = {
+      status: response.status,
+      apnsId: response.headers.get("apns-id"),
+      // Sandbox only: the id to look the push up in Apple's Push Notifications Console.
+      apnsUniqueId: response.headers.get("apns-unique-id"),
+      reason,
+      ms: Date.now() - started,
+    };
+    console.log(
+      JSON.stringify({
+        message: "APNs response",
+        ...log,
+        environment,
+        kind: push.kind,
+        signer: token.signer,
+        ...result,
+      }),
     );
-  } catch (error) {
-    console.error(
-      JSON.stringify({ message: "APNs body read failed", ...log, error: String(error) }),
-    );
-    return json({ error: "apns_unreachable", detail: String(error) }, 502);
+    return json(result, response.ok ? 200 : 502);
   }
-  const reason = response.ok ? undefined : parseReason(text);
-  if (reason === "ExpiredProviderToken" || reason === "InvalidProviderToken") tokens.clear();
-  const result = {
-    status: response.status,
-    apnsId: response.headers.get("apns-id"),
-    // Sandbox only: the id to look the push up in Apple's Push Notifications Console.
-    apnsUniqueId: response.headers.get("apns-unique-id"),
-    reason,
-    ms: Date.now() - started,
-  };
-  console.log(
-    JSON.stringify({ message: "APNs response", ...log, environment, kind: push.kind, ...result }),
-  );
-  return json(result, response.ok ? 200 : 502);
 }
 
 /** A provider's answer body, or a rejection once `ms` passed; the body is cancelled then, so the stream is let go. */
@@ -275,7 +291,7 @@ export function providerHealth(env: ProviderEnv, send: Send): Promise<DeepHealth
       credentials: credentials(env),
       environment: env.APNS_ENVIRONMENT === "production" ? "production" : "sandbox",
       topic: apnsTopic(env),
-      tokens,
+      tokens: providerTokens,
       fcmServiceAccount: env.FCM_SERVICE_ACCOUNT,
     },
     send,
@@ -322,7 +338,7 @@ async function sendFcm(
     let accessToken: string;
     try {
       accessToken = await within(
-        googleTokens.get(account, Date.now(), send),
+        providerTokens.google(account, send, Date.now()),
         left(),
         () => new GoogleAuthError("unreachable", "token exchange: out of time"),
       );
@@ -350,7 +366,7 @@ async function sendFcm(
       return json({ error: "fcm_unreachable", detail: String(error) }, 502);
     }
     if (response.status !== 401) break;
-    await googleTokens.clear(accessToken);
+    await providerTokens.googleRefused(accessToken);
     if (attempt === 1) break;
     await response.body?.cancel();
     // Too little time left for another exchange and send. Not the 401 itself, which the instance takes as a refusal

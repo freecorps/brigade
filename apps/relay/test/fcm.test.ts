@@ -6,7 +6,7 @@ import {
   sealPushV2,
   toBase64url,
 } from "@freecorps/brigade-push";
-import { describe, expect, test } from "vite-plus/test";
+import { beforeEach, describe, expect, test } from "vite-plus/test";
 import {
   ACCESS_TOKEN_MARGIN_MS,
   buildFcmRequest,
@@ -18,7 +18,12 @@ import {
   signGoogleAssertion,
 } from "../src/fcm.ts";
 import { handle, type RelayEnv } from "../src/index.ts";
+import { providerTokens } from "../src/provider-tokens.ts";
 import { hang } from "./hang.ts";
+
+// Each test starts on Ember's transport with nothing cached: a refusal in one must not switch the next to the
+// relay's own signer (src/provider-tokens.ts).
+beforeEach(() => providerTokens.reset());
 
 // A throwaway RSA key in a service account's shape; never a real one. example.com, not Google's domains.
 const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });

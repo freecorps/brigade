@@ -18,9 +18,17 @@ import {
   type SkippedMember,
 } from "../src/paging.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
+import { EMBER_MEMBER_REPAIR_DELAY_MS } from "./members.ts";
 import { emberWorkspace } from "./shard-facade.ts";
 
 const TICK = "paging:tick";
+
+/**
+ * The least wait between one tick and the next it schedules: work still due right after a tick (a release that threw,
+ * which `releaseAt` reports due at once, or more phones than one batch) waits this long, so a failing release never
+ * spins the shard's alarm.
+ */
+export const TICK_RETRY_MS = 5 * 1000;
 
 /** How long an overdue tick is waited for before another is scheduled in its place. */
 export const TICK_LEASE_MS = 60 * 1000;
@@ -46,8 +54,8 @@ function tickAt(ctx: MutationCtx, at: number): void {
   ctx.scheduler.runAt(when, TICK, {});
 }
 
-/** A `Pager` over this mutation; `wake` schedules a tick at `at`. */
-function pager(ctx: MutationCtx): { pager: Pager; workspace: string | undefined } {
+/** A `Pager` over this mutation; `wake` schedules a tick at `at`, not before `floor`. */
+function pager(ctx: MutationCtx, floor = ctx.now): { pager: Pager; workspace: string | undefined } {
   const { shard, storage } = emberWorkspace(ctx);
   const p = new Pager({
     storage,
@@ -55,15 +63,15 @@ function pager(ctx: MutationCtx): { pager: Pager; workspace: string | undefined 
     log,
     // Ember's subscriptions follow the rows: nothing to broadcast.
     committed: () => {},
-    wake: (at) => tickAt(ctx, at),
+    wake: (at) => tickAt(ctx, Math.max(floor, at)),
   });
   return { pager: p, workspace: shard.workspace() };
 }
 
-/** Schedules the next tick at the pager's earliest due time, if it has one. */
-function scheduleTick(ctx: MutationCtx, p: Pager): void {
+/** Schedules the next tick at the pager's earliest due time, if it has one, and not before `floor`. */
+function scheduleTick(ctx: MutationCtx, p: Pager, floor = ctx.now): void {
   const due = [p.replayAt(), p.releaseAt(ctx.now)].filter((at): at is number => at !== null);
-  if (due.length > 0) tickAt(ctx, Math.min(...due));
+  if (due.length > 0) tickAt(ctx, Math.max(floor, Math.min(...due)));
 }
 
 const event = v.any();
@@ -73,11 +81,18 @@ const event = v.any();
  * one transaction: a plan that throws leaves the page watched, as on the DO.
  */
 export const plan = internalMutationGeneric({
-  args: { event },
-  handler: (ctx, { event: e }: { event: BrigadeEvent }): PagePlan => {
+  args: { event, repair: v.optional(v.boolean()) },
+  handler: (ctx, { event: e, repair }: { event: BrigadeEvent; repair?: boolean }): PagePlan => {
     const c = ctx as MutationCtx;
     const { pager: p, workspace } = pager(c);
     if (workspace !== e.workspaceId) return { send: false, reason: "not_found" } as PagePlan;
+    // The member check before this page failed or was late (src/ember-paging.ts): a durable repair reads D1 again
+    // later, so the copy catches up even with no other activity, as the DO's repair alarm does.
+    if (repair) {
+      c.scheduler.runAfter(EMBER_MEMBER_REPAIR_DELAY_MS, "members:repair", {
+        workspaceId: e.workspaceId,
+      });
+    }
     const out = p.plan(e, c.now);
     if (asksForPage(e)) p.arrived(e.id);
     scheduleTick(c, p);
@@ -125,13 +140,15 @@ export const tick = internalMutationGeneric({
   args: {},
   handler: (ctx): { released: number; replayed: number } => {
     const c = ctx as MutationCtx;
-    const { pager: p, workspace } = pager(c);
+    // Whatever it wakes for is scheduled `TICK_RETRY_MS` out at the soonest.
+    const floor = c.now + TICK_RETRY_MS;
+    const { pager: p, workspace } = pager(c, floor);
     if (workspace === undefined) return { released: 0, replayed: 0 };
     // This tick is the one scheduled: the next is whatever the pager wants after it.
     c.sql.exec("delete from ember_ticks where key = 'paging'");
     const released = p.releaseDue(c.now);
     const replayed = p.replayDue(c.now);
-    scheduleTick(c, p);
+    scheduleTick(c, p, floor);
     return { released, replayed };
   },
 });

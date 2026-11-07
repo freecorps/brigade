@@ -13,7 +13,7 @@ import {
   workspaceShard,
 } from "../src/ember.ts";
 import { EMBER_TOKEN_TTL_S, mintEmberToken, verifyEmberToken } from "../src/ember-token.ts";
-import { workspacePager } from "../src/ember-paging.ts";
+import { ENGINE_CACHE_MS, pageEngine, workspacePager } from "../src/ember-paging.ts";
 import { deleteMembership, writeRole } from "../src/members.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { sessionCookie } from "./session.ts";
@@ -623,7 +623,7 @@ describe("pages for an Ember workspace", () => {
       data: {},
       specversion: "1.0",
     };
-    const pager = await workspacePager(env, workspaceId);
+    const pager = workspacePager(env, workspaceId);
     // The shard holds the incident (WorkspaceDO does not: it would answer `not_found`); its one member declared it.
     expect(await pager.planPage(event)).toEqual({ send: false, reason: "nobody" });
     expect((await stub.query(shard, "members:reconciledAt", {}, null, true)).value).toBeTypeOf(
@@ -633,9 +633,30 @@ describe("pages for an Ember workspace", () => {
     expect(await pager.recordDeadLetter(event)).not.toBe("other_workspace");
     // A workspace still on WorkspaceDO keeps its Durable Object.
     const other = await owner();
-    expect(await (await workspacePager(env, other.workspaceId)).planPage(event)).toEqual({
+    expect(await workspacePager(env, other.workspaceId).planPage(event)).toEqual({
       send: false,
       reason: "not_found",
     });
+  });
+});
+
+describe("the engine a page goes to", () => {
+  test("survives D1 failing: the engine last known, or WorkspaceDO", async () => {
+    const failing = {
+      prepare: () => ({
+        bind: () => ({ first: () => Promise.reject(new Error("D1 is down")) }),
+      }),
+    } as unknown as D1Database;
+    const stalled = {
+      prepare: () => ({ bind: () => ({ first: () => new Promise(() => {}) }) }),
+    } as unknown as D1Database;
+    const { workspaceId } = await owner();
+    expect(await pageEngine(failing, workspaceId)).toBe("brigade");
+    expect(await pageEngine(stalled, `${workspaceId}_x`)).toBe("brigade");
+    // Known from D1, it stays known while D1 is out.
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const now = Date.now();
+    expect(await pageEngine(env.DB, workspaceId, now)).toBe("ember");
+    expect(await pageEngine(failing, workspaceId, now + ENGINE_CACHE_MS + 1)).toBe("ember");
   });
 });

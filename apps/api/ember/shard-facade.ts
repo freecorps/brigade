@@ -9,6 +9,7 @@ import type { MutationCtx } from "@freecorps/ember-server";
 import {
   createEmberStore,
   mutations,
+  type EmberRowsWriter,
   serverMutations,
   type BrigadeTables,
   type EmberStore,
@@ -60,6 +61,35 @@ function emberStorage(ctx: MutationCtx, store: EmberStore<BrigadeTables>): Durab
   } as unknown as DurableObjectStorage;
 }
 
+/**
+ * `db` with every error its calls throw (the query builder's `collect`/`first` included) reported to `failed` before
+ * it is rethrown: a mutation's code catches its own errors, so a storage failure would otherwise end as `internal`.
+ */
+function watched(db: EmberRowsWriter, failed: (error: unknown) => void): EmberRowsWriter {
+  const guard = <T>(fn: () => T): T => {
+    try {
+      return fn();
+    } catch (error) {
+      failed(error);
+      throw error;
+    }
+  };
+  return {
+    query: (table) => {
+      const q = guard(() => db.query(table));
+      return {
+        withIndex: (index, range) => {
+          const r = guard(() => q.withIndex(index, range));
+          return { collect: () => guard(() => r.collect()), first: () => guard(() => r.first()) };
+        },
+      };
+    },
+    insert: (table, value) => guard(() => db.insert(table, value)),
+    patch: (id, value) => guard(() => db.patch(id, value)),
+    delete: (id) => guard(() => db.delete(id)),
+  };
+}
+
 /** The DO's `Shard` and storage, as the orchestrators take them, over one Ember mutation. */
 export function emberWorkspace(ctx: MutationCtx): {
   shard: EmberShard;
@@ -76,9 +106,16 @@ export function emberWorkspace(ctx: MutationCtx): {
  */
 export class EmberShard {
   readonly store: EmberStore<BrigadeTables>;
+  /** The first error Ember's storage threw under this shard's store (the DO's `StorageFailure`). */
+  private failure: { error: unknown } | undefined;
 
   constructor(private readonly ctx: MutationCtx) {
-    this.store = createEmberStore<BrigadeTables>(ctx.db as never, TABLE_SET);
+    this.store = createEmberStore<BrigadeTables>(
+      watched(ctx.db as unknown as EmberRowsWriter, (error) => {
+        this.failure ??= { error };
+      }),
+      TABLE_SET,
+    );
   }
 
   workspace(): string | undefined {
@@ -113,6 +150,9 @@ export class EmberShard {
       workspaceLimits(),
       this.store,
     );
+    // A storage failure is not an answer (RFC 0004): rethrown, so the whole Ember mutation rolls back and its caller
+    // tries again, rather than an `internal` result stored for this mutation id (`escalation.start` never retried).
+    if (this.failure) throw this.failure.error;
     const result: MutationResultMessage = out.ok
       ? { type: "mutationResult", mutationId: input.mutationId, ok: true, version: 0 }
       : { type: "mutationResult", mutationId: input.mutationId, ok: false, error: out.error };

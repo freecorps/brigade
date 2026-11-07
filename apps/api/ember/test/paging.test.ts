@@ -12,8 +12,10 @@ import { describe, expect, test } from "vite-plus/test";
 import { PAGE_HOLD_MS } from "../../src/paging.ts";
 import type { BrigadeEvent } from "../../src/outbox.ts";
 import * as events from "../events.ts";
+import * as members from "../members.ts";
 import * as paging from "../paging.ts";
 import schema from "../schema.ts";
+import { EmberShard } from "../shard-facade.ts";
 import * as workspace from "../workspace.ts";
 
 const T = Date.UTC(2026, 10, 7, 12, 0, 0);
@@ -33,6 +35,34 @@ const rows = queryGeneric({
       ),
 } as never);
 
+/** A mutation through `EmberShard` over a `ctx.db` whose writes fail, as a full disk would (test only). */
+const failingDisk = internalMutationGeneric({
+  args: { id: v.string() },
+  handler: (ctx, { id }: { id: string }) => {
+    const c = ctx as MutationCtx;
+    const db = new Proxy(c.db as object, {
+      get(target, key) {
+        if (key === "insert" || key === "patch") {
+          return () => {
+            throw new Error("SQLITE_FULL: database or disk is full");
+          };
+        }
+        const value = (target as Record<string | symbol, unknown>)[key];
+        return typeof value === "function" ? (value as () => unknown).bind(target) : value;
+      },
+    });
+    const shard = new EmberShard({ ...c, db } as MutationCtx);
+    return shard.mutate({
+      clientId: "test",
+      mutationId: "m1",
+      actor: { kind: "user", id: ANA, role: "owner" },
+      name: "incident.declare",
+      args: { id, title: "Disk full" },
+      now: c.now,
+    }).result;
+  },
+});
+
 /** Rows of a private ledger table (test only). */
 const ledger = internalMutationGeneric({
   args: { statement: v.string() },
@@ -44,7 +74,7 @@ function shard() {
   const engine = createEngine({
     schema,
     driver: createNodeSqliteDriver(),
-    functions: { workspace, events, paging, test: { rows, ledger } },
+    functions: { workspace, events, members, paging, test: { rows, ledger, failingDisk } },
     now: () => clock,
   });
   engine.migrate();
@@ -243,5 +273,46 @@ describe("paging on Ember", () => {
     s.tick(paging.TICK_LEASE_MS);
     const replaced = s.call("paging:plan", { event: another(event, 11) }).scheduled;
     expect(replaced.filter((job) => job.fn === "paging:tick")).toMatchObject([{ runAt: s.now() }]);
+  });
+
+  test("work still due after a tick waits TICK_RETRY_MS, so a failing release never spins the alarm", () => {
+    const s = shard();
+    const phone = s.device(BIA, 1);
+    const { incident, event } = s.declare();
+    s.call("paging:plan", { event });
+    s.call("paging:record", {
+      event,
+      outcomes: [{ deviceId: phone, userId: BIA, ok: true }],
+      final: true,
+    });
+    s.mutate("incident.setSeverity", { id: incident, severity: "sev3" });
+    s.call("paging:plan", { event: another(event, 9) });
+    s.tick(PAGE_HOLD_MS + 1);
+    // Something keeps it due right away (here: a release that would throw is the same to the scheduler).
+    s.call("paging:plan", { event: another(event, 10) });
+    const out = s.call("paging:tick", {});
+    for (const job of out.scheduled.filter((j) => j.fn === "paging:tick")) {
+      expect((job as unknown as { runAt: number }).runAt).toBeGreaterThanOrEqual(
+        s.now() + paging.TICK_RETRY_MS,
+      );
+    }
+  });
+
+  test("a page whose member check failed schedules a durable member repair", () => {
+    const s = shard();
+    s.device(BIA, 1);
+    const { event } = s.declare();
+    const repairs = (out: { scheduled: { fn: string }[] }) =>
+      out.scheduled.filter((job) => job.fn === "members:repair").length;
+    expect(repairs(s.call("paging:plan", { event }))).toBe(0);
+    expect(repairs(s.call("paging:plan", { event: another(event, 9), repair: true }))).toBe(1);
+  });
+
+  test("a storage failure under the facade aborts the Ember mutation instead of storing an internal result", () => {
+    const s = shard();
+    const id = newId("inc", T, (n) => new Uint8Array(n).fill(7));
+    expect(() => s.call("test:failingDisk", { id })).toThrow(/SQLITE_FULL/);
+    expect(s.table("incidents").map((row) => row.id)).not.toContain(id);
+    expect(s.sql("select mutation_id from mutation_results")).toEqual([]);
   });
 });

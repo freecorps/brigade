@@ -396,7 +396,7 @@ export async function consumeDeadLetters(
         return message.ack();
       }
       try {
-        const result = await (await workspacePager(env, event.workspaceId)).recordDeadLetter(event);
+        const result = await workspacePager(env, event.workspaceId).recordDeadLetter(event);
         log("dead-lettered page handled", { event: event.id, incident: event.subject, result });
         message.ack();
       } catch (error) {
@@ -727,7 +727,7 @@ export async function notifyPush(
 ): Promise<false | PushAgain> {
   // Most events page nobody (the delivery rows' own `notification.*` among them): no shard call for those.
   if (!asksForPage(event)) return false;
-  const workspace: PageShard = shard ?? (await workspacePager(env, event.workspaceId));
+  const workspace: PageShard = shard ?? workspacePager(env, event.workspaceId);
   const plan = await within<PagePlan>(workspace.planPage(event), SHARD_CALL_TIMEOUT_MS, "planPage");
   if (!plan.send) return false;
   const receipts = receiptUrl(env.DASHBOARD_URL);

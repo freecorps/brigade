@@ -105,15 +105,38 @@ export function emberSessions(env: SessionsEnv): WorkspaceSessions {
   return {
     endSession,
     async signOutUser(workspaceId, userId, options = {}) {
+      let result: SignOutUserResult;
       try {
-        return await emberMutation<SignOutUserResult>(env, workspaceId, "sessions:signOutUser", {
+        // The phones first, committed on their own; then the takeover, which a retry runs again (each step is a
+        // no-op the second time).
+        result = await emberMutation<SignOutUserResult>(env, workspaceId, "sessions:signOutUser", {
           workspaceId,
           userId,
-          ...(options.takeOver === undefined ? {} : { takeOver: options.takeOver }),
         });
-      } finally {
-        await revoke(env, workspaceId, { subject: userId });
+        if (result.ok && options.takeOver) {
+          result = await emberMutation<SignOutUserResult>(env, workspaceId, "sessions:takeOver", {
+            workspaceId,
+            userId,
+          });
+        }
+      } catch (error) {
+        await revoke(env, workspaceId, { subject: userId }).catch(() => undefined);
+        throw error;
       }
+      // Committed: what it took over is the answer even if closing the sockets fails, so the takeover notice names
+      // it (a retry would find it already done and name nothing). The sockets are refused anyway from their next
+      // token refresh, since the reset deleted every session the auth hook could find in D1.
+      try {
+        await revoke(env, workspaceId, { subject: userId });
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            message: "closing a reset account's Ember sockets failed",
+            error: String(error),
+          }),
+        );
+      }
+      return result;
     },
     /** As `WorkspaceDO.catchUpSessionEnds`: acts on what D1's `session_end` lists here, deleting each row it acted on. */
     async catchUpSessionEnds(workspaceId) {

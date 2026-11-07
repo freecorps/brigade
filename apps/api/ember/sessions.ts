@@ -71,27 +71,41 @@ export type SignOutUserResult =
   | NotFound;
 
 /**
- * Every session of `userId` ended (a password reset): their phones come off (`device.signOut`). With `takeOver` and
- * nobody else a member here, also what `WorkspaceDO.signOutUser` takes over: every alert source URL and the routes the
- * account made (`alertSource.takeOver`), every monitor paused and heartbeat URL revoked (`monitor.takeOver`), and a
- * Slack connection the account made (`slack.takeOver`). Answers what it paused and revoked, counted before each step
- * so a retry after a step committed counts the same.
- *
- * Not yet on Ember: routing again the alerts those routes kept quiet. On `WorkspaceDO` that is its alert engine's job
- * (`AlertIntake.reroute`, from its alarm); it comes with the alert engine's move (RFC 0016 "What runs where").
+ * Every session of `userId` ended (a password reset): their phones come off (`device.signOut`). Its own transaction,
+ * committed before any takeover step runs (`takeOver` below): a takeover step that fails must never put the phones
+ * back, since nothing else takes them off again (on `WorkspaceDO` this step also commits first).
  */
 export const signOutUser = internalMutationGeneric({
-  args: { workspaceId: v.string(), userId: v.string(), takeOver: v.optional(v.boolean()) },
+  args: { workspaceId: v.string(), userId: v.string() },
+  handler: (ctx, input): { ok: true } | NotFound => {
+    const c = ctx as MutationCtx;
+    if (workspaceId(rows(c)) !== input.workspaceId) return notFound;
+    step(c, "device.signOut", { userId: input.userId });
+    return { ok: true };
+  },
+});
+
+/**
+ * After `signOutUser` with `takeOver`, when nobody else is a member here: what `WorkspaceDO.signOutUser` takes over.
+ * Every alert source URL and the routes the account made (`alertSource.takeOver`), every monitor paused and heartbeat
+ * URL revoked (`monitor.takeOver`), and a Slack connection the account made (`slack.takeOver`). Answers what it paused
+ * and revoked, counted before each step so a retry after a step committed counts the same; with anyone else a member,
+ * nothing is taken over (`{ ok: true }`).
+ *
+ * Not yet on Ember: routing again the alerts those routes kept quiet. On `WorkspaceDO` that is its alert engine's job
+ * (`AlertIntake.reroute`, from its alarm); it comes with the alert engine's move (RFC 0016 "Parity").
+ */
+export const takeOver = internalMutationGeneric({
+  args: { workspaceId: v.string(), userId: v.string() },
   handler: (ctx, input): SignOutUserResult => {
     const c = ctx as MutationCtx;
     const { userId } = input;
     if (workspaceId(rows(c)) !== input.workspaceId) return notFound;
-    step(c, "device.signOut", { userId });
     // The Worker counted the members in D1 a moment ago; someone who joined since is not the account's to act for.
     const others = rows(c)
       .scan("members")
       .some((member) => member.id !== userId);
-    if (!input.takeOver || others) return { ok: true };
+    if (others) return { ok: true };
     // Random bytes, not the hash of a token: no heartbeat or alert source URL matches it, so every one is revoked.
     const tokenHash = Array.from({ length: 32 }, () =>
       Math.floor(c.random() * 256)

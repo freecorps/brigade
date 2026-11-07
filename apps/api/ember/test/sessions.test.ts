@@ -104,10 +104,12 @@ describe("sessions on Ember", () => {
       ok: false,
       code: "not_found",
     });
-    expect(s.call("sessions:signOutUser", { workspaceId: "ws_other", userId: ANA })).toEqual({
-      ok: false,
-      code: "not_found",
-    });
+    for (const fn of ["sessions:signOutUser", "sessions:takeOver"]) {
+      expect(s.call(fn, { workspaceId: "ws_other", userId: ANA })).toEqual({
+        ok: false,
+        code: "not_found",
+      });
+    }
   });
 
   test("a password reset signs every phone out; a takeover of the only member pauses and revokes", () => {
@@ -123,10 +125,20 @@ describe("sessions on Ember", () => {
       regions: ["weur"],
     };
     expect(s.mutate("monitor.createTcp", monitor)).toEqual({ ok: true });
-    const result = s.call("sessions:signOutUser", { workspaceId: WS, userId: ANA, takeOver: true });
-    expect(result).toEqual({ ok: true, paused: ["Database"], revoked: 0, sources: 0, routes: 0 });
+    expect(s.call("sessions:signOutUser", { workspaceId: WS, userId: ANA })).toEqual({ ok: true });
     expect(s.table("devices")).toEqual([]);
+    const result = s.call("sessions:takeOver", { workspaceId: WS, userId: ANA });
+    expect(result).toEqual({ ok: true, paused: ["Database"], revoked: 0, sources: 0, routes: 0 });
     expect(s.table("monitors").map((row) => row.paused)).toEqual([true]);
+  });
+
+  test("a takeover step that fails leaves the phones signed out", () => {
+    const s = shard();
+    expect(s.mutate("device.register", device(1))).toEqual({ ok: true });
+    expect(s.call("sessions:signOutUser", { workspaceId: WS, userId: ANA })).toEqual({ ok: true });
+    // The takeover is its own transaction: refused or thrown, it cannot bring the phone back.
+    expect(() => s.call("sessions:takeOver", { workspaceId: WS, userId: 42 })).toThrow();
+    expect(s.table("devices")).toEqual([]);
   });
 
   test("with anyone else a member, a takeover takes nothing over", () => {
@@ -134,8 +146,6 @@ describe("sessions on Ember", () => {
       { id: ANA, name: "Ana" },
       { id: "usr_bia", name: "Bia" },
     ]);
-    expect(
-      s.call("sessions:signOutUser", { workspaceId: WS, userId: ANA, takeOver: true }),
-    ).toEqual({ ok: true });
+    expect(s.call("sessions:takeOver", { workspaceId: WS, userId: ANA })).toEqual({ ok: true });
   });
 });

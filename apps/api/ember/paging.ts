@@ -35,15 +35,21 @@ import type { BrigadeEvent } from "../src/outbox.ts";
 import { EMBER_MEMBER_REPAIR_DELAY_MS } from "./members.ts";
 import { Escalations } from "../src/escalation.ts";
 import { emberWorkspace, type EmberShard } from "./shard-facade.ts";
-import { holdTicks, tickAt } from "./ticks.ts";
+import { holdTicks, tickAt, type TickKey } from "./ticks.ts";
 
 export { TICK_LEASE_MS, TICK_RETRY_MS } from "./ticks.ts";
 
 const log = (message: string, fields: Record<string, unknown>) =>
   console.error(JSON.stringify({ message, ...fields }));
 
-/** A `Pager` over this mutation; `wake` schedules a tick at `at`. */
-function pager(ctx: MutationCtx): {
+/**
+ * A `Pager` over this mutation; `wake` schedules tick `wakes` at `at`: the paging tick, or the shard's own send for
+ * the mutations whose wakes are the leases of late pages (`overdue`, `localDone`).
+ */
+function pager(
+  ctx: MutationCtx,
+  wakes: TickKey = "paging",
+): {
   pager: Pager;
   workspace: string | undefined;
   check: () => void;
@@ -56,7 +62,7 @@ function pager(ctx: MutationCtx): {
     log,
     // Ember's subscriptions follow the rows: nothing to broadcast.
     committed: () => {},
-    wake: (at) => tickAt(ctx, at),
+    wake: (at) => tickAt(ctx, at, wakes),
   });
   return { pager: p, workspace: shard.workspace(), check: () => shard.check(), shard };
 }
@@ -332,7 +338,7 @@ export const overdue = internalMutationGeneric({
   args: {},
   handler: (ctx): { event: BrigadeEvent; tries: number }[] => {
     const c = ctx as MutationCtx;
-    const { pager: p, workspace, check } = pager(c);
+    const { pager: p, workspace, check } = pager(c, "local");
     if (workspace === undefined) return [];
     c.sql.exec("delete from ember_ticks where key = 'local'");
     const leased = p.overdue(c.now);
@@ -360,7 +366,7 @@ export const localDone = internalMutationGeneric({
     input: { eventId: string; tries: number; sent: boolean; until?: number },
   ): null => {
     const c = ctx as MutationCtx;
-    const { pager: p, workspace, check } = pager(c);
+    const { pager: p, workspace, check } = pager(c, "local");
     if (workspace === undefined) return null;
     if (input.sent) p.arrived(input.eventId);
     else if (input.tries >= PAGE_LOCAL_TRIES) {

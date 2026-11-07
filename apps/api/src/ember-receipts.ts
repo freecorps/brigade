@@ -13,6 +13,8 @@ export const EMBER_RECEIPT_KEY_ID = "k2";
 
 const encoder = new TextEncoder();
 const keys = new Map<string, Promise<CryptoKey>>();
+/** Workspaces whose receipt key an isolate keeps derived. */
+const MAX_KEYS = 256;
 
 /** `workspaceId`'s receipt key: HKDF of `secret`, kept per isolate. */
 function receiptKey(secret: string, workspaceId: string): Promise<CryptoKey> {
@@ -37,6 +39,8 @@ function receiptKey(secret: string, workspaceId: string): Promise<CryptoKey> {
       );
     // A failed derivation is not kept: the next call tries again.
     key.catch(() => keys.delete(cacheKey));
+    // Bounded: past `MAX_KEYS` the oldest goes (a Map keeps insertion order); deriving one again is cheap.
+    if (keys.size >= MAX_KEYS) keys.delete(keys.keys().next().value!);
     keys.set(cacheKey, key);
   }
   return key;

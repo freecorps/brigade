@@ -403,6 +403,8 @@ describe("pages the Queue is late with, on Ember", () => {
     // Leased: not handed out again until its lease runs out, and the next send is armed for then.
     expect(s.call("paging:overdue", {}).value).toEqual([]);
     expect(leased.scheduled.some((job) => job.fn === "local:send")).toBe(true);
+    // Its wakes are the shard's own send's, not the paging tick's.
+    expect(leased.scheduled.some((job) => job.fn === "paging:tick")).toBe(false);
     for (let tries = 1; tries < PAGE_LOCAL_TRIES; tries++) {
       s.call("paging:localDone", { eventId: event.id, tries, sent: false });
       s.tick(60 * 1000);

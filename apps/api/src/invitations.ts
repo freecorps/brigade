@@ -330,7 +330,7 @@ export class Invitations {
                where "organizationId" = ? and email = ? and status = 'pending' and "expiresAt" <= ?`,
             )
             .bind(workspaceId, email, iso(now)),
-          this.reserveSend(id, email, actorId, now, false),
+          this.reserveSend(workspaceId, id, email, actorId, now, false),
           // `changes()` is the reservation's: no invitation without its email counted.
           db
             .prepare(
@@ -339,7 +339,8 @@ export class Invitations {
             )
             .bind(id, workspaceId, email, role, iso(expiresAt), iso(now), actorId),
         ]);
-        if (reserved!.meta.changes !== 1) return await this.capped(id, email, actorId, now);
+        if (reserved!.meta.changes !== 1)
+          return await this.capped(workspaceId, id, email, actorId, now);
       } catch (error) {
         // The unique index: another pending invitation for that address got in first (D1 edited meanwhile).
         if (String(error).includes("UNIQUE")) return { ok: false, code: "already_invited" };
@@ -404,7 +405,7 @@ export class Invitations {
       const sendId = newId("snd", now, this.options.randomBytes);
       try {
         const [reserved, updated] = await db.batch([
-          this.reserveSend(invitationId, row.email, actorId, now, true, sendId),
+          this.reserveSend(workspaceId, invitationId, row.email, actorId, now, true, sendId),
           db
             .prepare(
               `update invitation set "expiresAt" = ?
@@ -415,7 +416,7 @@ export class Invitations {
           db.prepare(`delete from invitation_send where id = ? and changes() = 0`).bind(sendId),
         ]);
         if (reserved!.meta.changes !== 1) {
-          return await this.capped(invitationId, row.email, actorId, now);
+          return await this.capped(workspaceId, invitationId, row.email, actorId, now);
         }
         if (updated!.meta.changes !== 1) return { ok: false, code: "conflict" };
       } catch (error) {
@@ -660,10 +661,13 @@ export class Invitations {
    * Counts one more email of `invitationId` in D1's `invitation_send`, only while the caps that span workspaces all
    * have room: `INVITATIONS_PER_ADDRESS_DAILY_CAP` for `email` (its `invitationAddressKey`, which is what the row's
    * `email` holds, so `+tags` share one count), `INVITATIONS_PER_INVITER_DAILY_CAP` for `inviterId`
-   * and `INVITATION_MAX_SENDS` for the invitation (and, with `pending`, only while it is still pending). One
-   * statement, so D1 decides it atomically whichever shards are inviting at once.
+   * and `INVITATION_MAX_SENDS` for the invitation (and, with `pending`, only while it is still pending), and the
+   * workspace's own: `INVITATIONS_DAILY_CAP`, and with `pending` `INVITATION_RESEND_INTERVAL_MS`, which the shard
+   * checked already but cannot hold without the DO's member lock (Ember). One statement, so D1 decides it atomically
+   * whichever shards are inviting at once.
    */
   private reserveSend(
+    workspaceId: string,
     invitationId: string,
     email: string,
     inviterId: string,
@@ -678,7 +682,11 @@ export class Invitations {
          where (select count(*) from invitation_send where email = ?3 and at > ?6) < ?7
            and (select count(*) from invitation_send where "inviterId" = ?4 and at > ?6) < ?8
            and (select count(*) from invitation_send where "invitationId" = ?2) < ?9
-           and (?10 = 0 or exists (select 1 from invitation where id = ?2 and status = 'pending'))`,
+           and (?10 = 0 or exists (select 1 from invitation where id = ?2 and status = 'pending'))
+           and (select count(*) from invitation_send s join invitation i on i.id = s."invitationId"
+                where i."organizationId" = ?11 and s.at > ?6) < ?12
+           and (?10 = 0 or not exists
+                (select 1 from invitation_send where "invitationId" = ?2 and at > ?13))`,
       )
       .bind(
         id,
@@ -691,11 +699,15 @@ export class Invitations {
         INVITATIONS_PER_INVITER_DAILY_CAP,
         INVITATION_MAX_SENDS,
         pending ? 1 : 0,
+        workspaceId,
+        INVITATIONS_DAILY_CAP,
+        now - INVITATION_RESEND_INTERVAL_MS,
       );
   }
 
   /** Which cap refused a `reserveSend` (read again after it); `conflict` when none did (no longer pending). */
   private async capped(
+    workspaceId: string,
     invitationId: string,
     email: string,
     inviterId: string,
@@ -706,10 +718,26 @@ export class Invitations {
         `select
            (select count(*) from invitation_send where email = ?1 and at > ?4) as address,
            (select count(*) from invitation_send where "inviterId" = ?2 and at > ?4) as inviter,
-           (select count(*) from invitation_send where "invitationId" = ?3) as sends`,
+           (select count(*) from invitation_send where "invitationId" = ?3) as sends,
+           (select count(*) from invitation_send s join invitation i on i.id = s."invitationId"
+            where i."organizationId" = ?5 and s.at > ?4) as workspace,
+           (select max(at) from invitation_send where "invitationId" = ?3) as last`,
       )
-      .bind(invitationAddressKey(email), inviterId, invitationId, now - DAY_MS)
-      .first<{ address: number; inviter: number; sends: number }>();
+      .bind(invitationAddressKey(email), inviterId, invitationId, now - DAY_MS, workspaceId)
+      .first<{
+        address: number;
+        inviter: number;
+        sends: number;
+        workspace: number;
+        last: number | null;
+      }>();
+    // The shard's checks before D1, again here: without the DO's member lock (Ember) two calls can pass them at once.
+    if (counts?.last != null && now - counts.last < INVITATION_RESEND_INTERVAL_MS) {
+      return { ok: false, code: "too_soon" };
+    }
+    if (counts && counts.workspace >= INVITATIONS_DAILY_CAP) {
+      return { ok: false, code: "rate_limited" };
+    }
     if (counts && counts.sends >= INVITATION_MAX_SENDS) return { ok: false, code: "send_limit" };
     if (counts && counts.address >= INVITATIONS_PER_ADDRESS_DAILY_CAP) {
       return { ok: false, code: "address_limited" };

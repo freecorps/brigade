@@ -17,7 +17,11 @@ import { InvitationLedger, type InvitationEmailPlan } from "../src/invitation-le
 import type { InvitationResult } from "../src/invitations.ts";
 import { readRole } from "../src/members.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
-import { EMBER_MEMBER_REPAIR_DELAY_MS, EMBER_MEMBER_REPAIR_RETRY_MS } from "./members.ts";
+import {
+  bumpFence,
+  EMBER_MEMBER_REPAIR_DELAY_MS,
+  EMBER_MEMBER_REPAIR_RETRY_MS,
+} from "./members.ts";
 import { emberWorkspace, type EmberShard } from "./shard-facade.ts";
 
 const REPAIR = "invitations:repair";
@@ -144,9 +148,21 @@ export const apply = internalMutationGeneric({
       ctx,
       input.workspaceId,
       { ok: false, code: "not_found" } as InvitationResult,
-      (ledger) => ledger.apply(input.actor, input.name, input.args, input.now),
+      (ledger) => {
+        const out = ledger.apply(input.actor, input.name, input.args, input.now);
+        if (out.ok) fenced(ctx, input.name);
+        return out;
+      },
     ),
 });
+
+/**
+ * A member change an invitation brought (`member.add` on accept) fences the member repair as `members:apply` does: a
+ * repair holding a snapshot of D1 from before it is `stale`, rather than reconcile the new member away.
+ */
+function fenced(ctx: unknown, name: string): void {
+  if (name.startsWith("member.")) bumpFence((ctx as MutationCtx).db);
+}
 
 /**
  * Records a mutation as owed to the repair (`InvitationLedger.owe`): the Worker's fallback when `apply` itself failed
@@ -215,9 +231,11 @@ export const settle = internalMutationGeneric({
     ctx,
     input: { workspaceId: string; key: string; name: string; args: unknown; run: boolean },
   ): boolean =>
-    withLedger(ctx, input.workspaceId, false, (ledger) =>
-      ledger.settle(input.key, input.name, input.args, input.run),
-    ),
+    withLedger(ctx, input.workspaceId, false, (ledger) => {
+      const settled = ledger.settle(input.key, input.name, input.args, input.run);
+      if (settled && input.run) fenced(ctx, input.name);
+      return settled;
+    }),
 });
 
 const OWED = makeFunctionReference<"mutation">("invitations:owed");

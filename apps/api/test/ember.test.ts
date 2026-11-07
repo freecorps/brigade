@@ -1118,3 +1118,43 @@ describe("invitations on an Ember workspace", () => {
     ).toEqual({ ok: true });
   });
 });
+
+describe("invitation caps on an Ember workspace", () => {
+  test("the workspace's daily cap holds in D1's reservation, whatever the shard's ledger counted", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    await env.DB.prepare(`update "user" set "emailVerified" = 1 where id = ?`).bind(userId).run();
+    // 29 sends today that only D1 has (as two Worker calls past the shard's check at once would leave them).
+    const now = Date.now();
+    for (let i = 0; i < 29; i++) {
+      const id = `inv_cap_${people}_${i}`;
+      await env.DB.batch([
+        env.DB.prepare(
+          `insert into invitation (id, "organizationId", email, role, status, "expiresAt", "createdAt", "inviterId")
+           values (?, ?, ?, 'responder', 'expired', ?, ?, ?)`,
+        ).bind(
+          id,
+          workspaceId,
+          `cap-${i}@example.com`,
+          new Date(now).toISOString(),
+          new Date(now).toISOString(),
+          userId,
+        ),
+        env.DB.prepare(
+          `insert into invitation_send (id, "invitationId", email, "inviterId", at) values (?, ?, ?, ?, ?)`,
+        ).bind(`snd_cap_${people}_${i}`, id, `cap-${i}@example.com`, "usr_elsewhere", now - 1000),
+      ]);
+    }
+    const invite = (email: string) =>
+      api(`/workspaces/${workspaceId}/invitations`, {
+        method: "POST",
+        headers: { Cookie: cookie },
+        body: JSON.stringify({ email, role: "responder" }),
+      });
+    expect((await invite(`cap-a-${people}@example.com`)).status).toBe(201);
+    expect(await (await invite(`cap-b-${people}@example.com`)).json()).toEqual({
+      error: "rate_limited",
+    });
+  });
+});

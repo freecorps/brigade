@@ -1,6 +1,6 @@
 import { createEngine, queryGeneric, v, type QueryCtx } from "@freecorps/ember-server";
 import { createNodeSqliteDriver } from "@freecorps/ember-server/testing";
-import { newId, REMINDER_HOUR, type Actor } from "@freecorps/brigade-schema";
+import { MEMBERS_ACTOR, newId, REMINDER_HOUR, type Actor } from "@freecorps/brigade-schema";
 import { describe, expect, test } from "vite-plus/test";
 import type { BrigadeEvent } from "../../src/outbox.ts";
 import * as events from "../events.ts";
@@ -492,6 +492,30 @@ describe("invitations' shard side, on Ember", () => {
     ).toBe(true);
     expect(s.call("invitations:owed", { workspaceId: WS }).value).toEqual([]);
     expect(s.outbox().filter((e) => e.type === "member.invited")).toHaveLength(1);
+  });
+
+  test("a member an accept added fences a member repair holding D1 from before it", () => {
+    const s = shard();
+    const BIA = "usr_bia";
+    expect(
+      s.call("invitations:apply", {
+        workspaceId: WS,
+        actor: MEMBERS_ACTOR,
+        name: "member.add",
+        args: { id: BIA, name: "Bia", role: "responder", invitationId: id("inv") },
+        now: T,
+      }).value,
+    ).toEqual({ ok: true });
+    // A repair read the fence (0) and D1 before Bia accepted: its snapshot would take her off.
+    const before = [ANA, CAIO, EVA].map((member) => ({
+      id: member,
+      role: "owner",
+      resetAt: null,
+    }));
+    expect(s.call("members:reconcile", { workspaceId: WS, members: before, gen: 0 }).value).toEqual(
+      { ok: false, code: "stale" },
+    );
+    expect(s.table("members").map((row) => row.id)).toContain(BIA);
   });
 
   test("the daily count and a send's ledger row come from the shard's own tables", () => {

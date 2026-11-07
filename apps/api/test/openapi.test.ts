@@ -442,6 +442,9 @@ const CASES: Record<string, () => Promise<Case>> = {
         id,
       ),
     );
+    await env.DB.prepare(`update invitation_send set at = ? where "invitationId" = ?`)
+      .bind(Date.now() - INVITATION_RESEND_INTERVAL_MS - 1, id)
+      .run();
     return {
       path: `/workspaces/${t.id}/invitations/${id}/resend`,
       init: { method: "POST" },

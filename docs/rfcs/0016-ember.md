@@ -192,18 +192,28 @@ framework-light.
   a real Ember shard engine (`vite.ember.config.ts`, on `node:sqlite`), so every mutation and query test runs its
   `apply` over Ember's `ctx.db` too.
 
-```ts
-// apps/api/ember/incidents.ts (AGPL app code)
-export const declare = brigadeMutation("incident.declare"); // validates, resolves the actor, runs runMutation
-```
+**The functions (built, `apps/api/ember/`).** Brigade's registries stay the one list of mutations and queries, so
+the shard exposes them by name rather than one Ember export each: `workspace:mutate({ name, args })` runs a client
+mutation (`mutations`), the internal `workspace:serverMutate({ name, args, actor })` a server-only one
+(`serverMutations`: provisioning, `member.sync`, monitor reports) with the actor the API resolved, and
+`workspace:query({ name, args })` a named query. That is the shape of a Brigade Sync `mutate` frame and subscription,
+which the adapter ("Clients") needs anyway.
 
-- **Actor and RBAC.** `brigadeMutation(name)` builds an Ember `mutation` whose handler resolves the actor from
-  `ctx.auth` (a member: their role from the shard's member row; a token: its scopes, RFC 0014; system actors only
-  through `internalMutation`) and calls `runMutation` with Brigade's `can(role, permission)` check, exactly as the
-  shard does today. Refusals keep their codes (`forbidden`, `conflict`, …) as Ember errors with `data.code`.
+- **Actor and RBAC.** The handler resolves the actor from `ctx.auth` and calls `runMutation`/`runQuery` with
+  Brigade's `can(role, permission)` check, exactly as the shard does today. A member's role is the identity's `role`
+  claim: D1's, as the auth hook checked it at admission and again on every token refresh ("Auth"), so at most 5
+  minutes old, lowered to the shard's member copy as `WorkspaceDO.tokenActor` does, so a demotion the shard ran holds at once. (The shard's
+  member row cannot be the source: a member's first `member.sync` runs before it exists, and the row is a copy of
+  D1.) An API token's identity carries `kind: "token"` and its creator's role; its scopes, revocation and expiry come
+  from its `api_tokens` row in the shard. System actors exist only through `serverMutate`. The instance's caps (`MAX_MONITORS`) reach mutations through `setWorkspaceLimits`, called once by the Worker's entry, since Ember mutations have no `env`.
+- **Results are values.** `{ ok: true }` or `{ ok: false, error }` with Brigade's `MutationError` (`forbidden`,
+  `conflict`, `invalid_args` with its issues, …), not thrown errors: Ember's wire carries a thrown error's code and
+  message only, and a refused mutation has already written nothing (the store's undo log).
 - **Determinism.** Brigade's mutations already take time from `ctx.now`; `ctx.now` comes from Ember's seeded clock.
-- **Events.** `commit(events)` writes each event to an `events` table (the timeline and webhooks read it) and schedules
-  its delivery (below), in the mutation's transaction.
+- **Events.** `commit(events)` writes each event's `BrigadeEvent` envelope (the one `writeOutbox` builds, RFC 0005)
+  to an `events` table in the mutation's transaction (built); scheduling its delivery is the next step (below). The
+  rows go straight to `ctx.db`, outside the store's undo log, so a mutation whose events fail to write fails as a
+  whole instead of committing them next to its rolled-back rows.
 - **Queries.** Each `defineQuery` becomes an Ember `query` that reads its table through an index and keeps
   `filter`/`sort` in JavaScript (Brigade's tables are small per workspace); reactivity is Ember's read sets.
 - **Restores.** Ember's bookmarks (`ember restore`) replace the epoch hook (RFC 0004 "Epoch"): Ember's protocol

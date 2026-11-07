@@ -879,6 +879,8 @@ describe("delivery receipts on an Ember workspace", () => {
     expect(receipt).toMatch(/^v1\.k2\./);
     const post = (token: string) =>
       api("/receipts", { method: "POST", body: JSON.stringify({ token }) });
+    // Routed by the token's key id, not D1: even with D1 saying `brigade`, an Ember token reaches the Ember shard.
+    await setWorkspaceEngine(env.DB, ws.workspaceId, "brigade", Date.now());
     const first = await post(receipt!);
     expect(first.status).toBe(200);
     expect(await first.json()).toEqual({ ok: true });
@@ -927,5 +929,20 @@ describe("a page the Queue is late with, on an Ember workspace", () => {
     expect(requests).toHaveLength(1);
     // Recorded on the shard: the Queue's copy, if it comes now, plans nobody again.
     expect(await workspacePager(env, ws.workspaceId).planPage(late)).toMatchObject({ send: false });
+  });
+});
+
+describe("the shard's own send of late pages", () => {
+  test("fails its job when the first lease fails, so the scheduler runs it again", async () => {
+    await expect(
+      sendOverdue(
+        {
+          env: {},
+          runMutation: () => Promise.reject(new Error("storage reset")),
+        },
+        { WORKSPACE: env.WORKSPACE } as never,
+        () => Promise.resolve(Response.json({ status: 200 })),
+      ),
+    ).rejects.toThrow("storage reset");
   });
 });

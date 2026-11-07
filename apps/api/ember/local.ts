@@ -50,7 +50,8 @@ type LocalEnv = NotifyEnv & { BETTER_AUTH_SECRET?: string };
 
 /**
  * Every page the Queue has not brought in time, 20 at a time (`paging:overdue`), each sent through `send` as the
- * consumer would (`notifyPush`, with this shard's plan and record as the planner). Never throws.
+ * consumer would (`notifyPush`, with this shard's plan and record as the planner). Throws only when the first lease
+ * fails, so the scheduler tries the job again.
  */
 export async function sendOverdue(
   ctx: ActionCtx,
@@ -82,6 +83,9 @@ export async function sendOverdue(
       due = (await ctx.runMutation(OVERDUE, {})) as { event: BrigadeEvent; tries: number }[];
     } catch (error) {
       log("reading the pages the queue has not brought failed", { error: String(error) });
+      // Its rollback took the next send's arming with it: fail the job, so the scheduler runs it again. A later batch
+      // that fails leaves the pages leased, and the lease brings them back with the send it armed.
+      if (batch === 0) throw error;
       break;
     }
     if (due.length === 0) break;

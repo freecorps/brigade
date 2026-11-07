@@ -116,5 +116,12 @@ export function expectPages(ctx: MutationCtx, pages: readonly BrigadeEvent[]): v
       );
     }
   }
-  if (watched) tickAt(ctx, due, "local");
+  // Arming is never in the commit's way either: a page left unarmed is the Queue's alone, as on the DO.
+  try {
+    if (watched) tickAt(ctx, due, "local");
+  } catch (error) {
+    console.error(
+      JSON.stringify({ message: "arming the page watch failed", error: String(error) }),
+    );
+  }
 }

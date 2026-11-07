@@ -38,8 +38,8 @@ import {
 import type { MemberChangeResult } from "./members.ts";
 import { emailSender } from "./email.ts";
 import { consumeDeadLetters, consumeEvents, type NotifyEnv } from "./notify.ts";
-import { receiptWorkspace, type ReceiptResult } from "./receipts.ts";
-import { emberReceipt } from "./ember-receipts.ts";
+import { parseReceiptToken, receiptWorkspace, type ReceiptResult } from "./receipts.ts";
+import { EMBER_RECEIPT_KEY_ID, emberReceipt } from "./ember-receipts.ts";
 import { beginSlackInstall, listSlackChannels } from "./slack-bridge.ts";
 import type { FeedFormat } from "./status-feed.ts";
 import { configureStatusPage, serveStatusFeed, serveStatusPage } from "./status-route.ts";
@@ -1547,9 +1547,10 @@ export async function receiveReceipt(request: Request, env: Env): Promise<Respon
     return json({ error: "rate_limited" }, RECEIPT_STATUS.rate_limited);
   }
   try {
-    // On Ember (RFC 0016) the Worker checks the token and the shard records it (src/ember-receipts.ts).
+    // A token minted on Ember (its key id, RFC 0016) is checked here and recorded by the shard (src/ember-receipts.ts);
+    // one the DO minted goes to the DO. By the token alone, so no D1 lookup can send a genuine receipt to the wrong one.
     const result =
-      (await pageEngine(env.DB, workspace)) === "ember"
+      parseReceiptToken(token)?.claim.keyId === EMBER_RECEIPT_KEY_ID
         ? await emberReceipt(env, workspace, token as string, Date.now(), (claim) =>
             emberMutation<ReceiptResult>(env, workspace, "paging:receipt", claim),
           )

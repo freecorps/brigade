@@ -2,7 +2,12 @@
 // workspace only once D1 says its engine is `ember`.
 import { env, exports } from "cloudflare:workers";
 import { createExecutionContext } from "cloudflare:test";
-import { alertSourceToken, newHeartbeatSecret, newId } from "@freecorps/brigade-schema";
+import {
+  alertSourceToken,
+  heartbeatToken,
+  newHeartbeatSecret,
+  newId,
+} from "@freecorps/brigade-schema";
 import grafanaFiring from "../../../packages/schema/tests/fixtures/alerts/grafana-firing.json";
 import { describe, expect, test, vi } from "vite-plus/test";
 import {
@@ -1320,5 +1325,50 @@ describe("alert sources on an Ember workspace", () => {
     const unreadable = await post(alertSourceToken(workspaceId, sourceId, secret), "{not json");
     expect(unreadable.status).toBe(202);
     expect(await unreadable.json()).toMatchObject({ ok: true, malformed: true });
+  });
+});
+
+describe("heartbeats on an Ember workspace", () => {
+  test("POST /heartbeat/:token is checked and taken on the Ember shard", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const minted = await api(`/ember-token/${workspaceId}`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    const { token, shard } = (await minted.json()) as { token: string; shard: string };
+    const random = (n: number) => crypto.getRandomValues(new Uint8Array(n));
+    const monitorId = newId("mon", Date.now(), random);
+    const secret = newHeartbeatSecret(random);
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
+    const created = await api("/ember/api/mutation", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        fn: "workspace:mutate",
+        shard,
+        args: {
+          name: "monitor.createHeartbeat",
+          args: {
+            id: monitorId,
+            name: "Nightly backup",
+            intervalSeconds: 60,
+            graceSeconds: 30,
+            tokenHash: [...new Uint8Array(digest)]
+              .map((byte) => byte.toString(16).padStart(2, "0"))
+              .join(""),
+          },
+        },
+      }),
+    });
+    expect(await created.json()).toMatchObject({ ok: true, value: { ok: true } });
+    const ping = (secretText: string) =>
+      exports.default.fetch(
+        `${ORIGIN}/heartbeat/${heartbeatToken(workspaceId, monitorId, secretText)}`,
+        { method: "POST", headers: { "cf-connecting-ip": clientIp() } },
+      );
+    expect((await ping(secret)).status).toBe(202);
+    expect((await ping(newHeartbeatSecret(random))).status).toBe(404);
   });
 });

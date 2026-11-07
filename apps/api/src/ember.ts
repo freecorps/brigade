@@ -17,6 +17,7 @@ import * as invitations from "../ember/invitations.ts";
 import * as mailer from "../ember/mailer.ts";
 import * as rest from "../ember/rest.ts";
 import * as members from "../ember/members.ts";
+import * as monitors from "../ember/monitors.ts";
 import * as paging from "../ember/paging.ts";
 import * as sessions from "../ember/sessions.ts";
 import * as workspace from "../ember/workspace.ts";
@@ -157,6 +158,7 @@ export const ember = createEmberWorker({
     invitations,
     devices,
     alerts,
+    monitors,
   },
   basePath: EMBER_BASE_PATH,
   auth: brigadeEmberAuth,

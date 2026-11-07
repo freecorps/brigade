@@ -15,6 +15,7 @@ import {
   type CheckResult,
   type Connector,
 } from "./check.ts";
+import { workspaceMonitors } from "./ember-monitors.ts";
 
 /** One region's verdict on one monitor, sent to the workspace shard (`WorkspaceDO.report`). */
 export type ProbeReport = {
@@ -33,10 +34,7 @@ export type ProbeReport = {
   error: string | null;
 };
 
-/** The object for a workspace's region: `${workspaceId}:${region}`, created with that `locationHint`. */
-export function probeName(workspaceId: string, region: ProbeRegion): string {
-  return `${workspaceId}:${region}`;
-}
+export { probeName } from "./probe-name.ts";
 
 const random = (length: number) => crypto.getRandomValues(new Uint8Array(length));
 
@@ -248,7 +246,7 @@ export class ProbeDO extends DurableObject<Env> {
     });
     let accepted: boolean[];
     try {
-      accepted = await this.env.WORKSPACE.getByName(workspaceId).report(region, reports);
+      accepted = await (await workspaceMonitors(this.env, workspaceId)).report(region, reports);
     } catch (error) {
       this.log("probe report failed", { workspaceId, error });
       return;

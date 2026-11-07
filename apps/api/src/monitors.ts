@@ -22,8 +22,10 @@ import {
 } from "@freecorps/brigade-schema";
 import type { MutationResultMessage } from "@freecorps/brigade-sync/protocol";
 import type { CheckConfig } from "./check.ts";
+import { same } from "./alert-intake.ts";
 import { within } from "./deadline.ts";
-import { probeName, type ProbeDO, type ProbeReport } from "./probe.ts";
+import { probeName } from "./probe-name.ts";
+import type { ProbeDO, ProbeReport } from "./probe.ts";
 import type { Shard } from "./shard.ts";
 import type { RowChange } from "./store.ts";
 
@@ -40,7 +42,8 @@ export const STALE_MS = 3 * REPORT_EVERY_MS;
  */
 export const PROBE_PUSH_TIMEOUT_MS = 5000;
 
-const SCHEMA = `
+/** The shard's record of each region's last push (ember/ledgers.ts too). */
+export const MONITORS_SCHEMA = `
   create table if not exists probe_pushes (
     region text primary key,
     config text not null,
@@ -83,7 +86,7 @@ export type MonitoringOptions = {
 
 export class Monitoring {
   constructor(private readonly options: MonitoringOptions) {
-    options.storage.sql.exec(SCHEMA);
+    options.storage.sql.exec(MONITORS_SCHEMA);
   }
 
   /**
@@ -141,14 +144,24 @@ export class Monitoring {
    * re-arms the shard alarm if it was lost, since that alarm is what notices the next missed ping.
    */
   async ping(monitorId: string, digest: ArrayBuffer): Promise<boolean> {
+    if (!this.accept(monitorId, digest)) return false;
+    const { storage } = this.options;
+    if ((await storage.getAlarm()) === null) await storage.setAlarm(Date.now() + MONITOR_TICK_MS);
+    return true;
+  }
+
+  /**
+   * `ping` without re-arming the alarm: synchronous, so on Ember it runs inside one mutation, which arms the monitor
+   * tick itself (ember/monitors.ts).
+   */
+  accept(monitorId: string, digest: ArrayBuffer | Uint8Array): boolean {
     const { store } = this.options.shard;
     const secret = store.get("heartbeats", monitorId);
     const monitor = store.get("monitors", monitorId);
     if (!secret || !monitor || digest.byteLength !== 32) return false;
     const stored = hexBytes(secret.tokenHash);
-    // timingSafeEqual throws on a length mismatch; a malformed stored hash is a refusal, not a 500.
-    if (stored.byteLength !== digest.byteLength) return false;
-    if (!crypto.subtle.timingSafeEqual(stored, digest)) return false;
+    // In constant time; a length mismatch (a malformed stored hash) is a refusal, not a 500.
+    if (!same(stored, digest)) return false;
     if (monitor.paused) return true;
     const now = Date.now();
     store.update("heartbeats", monitorId, { lastPingAt: now });
@@ -165,8 +178,6 @@ export class Monitoring {
         error: null,
       });
     }
-    const { storage } = this.options;
-    if ((await storage.getAlarm()) === null) await storage.setAlarm(now + MONITOR_TICK_MS);
     return true;
   }
 
@@ -176,7 +187,19 @@ export class Monitoring {
    * caller (`WorkspaceDO.alarm`) sets a fallback alarm before calling, so a failure here never ends the chain.
    */
   async tick(now: number): Promise<number | null> {
-    const { storage, log } = this.options;
+    const { log } = this.options;
+    this.checkDue(now);
+    try {
+      await this.pushProbes(now);
+    } catch (error) {
+      log("probe pushes failed", { error });
+    }
+    return this.nextAt(now);
+  }
+
+  /** The tick's own checks: missed heartbeats and stale monitors. Never throws (each is logged). */
+  checkDue(now: number): void {
+    const { log } = this.options;
     const monitors = this.options.shard.store.scan("monitors");
     try {
       this.missedHeartbeats(monitors, now);
@@ -188,13 +211,12 @@ export class Monitoring {
     } catch (error) {
       log("stale monitors failed", { error });
     }
-    try {
-      await this.pushProbes(monitors, now);
-    } catch (error) {
-      log("probe pushes failed", { error });
-    }
+  }
+
+  /** When the tick wants to run next (`tick`'s answer), after the checks and pushes of this one. */
+  nextAt(now: number): number | null {
     const latest = this.options.shard.store.scan("monitors");
-    const pushed = storage.sql
+    const pushed = this.options.storage.sql
       .exec<{ n: number }>("select count(*) as n from probe_pushes")
       .one().n;
     return this.nextWake(latest, now) ?? (pushed === 0 ? null : now + MONITOR_TICK_MS);
@@ -263,35 +285,12 @@ export class Monitoring {
    * active monitor's region has not reported for `STALE_MS`. A region no monitor uses any more gets an empty list
    * (which stops its alarm) and is forgotten once that push succeeds. A failed push is retried on the next tick.
    */
-  private async pushProbes(monitors: MonitorRow[], now: number): Promise<void> {
-    const { storage, shard, log } = this.options;
+  private async pushProbes(now: number): Promise<void> {
+    const { shard, log } = this.options;
     const workspaceId = shard.workspace();
     if (workspaceId === undefined) return;
-    const pushes = new Map(
-      storage.sql
-        .exec<{ region: string; config: string; at: number }>("select * from probe_pushes")
-        .toArray()
-        .map((row) => [row.region, row]),
-    );
     await Promise.all(
-      PROBE_REGIONS.map(async (region) => {
-        const active = monitors.filter(
-          (monitor) =>
-            monitor.kind !== "heartbeat" && !monitor.paused && monitor.regions.includes(region),
-        );
-        const checks = active.map(toConfig);
-        const config = JSON.stringify(checks);
-        const last = pushes.get(region);
-        if (!last && checks.length === 0) return;
-        // Quiet for longer than a refresh allows: `STALE_MS`, or a whole check interval plus a refresh for a
-        // monitor checked less often than that (an hourly check is not a stalled probe 15 minutes in).
-        const stale = active.some((monitor) => {
-          const check = monitor.checks.find((c) => c.source === region);
-          const window = Math.max(STALE_MS, monitor.intervalSeconds * 1000 + REPORT_EVERY_MS);
-          return now - (check?.at ?? monitor.restartedAt) > window;
-        });
-        if (stale) log("probe stalled", { region });
-        if (last && last.config === config && now - last.at < REPUSH_MS && !stale) return;
+      this.pushesDue(now).map(async ({ region, checks, config }) => {
         try {
           const stub = this.options.probes.getByName(probeName(workspaceId, region), {
             locationHint: region,
@@ -306,19 +305,60 @@ export class Monitoring {
           log("probe push failed", { region, error });
           return;
         }
-        if (checks.length === 0)
-          storage.sql.exec("delete from probe_pushes where region = ?", region);
-        else {
-          storage.sql.exec(
-            `insert into probe_pushes (region, config, at) values (?, ?, ?)
-             on conflict (region) do update set config = excluded.config, at = excluded.at`,
-            region,
-            config,
-            now,
-          );
-        }
+        this.pushed(region, config, checks.length, now);
       }),
     );
+  }
+
+  /**
+   * The regions whose checks are due to go to their probe: changed, unchanged for `REPUSH_MS`, or quiet for longer
+   * than a refresh allows (logged as stalled). Synchronous, so on Ember a mutation plans them and an action pushes.
+   */
+  pushesDue(now: number): { region: ProbeRegion; checks: CheckConfig[]; config: string }[] {
+    const { storage, shard, log } = this.options;
+    if (shard.workspace() === undefined) return [];
+    const monitors = shard.store.scan("monitors");
+    const pushes = new Map(
+      storage.sql
+        .exec<{ region: string; config: string; at: number }>("select * from probe_pushes")
+        .toArray()
+        .map((row) => [row.region, row]),
+    );
+    return PROBE_REGIONS.flatMap((region) => {
+      const active = monitors.filter(
+        (monitor) =>
+          monitor.kind !== "heartbeat" && !monitor.paused && monitor.regions.includes(region),
+      );
+      const checks = active.map(toConfig);
+      const config = JSON.stringify(checks);
+      const last = pushes.get(region);
+      if (!last && checks.length === 0) return [];
+      // Quiet for longer than a refresh allows: `STALE_MS`, or a whole check interval plus a refresh for a
+      // monitor checked less often than that (an hourly check is not a stalled probe 15 minutes in).
+      const stale = active.some((monitor) => {
+        const check = monitor.checks.find((c) => c.source === region);
+        const window = Math.max(STALE_MS, monitor.intervalSeconds * 1000 + REPORT_EVERY_MS);
+        return now - (check?.at ?? monitor.restartedAt) > window;
+      });
+      if (stale) log("probe stalled", { region });
+      if (last && last.config === config && now - last.at < REPUSH_MS && !stale) return [];
+      return [{ region, checks, config }];
+    });
+  }
+
+  /** A push the probe took: a region no monitor uses any more is forgotten, any other's config is kept. */
+  pushed(region: ProbeRegion, config: string, checks: number, now: number): void {
+    const { storage } = this.options;
+    if (checks === 0) storage.sql.exec("delete from probe_pushes where region = ?", region);
+    else {
+      storage.sql.exec(
+        `insert into probe_pushes (region, config, at) values (?, ?, ?)
+         on conflict (region) do update set config = excluded.config, at = excluded.at`,
+        region,
+        config,
+        now,
+      );
+    }
   }
 }
 

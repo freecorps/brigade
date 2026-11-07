@@ -20,6 +20,7 @@ import * as members from "../ember/members.ts";
 import * as monitors from "../ember/monitors.ts";
 import * as paging from "../ember/paging.ts";
 import * as sessions from "../ember/sessions.ts";
+import * as status from "../ember/status.ts";
 import * as workspace from "../ember/workspace.ts";
 import type { Role } from "@freecorps/brigade-schema";
 import { memberRole, resolveActor } from "./actor.ts";
@@ -159,6 +160,7 @@ export const ember = createEmberWorker({
     devices,
     alerts,
     monitors,
+    status,
   },
   basePath: EMBER_BASE_PATH,
   auth: brigadeEmberAuth,

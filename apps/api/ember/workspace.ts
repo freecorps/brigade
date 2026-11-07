@@ -37,7 +37,8 @@ import {
 } from "@freecorps/brigade-schema";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { nextSeq, scheduleDrain } from "./events.ts";
-import { armUpkeep, expectPages } from "./ticks.ts";
+import { armUpkeep, expectPages, tickAt } from "./ticks.ts";
+import { touchesStatusPage } from "../src/shard.ts";
 import { asksForPage } from "../src/paging.ts";
 import { MEMBER_TOMBSTONE_MS } from "../src/members.ts";
 import { bumpFence } from "./members.ts";
@@ -149,11 +150,24 @@ export function run(
   const base = shared ?? createEmberStore<BrigadeTables>(ctx.db as never, TABLE_SET);
   // The tables this mutation writes: a committed one that moved an escalation timer or a reminder arms the tick.
   const written = new Set<string>();
+  // Its row changes, for whether the public status page's snapshot is out of date (`touchesStatusPage`): only the
+  // tables that can say so keep their rows (a monitor's before and after, for its followed state).
+  const changes: StatusChange[] = [];
+  const note = (table: string, id: string, before: unknown) => {
+    written.add(table);
+    if (STATUS_WATCHED.has(table)) changes.push({ table, id, before });
+  };
   const store: EmberStore<BrigadeTables> = {
     ...base,
-    insert: (table, row) => (written.add(table), base.insert(table, row)),
-    update: (table, id, patch) => (written.add(table), base.update(table, id, patch)),
-    delete: (table, id) => (written.add(table), base.delete(table, id)),
+    insert: (table, row) => (note(table, row.id, undefined), base.insert(table, row)),
+    update: (table, id, patch) => (
+      note(table, id, table === "monitors" ? base.get(table, id) : undefined),
+      base.update(table, id, patch)
+    ),
+    delete: (table, id) => (
+      note(table, id, table === "monitors" ? base.get(table, id) : undefined),
+      base.delete(table, id)
+    ),
   };
   const who = actor(store);
   if (!who) return notMember();
@@ -210,11 +224,46 @@ export function run(
   // The events go out after this transaction commits (ember/events.ts).
   if (seq.seq !== undefined) scheduleDrain(ctx);
   if (outcome.ok) {
+    markStatus(ctx, base, changes);
     armUpkeep(ctx, base, written, name);
     expectPages(ctx, pages);
     tombstones(ctx, name, args);
   }
   return outcome.ok ? { ok: true } : { ok: false, error: outcome.error };
+}
+
+type StatusChange = { table: string; id: string; before: unknown };
+
+/** The tables `touchesStatusPage` reads changes of (src/shard.ts `STATUS_TABLES`, alerts and monitors). */
+const STATUS_WATCHED: ReadonlySet<string> = new Set([
+  "status_page",
+  "status_components",
+  "status_incidents",
+  "status_maintenance",
+  "status_domain",
+  "alerts",
+  "monitors",
+]);
+
+/**
+ * After a mutation that put the status page's snapshot out of date, as the DO's `Shard.mutate` marks it: the dirty
+ * version (`shard_meta` `status_dirty`, later than any before it) and the status tick armed (ember/status.ts).
+ */
+function markStatus(ctx: MutationCtx, store: Store<BrigadeTables>, changes: StatusChange[]): void {
+  if (changes.length === 0) return;
+  const rows = changes.map((change) => ({
+    ...change,
+    after: change.table === "monitors" ? store.get("monitors", change.id) : undefined,
+  }));
+  if (!touchesStatusPage(rows as never, store as never)) return;
+  const [row] = ctx.sql.exec("select value from shard_meta where key = 'status_dirty'") as {
+    value: number;
+  }[];
+  ctx.sql.exec(
+    "insert into shard_meta (key, value) values ('status_dirty', ?) on conflict (key) do update set value = excluded.value",
+    Math.max(ctx.now, (row?.value ?? 0) + 1),
+  );
+  tickAt(ctx, ctx.now, "status");
 }
 
 /**

@@ -16,6 +16,8 @@ import { workspaceInvitations } from "./ember-invitations.ts";
 export type InviteNotifyEnv = {
   WORKSPACE: Env["WORKSPACE"];
   DB?: D1Database;
+  /** A workspace on Ember (D1's `workspace_engine`) plans its invitation emails on its shard. */
+  SHARD?: Env["SHARD"];
   /**
    * The dashboard's origin for the link. Without it only the dev log sender uses the origin the invitation was made
    * through (`linkFallback`); a real sender sends nothing.

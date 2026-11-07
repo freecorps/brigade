@@ -103,6 +103,7 @@ describe("members on Ember", () => {
 
   test("reconcile: the copy follows D1 and answers whom it removed and changed", () => {
     const s = shard();
+    expect(s.query("members:reconciledAt", {})).toBeNull();
     expect(
       s.call("members:reconcile", {
         workspaceId: WS,
@@ -117,6 +118,8 @@ describe("members on Ember", () => {
         members: [{ id: "usr_ana", role: "admin", resetAt: null }],
       }),
     ).toEqual({ ok: true, removed: [], changed: [] });
+    // Either way the copy agrees with D1 now: a page need not check it again for a while.
+    expect(s.query("members:reconciledAt", {})).toBeTypeOf("number");
   });
 
   test("a repair's snapshot that a member change overtook is refused as stale", () => {

@@ -4,6 +4,7 @@
 
 import { defineSchema, defineShard, defineTable, v } from "@freecorps/ember-server";
 import { EMBER_ROW_INDEX, TABLES, type TableName } from "@freecorps/brigade-schema";
+import { LEDGER_DDL, LEDGER_TABLES } from "./ledgers.ts";
 
 /** Every Brigade table, synced and server-only, in a stable order. */
 export const BRIGADE_TABLES = Object.keys(TABLES).sort() as TableName[];
@@ -11,6 +12,9 @@ export const BRIGADE_TABLES = Object.keys(TABLES).sort() as TableName[];
 const rows = () => defineTable({ id: v.string(), data: v.string() }).index(EMBER_ROW_INDEX, ["id"]);
 
 export default defineSchema({
+  // The orchestrators' ledgers (page deliveries, holds, replays, stored mutation results, …), as Ember's app-private
+  // SQL tables: `ctx.sql` in mutations (ember/shard-facade.ts).
+  privateSql: { tables: LEDGER_TABLES, ddl: LEDGER_DDL },
   shards: {
     // The key is the workspace id (`ws_<ULID>`): the shard `workspace:ws_…`.
     workspace: defineShard({ key: v.string() }),

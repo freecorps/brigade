@@ -96,13 +96,15 @@ export class StatusPublisher {
     const args = parsed.value;
     const { store } = this.deps.shard;
     const current = store.get("status_page", STATUS_PAGE_ID);
+    // Claims and retirements must stay ordered even when consecutive saves share a clock tick.
+    const configuredAt = Math.max(Date.now(), (current?.updatedAt ?? 0) + 1);
     let claimed: number | null = null;
     // Only a public page claims its slug (decided, Q23): a draft's is kept on the page alone (`claimed: false`), so a
     // `slug_taken` never tells an admin which addresses other drafts use; a taken one is refused when it goes public.
     const held = current?.slug === args.slug && current.claimed !== false;
     if (args.enabled && !held) {
       try {
-        const now = Date.now();
+        const now = configuredAt;
         const [before, , owner] = await this.deps.db.batch([
           this.deps.db
             .prepare("select workspace_id from status_slug where slug = ?")
@@ -126,7 +128,12 @@ export class StatusPublisher {
         return { ok: false, code: "unavailable" };
       }
     }
-    const now = Date.now();
+    // Another save may have finished while D1 claimed the slug, so retire after the latest saved page too.
+    const now = Math.max(
+      Date.now(),
+      configuredAt,
+      (store.get("status_page", STATUS_PAGE_ID)?.updatedAt ?? 0) + 1,
+    );
     let outcome;
     try {
       outcome = this.deps.shard.mutate({

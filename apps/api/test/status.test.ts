@@ -1,7 +1,12 @@
 // The public status page (RFC 0012): `PUT /workspaces/:id/status-page` claims the slug in D1 and sets the page up in
 // the shard as the member; the shard pushes a sanitized snapshot to KV; `GET /status/:slug` reads only KV.
 import { env, exports } from "cloudflare:workers";
-import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import {
+  createExecutionContext,
+  runDurableObjectAlarm,
+  runInDurableObject,
+  waitOnExecutionContext,
+} from "cloudflare:test";
 import {
   MONITOR_ACTOR,
   newId,
@@ -11,6 +16,7 @@ import {
   type StatusSnapshot,
 } from "@freecorps/brigade-schema";
 import { describe, expect, test, vi } from "vite-plus/test";
+import worker from "../src/index.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { feedUrls, renderAtomFeed } from "../src/status-feed.ts";
 import { Shard, touchesStatusPage } from "../src/shard.ts";
@@ -231,7 +237,11 @@ const unparkStatus = (t: Team) =>
   });
 
 /** A publisher on the shard's own storage with `kv`, recording its logs and the alarm times it asks for. */
-function publisherWith(state: DurableObjectState, kv: KVNamespace, db: D1Database = env.DB) {
+function publisherWith(
+  state: DurableObjectState,
+  kv: KVNamespace | undefined,
+  db: D1Database = env.DB,
+) {
   const shard = new Shard(state.storage, {
     shard: "workspace",
     randomBytes: random,
@@ -637,6 +647,57 @@ describe("the snapshot", () => {
     });
     expect(await owners(first)).toEqual([]);
     expect(await owners(second)).toEqual([t.id]);
+  });
+
+  test("a slug claimed and retired in the same millisecond is released without KV", async () => {
+    const t = await team();
+    await parkStatus(t);
+    const first = slug();
+    const second = slug();
+    const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
+    const { released, kept } = await runInDurableObject(
+      t.stub,
+      async (_instance: WorkspaceDO, state) => {
+        const { publisher, shard } = publisherWith(state, undefined);
+        // Both saves can share a clock tick and overlap their D1 calls; retirement must follow the latest claim.
+        const now = Date.now();
+        const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+        try {
+          expect(
+            await Promise.all([
+              publisher.configure(t.id, ana, settings(first)),
+              publisher.configure(t.id, ana, settings(second)),
+            ]),
+          ).toEqual([{ ok: true }, { ok: true }]);
+          const [retired] = shard.store.scan("status_retired");
+          expect(retired).toBeDefined();
+          const kept = shard.store.get("status_page", "status_page")!.slug;
+          const released = retired!.id;
+          const claim = await env.DB.prepare("select created_at from status_slug where slug = ?")
+            .bind(released)
+            .first<{ created_at: number }>();
+          expect(retired!.at).toBeGreaterThan(claim!.created_at);
+          // Taking it back within that same tick must also survive a late release of the first retirement.
+          expect(await publisher.configure(t.id, ana, settings(released))).toEqual({ ok: true });
+          await env.DB.prepare(
+            "delete from status_slug where slug = ? and workspace_id = ? and created_at < ?",
+          )
+            .bind(released, t.id, retired!.at)
+            .run();
+          expect(await owners(released)).toEqual([t.id]);
+          expect(await publisher.configure(t.id, ana, settings(kept))).toEqual({ ok: true });
+          const again = shard.store.get("status_retired", released)!;
+          await publisher.publish(t.id, again.at);
+          expect(shard.store.scan("status_retired")).toEqual([]);
+          expect(publisher.nextAt(again.at)).toBeNull();
+          return { released, kept };
+        } finally {
+          clock.mockRestore();
+        }
+      },
+    );
+    expect(await owners(released)).toEqual([]);
+    expect(await owners(kept)).toEqual([t.id]);
   });
 
   test("a quiet public page is rebuilt daily, so its history and its time stay true", async () => {
@@ -1302,8 +1363,28 @@ describe("the snapshot", () => {
     const address = slug();
     await configure(t, t.ana, settings(address));
     await t.push();
-    const from = { "cf-connecting-ip": "203.0.113.77" };
-    const get = (path: string) => exports.default.fetch(`${ORIGIN}${path}`, { headers: from });
+    const from = clientIp();
+    const otherFrom = clientIp();
+    // Miniflare's limiter resets at wall-clock minute boundaries in another Worker, beyond fake timers' reach.
+    // Keep this test's 30-miss window local so the requests cannot straddle that reset or share another test's count.
+    const counts = new Map<string, number>();
+    const limit = vi.fn(async ({ key }: { key: string }) => {
+      const count = (counts.get(key) ?? 0) + 1;
+      counts.set(key, count);
+      return { success: count <= 30 };
+    });
+    const localEnv = { ...env, STATUS_MISS_LIMIT: { limit } };
+    const get = async (path: string, ip = from) => {
+      const ctx = createExecutionContext();
+      const response = await worker.fetch(
+        new Request(`${ORIGIN}${path}`, { headers: { "cf-connecting-ip": ip } }),
+        localEnv,
+        ctx,
+      );
+      // Finish cache writes so the next request to the same missing slug exercises the cached 404.
+      await waitOnExecutionContext(ctx);
+      return response;
+    };
     const missing = slug();
     for (let index = 0; index < 30; index++) {
       const response = await get(
@@ -1319,13 +1400,19 @@ describe("the snapshot", () => {
     // A cached 404 counts as a miss too, a feed's as well; a real page and its feed never do.
     expect((await get(`/status/${missing}`)).status).toBe(429);
     expect((await get(`/status/${missing}/feed.atom`)).status).toBe(429);
+    expect(limit).toHaveBeenCalledTimes(33);
     expect((await get(`/status/${address}`)).status).toBe(200);
     expect((await get(`/status/${address}/feed.json`)).status).toBe(200);
+    expect(limit).toHaveBeenCalledTimes(33);
     // Another caller is not held back.
-    const other = await exports.default.fetch(`${ORIGIN}/status/${missing}`, {
-      headers: { "cf-connecting-ip": "203.0.113.78" },
-    });
+    const other = await get(`/status/${missing}`, otherFrom);
     expect(other.status).toBe(404);
+    expect(counts).toEqual(
+      new Map([
+        [from, 33],
+        [otherFrom, 1],
+      ]),
+    );
   });
 
   test("the feeds come from the snapshot in KV, cached like the page", async () => {

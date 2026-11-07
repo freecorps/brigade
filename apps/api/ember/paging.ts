@@ -55,7 +55,10 @@ function tickAt(ctx: MutationCtx, at: number): void {
 }
 
 /** A `Pager` over this mutation; `wake` schedules a tick at `at`, not before `floor`. */
-function pager(ctx: MutationCtx, floor = ctx.now): { pager: Pager; workspace: string | undefined } {
+function pager(
+  ctx: MutationCtx,
+  floor = ctx.now,
+): { pager: Pager; workspace: string | undefined; check: () => void } {
   const { shard, storage } = emberWorkspace(ctx);
   const p = new Pager({
     storage,
@@ -65,7 +68,7 @@ function pager(ctx: MutationCtx, floor = ctx.now): { pager: Pager; workspace: st
     committed: () => {},
     wake: (at) => tickAt(ctx, Math.max(floor, at)),
   });
-  return { pager: p, workspace: shard.workspace() };
+  return { pager: p, workspace: shard.workspace(), check: () => shard.check() };
 }
 
 /** Schedules the next tick at the pager's earliest due time, if it has one, and not before `floor`. */
@@ -84,7 +87,7 @@ export const plan = internalMutationGeneric({
   args: { event, repair: v.optional(v.boolean()) },
   handler: (ctx, { event: e, repair }: { event: BrigadeEvent; repair?: boolean }): PagePlan => {
     const c = ctx as MutationCtx;
-    const { pager: p, workspace } = pager(c);
+    const { pager: p, workspace, check } = pager(c);
     if (workspace !== e.workspaceId) return { send: false, reason: "not_found" } as PagePlan;
     // The member check before this page failed or was late (src/ember-paging.ts): a durable repair reads D1 again
     // later, so the copy catches up even with no other activity, as the DO's repair alarm does.
@@ -96,6 +99,7 @@ export const plan = internalMutationGeneric({
     const out = p.plan(e, c.now);
     if (asksForPage(e)) p.arrived(e.id);
     scheduleTick(c, p);
+    check();
     return out;
   },
 });
@@ -105,11 +109,12 @@ export const deadLettered = internalMutationGeneric({
   args: { event },
   handler: (ctx, { event: e }: { event: BrigadeEvent }): DeadLetterResult => {
     const c = ctx as MutationCtx;
-    const { pager: p, workspace } = pager(c);
+    const { pager: p, workspace, check } = pager(c);
     if (workspace !== e.workspaceId) return "other_workspace";
     const result = p.deadLettered(e, c.now);
     p.arrived(e.id);
     scheduleTick(c, p);
+    check();
     return result;
   },
 });
@@ -127,10 +132,11 @@ export const record = internalMutationGeneric({
     },
   ): null => {
     const c = ctx as MutationCtx;
-    const { pager: p, workspace } = pager(c);
+    const { pager: p, workspace, check } = pager(c);
     if (workspace !== input.event.workspaceId) return null;
     p.record(input.event, input.outcomes, input.final, input.skipped ?? [], c.now);
     scheduleTick(c, p);
+    check();
     return null;
   },
 });
@@ -142,13 +148,16 @@ export const tick = internalMutationGeneric({
     const c = ctx as MutationCtx;
     // Whatever it wakes for is scheduled `TICK_RETRY_MS` out at the soonest.
     const floor = c.now + TICK_RETRY_MS;
-    const { pager: p, workspace } = pager(c, floor);
+    const { pager: p, workspace, check } = pager(c, floor);
     if (workspace === undefined) return { released: 0, replayed: 0 };
     // This tick is the one scheduled: the next is whatever the pager wants after it.
     c.sql.exec("delete from ember_ticks where key = 'paging'");
     const released = p.releaseDue(c.now);
     const replayed = p.replayDue(c.now);
     scheduleTick(c, p, floor);
+    // A release whose storage failed is caught by `releaseDue` (left held): the whole tick fails instead, as the
+    // DO's alarm does, and the scheduler runs it again.
+    check();
     return { released, replayed };
   },
 });

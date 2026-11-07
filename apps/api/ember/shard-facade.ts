@@ -139,20 +139,37 @@ export class EmberShard {
     return row && (JSON.parse(row.result) as MutationResultMessage);
   }
 
+  /**
+   * Rethrows the storage failure any call under this shard met, so the Ember mutation that built it fails as a whole:
+   * the orchestrators catch what `mutate` throws (a held push left held, `Pager.releaseDue`), which on the DO is fine
+   * because its storage failure aborts the alarm's transaction, and here must do the same. Every function using the
+   * shard calls it last.
+   */
+  check(): void {
+    if (this.failure) throw this.failure.error;
+  }
+
   mutate(input: MutateInput): MutateOutcome {
     const registry = input.internal ? serverMutations : mutations;
-    const out = run(
-      this.ctx,
-      registry,
-      input.name,
-      input.args,
-      () => input.actor,
-      workspaceLimits(),
-      this.store,
-    );
+    let out: ReturnType<typeof run>;
+    try {
+      out = run(
+        this.ctx,
+        registry,
+        input.name,
+        input.args,
+        () => input.actor,
+        workspaceLimits(),
+        this.store,
+      );
+    } catch (error) {
+      // `run` throws only when the mutation cannot be answered (its events not written, a rollback not replayed).
+      this.failure ??= { error };
+      throw error;
+    }
     // A storage failure is not an answer (RFC 0004): rethrown, so the whole Ember mutation rolls back and its caller
     // tries again, rather than an `internal` result stored for this mutation id (`escalation.start` never retried).
-    if (this.failure) throw this.failure.error;
+    this.check();
     const result: MutationResultMessage = out.ok
       ? { type: "mutationResult", mutationId: input.mutationId, ok: true, version: 0 }
       : { type: "mutationResult", mutationId: input.mutationId, ok: false, error: out.error };

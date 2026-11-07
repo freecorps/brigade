@@ -35,23 +35,28 @@ const rows = queryGeneric({
       ),
 } as never);
 
-/** A mutation through `EmberShard` over a `ctx.db` whose writes fail, as a full disk would (test only). */
+/** `ctx` with a `db` whose writes fail, as a full disk would. */
+function fullDisk(c: MutationCtx): MutationCtx {
+  const db = new Proxy(c.db as object, {
+    get(target, key) {
+      if (key === "insert" || key === "patch") {
+        return () => {
+          throw new Error("SQLITE_FULL: database or disk is full");
+        };
+      }
+      const value = (target as Record<string | symbol, unknown>)[key];
+      return typeof value === "function" ? (value as () => unknown).bind(target) : value;
+    },
+  });
+  return { ...c, db } as MutationCtx;
+}
+
+/** A mutation through `EmberShard` over a full disk (test only). */
 const failingDisk = internalMutationGeneric({
   args: { id: v.string() },
   handler: (ctx, { id }: { id: string }) => {
     const c = ctx as MutationCtx;
-    const db = new Proxy(c.db as object, {
-      get(target, key) {
-        if (key === "insert" || key === "patch") {
-          return () => {
-            throw new Error("SQLITE_FULL: database or disk is full");
-          };
-        }
-        const value = (target as Record<string | symbol, unknown>)[key];
-        return typeof value === "function" ? (value as () => unknown).bind(target) : value;
-      },
-    });
-    const shard = new EmberShard({ ...c, db } as MutationCtx);
+    const shard = new EmberShard(fullDisk(c));
     return shard.mutate({
       clientId: "test",
       mutationId: "m1",
@@ -61,6 +66,16 @@ const failingDisk = internalMutationGeneric({
       now: c.now,
     }).result;
   },
+});
+
+/** `paging:tick` over a full disk (test only). */
+const tickOnFullDisk = internalMutationGeneric({
+  args: {},
+  handler: (ctx) =>
+    (paging.tick as unknown as { handler: (c: MutationCtx, a: object) => unknown }).handler(
+      fullDisk(ctx as MutationCtx),
+      {},
+    ),
 });
 
 /** Rows of a private ledger table (test only). */
@@ -74,7 +89,13 @@ function shard() {
   const engine = createEngine({
     schema,
     driver: createNodeSqliteDriver(),
-    functions: { workspace, events, members, paging, test: { rows, ledger, failingDisk } },
+    functions: {
+      workspace,
+      events,
+      members,
+      paging,
+      test: { rows, ledger, failingDisk, tickOnFullDisk },
+    },
     now: () => clock,
   });
   engine.migrate();
@@ -318,5 +339,29 @@ describe("paging on Ember", () => {
     expect(() => s.call("test:failingDisk", { id })).toThrow(/SQLITE_FULL/);
     expect(s.table("incidents").map((row) => row.id)).not.toContain(id);
     expect(s.sql("select mutation_id from mutation_results")).toEqual([]);
+  });
+
+  test("a release whose storage fails fails the whole tick: the push stays held for the next one", () => {
+    const s = shard();
+    const phone = s.device(BIA, 1);
+    const { incident, event } = s.declare();
+    s.call("paging:plan", { event });
+    s.call("paging:record", {
+      event,
+      outcomes: [{ deviceId: phone, userId: BIA, ok: true }],
+      final: true,
+    });
+    s.mutate("incident.setSeverity", { id: incident, severity: "sev3" });
+    const later = another(event, 9);
+    s.call("paging:plan", { event: later });
+    s.tick(PAGE_HOLD_MS + 1);
+    for (let i = 0; i < 3; i++) {
+      expect(() => s.call("test:tickOnFullDisk", {})).toThrow(/could not be written|SQLITE_FULL/);
+      expect(s.sql("select state from page_held")).toEqual([{ state: "held" }]);
+    }
+    expect(s.outbox().filter((e) => e.type === "notification.released")).toEqual([]);
+    // The disk is back: the next tick releases it.
+    expect(s.call("paging:tick", {}).value).toMatchObject({ released: 1 });
+    expect(s.sql("select state from page_held")).toEqual([{ state: "released" }]);
   });
 });

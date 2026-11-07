@@ -38,7 +38,12 @@ export function holdTicks(ctx: MutationCtx): number {
  * (follow-up reminders), apart so a large follow-up history never weighs on a page's transaction (Ember's per-
  * transaction read limit), and a reminder that fails never rolls back a level that fired.
  */
-const JOBS = { paging: TICK, reminders: "paging:remind", local: "local:send" } as const;
+const JOBS = {
+  paging: TICK,
+  reminders: "paging:remind",
+  local: "local:send",
+  reroute: "alerts:reroute",
+} as const;
 export type TickKey = keyof typeof JOBS;
 
 /**
@@ -86,6 +91,9 @@ export function armUpkeep(
   ) {
     tickAt(ctx, ctx.now, "reminders");
   }
+  // The routes changed: what they kept quiet is routed again now (RFC 0005 "Alert sources"), as the DO's
+  // `rerouteAlerts` does, in its own transaction (ember/alerts.ts).
+  if (tables.has("alert_routes")) tickAt(ctx, ctx.now, "reroute");
 }
 
 /**

@@ -9,6 +9,7 @@ import { env as moduleEnv } from "cloudflare:workers";
 import { createEmberWorker, type EmberAuthHook } from "@freecorps/ember-runtime";
 import type { Identity } from "@freecorps/ember-server";
 import schema from "../ember/schema.ts";
+import * as alerts from "../ember/alerts.ts";
 import * as devices from "../ember/devices.ts";
 import * as events from "../ember/events.ts";
 import * as local from "../ember/local.ts";
@@ -155,6 +156,7 @@ export const ember = createEmberWorker({
     rest,
     invitations,
     devices,
+    alerts,
   },
   basePath: EMBER_BASE_PATH,
   auth: brigadeEmberAuth,

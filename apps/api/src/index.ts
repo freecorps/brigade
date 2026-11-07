@@ -81,6 +81,7 @@ import {
 import { forgetSessionEnd, recordSessionEnd, sweepSessionEnds } from "./session-end.ts";
 import { within } from "./deadline.ts";
 import { DEVICES_REGISTER_PATH, registerDevices } from "./device-route.ts";
+import { workspaceAlerts } from "./ember-alerts.ts";
 import { appSignInRoute, pruneAppSignIns } from "./app-sign-in.ts";
 import {
   IDEMPOTENCY_KEY_HEADER,
@@ -1454,7 +1455,7 @@ export async function receiveAlerts(request: Request, env: Env, token: string): 
     );
   }
   try {
-    const shard = env.WORKSPACE.getByName(parsed.workspaceId);
+    const shard = await workspaceAlerts(env, parsed.workspaceId);
     const headers = alertHeaders(request);
     // Too large to read: the shard checks the URL's secret and the source's header, and pages the unreadable alert.
     const result =
@@ -1484,7 +1485,7 @@ export async function receiveAlerts(request: Request, env: Env, token: string): 
         return json({ error: "not_found" }, 404);
     }
   } catch (error) {
-    return failed("WorkspaceDO.alert failed", parsed.workspaceId, error);
+    return failed("the shard's alert intake failed", parsed.workspaceId, error);
   }
 }
 

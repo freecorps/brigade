@@ -54,6 +54,11 @@ export type AlertIntakeOptions = {
    * matched, so requests with a wrong secret never spend the real source's budget. Fails open.
    */
   allow: (sourceId: string) => Promise<boolean>;
+  /**
+   * Where quiet rows that failed to route again on their own are kept (`REROUTE_RETRY_MS`): in memory on the DO, in a
+   * private SQL table on Ember, where each mutation builds its own intake (ember/alerts.ts).
+   */
+  rerouteFailed?: Map<string, number>;
 };
 
 const encoder = new TextEncoder();
@@ -132,11 +137,107 @@ function unreadable(
 const capacityTitle = (locale: WorkspaceLocale) =>
   alert_incident_title({ part: "capacity", name: "" }, { locale });
 
+/** A source's secrets, as the shard keeps them (`alert_source_secrets`). */
+export type AlertSourceSecret = {
+  tokenHash: string;
+  headerHash: string | null;
+  signingSecret: string | null;
+};
+
+/**
+ * What a verified payload asks the shard to ingest (`AlertIntake.ingestPayload`): the alerts read from it, or the
+ * unreadable alert alone (`malformed`), and with `partly` the unreadable alert after the readable ones; `too_large` for
+ * a payload the Worker would not read. Plain data, so on Ember the Worker reads the payload and the shard ingests it.
+ */
+export type AlertPayload =
+  | { kind: "alerts"; alerts: NormalizedAlert[]; malformed: boolean; partly: boolean }
+  | { kind: "too_large" };
+
+/**
+ * The source, when `digest` is its URL secret's and the request carries its header (if it has one), both compared
+ * in constant time; undefined for every refusal alike. The provider's signature is `signed`'s to check.
+ */
+export async function verifiedSource(
+  source: AlertSourceRow | undefined,
+  secret: AlertSourceSecret | undefined,
+  digest: ArrayBuffer,
+  headers: AlertHeaders,
+): Promise<AlertSourceRow | undefined> {
+  if (!source || !secret || !same(hexBytes(secret.tokenHash), digest)) return undefined;
+  if (secret.headerHash !== null && source.headerName !== null) {
+    const value = headers[source.headerName];
+    if (value === undefined) return undefined;
+    const hash = await crypto.subtle.digest("SHA-256", encoder.encode(value));
+    if (!same(hexBytes(secret.headerHash), hash)) return undefined;
+  }
+  return source;
+}
+
+/** Whether `body` carries the provider's signature when the source has a signing secret (Sentry, Grafana). */
+export async function signed(
+  source: AlertSourceRow,
+  secret: AlertSourceSecret,
+  body: ArrayBuffer,
+  headers: AlertHeaders,
+): Promise<boolean> {
+  if (secret.signingSecret === null || (source.kind !== "sentry" && source.kind !== "grafana")) {
+    return true;
+  }
+  const sent = headers[SIGNATURE_HEADER[source.kind]]?.trim().toLowerCase();
+  if (!sent || !/^[0-9a-f]{64}$/.test(sent)) return false;
+  const expected = await hmacHex(secret.signingSecret, body);
+  return same(encoder.encode(expected), encoder.encode(sent));
+}
+
+/**
+ * What a verified payload of `source` asks for: `ignored` (nothing to page), or the alerts to ingest. A payload
+ * Brigade cannot read still pages: as the unreadable alert, which skips the routes; an alert the shard would refuse is
+ * left out, and the unreadable alert pages after the rest.
+ */
+export function readPayload(
+  source: AlertSourceRow,
+  body: ArrayBuffer,
+  headers: AlertHeaders,
+  log: (message: string, fields: Record<string, unknown>) => void,
+): AlertPayload | "ignored" {
+  const sourceId = source.id;
+  const normalized = normalizeAlerts(source.kind, decoder.decode(body), headers);
+  if (normalized.kind === "ignored") return "ignored";
+  if (normalized.kind === "malformed") {
+    log("alert payload unreadable; paging through the default route", {
+      source: sourceId,
+      kind: source.kind,
+      reason: normalized.reason,
+    });
+    return { kind: "alerts", alerts: [], malformed: true, partly: false };
+  }
+  if (normalized.skipped > 0) {
+    log("alerts left out of a payload", { source: sourceId, skipped: normalized.skipped });
+  }
+  // One alert the shard would refuse must not keep the rest of a Grafana group from paging.
+  const refused = normalized.alerts.filter((alert) => alertIssues(alert).length > 0);
+  const alerts = normalized.alerts.filter((alert) => !refused.includes(alert));
+  if (refused.length > 0 || normalized.unreadable > 0) {
+    log("unreadable alerts left out of a payload; paging the unreadable alert", {
+      source: sourceId,
+      unreadable: normalized.unreadable,
+      refused: refused.length,
+      ...(refused.length > 0 && { issues: alertIssues(refused[0]).slice(0, 3) }),
+    });
+  }
+  // Nothing readable left: the payload pages as malformed (through the default, past every route).
+  const malformed = alerts.length === 0;
+  const partly = (refused.length > 0 || normalized.unreadable > 0) && !malformed;
+  return { kind: "alerts", alerts: malformed ? [] : alerts, malformed, partly };
+}
+
 export class AlertIntake {
   /** Quiet rows that failed to route again on their own, and when they may be tried again (`REROUTE_RETRY_MS`). */
-  private readonly rerouteFailed = new Map<string, number>();
+  private readonly rerouteFailed: Map<string, number>;
 
-  constructor(private readonly options: AlertIntakeOptions) {}
+  constructor(private readonly options: AlertIntakeOptions) {
+    this.rerouteFailed = options.rerouteFailed ?? new Map();
+  }
 
   /** The language of the titles the shard writes for incidents it opens: the workspace's (RFC 0008, Q15). */
   private locale(): WorkspaceLocale {
@@ -157,79 +258,19 @@ export class AlertIntake {
     body: ArrayBuffer,
     headers: AlertHeaders,
   ): Promise<AlertIntakeResult> {
-    const { shard, log } = this.options;
-    const source = await this.verified(sourceId, digest, headers);
-    if (!source) return { status: "not_found" };
-    const secret = shard.store.get("alert_source_secrets", sourceId)!;
-    if (secret.signingSecret !== null && (source.kind === "sentry" || source.kind === "grafana")) {
-      const sent = headers[SIGNATURE_HEADER[source.kind]]?.trim().toLowerCase();
-      if (!sent || !/^[0-9a-f]{64}$/.test(sent)) return { status: "not_found" };
-      const expected = await hmacHex(secret.signingSecret, body);
-      if (!same(encoder.encode(expected), encoder.encode(sent))) return { status: "not_found" };
-    }
-    if (!(await this.options.allow(sourceId))) {
-      log("alert source over its rate", { source: sourceId });
-      return { status: "busy" };
-    }
-
-    const normalized = normalizeAlerts(source.kind, decoder.decode(body), headers);
-    if (normalized.kind === "ignored") return { status: "ignored" };
-    let malformed = normalized.kind === "malformed";
-    let alerts: NormalizedAlert[] = [];
-    // Readable alerts, and some that were not: those page as the unreadable alert, past every route.
-    let partly = false;
-    if (normalized.kind === "malformed") {
-      log("alert payload unreadable; paging through the default route", {
-        source: sourceId,
-        kind: source.kind,
-        reason: normalized.reason,
-      });
-    } else {
-      if (normalized.skipped > 0) {
-        log("alerts left out of a payload", { source: sourceId, skipped: normalized.skipped });
-      }
-      // One alert the shard would refuse must not keep the rest of a Grafana group from paging.
-      const refused = normalized.alerts.filter((alert) => alertIssues(alert).length > 0);
-      alerts = normalized.alerts.filter((alert) => !refused.includes(alert));
-      if (refused.length > 0 || normalized.unreadable > 0) {
-        log("unreadable alerts left out of a payload; paging the unreadable alert", {
-          source: sourceId,
-          unreadable: normalized.unreadable,
-          refused: refused.length,
-          ...(refused.length > 0 && { issues: alertIssues(refused[0]).slice(0, 3) }),
-        });
-      }
-      // Nothing readable left: the payload pages as malformed (through the default, past every route).
-      malformed = alerts.length === 0;
-      partly = (refused.length > 0 || normalized.unreadable > 0) && !malformed;
-    }
-    if (malformed) alerts = [unreadable(source, this.locale())];
-
-    const first = this.ingest(
-      source.id,
-      alerts,
-      malformed,
-      partly ? unreadable(source, this.locale()) : undefined,
+    const { store } = this.options.shard;
+    const secret = store.get("alert_source_secrets", sourceId) ?? undefined;
+    const source = await verifiedSource(
+      store.get("alert_sources", sourceId) ?? undefined,
+      secret,
+      digest,
+      headers,
     );
-    if (first.ok)
-      return { status: "accepted", alerts: alerts.length + (partly ? 1 : 0), malformed };
-    if (first.error.code === "not_found") return { status: "not_found" };
-    // Refused for what the payload holds (a declare it could not make, an alert it would not take): retrying would
-    // be refused the same way, so the payload pages as one unreadable alert instead, and the log says why.
-    log("alert payload refused; paging the unreadable alert", {
-      source: sourceId,
-      code: first.error.code,
-      message: first.error.message,
-    });
-    const fallback = this.ingest(source.id, [unreadable(source, this.locale())], true);
-    if (fallback.ok) return { status: "accepted", alerts: 1, malformed: true };
-    if (fallback.error.code === "not_found") return { status: "not_found" };
-    log("the unreadable alert was refused too", {
-      source: sourceId,
-      code: fallback.error.code,
-      message: fallback.error.message,
-    });
-    return { status: "busy" };
+    if (!source || !(await signed(source, secret!, body, headers))) return { status: "not_found" };
+    if (!(await this.allowed(sourceId))) return { status: "busy" };
+    const payload = readPayload(source, body, headers, this.options.log);
+    if (payload === "ignored") return { status: "ignored" };
+    return this.ingestPayload(sourceId, payload);
   }
 
   /**
@@ -243,48 +284,76 @@ export class AlertIntake {
     digest: ArrayBuffer,
     headers: AlertHeaders,
   ): Promise<AlertIntakeResult> {
-    const { log } = this.options;
-    const source = await this.verified(sourceId, digest, headers);
+    const { store } = this.options.shard;
+    const source = await verifiedSource(
+      store.get("alert_sources", sourceId) ?? undefined,
+      store.get("alert_source_secrets", sourceId) ?? undefined,
+      digest,
+      headers,
+    );
     if (!source) return { status: "not_found" };
-    if (!(await this.options.allow(sourceId))) {
-      log("alert source over its rate", { source: sourceId });
-      return { status: "busy" };
-    }
-    log("alert payload too large; paging the unreadable alert", {
-      source: sourceId,
-      kind: source.kind,
-    });
-    const result = this.ingest(source.id, [unreadable(source, this.locale(), "too_large")], true);
-    if (result.ok) return { status: "accepted", alerts: 1, malformed: true };
-    if (result.error.code === "not_found") return { status: "not_found" };
-    log("the unreadable alert was refused", {
-      source: sourceId,
-      code: result.error.code,
-      message: result.error.message,
-    });
-    return { status: "busy" };
+    if (!(await this.allowed(sourceId))) return { status: "busy" };
+    return this.ingestPayload(sourceId, { kind: "too_large" });
+  }
+
+  private async allowed(sourceId: string): Promise<boolean> {
+    if (await this.options.allow(sourceId)) return true;
+    this.options.log("alert source over its rate", { source: sourceId });
+    return false;
   }
 
   /**
-   * The source, when `digest` is its URL secret's and the request carries its header (if it has one), both compared
-   * in constant time; undefined for every refusal alike. The provider's signature is the caller's to check.
+   * Ingests what a verified payload asks for (`readPayload`, or `too_large`): synchronous, so on Ember it runs inside
+   * one mutation. A payload the shard refuses for what it holds pages as one unreadable alert instead. `not_found`
+   * when the source is gone meanwhile.
    */
-  private async verified(
-    sourceId: string,
-    digest: ArrayBuffer,
-    headers: AlertHeaders,
-  ): Promise<AlertSourceRow | undefined> {
-    const { shard } = this.options;
+  ingestPayload(sourceId: string, payload: AlertPayload): AlertIntakeResult {
+    const { shard, log } = this.options;
     const source = shard.store.get("alert_sources", sourceId);
-    const secret = shard.store.get("alert_source_secrets", sourceId);
-    if (!source || !secret || !same(hexBytes(secret.tokenHash), digest)) return undefined;
-    if (secret.headerHash !== null && source.headerName !== null) {
-      const value = headers[source.headerName];
-      if (value === undefined) return undefined;
-      const hash = await crypto.subtle.digest("SHA-256", encoder.encode(value));
-      if (!same(hexBytes(secret.headerHash), hash)) return undefined;
+    if (!source) return { status: "not_found" };
+    const locale = this.locale();
+    if (payload.kind === "too_large") {
+      log("alert payload too large; paging the unreadable alert", {
+        source: sourceId,
+        kind: source.kind,
+      });
+      const result = this.ingest(source.id, [unreadable(source, locale, "too_large")], true);
+      if (result.ok) return { status: "accepted", alerts: 1, malformed: true };
+      if (result.error.code === "not_found") return { status: "not_found" };
+      log("the unreadable alert was refused", {
+        source: sourceId,
+        code: result.error.code,
+        message: result.error.message,
+      });
+      return { status: "busy" };
     }
-    return source;
+    const { malformed, partly } = payload;
+    const alerts = malformed ? [unreadable(source, locale)] : payload.alerts;
+    const first = this.ingest(
+      source.id,
+      alerts,
+      malformed,
+      partly ? unreadable(source, locale) : undefined,
+    );
+    if (first.ok)
+      return { status: "accepted", alerts: alerts.length + (partly ? 1 : 0), malformed };
+    if (first.error.code === "not_found") return { status: "not_found" };
+    // Refused for what the payload holds (a declare it could not make, an alert it would not take): retrying would
+    // be refused the same way, so the payload pages as one unreadable alert instead, and the log says why.
+    log("alert payload refused; paging the unreadable alert", {
+      source: sourceId,
+      code: first.error.code,
+      message: first.error.message,
+    });
+    const fallback = this.ingest(source.id, [unreadable(source, locale)], true);
+    if (fallback.ok) return { status: "accepted", alerts: 1, malformed: true };
+    if (fallback.error.code === "not_found") return { status: "not_found" };
+    log("the unreadable alert was refused too", {
+      source: sourceId,
+      code: fallback.error.code,
+      message: fallback.error.message,
+    });
+    return { status: "busy" };
   }
 
   /**

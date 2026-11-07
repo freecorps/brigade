@@ -2,7 +2,8 @@
 // workspace only once D1 says its engine is `ember`.
 import { env, exports } from "cloudflare:workers";
 import { createExecutionContext } from "cloudflare:test";
-import { newId } from "@freecorps/brigade-schema";
+import { alertSourceToken, newHeartbeatSecret, newId } from "@freecorps/brigade-schema";
+import grafanaFiring from "../../../packages/schema/tests/fixtures/alerts/grafana-firing.json";
 import { describe, expect, test, vi } from "vite-plus/test";
 import {
   EMBER_BODY_MAX,
@@ -1258,5 +1259,66 @@ describe("registering a phone on an Ember workspace", () => {
     expect(await register(biaCookie)).toBe("ok");
     expect(await holder(bia)).toEqual([device.id]);
     expect(await holder(userId)).toEqual([]);
+  });
+});
+
+describe("alert sources on an Ember workspace", () => {
+  test("POST /alerts/:token checks the secret in the Worker and ingests on the shard", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const minted = await api(`/ember-token/${workspaceId}`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    const { token, shard } = (await minted.json()) as { token: string; shard: string };
+    const random = (n: number) => crypto.getRandomValues(new Uint8Array(n));
+    const sourceId = newId("src", Date.now(), random);
+    const secret = newHeartbeatSecret(random);
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
+    const created = await api("/ember/api/mutation", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        fn: "workspace:mutate",
+        shard,
+        args: {
+          name: "alertSource.create",
+          args: {
+            id: sourceId,
+            name: "Grafana",
+            kind: "grafana",
+            tokenHash: [...new Uint8Array(digest)]
+              .map((byte) => byte.toString(16).padStart(2, "0"))
+              .join(""),
+            auth: null,
+            signingSecret: null,
+          },
+        },
+      }),
+    });
+    expect(await created.json()).toMatchObject({ ok: true, value: { ok: true } });
+    const post = (url: string, body: string) =>
+      exports.default.fetch(`${ORIGIN}/alerts/${url}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "cf-connecting-ip": clientIp() },
+        body,
+      });
+    const accepted = await post(
+      alertSourceToken(workspaceId, sourceId, secret),
+      JSON.stringify(grafanaFiring),
+    );
+    expect(accepted.status).toBe(202);
+    expect(await accepted.json()).toMatchObject({ ok: true, malformed: false });
+    // A wrong secret is the same 404 as any refusal.
+    const wrong = await post(
+      alertSourceToken(workspaceId, sourceId, newHeartbeatSecret(random)),
+      JSON.stringify(grafanaFiring),
+    );
+    expect(wrong.status).toBe(404);
+    // Unreadable still pages, as the unreadable alert.
+    const unreadable = await post(alertSourceToken(workspaceId, sourceId, secret), "{not json");
+    expect(unreadable.status).toBe(202);
+    expect(await unreadable.json()).toMatchObject({ ok: true, malformed: true });
   });
 });

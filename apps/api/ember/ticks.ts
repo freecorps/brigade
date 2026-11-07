@@ -1,10 +1,12 @@
-// The shard's upkeep ticks (`paging:tick` and `paging:remind`, ember/paging.ts): the synchronous part of
-// `WorkspaceDO`'s alarm, as scheduler jobs at the earliest each needs one. `ember_ticks` holds the earliest scheduled, so the many calls that
+// The shard's upkeep ticks (`paging:tick` and `paging:remind`, ember/paging.ts, and `local:send`, ember/local.ts): what
+// `WorkspaceDO`'s alarm does, as scheduler jobs at the earliest each needs one. `ember_ticks` holds the earliest scheduled, so the many calls that
 // each want one leave a single job. A module of its own, so `run()` (ember/workspace.ts) can arm it after a mutation
 // that moved a timer, without importing the paging functions.
 
 import type { MutationCtx } from "@freecorps/ember-server";
 import type { BrigadeTables, Store } from "@freecorps/brigade-schema";
+import type { BrigadeEvent } from "../src/outbox.ts";
+import { PAGE_QUEUE_GRACE_MS } from "../src/paging.ts";
 
 export const TICK = "paging:tick";
 
@@ -36,7 +38,7 @@ export function holdTicks(ctx: MutationCtx): number {
  * (follow-up reminders), apart so a large follow-up history never weighs on a page's transaction (Ember's per-
  * transaction read limit), and a reminder that fails never rolls back a level that fired.
  */
-const JOBS = { paging: TICK, reminders: "paging:remind" } as const;
+const JOBS = { paging: TICK, reminders: "paging:remind", local: "local:send" } as const;
 export type TickKey = keyof typeof JOBS;
 
 /**
@@ -83,5 +85,43 @@ export function armUpkeep(
     (tables.has("members") && planned())
   ) {
     tickAt(ctx, ctx.now, "reminders");
+  }
+}
+
+/**
+ * The pages a mutation just wrote (`Pager.expect`, the DO's `outboxed`): each is expected back from the Queue within
+ * `PAGE_QUEUE_GRACE_MS`, or the shard sends it itself (`local:send`, ember/local.ts), armed here for then.
+ */
+export function expectPages(ctx: MutationCtx, pages: readonly BrigadeEvent[]): void {
+  if (pages.length === 0) return;
+  const due = ctx.now + PAGE_QUEUE_GRACE_MS;
+  let watched = false;
+  for (const page of pages) {
+    // Never in the commit's way: a row that cannot be written leaves the page to the Queue alone, as on the DO.
+    try {
+      ctx.sql.exec(
+        "insert into page_pending (event_id, event, due) values (?, ?, ?) on conflict do nothing",
+        page.id,
+        JSON.stringify(page),
+        due,
+      );
+      watched = true;
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          message: "watching a page for the queue failed",
+          event: page.id,
+          error: String(error),
+        }),
+      );
+    }
+  }
+  // Arming is never in the commit's way either: a page left unarmed is the Queue's alone, as on the DO.
+  try {
+    if (watched) tickAt(ctx, due, "local");
+  } catch (error) {
+    console.error(
+      JSON.stringify({ message: "arming the page watch failed", error: String(error) }),
+    );
   }
 }

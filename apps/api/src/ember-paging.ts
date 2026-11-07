@@ -4,9 +4,9 @@
 // `recordPage`, `recordDeadLetter` and the email plans and records do, with the member check before a page
 // (`Membership.fresh`) run from here, since it reads D1.
 //
-// Not yet on Ember (RFC 0016 "Parity"): delivery receipts (a page there goes out without them, as the DO's does when
-// minting fails, and only its delivered stage stays unknown) and the page the shard sends itself when the Queue is
-// late (`pageLocally`). The acknowledge route reaches `paging:acknowledge` itself (src/index.ts).
+// A page planned on Ember carries receipt tokens minted here (src/ember-receipts.ts); the acknowledge and receipt
+// routes reach `paging:acknowledge` and `paging:receipt` themselves (src/index.ts), and the page the shard sends
+// itself when the Queue is late runs in the shard (ember/local.ts).
 
 import type { EmailAbout } from "@freecorps/brigade-schema";
 import { getFunctionName } from "@freecorps/ember-server";
@@ -17,6 +17,7 @@ import type { PageShard } from "./notify.ts";
 import type { BrigadeEvent } from "./outbox.ts";
 import type { EmailOutcome, EmailPlan, ReminderPlan, RotationPlan } from "./mailer.ts";
 import type { DeadLetterResult, PagePlan } from "./paging.ts";
+import { withReceipts } from "./ember-receipts.ts";
 
 type Outcome =
   | { ok: true; value: unknown }
@@ -59,6 +60,8 @@ export type PagingEnv = {
   WORKSPACE: Env["WORKSPACE"];
   DB?: Env["DB"];
   SHARD?: Env["SHARD"];
+  /** The key a page's receipt tokens are derived from on Ember (src/ember-receipts.ts); none without it. */
+  BETTER_AUTH_SECRET?: string;
 };
 
 const log = (message: string, fields: Record<string, unknown>) =>
@@ -107,10 +110,10 @@ export async function pageEngine(
  * engine is read inside each call, so the caller's deadline on the call (`within`) covers the lookup too.
  */
 export function workspacePager(env: PagingEnv, workspaceId: string): WorkspacePager {
-  const { DB, SHARD } = env;
+  const { DB, SHARD, BETTER_AUTH_SECRET } = env;
   const pick = async (): Promise<WorkspacePager> =>
     DB && SHARD && (await pageEngine(DB, workspaceId)) === "ember"
-      ? emberPager({ DB, SHARD }, workspaceId)
+      ? emberPager({ DB, SHARD, BETTER_AUTH_SECRET }, workspaceId)
       : env.WORKSPACE.getByName(workspaceId);
   return {
     planPage: async (event) => (await pick()).planPage(event),
@@ -129,7 +132,7 @@ export function workspacePager(env: PagingEnv, workspaceId: string): WorkspacePa
   };
 }
 
-type EmberPagingEnv = Pick<Env, "DB" | "SHARD">;
+type EmberPagingEnv = Pick<Env, "DB" | "SHARD"> & { BETTER_AUTH_SECRET?: string };
 
 /** Calls `fn` on the workspace's Ember shard; throws when Ember refused it. */
 async function call(
@@ -160,7 +163,8 @@ export function emberPager(env: EmberPagingEnv, workspaceId: string): WorkspaceP
         ...(repair ? { repair: true } : {}),
       })) as PagePlan;
       if (repair) repairPending.delete(workspaceId);
-      return plan;
+      // Each device's receipt token, as `WorkspaceDO.plan` mints them; never in the page's way.
+      return withReceipts(env, workspaceId, event.id, plan, Date.now());
     },
     async recordPage(event, outcomes, final, skipped) {
       await call(env, workspaceId, "mutation", "paging:record", {

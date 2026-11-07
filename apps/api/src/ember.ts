@@ -10,6 +10,7 @@ import { createEmberWorker, type EmberAuthHook } from "@freecorps/ember-runtime"
 import type { Identity } from "@freecorps/ember-server";
 import schema from "../ember/schema.ts";
 import * as events from "../ember/events.ts";
+import * as local from "../ember/local.ts";
 import * as mailer from "../ember/mailer.ts";
 import * as members from "../ember/members.ts";
 import * as paging from "../ember/paging.ts";
@@ -139,7 +140,7 @@ workspace.setWorkspaceLimits({ monitors: instanceMonitorCap(moduleEnv as unknown
 
 export const ember = createEmberWorker({
   schema,
-  functions: { workspace, sessions, members, events, paging, mailer },
+  functions: { workspace, sessions, members, events, paging, mailer, local },
   basePath: EMBER_BASE_PATH,
   auth: brigadeEmberAuth,
 });

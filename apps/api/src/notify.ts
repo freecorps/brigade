@@ -77,7 +77,7 @@ import {
   type BeatChecks,
   type RelayHealth,
 } from "./watchdog.ts";
-import { WORKSPACE_ID } from "./workspace.ts";
+import { WORKSPACE_ID } from "./workspace-ids.ts";
 
 /**
  * Deliveries of a page before the members it missed are recorded as not paged (`notification.failed`). The

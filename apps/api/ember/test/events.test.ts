@@ -15,6 +15,7 @@ import {
   MAX_EVENT_BYTES,
 } from "../../src/outbox.ts";
 import * as events from "../events.ts";
+import { local } from "./stubs.ts";
 import schema from "../schema.ts";
 import * as workspace from "../workspace.ts";
 
@@ -45,7 +46,7 @@ function shard() {
   const engine = createEngine({
     schema,
     driver: createNodeSqliteDriver(),
-    functions: { workspace, events, test: { big } },
+    functions: { workspace, local, events, test: { big } },
     now: () => clock,
   });
   engine.migrate();

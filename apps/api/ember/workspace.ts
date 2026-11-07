@@ -37,7 +37,8 @@ import {
 } from "@freecorps/brigade-schema";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { nextSeq, scheduleDrain } from "./events.ts";
-import { armUpkeep } from "./ticks.ts";
+import { armUpkeep, expectPages } from "./ticks.ts";
+import { asksForPage } from "../src/paging.ts";
 import { BRIGADE_TABLES } from "./schema.ts";
 
 const TABLE_SET: ReadonlySet<string> = new Set(BRIGADE_TABLES);
@@ -158,6 +159,8 @@ export function run(
   // Event rows are written straight to `ctx.db`, outside the store's undo log: if writing them fails, the mutation
   // must not commit its rows' rollback next to the events already written, so the whole Ember mutation fails instead.
   let committing = false;
+  // The pages this mutation wrote, watched for the Queue (`expectPages`).
+  const pages: BrigadeEvent[] = [];
   const seq: { seq?: number } = {};
   const outcome = runMutation(
     registry,
@@ -183,6 +186,7 @@ export function run(
             data: event.data,
             specversion: "1.0",
           };
+          if (asksForPage(envelope)) pages.push(envelope);
           (ctx.db as never as EventsWriter).insert("events", {
             id: envelope.id,
             seq: nextSeq(ctx.db, seq),
@@ -203,7 +207,10 @@ export function run(
   }
   // The events go out after this transaction commits (ember/events.ts).
   if (seq.seq !== undefined) scheduleDrain(ctx);
-  if (outcome.ok) armUpkeep(ctx, base, written);
+  if (outcome.ok) {
+    armUpkeep(ctx, base, written);
+    expectPages(ctx, pages);
+  }
   return outcome.ok ? { ok: true } : { ok: false, error: outcome.error };
 }
 

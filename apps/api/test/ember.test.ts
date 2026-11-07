@@ -21,6 +21,9 @@ import {
   workspacePager,
 } from "../src/ember-paging.ts";
 import { deleteMembership, writeRole } from "../src/members.ts";
+import { sendOverdue } from "../ember/local.ts";
+import { getFunctionName } from "@freecorps/ember-server";
+import { generateRecipient, toBase64url } from "@freecorps/brigade-push";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { sessionCookie } from "./session.ts";
 
@@ -775,5 +778,171 @@ describe("acknowledging an incident on an Ember workspace", () => {
     expect(second.status).toBe(409);
     expect(await second.json()).toEqual({ error: "conflict" });
     expect(await first.json()).toEqual({ ok: true });
+  });
+});
+
+/** An Ember workspace with Bia, a responder, and her phone. */
+async function withResponder() {
+  const { userId, cookie, workspaceId } = await owner();
+  await provision(workspaceId, userId);
+  await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+  const address = `ember-bia-${++people}@example.com`;
+  const signedUp = await api("/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({ name: "Bia", email: address, password: PASSWORD }),
+  });
+  const bia = ((await signedUp.json()) as { user: { id: string } }).user.id;
+  await env.DB.prepare(
+    `insert into member (id, "organizationId", "userId", role, "createdAt") values (?, ?, ?, 'responder', ?)`,
+  )
+    .bind(`mem_${bia}`, workspaceId, bia, new Date().toISOString())
+    .run();
+  const shard = workspaceShard(workspaceId);
+  const stub = env.SHARD.getByName(shard) as unknown as {
+    mutation(
+      s: string,
+      fn: string,
+      args: unknown,
+      identity: unknown,
+      internal: boolean,
+    ): Promise<Outcome>;
+  };
+  const responder = { kind: "user", id: bia, role: "responder" };
+  expect(
+    await stub.mutation(
+      shard,
+      "workspace:serverMutate",
+      { name: "member.sync", args: { id: bia, name: "Bia", role: "responder" }, actor: responder },
+      null,
+      true,
+    ),
+  ).toMatchObject({ ok: true, value: { ok: true } });
+  const random = (n: number) => crypto.getRandomValues(new Uint8Array(n));
+  const deviceId = newId("dev", Date.now(), random);
+  const registered = await stub.mutation(
+    shard,
+    "workspace:mutate",
+    {
+      name: "device.register",
+      args: {
+        id: deviceId,
+        platform: "ios",
+        environment: "sandbox",
+        pushToken: "a".repeat(64),
+        voipToken: null,
+        publicKey: toBase64url((await generateRecipient()).publicKey),
+      },
+    },
+    { subject: bia, claims: { role: "responder", ws: workspaceId } },
+    false,
+  );
+  expect(registered).toMatchObject({ ok: true, value: { ok: true } });
+  const minted = await api(`/ember-token/${workspaceId}`, {
+    method: "POST",
+    headers: { Cookie: cookie },
+  });
+  const { token } = (await minted.json()) as { token: string };
+  const incident = newId("inc", Date.now(), random);
+  const declared = await api("/ember/api/mutation", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      fn: "workspace:mutate",
+      shard,
+      args: {
+        name: "incident.declare",
+        args: { id: incident, title: "Checkout is down", severity: "sev1" },
+      },
+    }),
+  });
+  expect(await declared.json()).toMatchObject({ ok: true, value: { ok: true } });
+  const page = (): BrigadeEvent => ({
+    id: newId("evt", Date.now(), random),
+    type: "incident.declared",
+    source: `brigade://${workspaceId}/workspace`,
+    workspaceId,
+    time: new Date().toISOString(),
+    actor: { kind: "user", id: userId },
+    subject: incident,
+    data: {},
+    specversion: "1.0",
+  });
+  return { workspaceId, shard, stub, deviceId, incident, page };
+}
+
+describe("delivery receipts on an Ember workspace", () => {
+  test("a page planned there carries a receipt token, which POST /receipts records once", async () => {
+    const ws = await withResponder();
+    const plan = await workspacePager(env, ws.workspaceId).planPage(ws.page());
+    expect(plan).toMatchObject({ send: true, targets: [{ deviceId: ws.deviceId }] });
+    const receipt = (plan as { targets: { receipt?: string }[] }).targets[0]!.receipt;
+    expect(receipt).toMatch(/^v1\.k2\./);
+    const post = (token: string) =>
+      api("/receipts", { method: "POST", body: JSON.stringify({ token }) });
+    // Routed by the token's key id, not D1: even with D1 saying `brigade`, an Ember token reaches the Ember shard.
+    await setWorkspaceEngine(env.DB, ws.workspaceId, "brigade", Date.now());
+    const first = await post(receipt!);
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ ok: true });
+    // Again: `already`, answered as a success (the phone need not retry).
+    const again = await post(receipt!);
+    expect(again.status).toBe(200);
+    // One altered byte: not a token this Worker minted for the workspace.
+    const forged = `${receipt!.slice(0, -2)}${receipt!.endsWith("A") ? "B" : "A"}A`;
+    expect(await (await post(forged)).json()).toEqual({ error: "invalid" });
+  });
+});
+
+describe("a page the Queue is late with, on an Ember workspace", () => {
+  test("goes out from the shard through the relay, with the shard's plan and record", async () => {
+    const ws = await withResponder();
+    const late = ws.page();
+    let leased = false;
+    const requests: unknown[] = [];
+    const out = await sendOverdue(
+      {
+        env: {},
+        runMutation: async (ref, args) => {
+          const name = getFunctionName(ref as never);
+          if (name === "paging:overdue") {
+            if (leased) return [];
+            leased = true;
+            return [{ event: late, tries: 1 }];
+          }
+          const res = await ws.stub.mutation(ws.shard, name, args, null, true);
+          if (!res.ok) throw new Error(`${name}: ${JSON.stringify(res.error)}`);
+          return res.value;
+        },
+      },
+      {
+        WORKSPACE: env.WORKSPACE,
+        RELAY_URL: "https://relay.test",
+        RELAY_SEND_TOKEN: "test-token",
+        BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,
+      } as never,
+      async (request) => {
+        requests.push(await request.json());
+        return Response.json({ status: 200 });
+      },
+    );
+    expect(out).toEqual({ sent: 1 });
+    expect(requests).toHaveLength(1);
+    // Recorded on the shard: the Queue's copy, if it comes now, plans nobody again.
+    expect(await workspacePager(env, ws.workspaceId).planPage(late)).toMatchObject({ send: false });
+  });
+});
+
+describe("the shard's own send of late pages", () => {
+  test("fails its job when the first lease fails, so the scheduler runs it again", async () => {
+    await expect(
+      sendOverdue(
+        {
+          env: {},
+          runMutation: () => Promise.reject(new Error("storage reset")),
+        },
+        { WORKSPACE: env.WORKSPACE } as never,
+        () => Promise.resolve(Response.json({ status: 200 })),
+      ),
+    ).rejects.toThrow("storage reset");
   });
 });

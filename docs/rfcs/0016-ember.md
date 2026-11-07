@@ -178,8 +178,10 @@ framework-light.
 
 - **Rollback inside a mutation.** Ember's `ctx.db` has no savepoints, and `runMutation` undoes a failed `apply`
   without failing the Ember mutation that ran it. The store keeps an undo log (each write's row before it) and
-  replays it backwards on a throw, nested as `transaction` requires; if replaying fails, the error escapes the
-  handler and Ember rolls the whole mutation back.
+  replays it backwards on a throw, nested as `transaction` requires; if replaying fails (Ember's write limit,
+  say), the store refuses every later call and `undoFailure()` returns the error, which the handler rethrows so Ember
+  rolls the whole mutation back rather than commit a half-undone one (`runMutation` alone would turn it into an
+  `internal` result).
 - **Ember's read limit.** Ember refuses a transaction that reads more than 16,384 rows, and Brigade's mutations scan
   tables and look rows up again and again (an `alert.ingest` of 50 alerts in a workspace with a few hundred alerts
   went past it). The store holds what one call has read and written, so a table is read from Ember at most once per

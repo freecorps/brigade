@@ -382,6 +382,15 @@ one declaring member and three paged ones:
 - **Not checked:** a Critical Alert (Xcode's development profile cannot carry the entitlement; it needs an ad hoc or
   store build), item 2's refusals, and `Unregistered` after an uninstall, which APNs reports only some time later.
 
+**Result, step 2 (2026-11-06).** `dev` running step 2, with the four APNs secrets and the Firebase service account on
+the API Worker:
+
+- **Direct:** a SEV1 rang the iPhone and the Android emulator and both showed `Delivered · Call sent`, with no
+  `/send` reaching the relay in that time (only the watchdog's deep health checks).
+- **Fallback:** with `APNS_KEY_ID` set wrong on the API, a SEV2 reached the iPhone through the relay's `/send`
+  (`APNs response` 200 there) and was acknowledged from the notification; Android, which does not use the APNs key,
+  still went direct. The right key id was put back afterwards.
+
 ## Ember gaps
 
 What Brigade needs that Ember does not have, each worked around here and proposed for Ember, clean-room:

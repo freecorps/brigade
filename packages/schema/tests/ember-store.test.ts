@@ -10,7 +10,13 @@ import {
 } from "@freecorps/ember-server";
 import { createNodeSqliteDriver } from "@freecorps/ember-server/testing";
 import { describe, expect, test } from "vite-plus/test";
-import { createEmberStore, EMBER_ROW_INDEX, StoreError, type Store } from "../src/index.ts";
+import {
+  createEmberStore,
+  type EmberStore,
+  EMBER_ROW_INDEX,
+  StoreError,
+  type Store,
+} from "../src/index.ts";
 
 type Note = { id: string; text: string; tags: string[]; note?: string | null };
 type Tables = { notes: Note; other: { id: string; n: number } };
@@ -249,6 +255,29 @@ describe("createEmberStore", () => {
       return store.range("notes", "n12", "n15").map((r) => r.id);
     });
     expect(ids).toEqual(["n12", "n13", "n14"]);
+  });
+
+  test("rangeDescending reads the newest `limit` rows off the index, and sees this call's writes", () => {
+    // 100 rows, a 30-row read limit: reading the whole range would go past it.
+    const { tx } = shard({ rowsRead: 30 });
+    tx((store) => {
+      for (let i = 0; i < 100; i++) store.insert("notes", note(`n${String(i).padStart(2, "0")}`));
+    });
+    const [page, next, mine, afterDelete] = tx((store) => {
+      const ember = store as EmberStore<Tables>;
+      const first = ember.rangeDescending("notes", "n", "n~", 5).map((r) => r.id);
+      const second = ember.rangeDescending("notes", "n", "n95", 5).map((r) => r.id);
+      store.insert("notes", note("n99z"));
+      const withMine = ember.rangeDescending("notes", "n", "n~", 3).map((r) => r.id);
+      store.delete("notes", "n99z");
+      store.delete("notes", "n99");
+      const deleted = ember.rangeDescending("notes", "n90", "n~", 3).map((r) => r.id);
+      return [first, second, withMine, deleted];
+    });
+    expect(page).toEqual(["n99", "n98", "n97", "n96", "n95"]);
+    expect(next).toEqual(["n94", "n93", "n92", "n91", "n90"]);
+    expect(mine).toEqual(["n99z", "n99", "n98"]);
+    expect(afterDelete).toEqual(["n98", "n97", "n96"]);
   });
 
   test("each table is read from Ember once per call, so repeated scans stay under Ember's read limit", () => {

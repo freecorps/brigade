@@ -17,7 +17,6 @@ import {
   NOTIFIER_ACTOR,
   nextReminderAt,
   remindersDue,
-  ROLES,
   type Actor,
 } from "@freecorps/brigade-schema";
 import type { AckResult } from "../src/workspace.ts";
@@ -244,7 +243,7 @@ export const acknowledge = internalMutationGeneric({
     const c = ctx as MutationCtx;
     const { shard } = emberWorkspace(c);
     if (shard.workspace() !== input.workspaceId) return { ok: false, code: "not_found" };
-    const actor = tokenActor(shard, input.actor, c.now);
+    const actor = shard.tokenActor(input.actor, c.now);
     if (!actor) return { ok: false, code: "unauthenticated" };
     // The key names a tap on one incident's page: the same key for another incident is another ack.
     const id = `${input.incidentId}:${input.mutationId}`;
@@ -262,18 +261,6 @@ export const acknowledge = internalMutationGeneric({
     return result.ok ? { ok: true } : { ok: false, code: result.error.code };
   },
 });
-
-/** `WorkspaceDO.tokenActor`: an API token while this shard backs it, with its creator's role here when higher. */
-function tokenActor(shard: EmberShard, actor: Actor, now: number): Actor | undefined {
-  if (actor.kind !== "token") return actor;
-  const row = shard.store.get("api_tokens", actor.id);
-  if (!row || row.revokedAt !== null || row.createdBy !== actor.by) return undefined;
-  if (row.expiresAt !== null && row.expiresAt <= now) return undefined;
-  const copy = shard.store.get("members", row.createdBy);
-  return copy && ROLES.indexOf(copy.role) > ROLES.indexOf(actor.role)
-    ? { ...actor, role: copy.role }
-    : actor;
-}
 
 /**
  * `WorkspaceDO.receipt`'s shard side (RFC 0006 "Delivery receipts"): the Worker checked the token's MAC and expiry

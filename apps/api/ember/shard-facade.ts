@@ -9,6 +9,8 @@ import type { MutationCtx } from "@freecorps/ember-server";
 import {
   createEmberStore,
   mutations,
+  ROLES,
+  type Actor,
   type EmberRowsWriter,
   serverMutations,
   type BrigadeTables,
@@ -80,7 +82,14 @@ function watched(db: EmberRowsWriter, failed: (error: unknown) => void): EmberRo
       return {
         withIndex: (index, range) => {
           const r = guard(() => q.withIndex(index, range));
-          return { collect: () => guard(() => r.collect()), first: () => guard(() => r.first()) };
+          return {
+            collect: () => guard(() => r.collect()),
+            first: () => guard(() => r.first()),
+            order: (order) => {
+              const o = guard(() => r.order(order));
+              return { take: (n) => guard(() => o.take(n)) };
+            },
+          };
         },
       };
     },
@@ -147,6 +156,59 @@ export class EmberShard {
    */
   check(): void {
     if (this.failure) throw this.failure.error;
+  }
+
+  /** When the stored result of a mutation was written (`Shard.storedAt`), within the retention. */
+  storedAt(actorId: string, clientId: string, mutationId: string, now: number): number | undefined {
+    const [row] = this.ctx.sql.exec(
+      `select at from mutation_results
+       where actor_id = ? and client_id = ? and mutation_id = ? and at >= ?`,
+      actorId,
+      clientId,
+      mutationId,
+      now - RESULT_RETENTION_MS,
+    ) as { at: number }[];
+    return row?.at;
+  }
+
+  /**
+   * Ties an HTTP request's `Idempotency-Key` to what the request is (`Shard.claimRequestKey`): true when the key is
+   * new or was first sent with this same request, within the results' retention.
+   */
+  claimRequestKey(actorId: string, key: string, request: string, now: number): boolean {
+    const [row] = this.ctx.sql.exec(
+      "select request from request_keys where actor_id = ? and key = ? and at >= ?",
+      actorId,
+      key,
+      now - RESULT_RETENTION_MS,
+    ) as { request: string }[];
+    if (row) return row.request === request;
+    this.ctx.sql.exec(
+      `insert into request_keys (actor_id, key, at, request) values (?, ?, ?, ?)
+       on conflict (actor_id, key) do update set at = excluded.at, request = excluded.request`,
+      actorId,
+      key,
+      now,
+      request,
+    );
+    this.ctx.sql.exec("delete from request_keys where at < ?", now - RESULT_RETENTION_MS);
+    return true;
+  }
+
+  /**
+   * An API token actor as this shard backs it (`WorkspaceDO.tokenActor`, RFC 0014), or undefined: its listed copy must
+   * exist, be neither revoked nor expired and have the same creator; its role is the lower of what the Worker read in
+   * D1 and the creator's copy here. Any other actor is returned as it is.
+   */
+  tokenActor(actor: Actor, now: number): Actor | undefined {
+    if (actor.kind !== "token") return actor;
+    const row = this.store.get("api_tokens", actor.id);
+    if (!row || row.revokedAt !== null || row.createdBy !== actor.by) return undefined;
+    if (row.expiresAt !== null && row.expiresAt <= now) return undefined;
+    const copy = this.store.get("members", row.createdBy);
+    return copy && ROLES.indexOf(copy.role) > ROLES.indexOf(actor.role)
+      ? { ...actor, role: copy.role }
+      : actor;
   }
 
   mutate(input: MutateInput): MutateOutcome {

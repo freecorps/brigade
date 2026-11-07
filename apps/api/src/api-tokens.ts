@@ -23,9 +23,12 @@ import type { Auth } from "./auth.ts";
 import { readBounded } from "./body.ts";
 import { fromBase64url, isTokenKey } from "./slack-token.ts";
 import { ORGANIZATION_ID } from "./workspace.ts";
+import { workspaceRest } from "./ember-rest.ts";
 
 export type ApiTokenEnv = Pick<Env, "DB" | "WORKSPACE" | "API_TOKEN_LIMIT"> & {
   API_TOKEN_KEY?: string;
+  /** Ember's shards, for a workspace D1's `workspace_engine` says is on Ember (src/ember-rest.ts). */
+  SHARD?: Env["SHARD"];
 };
 
 /** How long an isolate trusts a token it resolved in D1; revoking drops it from the revoking isolate at once. */
@@ -294,7 +297,9 @@ async function recordUse(env: ApiTokenEnv, token: TokenRow, now: number): Promis
       .bind(now, token.id, now - LAST_USED_EVERY_MS)
       .run();
     if (written.meta.changes !== 1) return;
-    await env.WORKSPACE.getByName(token.workspaceId).apiTokenUsed(token.workspaceId, token.id, now);
+    await (
+      await workspaceRest(env, token.workspaceId)
+    ).apiTokenUsed(token.workspaceId, token.id, now);
   } catch (error) {
     log("recording an API token's use failed", { token: token.id, error: String(error) });
   }
@@ -451,14 +456,11 @@ async function mint(
   }
   let result: { ok: true } | { ok: false; code: string };
   try {
-    result = await env.WORKSPACE.getByName(workspaceId).apiTokenRun(
-      workspaceId,
-      actor,
-      "apiToken.create",
-      { id, name, scopes, expiresAt },
-    );
+    result = await (
+      await workspaceRest(env, workspaceId)
+    ).apiTokenRun(workspaceId, actor, "apiToken.create", { id, name, scopes, expiresAt });
   } catch (error) {
-    log("WorkspaceDO.apiTokenRun failed", { workspace: workspaceId, error: String(error) });
+    log("the shard's apiTokenRun failed", { workspace: workspaceId, error: String(error) });
     await unmint(env.DB, id);
     return answer({ error: "unavailable" }, 503);
   }
@@ -506,12 +508,9 @@ async function revoke(
   }
   forgetToken(tokenId);
   try {
-    const result = await env.WORKSPACE.getByName(workspaceId).apiTokenRun(
-      workspaceId,
-      actor,
-      "apiToken.revoke",
-      { id: tokenId },
-    );
+    const result = await (
+      await workspaceRest(env, workspaceId)
+    ).apiTokenRun(workspaceId, actor, "apiToken.revoke", { id: tokenId });
     // D1 has it revoked either way; `not_found`: the shard never listed it (its mint failed there).
     if (result.ok || result.code === "conflict" || result.code === "not_found") {
       return answer({ ok: true }, 200);
@@ -519,7 +518,7 @@ async function revoke(
     const status = STATUS[result.code];
     return answer({ error: status === undefined ? "internal" : result.code }, status ?? 500);
   } catch (error) {
-    log("WorkspaceDO.apiTokenRun failed", { workspace: workspaceId, error: String(error) });
+    log("the shard's apiTokenRun failed", { workspace: workspaceId, error: String(error) });
     return answer({ error: "unavailable" }, 503);
   }
 }

@@ -177,4 +177,35 @@ describe("devices on Ember", () => {
     expect(s.register(bia, device(1), { memberGen: again.gen })).toEqual({ ok: true });
     expect(s.register(bia, device(2))).toEqual({ ok: true });
   });
+
+  test("a removal before the ownership retry keeps the phone its member's", () => {
+    const s = shard();
+    const phone = device(1);
+    expect(s.register(ana, phone, { sessionId: "ses_ana" })).toEqual({ ok: true });
+    expect(s.server("member.remove", { id: BIA, role: "responder", reason: "removed" })).toEqual({
+      ok: true,
+    });
+    const theirs = device(1, 2);
+    const gone = s.register(bia, theirs) as { gen: number };
+    // D1 has Bia again: the first retry clears the tombstone, and finds Ana's phone.
+    expect(s.register(bia, theirs, { memberGen: gone.gen })).toMatchObject({
+      ok: false,
+      code: "forbidden",
+      heldBy: "ses_ana",
+    });
+    // Removed again before the Worker's ownership retry, which still carries the first read's fence.
+    expect(s.server("member.sync", { id: BIA, name: "Bia", role: "responder" }, bia)).toEqual({
+      ok: true,
+    });
+    expect(s.server("member.remove", { id: BIA, role: "responder", reason: "removed" })).toEqual({
+      ok: true,
+    });
+    expect(
+      s.register(bia, theirs, {
+        memberGen: gone.gen,
+        free: { sessionId: "ses_ana", before: T },
+      }),
+    ).toMatchObject({ ok: false, code: "gone" });
+    expect(s.table("devices")).toMatchObject([{ id: phone.id, userId: ANA }]);
+  });
 });

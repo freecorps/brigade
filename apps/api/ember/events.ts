@@ -29,8 +29,11 @@ import {
 } from "../src/outbox.ts";
 import { within } from "../src/deadline.ts";
 
-/** How long a scheduled drain may stay unfinished before the next event schedules another. */
-export const DRAIN_LEASE_MS = 5 * 60 * 1000;
+/**
+ * How long a scheduled drain may stay unfinished before the next event schedules another: twice the longest backoff
+ * of a failing drain (`DRAIN_RETRY_MAX_MS`), so a drain waiting out its backoff is never taken for a dead one.
+ */
+export const DRAIN_LEASE_MS = 2 * DRAIN_RETRY_MAX_MS;
 
 const PENDING = makeFunctionReference<"query">("events:pending");
 const SENT = makeFunctionReference<"mutation">("events:sent");

@@ -9,6 +9,7 @@ import { env as moduleEnv } from "cloudflare:workers";
 import { createEmberWorker, type EmberAuthHook } from "@freecorps/ember-runtime";
 import type { Identity } from "@freecorps/ember-server";
 import schema from "../ember/schema.ts";
+import * as members from "../ember/members.ts";
 import * as sessions from "../ember/sessions.ts";
 import * as workspace from "../ember/workspace.ts";
 import type { Role } from "@freecorps/brigade-schema";
@@ -80,6 +81,7 @@ export async function verifyIdentity(
   const claims = await verifyEmberToken(env.BETTER_AUTH_SECRET, token, now);
   if (!claims) return null;
   let role: Role | undefined;
+  let by: string | undefined;
   if (claims.kind === "token") {
     const row = await env.DB.prepare(
       `select created_by as createdBy, created_at as createdAt, expires_at as expiresAt from api_token
@@ -88,6 +90,7 @@ export async function verifyIdentity(
       .bind(claims.sub, claims.ws)
       .first<{ createdBy: string; createdAt: number; expiresAt: number | null }>();
     if (!row || (row.expiresAt !== null && row.expiresAt <= now)) return null;
+    by = row.createdBy;
     // As on REST (`resolveBearer`): the creator's role now, and a membership newer than the token (they left and came
     // back) does not revive it.
     role = (await creatorNow(env.DB, { ...row, workspaceId: claims.ws }))?.role;
@@ -113,6 +116,8 @@ export async function verifyIdentity(
       ws: claims.ws,
       ...(claims.kind === undefined ? {} : { kind: claims.kind }),
       ...(claims.sid === undefined ? {} : { sid: claims.sid }),
+      // An API token's creator, so the shard can close the sockets of every token acting for a member it changes.
+      ...(by === undefined ? {} : { by }),
     },
   };
 }
@@ -131,7 +136,7 @@ workspace.setWorkspaceLimits({ monitors: instanceMonitorCap(moduleEnv as unknown
 
 export const ember = createEmberWorker({
   schema,
-  functions: { workspace, sessions },
+  functions: { workspace, sessions, members },
   basePath: EMBER_BASE_PATH,
   auth: brigadeEmberAuth,
 });

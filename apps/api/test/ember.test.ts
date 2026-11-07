@@ -394,3 +394,85 @@ describe("sessions on an Ember workspace", () => {
     expect(left?.n).toBe(0);
   });
 });
+
+describe("members on an Ember workspace", () => {
+  test("a role change and a removal go to D1, then to the Ember copy", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    // Bia: a responder in D1 and in the shard's copy.
+    const address = `ember-bia-${++people}@example.com`;
+    const signedUp = await api("/auth/sign-up/email", {
+      method: "POST",
+      body: JSON.stringify({ name: "Bia", email: address, password: PASSWORD }),
+    });
+    const bia = ((await signedUp.json()) as { user: { id: string } }).user.id;
+    await env.DB.prepare(
+      `insert into member (id, "organizationId", "userId", role, "createdAt") values (?, ?, ?, 'responder', ?)`,
+    )
+      .bind(`mem_${bia}`, workspaceId, bia, new Date().toISOString())
+      .run();
+    const shard = workspaceShard(workspaceId);
+    const stub = env.SHARD.getByName(shard) as unknown as {
+      mutation(
+        s: string,
+        fn: string,
+        args: unknown,
+        identity: null,
+        internal: boolean,
+      ): Promise<Outcome>;
+      query(
+        s: string,
+        fn: string,
+        args: unknown,
+        identity: null,
+        internal: boolean,
+      ): Promise<Outcome>;
+    };
+    await stub.mutation(
+      shard,
+      "workspace:serverMutate",
+      {
+        name: "member.sync",
+        args: { id: bia, name: "Bia", role: "responder" },
+        actor: { kind: "user", id: bia, role: "responder" },
+      },
+      null,
+      true,
+    );
+    const copy = async () =>
+      (
+        (await stub.query(shard, "members:state", { workspaceId, targetId: bia }, null, true))
+          .value as {
+          copy: { role: string } | null;
+        }
+      ).copy;
+
+    const demoted = await api(`/workspaces/${workspaceId}/members/${bia}`, {
+      method: "PATCH",
+      headers: { Cookie: cookie },
+      body: JSON.stringify({ role: "viewer" }),
+    });
+    expect(await demoted.json()).toEqual({ ok: true });
+    expect(await copy()).toEqual({ role: "viewer" });
+    const d1 = await env.DB.prepare(
+      `select role from member where "organizationId" = ? and "userId" = ?`,
+    )
+      .bind(workspaceId, bia)
+      .first<{ role: string }>();
+    expect(d1?.role).toBe("viewer");
+
+    const removed = await api(`/workspaces/${workspaceId}/members/${bia}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+    expect(await removed.json()).toEqual({ ok: true });
+    expect(await copy()).toBeNull();
+    // The last owner stays, on Ember as on WorkspaceDO.
+    const last = await api(`/workspaces/${workspaceId}/members/${userId}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+    expect(last.status).toBe(409);
+  });
+});

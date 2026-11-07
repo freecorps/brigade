@@ -9,8 +9,8 @@
 //   retried by Ember's scheduler until it succeeds (the Durable Object's repair alarm).
 //
 // No tombstone: on Ember a removed member's token is refused by the auth hook, which checks D1 on every admission and
-// refresh, and the Worker revokes their sockets right after `apply` (`revokeSockets`, by user and by API token
-// creator).
+// refresh, and the Worker revokes their sockets right after `apply`, whether it succeeded or not (`revokeSockets`, by
+// user and by API token creator).
 
 import {
   internalActionGeneric,
@@ -161,8 +161,8 @@ export const apply = internalMutationGeneric({
 export type ReconciledMember = { id: string; role: Role; resetAt: number | null };
 
 /**
- * `member.reconcile` with D1's `members`, as `MEMBERS_ACTOR`. Answers who it removed and whose role it changed, so
- * the Worker can close their sockets; `conflict` (nothing to repair) is `{ ok: true }` with neither.
+ * `member.reconcile` with D1's `members`, as `MEMBERS_ACTOR`. Answers who it removed and whose role it changed, for a
+ * caller outside the shard to close their sockets; `conflict` (nothing to repair) is `{ ok: true }` with neither.
  */
 export const reconcile = internalMutationGeneric({
   args: {
@@ -213,7 +213,11 @@ export const armRepair = internalMutationGeneric({
 });
 
 /**
- * Reads D1's members and reconciles the shard with them. Never gives up: a failure (D1, the shard) schedules the
+ * Reads D1's members and reconciles the shard with them. It closes no socket: it runs in the shard itself (as a job
+ * from its alarm), and closing goes through the shard's own RPC. The sockets were already closed by the Worker when
+ * the change it repairs was made (`ember-members.ts`, on success and on failure alike); one D1 changed outside
+ * Brigade ends at its next token refresh, at most 5 minutes later, since the auth hook reads the member from D1
+ * (RFC 0016 "Auth"). Never gives up: a failure (D1, the shard) schedules the
  * repair again `EMBER_MEMBER_REPAIR_RETRY_MS` later, and a snapshot a member change overtook (`stale`) reads D1 again
  * at once, so the copy catches up however long D1 is out. A workspace too large for one `member.reconcile` catches
  * up `targetId` alone, as the DO does.
@@ -294,7 +298,6 @@ async function repairOnce(
     })) as MutateResult;
     if (!out.ok && out.error.code !== "conflict")
       throw new Error(`member repair: ${out.error.code}`);
-    if (out.ok) await closeSockets(ctx.env, input.workspaceId, [input.targetId]);
     return null;
   }
   const out = (await ctx.runMutation(RECONCILE, {
@@ -307,34 +310,5 @@ async function repairOnce(
     if (out.code === "stale") return STALE_RETRY_MS;
     throw new Error(`member reconcile: ${out.code}`);
   }
-  await closeSockets(ctx.env, input.workspaceId, [...out.removed, ...out.changed]);
   return null;
-}
-
-/**
- * Closes the sockets of `userIds` and of the API tokens they created, as `Membership.repair` does after a reconcile:
- * they reconnect with D1's answer (refused when removed, with the new role otherwise). A failure is logged, not
- * thrown: the reconcile committed, and each socket's next token refresh reads D1 anyway.
- */
-async function closeSockets(env: Record<string, unknown>, workspaceId: string, userIds: string[]) {
-  if (userIds.length === 0) return;
-  try {
-    // Imported here: src/ember.ts builds the runtime from this module.
-    const { ember, workspaceShard } = await import("../src/ember.ts");
-    const shard = workspaceShard(workspaceId);
-    await Promise.all(
-      userIds.flatMap((userId) => [
-        ember.revokeSockets(env as never, shard, { subject: userId }, { close: true }),
-        ember.revokeSockets(env as never, shard, { claim: "by", value: userId }, { close: true }),
-      ]),
-    );
-  } catch (error) {
-    console.error(
-      JSON.stringify({
-        message: "closing repaired members' Ember sockets failed",
-        workspace: workspaceId,
-        error: error instanceof Error ? error.message : String(error),
-      }),
-    );
-  }
 }

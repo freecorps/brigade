@@ -14,6 +14,7 @@ import {
   type EmberStore,
 } from "@freecorps/brigade-schema";
 import type { DeviceRegisterResult } from "../src/workspace.ts";
+import { EMBER_MEMBER_REPAIR_DELAY_MS } from "./members.ts";
 import { emberWorkspace } from "./shard-facade.ts";
 import { run, touchDevice, workspaceLimits, type MutateResult } from "./workspace.ts";
 
@@ -95,7 +96,13 @@ export const register = internalMutationGeneric({
         ACCOUNT_ACTOR,
       );
       shard.check();
-      if (!out.ok && out.error.code !== "conflict") return { ok: false, code: "internal" };
+      if (!out.ok && out.error.code !== "conflict") {
+        // As `WorkspaceDO.signOutStale`: the member repair's reconcile drops them instead (`resetAt` from D1).
+        c.scheduler.runAfter(EMBER_MEMBER_REPAIR_DELAY_MS, "members:repair", {
+          workspaceId: input.workspaceId,
+        });
+        return { ok: false, code: "internal" };
+      }
     }
     // Another member's phone whose session is over (`WorkspaceDO.freeDevice`).
     if (input.free && id !== undefined) {

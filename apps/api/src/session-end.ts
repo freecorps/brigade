@@ -6,6 +6,7 @@
 // whichever comes first: the shard itself before a phone registers in it or after a sync upgrade
 // (`WorkspaceDO.catchUpSessionEnds`), or the Worker's cron (`sweepSessionEnds`).
 
+import { workspaceSessions } from "./ember-workspace.ts";
 import type { EndingSession } from "./auth.ts";
 
 /** How long after a session ended the cron takes over its rows: by then the session hook has had its tries. */
@@ -60,7 +61,7 @@ export async function forgetSessionEnd(
  * `SESSION_END_TTL_MS`. Never throws.
  */
 export async function sweepSessionEnds(
-  env: Pick<Env, "DB" | "WORKSPACE">,
+  env: Pick<Env, "DB" | "WORKSPACE" | "SHARD">,
   now: number,
 ): Promise<void> {
   let workspaces: string[];
@@ -86,7 +87,7 @@ export async function sweepSessionEnds(
   await Promise.all(
     workspaces.map(async (workspaceId) => {
       try {
-        await env.WORKSPACE.getByName(workspaceId).catchUpSessionEnds(workspaceId);
+        await (await workspaceSessions(env, workspaceId)).catchUpSessionEnds(workspaceId);
       } catch (error) {
         console.error(
           JSON.stringify({

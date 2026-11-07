@@ -1162,7 +1162,18 @@ async function pushOne(
   let result: RelayResult;
   const started = Date.now();
   try {
-    result = await attempt(route);
+    try {
+      result = await attempt(route);
+    } catch (error) {
+      // A direct send whose relay `/send` behind it hung or threw: the device's handle (below) may still deliver it,
+      // so this is not yet the relay being unreachable.
+      if (route.kind !== "direct" || !viaHandle) throw error;
+      log("direct send and the relay's /send both failed", {
+        device: deviceId,
+        error: String(error),
+      });
+      result = { ok: false, status: 502, answer: { error: "relay_unreachable" } };
+    }
     if (
       route.kind === "handle" &&
       !result.ok &&
@@ -1205,7 +1216,7 @@ async function pushOne(
     // A shard from before the member's choice of calls leaves `call` out: its plan's `call` decides.
     const call =
       callId !== undefined && target.call !== false
-        ? await ringOne(callId, target, content, sealer, route)
+        ? await ringOne(callId, target, content, sealer, route, viaHandle)
         : undefined;
     return {
       outcome: {
@@ -1280,16 +1291,28 @@ function platformOf(target: Pick<PageTarget, "platform">): { platform?: "android
  * every push it gets (a malformed one included), so a call goes only to a token the app itself registered. The call
  * carries no receipt token (the extension, which reports receipts, never sees it). Best effort: never throws; what
  * the relay answered goes on the call's own delivery row (and a token APNs says is gone is cleared), while the page
- * is retried, escalated and recorded on the alert's outcome alone. Undefined when no call was sent.
+ * is retried, escalated and recorded on the alert's outcome alone. Undefined when no call was sent. An alert this
+ * instance sent directly (RFC 0016 step 2) to a device whose handle can ring but that has no raw VoIP token (none
+ * registered, or one APNs called gone) rings through `handleRoute`, since the plan rings it by its handle. An alert
+ * that went through `/send` did so because the handle was refused, so it never rings by that handle.
  */
 async function ringOne(
   callId: string,
   target: PageTarget,
   content: PushContent,
   sealer: ReturnType<typeof sealerFor>,
-  route: RelayRoute,
+  alertRoute: RelayRoute,
+  handleRoute: RelayRoute | undefined,
 ): Promise<CallOutcome | undefined> {
   const { deviceId, voipToken, handle } = target;
+  const route =
+    alertRoute.kind === "direct" &&
+    !voipToken &&
+    handle !== undefined &&
+    target.voip === true &&
+    handleRoute
+      ? handleRoute
+      : alertRoute;
   const viaHandle = route.kind === "handle";
   if (viaHandle ? target.voip !== true : !voipToken) return undefined;
   let envelope;

@@ -25,5 +25,7 @@ export default defineSchema({
     events: defineTable({ id: v.string(), type: v.string(), at: v.number(), event: v.string() })
       .index("by_event_id", ["id"])
       .index("by_at", ["at"]),
+    // How many member changes the shard has applied (`key: "members"`): fences a repair's snapshot of D1 (ember/members.ts).
+    member_fence: defineTable({ key: v.string(), n: v.number() }).index("by_key", ["key"]),
   },
 });

@@ -78,8 +78,9 @@ export async function readRole(
 }
 
 /**
- * Sets a member's role in D1 if it is still `from`, and never takes the role of the last owner. False when nothing
- * changed (D1 moved since it was read).
+ * Sets a member's role in D1 if it is still `from`, and never takes the role of the last owner. With `by`, only if
+ * that member still holds that role too (the caller as the change was checked: a shard without a member lock, RFC
+ * 0016, has nothing else to stop a caller demoted meanwhile). False when nothing changed (D1 moved since it was read).
  */
 export async function writeRole(
   db: D1Database,
@@ -87,15 +88,18 @@ export async function writeRole(
   userId: string,
   from: Role,
   to: Role,
+  by?: { id: string; role: Role },
 ): Promise<boolean> {
   const result = await db
     .prepare(
       `update member set role = ?4
        where "organizationId" = ?1 and "userId" = ?2 and role = ?3
          and (?3 != 'owner' or ?4 = 'owner'
-              or (select count(*) from member where "organizationId" = ?1 and role = 'owner') > 1)`,
+              or (select count(*) from member where "organizationId" = ?1 and role = 'owner') > 1)
+         and (?5 is null
+              or exists (select 1 from member where "organizationId" = ?1 and "userId" = ?5 and role = ?6))`,
     )
-    .bind(workspaceId, userId, from, to)
+    .bind(workspaceId, userId, from, to, by?.id ?? null, by?.role ?? null)
     .run();
   return result.meta.changes === 1;
 }
@@ -103,12 +107,15 @@ export async function writeRole(
 /**
  * Deletes a membership in D1 (never the last owner's) and, in the same transaction, moves the member's sessions that
  * had this workspace active to their oldest remaining one (or none), so their next page load does not open a
- * workspace they left. False when nothing was deleted.
+ * workspace they left. With `checked`, only if the member still has the role the change was checked against, and the
+ * caller (`by`, unless it is the member leaving) still holds theirs: the shard on Ember has no member lock (RFC 0016).
+ * False when nothing was deleted.
  */
 export async function deleteMembership(
   db: D1Database,
   workspaceId: string,
   userId: string,
+  checked?: { role: Role; by?: { id: string; role: Role } },
 ): Promise<boolean> {
   const [deleted] = await db.batch([
     db
@@ -116,9 +123,18 @@ export async function deleteMembership(
         `delete from member
          where "organizationId" = ?1 and "userId" = ?2
            and (role != 'owner'
-                or (select count(*) from member where "organizationId" = ?1 and role = 'owner') > 1)`,
+                or (select count(*) from member where "organizationId" = ?1 and role = 'owner') > 1)
+           and (?3 is null or role = ?3)
+           and (?4 is null
+                or exists (select 1 from member where "organizationId" = ?1 and "userId" = ?4 and role = ?5))`,
       )
-      .bind(workspaceId, userId),
+      .bind(
+        workspaceId,
+        userId,
+        checked?.role ?? null,
+        checked?.by?.id ?? null,
+        checked?.by?.role ?? null,
+      ),
     db
       .prepare(
         `update session

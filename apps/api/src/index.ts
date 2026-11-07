@@ -68,7 +68,8 @@ import {
   type RelaySetup,
 } from "./relay-instance.ts";
 import { BOOTSTRAP_PATH, bootstrapFirstUser } from "./bootstrap.ts";
-import { EMBER_BASE_PATH, issueEmberToken, serveEmber } from "./ember.ts";
+import { EMBER_BASE_PATH, issueEmberToken, serveEmber, workspaceEngine } from "./ember.ts";
+import { emberMembers } from "./ember-members.ts";
 import { workspaceSessions } from "./ember-workspace.ts";
 import { forgetSessionEnd, recordSessionEnd, sweepSessionEnds } from "./session-end.ts";
 import { within } from "./deadline.ts";
@@ -928,7 +929,10 @@ export async function changeMember(
   }
   let result: MemberChangeResult | TokenRefused;
   try {
-    const shard = env.WORKSPACE.getByName(workspaceId);
+    const shard =
+      (await workspaceEngine(env.DB, workspaceId)) === "ember"
+        ? emberMembers(env)
+        : env.WORKSPACE.getByName(workspaceId);
     result = member
       ? await shard.changeMember(workspaceId, caller.userId, userId, change, token)
       : await shard.finishLeave(workspaceId, caller.userId);

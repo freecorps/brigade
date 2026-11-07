@@ -13,6 +13,7 @@ import {
   workspaceShard,
 } from "../src/ember.ts";
 import { EMBER_TOKEN_TTL_S, mintEmberToken, verifyEmberToken } from "../src/ember-token.ts";
+import { deleteMembership, writeRole } from "../src/members.ts";
 import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
@@ -392,5 +393,143 @@ describe("sessions on an Ember workspace", () => {
       .bind(workspaceId)
       .first<{ n: number }>();
     expect(left?.n).toBe(0);
+  });
+});
+
+describe("members on an Ember workspace", () => {
+  test("a role change and a removal go to D1, then to the Ember copy", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    // Bia: a responder in D1 and in the shard's copy.
+    const address = `ember-bia-${++people}@example.com`;
+    const signedUp = await api("/auth/sign-up/email", {
+      method: "POST",
+      body: JSON.stringify({ name: "Bia", email: address, password: PASSWORD }),
+    });
+    const bia = ((await signedUp.json()) as { user: { id: string } }).user.id;
+    await env.DB.prepare(
+      `insert into member (id, "organizationId", "userId", role, "createdAt") values (?, ?, ?, 'responder', ?)`,
+    )
+      .bind(`mem_${bia}`, workspaceId, bia, new Date().toISOString())
+      .run();
+    const shard = workspaceShard(workspaceId);
+    const stub = env.SHARD.getByName(shard) as unknown as {
+      mutation(
+        s: string,
+        fn: string,
+        args: unknown,
+        identity: null,
+        internal: boolean,
+      ): Promise<Outcome>;
+      query(
+        s: string,
+        fn: string,
+        args: unknown,
+        identity: null,
+        internal: boolean,
+      ): Promise<Outcome>;
+    };
+    await stub.mutation(
+      shard,
+      "workspace:serverMutate",
+      {
+        name: "member.sync",
+        args: { id: bia, name: "Bia", role: "responder" },
+        actor: { kind: "user", id: bia, role: "responder" },
+      },
+      null,
+      true,
+    );
+    const copy = async () =>
+      (
+        (await stub.query(shard, "members:state", { workspaceId, targetId: bia }, null, true))
+          .value as {
+          copy: { role: string } | null;
+        }
+      ).copy;
+
+    const demoted = await api(`/workspaces/${workspaceId}/members/${bia}`, {
+      method: "PATCH",
+      headers: { Cookie: cookie },
+      body: JSON.stringify({ role: "viewer" }),
+    });
+    expect(await demoted.json()).toEqual({ ok: true });
+    expect(await copy()).toEqual({ role: "viewer" });
+    const d1 = await env.DB.prepare(
+      `select role from member where "organizationId" = ? and "userId" = ?`,
+    )
+      .bind(workspaceId, bia)
+      .first<{ role: string }>();
+    expect(d1?.role).toBe("viewer");
+
+    const removed = await api(`/workspaces/${workspaceId}/members/${bia}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+    expect(await removed.json()).toEqual({ ok: true });
+    expect(await copy()).toBeNull();
+    // The last owner stays, on Ember as on WorkspaceDO.
+    const last = await api(`/workspaces/${workspaceId}/members/${userId}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+    expect(last.status).toBe(409);
+  });
+});
+
+describe("member writes without the Durable Object's lock", () => {
+  test("a role change or removal checked against roles D1 no longer has changes nothing", async () => {
+    const { userId, workspaceId } = await owner();
+    const add = async (id: string, role: string) =>
+      env.DB.prepare(
+        `insert into member (id, "organizationId", "userId", role, "createdAt") values (?, ?, ?, ?, ?)`,
+      )
+        .bind(`mem_${id}`, workspaceId, id, role, new Date().toISOString())
+        .run();
+    for (const [id, role] of [
+      ["usr_adm", "admin"],
+      ["usr_bia", "responder"],
+    ] as const) {
+      await env.DB.prepare(
+        `insert into "user" (id, name, email, "emailVerified", "createdAt", "updatedAt") values (?, ?, ?, 1, ?, ?)`,
+      )
+        .bind(
+          id,
+          id,
+          `${id}-${workspaceId}@example.com`,
+          new Date().toISOString(),
+          new Date().toISOString(),
+        )
+        .run();
+      await add(id, role);
+    }
+    const admin = { id: "usr_adm", role: "admin" as const };
+    // The admin was demoted after their change was checked: refused.
+    await env.DB.prepare(
+      `update member set role = 'viewer' where "userId" = 'usr_adm' and "organizationId" = ?`,
+    )
+      .bind(workspaceId)
+      .run();
+    expect(await writeRole(env.DB, workspaceId, "usr_bia", "responder", "admin", admin)).toBe(
+      false,
+    );
+    expect(
+      await deleteMembership(env.DB, workspaceId, "usr_bia", { role: "responder", by: admin }),
+    ).toBe(false);
+    // Bia was promoted after her removal was checked: refused, even by an owner.
+    await env.DB.prepare(
+      `update member set role = 'owner' where "userId" = 'usr_bia' and "organizationId" = ?`,
+    )
+      .bind(workspaceId)
+      .run();
+    const ownerBy = { id: userId, role: "owner" as const };
+    expect(
+      await deleteMembership(env.DB, workspaceId, "usr_bia", { role: "responder", by: ownerBy }),
+    ).toBe(false);
+    // As checked: done.
+    expect(
+      await deleteMembership(env.DB, workspaceId, "usr_bia", { role: "owner", by: ownerBy }),
+    ).toBe(true);
   });
 });

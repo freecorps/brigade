@@ -3,10 +3,12 @@
 // over an Ember mutation (ember/shard-facade.ts): its rows through the store, its page ledger in Ember's private SQL
 // tables, its mutations (`notification.fail`, escalation steps, …) through `run()` like every other one.
 //
-// `paging:tick` is the part of the Durable Object's alarm that is the pager's and synchronous: held pushes released
-// once their hold ran out (`releaseDue`) and pages replayed (`replayDue`); each call schedules the next tick at the
-// pager's next due time. Not here yet: the page the shard sends itself when the Queue is late (`overdue`, the DO's
-// `pageLocally`), which sends through the relay and moves with the notifiers' side (RFC 0016 "Parity").
+// `paging:tick` and `paging:remind` are the synchronous part of the Durable Object's alarm, each its own job and
+// transaction (ember/ticks.ts): the tick fires escalation levels (`Escalations.fireDue`), replays lost pages
+// (`replayDue`) and releases held pushes (`releaseDue`); the reminder sends follow-up reminders (`followUp.remind`).
+// Each schedules itself again at its next due time. `paging:acknowledge` is the app's notification action. Not here
+// yet: delivery receipts, and the page the shard sends itself when the Queue is late (`overdue`, the DO's
+// `pageLocally`), which sends through the relay (RFC 0016 "Parity").
 
 import { internalMutationGeneric, v, type MutationCtx } from "@freecorps/ember-server";
 import {

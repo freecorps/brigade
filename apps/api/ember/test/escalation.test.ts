@@ -401,6 +401,15 @@ describe("a member removed while their request is in flight, on Ember", () => {
         request: "r",
       }).value,
     ).toEqual({ ok: false, code: "not_a_member" });
+    expect(
+      s.call("rest:tokenRun", {
+        workspaceId: WS,
+        actor: caio,
+        name: "apiToken.create",
+        args: { id: "tok_late", name: "Late", scopes: ["incident:read"], expiresAt: null },
+        mutationId: "mut_late",
+      }).value,
+    ).toEqual({ ok: false, code: "not_a_member" });
     s.tick(60 * 1000 + 1);
     expect(
       s.call("rest:read", {
@@ -409,5 +418,32 @@ describe("a member removed while their request is in flight, on Ember", () => {
         read: { kind: "incident", id: incident },
       }).value,
     ).toMatchObject({ ok: true });
+  });
+});
+
+describe("a member removed and back, on Ember", () => {
+  test("a reconcile that lists them again clears their tombstone", () => {
+    const s = shard();
+    s.call("members:apply", {
+      workspaceId: WS,
+      actor: { kind: "user", id: ANA, role: "owner" },
+      name: "member.remove",
+      args: { id: CAIO, role: "owner", reason: "removed" },
+    });
+    const caio: Actor = { kind: "user", id: CAIO, role: "responder" };
+    const read = () =>
+      s.call("rest:read", { workspaceId: WS, actor: caio, read: { kind: "services" } }).value;
+    expect(read()).toEqual({ ok: false, code: "not_a_member" });
+    expect(
+      s.call("members:reconcile", {
+        workspaceId: WS,
+        members: [ANA, CAIO, EVA].map((id) => ({
+          id,
+          role: id === CAIO ? "responder" : "owner",
+          resetAt: null,
+        })),
+      }).value,
+    ).toMatchObject({ ok: true });
+    expect(read()).toMatchObject({ ok: true });
   });
 });

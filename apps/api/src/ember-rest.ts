@@ -75,12 +75,23 @@ export function emberRest(env: RestEnv & { SHARD: Env["SHARD"] }): WorkspaceRest
       });
       // A revoked token's sockets close now (the DO's `closeSockets`); its next token refresh would refuse it anyway.
       if (name === "apiToken.revoke" && (result.ok || result.code === "conflict")) {
-        await ember.revokeSockets(
-          env as unknown as EmberEnv,
-          workspaceShard(workspaceId),
-          { subject: String(args.id) },
-          { close: true },
-        );
+        // Never in the revoke's way: it is done on the shard and in D1, and the token's next refresh is refused.
+        try {
+          await ember.revokeSockets(
+            env as unknown as EmberEnv,
+            workspaceShard(workspaceId),
+            { subject: String(args.id) },
+            { close: true },
+          );
+        } catch (error) {
+          console.error(
+            JSON.stringify({
+              message: "closing a revoked API token's Ember sockets failed",
+              workspace: workspaceId,
+              error: String(error),
+            }),
+          );
+        }
       }
       return result;
     },

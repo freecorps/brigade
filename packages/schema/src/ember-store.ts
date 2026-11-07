@@ -247,6 +247,8 @@ export function createEmberStore<S extends Tables>(
     },
     rangeDescending(table, from, to, limit) {
       live();
+      // As SQL's `limit 0`: nothing, and nothing read.
+      if (!(limit > 0)) return [];
       const entry = held(checked(table));
       const covered = entry.complete || entry.ranges.some(([lo, hi]) => lo <= from && to <= hi);
       // Rows held in `[lo, to)`, newest first: what this call read and wrote there.

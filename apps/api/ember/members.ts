@@ -230,6 +230,10 @@ export const reconcile = internalMutationGeneric({
     const now = new Map(input.members.map((member) => [member.id, member.role]));
     const removed = [...was.keys()].filter((id) => !now.has(id));
     markGone(c, removed);
+    // Whoever D1 lists is a member again: no tombstone of theirs stands, as `member.sync` clears one.
+    for (const member of input.members) {
+      c.sql.exec("delete from member_gone where user_id = ?", member.id);
+    }
     const changed = [...was]
       .filter(([id, role]) => now.has(id) && now.get(id) !== role)
       .map(([id]) => id);

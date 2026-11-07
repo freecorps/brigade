@@ -291,6 +291,10 @@ describe("createEmberStore", () => {
       return (store as EmberStore<Tables>).rangeDescending("notes", "n", "n~", 3).map((r) => r.id);
     });
     expect(ids).toEqual(["n89", "n88", "n87"]);
+    // A limit of 0 is nothing, as SQL's `limit 0`.
+    expect(
+      tx((store) => (store as EmberStore<Tables>).rangeDescending("notes", "n", "n~", 0)),
+    ).toEqual([]);
   });
 
   test("each table is read from Ember once per call, so repeated scans stay under Ember's read limit", () => {

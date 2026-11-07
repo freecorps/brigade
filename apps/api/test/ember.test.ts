@@ -1194,3 +1194,69 @@ describe("an invitation email's engine lookup", () => {
     }
   });
 });
+
+describe("registering a phone on an Ember workspace", () => {
+  test("POST /devices/register runs there, and frees another member's phone once their session is gone", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const address = `ember-bia-${++people}@example.com`;
+    const signedUp = await api("/auth/sign-up/email", {
+      method: "POST",
+      body: JSON.stringify({ name: "Bia", email: address, password: PASSWORD }),
+    });
+    const bia = ((await signedUp.json()) as { user: { id: string } }).user.id;
+    await env.DB.prepare(
+      `insert into member (id, "organizationId", "userId", role, "createdAt") values (?, ?, ?, 'responder', ?)`,
+    )
+      .bind(`mem_${bia}`, workspaceId, bia, new Date().toISOString())
+      .run();
+    const biaCookie = await sessionCookie(address, PASSWORD);
+    const device = {
+      id: newId("dev", Date.now(), (n) => crypto.getRandomValues(new Uint8Array(n))),
+      platform: "ios",
+      environment: "sandbox",
+      pushToken: "a".repeat(64),
+      voipToken: null,
+      publicKey: toBase64url((await generateRecipient()).publicKey),
+    };
+    const register = async (as: string) => {
+      const response = await api("/devices/register", {
+        method: "POST",
+        headers: { Cookie: as },
+        body: JSON.stringify({ device, workspaces: [workspaceId] }),
+      });
+      expect(response.status).toBe(200);
+      return ((await response.json()) as { workspaces: Record<string, string> }).workspaces[
+        workspaceId
+      ];
+    };
+    const shard = workspaceShard(workspaceId);
+    const holder = async (as: string) => {
+      const stub = env.SHARD.getByName(shard) as unknown as {
+        query(s: string, fn: string, args: unknown, identity: unknown): Promise<Outcome>;
+      };
+      const out = await stub.query(
+        shard,
+        "workspace:query",
+        { name: "devices.all", args: {} },
+        { subject: as, claims: { role: "owner", ws: workspaceId } },
+      );
+      return ((out.value as { rows: { id: string; userId: string }[] }).rows ?? [])
+        .filter((row) => row.userId === as)
+        .map((row) => row.id);
+    };
+
+    expect(await register(cookie)).toBe("ok");
+    // Again, unchanged: still fine.
+    expect(await register(cookie)).toBe("ok");
+    expect(await holder(userId)).toEqual([device.id]);
+    // Ana's session still exists: the phone stays hers.
+    expect(await register(biaCookie)).toBe("forbidden");
+    // Her session is gone (expired and swept): the phone is free for Bia.
+    await env.DB.prepare(`delete from "session" where "userId" = ?`).bind(userId).run();
+    expect(await register(biaCookie)).toBe("ok");
+    expect(await holder(bia)).toEqual([device.id]);
+    expect(await holder(userId)).toEqual([]);
+  });
+});

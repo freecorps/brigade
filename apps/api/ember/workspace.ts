@@ -40,6 +40,7 @@ import { nextSeq, scheduleDrain } from "./events.ts";
 import { armUpkeep, expectPages } from "./ticks.ts";
 import { asksForPage } from "../src/paging.ts";
 import { MEMBER_TOMBSTONE_MS } from "../src/members.ts";
+import { bumpFence } from "./members.ts";
 import { BRIGADE_TABLES } from "./schema.ts";
 
 const TABLE_SET: ReadonlySet<string> = new Set(BRIGADE_TABLES);
@@ -223,8 +224,11 @@ export function run(
 function tombstones(ctx: MutationCtx, name: unknown, args: unknown): void {
   const id = (args as { id?: unknown } | null)?.id;
   if (typeof id !== "string") return;
-  if (name === "member.remove") markGone(ctx, [id]);
-  else if (name === "member.sync") ctx.sql.exec("delete from member_gone where user_id = ?", id);
+  if (name === "member.remove") {
+    markGone(ctx, [id]);
+    // Fenced too: a D1 read taken before this removal proves nothing after it (ember/devices.ts).
+    bumpFence(ctx.db);
+  } else if (name === "member.sync") ctx.sql.exec("delete from member_gone where user_id = ?", id);
 }
 
 /** Tombstones for `userIds`, removed now. */
@@ -252,16 +256,58 @@ export const mutate = mutationGeneric({
   args: { name: v.string(), args: v.any() },
   handler: (ctx: MutationCtx, { name, args }: { name: string; args: unknown }) => {
     const identity = ctx.auth.getUserIdentity();
-    return run(
+    let acting: Actor | undefined;
+    const out = run(
       ctx,
       mutations,
       name,
       args,
-      (store) => actorOf(identity, store, ctx.now),
+      (store) => (acting = actorOf(identity, store, ctx.now)),
       instanceLimits,
     );
+    // As over HTTP (ember/devices.ts): registered or unchanged, the time and the socket's session are recorded.
+    if (name === "device.register" && acting && (out.ok || out.error.code === "conflict")) {
+      const sid = identity?.claims?.sid;
+      touchDevice(
+        ctx,
+        acting,
+        Reflect.get(Object(args), "id"),
+        typeof sid === "string" ? sid : undefined,
+      );
+    }
+    return out;
   },
 });
+
+/**
+ * `device.touch` as `actor`, after their `device.register` (over HTTP or a socket) went through or changed nothing:
+ * the time and `sessionId`, the session it was registered with, as `WorkspaceDO.touchDevice` records them. False when
+ * it was refused (logged).
+ */
+export function touchDevice(
+  ctx: MutationCtx,
+  actor: Actor,
+  id: unknown,
+  sessionId: string | undefined,
+  store?: EmberStore<BrigadeTables>,
+): boolean {
+  if (typeof id !== "string") return true;
+  const out = run(
+    ctx,
+    serverMutations,
+    "device.touch",
+    { id, ...(sessionId !== undefined ? { sessionId } : {}) },
+    () => actor,
+    instanceLimits,
+    store,
+  );
+  if (!out.ok) {
+    console.error(
+      JSON.stringify({ message: "refreshing a registered device failed", code: out.error.code }),
+    );
+  }
+  return out.ok;
+}
 
 /**
  * A server-only mutation (`serverMutations`: provisioning, monitor reports, member changes), run only by the API's own

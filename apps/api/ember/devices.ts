@@ -14,6 +14,7 @@ import {
   type EmberStore,
 } from "@freecorps/brigade-schema";
 import type { DeviceRegisterResult } from "../src/workspace.ts";
+import { MEMBER_TOMBSTONE_MS } from "../src/members.ts";
 import { EMBER_MEMBER_REPAIR_DELAY_MS } from "./members.ts";
 import { emberWorkspace } from "./shard-facade.ts";
 import { run, touchDevice, workspaceLimits, type MutateResult } from "./workspace.ts";
@@ -44,8 +45,10 @@ function runIn(
  * sessions: with `resetAt`, the member's devices from before their password reset come off first (`device.signOut`);
  * with `free`, the phone comes off the member who last registered it with that session (over, as D1 said at
  * `free.before`), unless they registered it again since; then `device.register`, and `device.touch` when it went
- * through or changed nothing (`conflict`). `member`: the Worker found them in D1 despite a tombstone (re-added), which
- * is dropped. A shard that serves another workspace, or none yet, answers `not_found`.
+ * through or changed nothing (`conflict`). `memberSince`: the Worker found them in D1 despite a tombstone (re-added),
+ * reading D1 from that time on: the tombstone is dropped only when its removal came before that read (their copy comes
+ * back with the `member.add` of the acceptance that put them back in D1). A removal after the read is `gone` again. A
+ * shard that serves another workspace, or none yet, answers `not_found`.
  */
 export const register = internalMutationGeneric({
   args: {
@@ -54,7 +57,7 @@ export const register = internalMutationGeneric({
     args: v.any(),
     resetAt: v.optional(v.number()),
     sessionId: v.optional(v.string()),
-    member: v.optional(v.boolean()),
+    memberSince: v.optional(v.number()),
     free: v.optional(v.object({ sessionId: v.string(), before: v.number() })),
   },
   handler: (
@@ -65,7 +68,7 @@ export const register = internalMutationGeneric({
       args: Record<string, unknown>;
       resetAt?: number;
       sessionId?: string;
-      member?: boolean;
+      memberSince?: number;
       free?: { sessionId: string; before: number };
     },
   ): DeviceRegisterAnswer => {
@@ -73,10 +76,16 @@ export const register = internalMutationGeneric({
     const { shard } = emberWorkspace(c);
     if (shard.workspace() !== input.workspaceId) return { ok: false, code: "not_found" };
     const { actor, args } = input;
-    if (input.member) {
+    if (shard.gone(actor.id, c.now)) {
+      if (input.memberSince === undefined) return { ok: false, code: "gone" };
+      const [row] = c.sql.exec("select until from member_gone where user_id = ?", actor.id) as {
+        until: number;
+      }[];
+      // Removed after the Worker began reading D1: its proof is older than the removal.
+      if (row && row.until - MEMBER_TOMBSTONE_MS >= input.memberSince) {
+        return { ok: false, code: "gone" };
+      }
       c.sql.exec("delete from member_gone where user_id = ?", actor.id);
-    } else if (shard.gone(actor.id, c.now)) {
-      return { ok: false, code: "gone" };
     }
     const store = shard.store;
     const id = typeof args.id === "string" ? args.id : undefined;

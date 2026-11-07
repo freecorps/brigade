@@ -46,7 +46,7 @@ export function emberRegisterDevice(env: DevicesEnv & { SHARD: Env["SHARD"] }): 
   return async (workspaceId, actor, args, resetAt, sessionId) => {
     if (!(await sessions.catchUpSessionEnds(workspaceId)))
       return { ok: false, code: "unavailable" };
-    const call = (extra: { member?: boolean; free?: { sessionId: string; before: number } }) =>
+    const call = (extra: { memberSince?: number; free?: { sessionId: string; before: number } }) =>
       emberMutation<DeviceRegisterAnswer>(env, workspaceId, "devices:register", {
         workspaceId,
         actor,
@@ -55,11 +55,13 @@ export function emberRegisterDevice(env: DevicesEnv & { SHARD: Env["SHARD"] }): 
         ...(sessionId !== undefined ? { sessionId } : {}),
         ...extra,
       });
-    let member = false;
+    let memberSince: number | undefined;
     let result = await call({});
     if (!result.ok && result.code === "gone") {
       // Removed within the tombstone: gone only if D1 says so too (they may have been added again since).
       let role: string | undefined;
+      // Before the read: a removal the shard ran after this is newer than what D1 answers.
+      const since = Date.now();
       try {
         role = await readRole(env.DB, workspaceId, actor.id);
       } catch (error) {
@@ -67,8 +69,8 @@ export function emberRegisterDevice(env: DevicesEnv & { SHARD: Env["SHARD"] }): 
         return { ok: false, code: "unavailable" };
       }
       if (role === undefined) return { ok: false, code: "not_a_member" };
-      member = true;
-      result = await call({ member });
+      memberSince = since;
+      result = await call({ memberSince });
     }
     if (!result.ok && result.code === "forbidden" && typeof args.id === "string") {
       // Another member's phone. Free when that member signed out on it (caught up again: the sign-out may have
@@ -97,7 +99,10 @@ export function emberRegisterDevice(env: DevicesEnv & { SHARD: Env["SHARD"] }): 
               : Date.parse(session.expiresAt);
         if (expiresAt <= before) free = { sessionId: heldBy, before };
       }
-      result = await call({ ...(member ? { member } : {}), ...(free ? { free } : {}) });
+      result = await call({
+        ...(memberSince !== undefined ? { memberSince } : {}),
+        ...(free ? { free } : {}),
+      });
     }
     if (!result.ok && result.code === "gone") return { ok: false, code: "unavailable" };
     if (!result.ok && result.code === "forbidden") return { ok: false, code: "forbidden" };

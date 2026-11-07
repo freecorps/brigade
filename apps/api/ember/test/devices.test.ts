@@ -57,7 +57,8 @@ function shard() {
   expect(server("member.sync", { id: BIA, name: "Bia", role: "responder" }, bia)).toEqual({
     ok: true,
   });
-  return { server, call, register, mutate, table, tick: (ms: number) => (clock += ms) };
+  const raw = (fn: string, args: unknown) => engine.runMutation(fn, args);
+  return { server, call, raw, register, mutate, table, tick: (ms: number) => (clock += ms) };
 }
 
 const device = (fill: number, token = fill) => ({
@@ -159,8 +160,20 @@ describe("devices on Ember", () => {
       ok: true,
     });
     expect(s.register(bia, device(1))).toEqual({ ok: false, code: "gone" });
-    // Back in D1 (the Worker read it): the tombstone goes, and the phone registers.
-    expect(s.register(bia, device(1), { member: true })).toEqual({ ok: true });
+    s.tick(1000);
+    // D1 read from before the removal: no proof she is back.
+    expect(s.register(bia, device(1), { memberSince: T - 1 })).toEqual({
+      ok: false,
+      code: "gone",
+    });
+    // Back in D1, read after the removal: the tombstone goes, and the phone registers.
+    const back = s.raw("devices:register", {
+      workspaceId: WS,
+      actor: bia,
+      args: device(1),
+      memberSince: T + 500,
+    });
+    expect(back.value).toEqual({ ok: true });
     expect(s.register(bia, device(2))).toEqual({ ok: true });
   });
 });

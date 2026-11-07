@@ -278,24 +278,28 @@ describe("paging on Ember", () => {
   test("work still due after a tick waits TICK_RETRY_MS, so a failing release never spins the alarm", () => {
     const s = shard();
     const phone = s.device(BIA, 1);
-    const { incident, event } = s.declare();
-    s.call("paging:plan", { event });
-    s.call("paging:record", {
-      event,
-      outcomes: [{ deviceId: phone, userId: BIA, ok: true }],
-      final: true,
-    });
-    s.mutate("incident.setSeverity", { id: incident, severity: "sev3" });
-    s.call("paging:plan", { event: another(event, 9) });
-    s.tick(PAGE_HOLD_MS + 1);
-    // Something keeps it due right away (here: a release that would throw is the same to the scheduler).
-    s.call("paging:plan", { event: another(event, 10) });
+    // Two incidents, paged 2 s apart, each with a SEV3 push held behind its page.
+    const hold = (fill: number) => {
+      const { incident, event } = s.declare(fill);
+      s.call("paging:plan", { event });
+      s.call("paging:record", {
+        event,
+        outcomes: [{ deviceId: phone, userId: BIA, ok: true }],
+        final: true,
+      });
+      s.mutate("incident.setSeverity", { id: incident, severity: "sev3" });
+      s.call("paging:plan", { event: another(event, fill + 20) });
+    };
+    hold(1);
+    s.tick(2000);
+    hold(2);
+    // The first hold ran out; the second runs out 2 s later, which a tick asks for no sooner than TICK_RETRY_MS.
+    s.tick(PAGE_HOLD_MS - 2000 + 1);
     const out = s.call("paging:tick", {});
-    for (const job of out.scheduled.filter((j) => j.fn === "paging:tick")) {
-      expect((job as unknown as { runAt: number }).runAt).toBeGreaterThanOrEqual(
-        s.now() + paging.TICK_RETRY_MS,
-      );
-    }
+    expect(out.value).toMatchObject({ released: 1 });
+    expect(out.scheduled.filter((job) => job.fn === "paging:tick")).toMatchObject([
+      { runAt: s.now() + paging.TICK_RETRY_MS },
+    ]);
   });
 
   test("a page whose member check failed schedules a durable member repair", () => {

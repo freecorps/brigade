@@ -122,12 +122,16 @@ async function call(
 export function emberPager(env: EmberPagingEnv, workspaceId: string): WorkspacePager {
   return {
     async planPage(event) {
-      const checked = await freshMembers(env, workspaceId, Date.now());
-      // A check that failed, was late or left the copy behind D1 has the shard repair it later (`repair`).
-      return (await call(env, workspaceId, "mutation", "paging:plan", {
+      if (!(await freshMembers(env, workspaceId, Date.now()))) repairPending.add(workspaceId);
+      // A check that failed, was late or left the copy behind D1 has the shard repair it later (`repair`); asked for
+      // on every page until a plan carrying it commits, so a plan that fails does not lose it.
+      const repair = repairPending.has(workspaceId);
+      const plan = (await call(env, workspaceId, "mutation", "paging:plan", {
         event,
-        ...(checked ? {} : { repair: true }),
+        ...(repair ? { repair: true } : {}),
       })) as PagePlan;
+      if (repair) repairPending.delete(workspaceId);
+      return plan;
     },
     async recordPage(event, outcomes, final, skipped) {
       await call(env, workspaceId, "mutation", "paging:record", {
@@ -144,6 +148,9 @@ export function emberPager(env: EmberPagingEnv, workspaceId: string): WorkspaceP
     },
   };
 }
+
+/** Per isolate: workspaces whose member check failed and whose repair no committed plan has scheduled yet. */
+const repairPending = new Set<string>();
 
 /** How many times a member check overtaken by a member change reads D1 again before the page goes without it. */
 const STALE_ATTEMPTS = 3;
@@ -164,7 +171,7 @@ export async function freshMembers(
   now: number,
   budgetMs = MEMBER_CHECK_BUDGET_MS,
 ): Promise<boolean> {
-  // Skipped after a failure: the repair that failure scheduled is on its way.
+  // Skipped after a failure: the repair that failure asked for is scheduled, or still pending (`repairPending`).
   if (now < (checkAfter.get(workspaceId) ?? 0)) return true;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<"late">((resolve) => {

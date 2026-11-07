@@ -80,6 +80,26 @@ function bumpFence(db: unknown): void {
   else (db as FenceDb).insert("member_fence", { key: "members", n: 1 });
 }
 
+/** When the copy last agreed with D1 (`member_fence` row `reconciled`, its `n` the time): the DO's `reconciled`. */
+function reconciledDoc(db: unknown): FenceDoc | null {
+  return (db as FenceDb)
+    .query("member_fence")
+    .withIndex("by_key", (q) => q.eq("key", "reconciled"))
+    .first();
+}
+
+function markReconciled(db: unknown, at: number): void {
+  const doc = reconciledDoc(db);
+  if (doc) (db as FenceDb).patch(doc._id, { n: at });
+  else (db as FenceDb).insert("member_fence", { key: "reconciled", n: at });
+}
+
+/** When the member list last agreed with D1, or null: a page checks it first when that is long ago. */
+export const reconciledAt = internalQueryGeneric({
+  args: {},
+  handler: (ctx): number | null => reconciledDoc(ctx.db)?.n ?? null,
+});
+
 const actorArg = v.object({
   kind: v.union(
     v.literal("user"),
@@ -205,6 +225,8 @@ export const reconcile = internalMutationGeneric({
     );
     if (!out.ok && out.error.code !== "conflict") return { ok: false, code: out.error.code };
     if (out.ok) bumpFence(c.db);
+    // Applied, or nothing to apply (`conflict`): the copy agrees with D1 as of now.
+    markReconciled(c.db, c.now);
     const now = new Map(input.members.map((member) => [member.id, member.role]));
     const removed = [...was.keys()].filter((id) => !now.has(id));
     const changed = [...was]
@@ -255,7 +277,7 @@ export const repair = internalActionGeneric({
 });
 
 /** One repair; answers when to try again (null: done). Throws when D1 or the shard failed. */
-async function repairOnce(
+export async function repairOnce(
   ctx: {
     env: Record<string, unknown>;
     runQuery(ref: unknown, args: unknown): Promise<unknown>;

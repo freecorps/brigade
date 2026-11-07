@@ -87,7 +87,8 @@ export const RELEASED = "notification.released";
 /** Held-back pushes looked at per release (the alarm's, or a receipt's); the rest wait for the next alarm. */
 const RELEASE_BATCH = 500;
 
-const SCHEMA = `
+/** The page ledger's tables (also declared as an Ember shard's private SQL, ember/schema.ts). */
+export const PAGING_SCHEMA = `
   create table if not exists page_deliveries (
     event_id text not null,
     device_id text not null,
@@ -479,7 +480,7 @@ export type DeadLetterResult =
 
 export class Pager {
   constructor(private readonly options: PagerOptions) {
-    options.storage.sql.exec(SCHEMA);
+    options.storage.sql.exec(PAGING_SCHEMA);
   }
 
   /**

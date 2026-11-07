@@ -13,7 +13,9 @@ import {
   workspaceShard,
 } from "../src/ember.ts";
 import { EMBER_TOKEN_TTL_S, mintEmberToken, verifyEmberToken } from "../src/ember-token.ts";
+import { workspacePager } from "../src/ember-paging.ts";
 import { deleteMembership, writeRole } from "../src/members.ts";
+import type { BrigadeEvent } from "../src/outbox.ts";
 import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
@@ -571,5 +573,69 @@ describe("events from an Ember workspace", () => {
       if (left !== null) await new Promise((resolve) => setTimeout(resolve, 100));
     }
     expect(left).toBeNull();
+  });
+});
+
+describe("pages for an Ember workspace", () => {
+  test("are planned and recorded on its Ember shard, after its member list is checked against D1", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const minted = await api(`/ember-token/${workspaceId}`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    const { token, shard } = (await minted.json()) as { token: string; shard: string };
+    const random = (n: number) => crypto.getRandomValues(new Uint8Array(n));
+    const incident = newId("inc", Date.now(), random);
+    const declared = await api("/ember/api/mutation", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        fn: "workspace:mutate",
+        shard,
+        args: {
+          name: "incident.declare",
+          args: { id: incident, title: "Checkout is down", severity: "sev1" },
+        },
+      }),
+    });
+    expect(await declared.json()).toMatchObject({ ok: true, value: { ok: true } });
+    const stub = env.SHARD.getByName(shard) as unknown as {
+      query(
+        s: string,
+        fn: string,
+        args: unknown,
+        identity: null,
+        internal: boolean,
+      ): Promise<Outcome>;
+    };
+    expect((await stub.query(shard, "members:reconciledAt", {}, null, true)).value).toBeNull();
+
+    const event: BrigadeEvent = {
+      id: newId("evt", Date.now(), random),
+      type: "incident.declared",
+      source: `brigade://${workspaceId}/workspace`,
+      workspaceId,
+      time: new Date().toISOString(),
+      actor: { kind: "user", id: userId },
+      subject: incident,
+      data: {},
+      specversion: "1.0",
+    };
+    const pager = await workspacePager(env, workspaceId);
+    // The shard holds the incident (WorkspaceDO does not: it would answer `not_found`); its one member declared it.
+    expect(await pager.planPage(event)).toEqual({ send: false, reason: "nobody" });
+    expect((await stub.query(shard, "members:reconciledAt", {}, null, true)).value).toBeTypeOf(
+      "number",
+    );
+    await pager.recordPage(event, [], true, []);
+    expect(await pager.recordDeadLetter(event)).not.toBe("other_workspace");
+    // A workspace still on WorkspaceDO keeps its Durable Object.
+    const other = await owner();
+    expect(await (await workspacePager(env, other.workspaceId)).planPage(event)).toEqual({
+      send: false,
+      reason: "not_found",
+    });
   });
 });

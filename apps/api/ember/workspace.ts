@@ -29,6 +29,7 @@ import {
   type Actor,
   type BrigadeTables,
   type DomainEvent,
+  type EmberStore,
   type MutationError,
   type QueryResult,
   type Role,
@@ -138,8 +139,10 @@ export function run(
   args: unknown,
   actor: (store: Store<BrigadeTables>) => Actor | undefined,
   limits?: { monitors?: number },
+  /** A store the caller reads through too (ember/shard-facade.ts), so its reads see this mutation's writes. */
+  shared?: EmberStore<BrigadeTables>,
 ): MutateResult {
-  const store = createEmberStore<BrigadeTables>(ctx.db as never, TABLE_SET);
+  const store = shared ?? createEmberStore<BrigadeTables>(ctx.db as never, TABLE_SET);
   const who = actor(store);
   if (!who) return notMember();
   const randomBytes = bytesFrom(() => ctx.random());

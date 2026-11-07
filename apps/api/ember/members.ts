@@ -133,6 +133,9 @@ export const state = internalQueryGeneric({
   },
 });
 
+/** What `apply` answers: the mutation's result, or `stale` when a repair's fence no longer holds. */
+export type ApplyResult = MutateResult | { ok: false; error: { code: "stale"; message: string } };
+
 /** One member change D1 already has, as `actor`. Refused, it writes nothing. */
 export const apply = internalMutationGeneric({
   args: {
@@ -140,8 +143,10 @@ export const apply = internalMutationGeneric({
     actor: actorArg,
     name: v.union(v.literal("member.changeRole"), v.literal("member.remove")),
     args: v.any(),
+    /** A repair's fence, read before D1 was: a change applied since makes it `stale`, and nothing is written. */
+    gen: v.optional(v.number()),
   },
-  handler: (ctx, input): MutateResult => {
+  handler: (ctx, input): ApplyResult => {
     const c = ctx as MutationCtx;
     const store = createEmberStore<BrigadeTables>(c.db as never, TABLE_SET);
     if (workspaceId(store) !== input.workspaceId) {
@@ -149,6 +154,12 @@ export const apply = internalMutationGeneric({
     }
     if (!isRole(input.actor.role)) {
       return { ok: false, error: { code: "forbidden", message: "Not a Brigade role" } };
+    }
+    if (input.gen !== undefined && (fence(c.db)?.n ?? 0) !== input.gen) {
+      return {
+        ok: false,
+        error: { code: "stale", message: "A member change came in since D1 was read" },
+      };
     }
     const actor = input.actor as Actor;
     const out = run(c, serverMutations, input.name, input.args, () => actor, workspaceLimits());
@@ -277,15 +288,10 @@ async function repairOnce(
     const target = members.find((member) => member.id === input.targetId);
     // Caught up already: the copy agrees with D1, or there is nothing of a removed member left.
     if (target ? !before.copy || before.copy.role === target.role : !before.leftovers) return null;
-    const now = (await ctx.runQuery(STATE, {
-      workspaceId: input.workspaceId,
-      targetId: input.targetId,
-    })) as MemberState;
-    if (!now.found) return null;
-    if (now.gen !== before.gen) return STALE_RETRY_MS;
     const out = (await ctx.runMutation(APPLY, {
       workspaceId: input.workspaceId,
       actor: MEMBERS_ACTOR,
+      gen: before.gen,
       ...(target
         ? {
             name: "member.changeRole",
@@ -295,7 +301,7 @@ async function repairOnce(
             name: "member.remove",
             args: { id: input.targetId, role: before.copy?.role ?? null, reason: "reconciled" },
           }),
-    })) as MutateResult;
+    })) as ApplyResult;
     if (!out.ok && out.error.code !== "conflict")
       throw new Error(`member repair: ${out.error.code}`);
     return null;

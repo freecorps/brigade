@@ -147,6 +147,30 @@ describe("members on Ember", () => {
     expect(now).toBe(gen + 1);
   });
 
+  test("a one-member repair is fenced the same way", () => {
+    const s = shard();
+    const gen = (
+      s.query("members:state", { workspaceId: WS, targetId: "usr_bia" }) as { gen: number }
+    ).gen;
+    // A demotion lands after the repair read D1 (which still said responder).
+    s.call("members:apply", {
+      workspaceId: WS,
+      actor: owner,
+      name: "member.changeRole",
+      args: { id: "usr_bia", from: "responder", to: "viewer" },
+    });
+    expect(
+      s.call("members:apply", {
+        workspaceId: WS,
+        actor: { kind: "system", id: "sys_members", role: "admin" },
+        name: "member.changeRole",
+        args: { id: "usr_bia", from: "viewer", to: "responder" },
+        gen,
+      }),
+    ).toMatchObject({ ok: false, error: { code: "stale" } });
+    expect(s.table("members").find((m) => m.id === "usr_bia")?.role).toBe("viewer");
+  });
+
   test("armRepair schedules the repair action", () => {
     const s = shard();
     const out = s.engine.runMutation("members:armRepair", { workspaceId: WS, targetId: "usr_bia" });

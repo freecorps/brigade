@@ -622,6 +622,7 @@ the old path removed only at the end. Order and details: RFC 0016 "Order of work
 - [ ] The workspace shard on Ember behind `workspace.engine`, with the page lease and the D1 auth hook
 - [ ] Dashboard on Ember's React client
 - [ ] App on Ember's React Native client, picked per instance from `/config`
-- [ ] Monitoring, status page and Slack on the Ember shard (the watchdog stays outside Ember)
+- [ ] Monitoring, status page and Slack on the Ember shard for a workspace whose `workspace.engine` is `ember`,
+      `WorkspaceDO` otherwise (the watchdog stays outside Ember)
 - [ ] Per-workspace migration and cutover: `dev`, then staging and production with Heitor's approval
 - [ ] Removal of what Ember replaced, after the keep window

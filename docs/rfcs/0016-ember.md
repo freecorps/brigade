@@ -37,21 +37,21 @@ step keeps a fallback and a test (AGENTS.md), and the old path stays deployable 
 
 ## Map
 
-| Brigade today                                                        | On Ember                                                                                                                                         | When      |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
-| Relay and API's APNs/FCM code (provider token, OAuth, error mapping) | `@freecorps/ember-push`'s transport, Brigade's payload and envelope unchanged ("Push")                                                           | Step 1    |
-| Relay hop for an instance that holds the app's credentials           | The API sends directly through the same transport; the relay is its fallback                                                                     | Step 2    |
-| `WorkspaceDO` (`store_rows`, change log, version, epoch)             | An Ember shard kind `workspace`, keyed by the workspace id, typed tables from `packages/schema` `TABLES`                                         | Steps 3–5 |
-| Named mutations (`packages/schema` `defineMutation`, `runMutation`)  | Ember `mutation`s that call the same `apply` over an Ember-backed `Store`, the actor from `ctx.auth` and the shard's member row                  | Step 3    |
-| Named queries (`defineQuery`, one table, `filter`/`sort`)            | Ember `query`s over `withIndex`, the same rows and permission check                                                                              | Step 3    |
-| Brigade Sync protocol and client (`packages/sync`)                   | Ember's protocol and `@freecorps/ember-client` / `-react` / `-react-native`; `packages/sync` keeps the pure parts (`whyPaged`, timeline folding) | Steps 4–5 |
-| Outbox → `brigade-events` Queue → consumer; `page_pending` fallback  | Scheduler jobs written in the mutation's transaction; pages delivered from the shard's alarm when the Queue stalls ("Events")                    | Step 3    |
-| Escalation timers on the shard's alarm                               | Scheduler jobs (`ctx.scheduler.runAt`), one per level, de-duplicated by the run and its step                                                     | Step 3    |
-| Better Auth on D1 (sessions, organizations, rate limits)             | **Kept on D1** for now; Ember's `ctx.auth` verifies a short-lived JWT minted from the D1 session ("Auth")                                        | Step 3    |
-| `ProbeDO` × regions, `WatchdogDO`, Worker Cron Triggers              | Probes as an Ember shard kind with a per-key location hint (gap); the watchdog and its Cron Trigger **stay outside Ember** ("Monitoring")        | Step 6    |
-| `status-edge`, KV `STATUS` snapshot, `StatusPages` entrypoint        | Unchanged; the snapshot push becomes a scheduler job of the workspace shard                                                                      | Step 6    |
-| Slack Worker and the `SlackBridge` entrypoint                        | Unchanged; the bridge's methods call the shard's Ember functions as the Slack actor                                                              | Step 6    |
-| D1 (members, invitations, cross-workspace reads, `session_end`)      | Unchanged                                                                                                                                        | —         |
+| Brigade today                                                        | On Ember                                                                                                                                                       | When      |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| Relay and API's APNs/FCM code (provider token, OAuth, error mapping) | `@freecorps/ember-push`'s transport, Brigade's payload and envelope unchanged ("Push")                                                                         | Step 1    |
+| Relay hop for an instance that holds the app's credentials           | The API sends directly through the same transport; the relay is its fallback                                                                                   | Step 2    |
+| `WorkspaceDO` (`store_rows`, change log, version, epoch)             | An Ember shard kind `workspace`, keyed by the workspace id, typed tables from `packages/schema` `TABLES`                                                       | Steps 3–5 |
+| Named mutations (`packages/schema` `defineMutation`, `runMutation`)  | Ember `mutation`s that call the same `apply` over an Ember-backed `Store`, the actor from `ctx.auth` and the shard's member row                                | Step 3    |
+| Named queries (`defineQuery`, one table, `filter`/`sort`)            | Ember `query`s over `withIndex`, the same rows and permission check                                                                                            | Step 3    |
+| Brigade Sync protocol and client (`packages/sync`)                   | Ember's protocol and `@freecorps/ember-client` / `-react` / `-react-native`; `packages/sync` keeps the pure parts (`whyPaged`, timeline folding)               | Steps 4–5 |
+| Outbox → `brigade-events` Queue → consumer; `page_pending` fallback  | Scheduler jobs written in the mutation's transaction; pages delivered from the shard's alarm when the Queue stalls ("Events")                                  | Step 3    |
+| Escalation timers on the shard's alarm                               | Scheduler jobs (`ctx.scheduler.runAt`), one per level, de-duplicated by the run and its step                                                                   | Step 3    |
+| Better Auth on D1 (sessions, organizations, rate limits)             | **Kept on D1** for now; Ember's `ctx.auth` verifies a short-lived JWT minted from the D1 session ("Auth")                                                      | Step 3    |
+| `ProbeDO` × regions, `WatchdogDO`, Worker Cron Triggers              | Probes as an Ember shard kind with a per-key location hint (gap), per workspace on its `workspace.engine`; the watchdog **stays outside Ember** ("Monitoring") | Step 6    |
+| `status-edge`, KV `STATUS` snapshot, `StatusPages` entrypoint        | Unchanged; the snapshot push becomes a scheduler job of the workspace shard                                                                                    | Step 6    |
+| Slack Worker and the `SlackBridge` entrypoint                        | Unchanged; the bridge's methods call the shard's Ember functions as the Slack actor                                                                            | Step 6    |
+| D1 (members, invitations, cross-workspace reads, `session_end`)      | Unchanged                                                                                                                                                      | —         |
 
 The steps are under "Order of work". Each is its own PR or stack, green on its own, and the old path is removed only
 in the last step.
@@ -174,10 +174,19 @@ accepts and then stalls (seen in production: seven minutes, no error) loses the 
 acceptable for pages:
 
 - **Pages keep their own lease.** A page's event also writes `page_pending` (a Brigade table) in the mutation, as
-  today; `deliver` clears it once the plan went through; a mutation job scheduled 60 s later (`ctx.scheduler.runAfter`)
-  finds it still there and runs the page from the shard's alarm (Ember runs action jobs in the alarm when no Queue is
-  bound; Brigade needs that per job, gap G2). Until G2, the page action is dispatched through `dispatchAction` with the
-  shard-local path for page events.
+  today. `deliver` clears it only once **every push of the plan is settled**: sent, or written as undelivered in its
+  delivery row (refused, no device, gone). That is stricter than RFC 0005's Queue path, which clears the row after
+  `planPage`, and the same as its alarm path, which clears after the sends: an action that stops between the plan and
+  a send leaves the lease, so nothing that wakes someone up depends on the action finishing. A mutation job scheduled
+  60 s later (`ctx.scheduler.runAfter`) finds a lease still there and runs the page from the shard's alarm (Ember runs
+  action jobs in the alarm when no Queue is bound; Brigade needs that per job, gap G2). Until G2, the page action is
+  dispatched through `dispatchAction` with the shard-local path for page events.
+- **A second run while the first is still sending** (the 60 s check, a Queue redelivery) sends only what the first has
+  not: before each push, `deliver` claims its delivery row (event id and device) for 30 s in a mutation, the way RFC
+  0005's email ledger holds a send for 60 s. A run that finds a row sent skips it; one that finds a live claim skips it
+  and leaves the lease, so the next check sees whether that push settled; one that finds an expired claim takes it
+  over and sends. A page's collapse id (APNs) and tag (Android) are its incident (RFC 0006), so a send that went out
+  just as its claim expired replaces the banner already on the phone: a repeat, never a missed page.
 - **Everything else** (Slack, webhooks, email, status page snapshots) is an ordinary action job with Ember's retries.
 - **Idempotency** stays Brigade's: the page ledger and the delivery rows de-duplicate by event id, so a job run twice
   pages nobody twice.
@@ -193,6 +202,14 @@ optimistic update per mutation that runs `apply` over the cached rows.
 Sync client and picks the protocol from the instance's `GET /config` (`sync: "ember"` once migrated), for as long as
 supported instances run the old engine; the dashboard is served by its own instance and switches with it.
 
+**App versions that only speak Brigade Sync** stay installed on phones after a workspace moves, and they only know
+how to reconnect and replay Brigade frames. So `/sync/:workspace` of a migrated workspace is served by a **Brigade Sync
+adapter** on the Ember shard: it answers `hello`, `mutate` and the subscription frames of RFC 0004 by running the same
+named mutations and queries as Ember functions and sending their results as Brigade `snapshot` and `patch` frames.
+Both sides run the same `apply` and the same queries, so the adapter translates frames, not rules. It stays until
+`/config`'s `minApp` is past the last release without the Ember client and no supported instance runs the old engine
+(step 8); the adapter's tests are RFC 0004's protocol tests run against it.
+
 ## Auth
 
 **Decision: Better Auth stays on D1 for now**, and Ember's `ctx.auth` trusts it. Moving to Ember's `Auth` Durable
@@ -207,17 +224,34 @@ Object is possible later (Ember runs Better Auth too) but not part of this migra
 - Moving the users and sessions table means either signing every phone out (and with it every page, RFC 0006) or a
   live session migration. Neither is worth doing in the same step as the engine.
 
-**How.** Better Auth's `jwt` plugin on the D1 instance mints a short-lived token (5 minutes) for a session; the
-clients get it from `/auth/token` and send it in Ember's `hello`; the Ember hook verifies it against the instance's
-JWKS (Ember's `remoteAuth({ from })` shape) and its `sensitive` mutations (removing a member, changing a role,
-acknowledging from a notification) check the session in D1. A revoked session closes the socket with
-`authExpired` (RFC 0004 "Session revocation", now Ember's). Revisit (Q33) once the migration is done.
+**How.** Better Auth's `jwt` plugin on the D1 instance mints a short-lived token (5 minutes) for a session, carrying
+the session id (`sid`, the id, never the token) and the session's expiry; the clients get it from `/auth/token` and
+send it in Ember's `hello`, and again in `{t:"auth"}` before it expires (Ember's client refreshes 30 s ahead).
+
+- **Admission.** The Ember auth hook verifies the token against the instance's JWKS (Ember's `remoteAuth({ from })`
+  shape) **and** checks D1 that the session has not ended (`session_end`, RFC 0002 "Auth") and that the member still
+  backs the actor, as today's upgrade does (RFC 0004 "Session revocation"). A revoked session never opens a socket,
+  with or without an unexpired token.
+- **An admitted socket.** Every refresh runs the same hook, so a socket keeps access only while its session does.
+  Ember already stops a socket's patches and refuses its frames once its token expires, until a fresh one arrives
+  (`authExpired`); so the worst case after a revocation is the token's 5 minutes, and only when the close below fails.
+- **Session end.** Better Auth's session-delete hook, which today asks each of the user's shards to close the
+  session's sockets (`WorkspaceDO.endSession`), calls the Ember shard instead: it closes every socket whose identity
+  carries that `sid` (gap G8), with the same 3 tries and `session_end` sweep as today. A password reset and a member
+  removal close the same way (by user id). An expired session is the token's own expiry.
+- **Sensitive mutations** (removing a member, changing a role, acknowledging from a notification) also check the
+  session in D1 at the moment they run, as today.
+
+Revisit (Q33) once the migration is done.
 
 ## Monitoring, crons and the edges
 
 - **Probes** (RFC 0007 "Placement") are one Durable Object per workspace and region with that region's
   `locationHint`. Ember's location hint is per shard kind; probes need one per key (gap G3). Until then `ProbeDO`
-  stays a plain Durable Object and reports results by calling the workspace shard's Ember mutation.
+  stays a plain Durable Object and reports results to the workspace's owner of record: the Ember shard's mutation
+  when D1's `workspace.engine` is `ember`, `WorkspaceDO` as today when it is `brigade`. The same choice, per workspace
+  and per call, routes the status page snapshot and the Slack bridge below, so nothing writes to an Ember shard that
+  does not own the workspace yet (a probe failure there would page nobody).
 - **The watchdog and its Cron Trigger stay outside Ember.** The dead-man switch exists to notice when the paging
   machinery stops (RFC 0007 "Watching the watcher"); running it on the machinery it watches (Ember's System DO and its
   crons) would remove that independence. The API Worker keeps its own `scheduled` handler for the watchdog and the
@@ -250,14 +284,20 @@ Per workspace, in the shard that owns it, never as a bulk job:
    Ember shard through one internal mutation per batch (idempotent by row id), and checks counts and a hash per
    table on both sides.
 3. **Switch.** D1's `workspace.engine` flips to `ember` and `WorkspaceDO` keeps a `forwarded` mark: every request it
-   gets from then on (an old socket, the Queue's late event, an alert route) is forwarded to the Ember shard or
-   refused with `410 moved`. Escalation runs continue from the copied timers (jobs at the same due time).
-4. **Rollback.** Flipping `engine` back to `brigade` within the keep window (30 days) makes `WorkspaceDO` the owner
-   again after copying back what changed since (the Ember shard keeps a change log of its own rows); after that window
-   the old storage is deleted by a later PR.
+   gets from then on (the Queue's late event, an alert route, a probe) is forwarded to the Ember shard, and an old
+   socket is closed so it reconnects to the Brigade Sync adapter ("Clients"); nothing an app sees answers `410 moved`.
+   Escalation runs continue from the copied timers (jobs at the same due time).
+4. **Rollback.** Within the keep window (30 days) the same route with `engine: "brigade"` reverses the copy, fenced
+   the same way: the Ember shard refuses the same conditions as step 2 (pending pages, a due timer), then stops taking
+   writes (`503 migrating`), records the high-water mark of its change log, copies every change up to it (rows,
+   timers, devices, delivery rows) back to `WorkspaceDO`, checks counts and a hash per table, and only then flips
+   `engine` back and lifts the fence on `WorkspaceDO`. A write that commits after the mark cannot exist, because the
+   fence came first. After the window the old storage is deleted by a later PR.
 
-Freecorps' own workspaces go first, on `dev`, then `staging`, then production. **Running the migration against
-production data needs the owner's approval**, as does every deploy to staging or production (AGENTS.md).
+Freecorps' own workspaces go first, on `dev`, then `staging`, then production. Code ships by continuous delivery
+(RFC 0002 "Continuous delivery": a merge to `main` whose CI passes deploys what changed), so each step's code reaches
+production with no engine reading it until a workspace is switched. **Running the migration route against staging
+or production data needs the owner's approval** each time: that is an operator action, not a deploy.
 
 ## Real-device check
 
@@ -307,6 +347,10 @@ What Brigade needs that Ember does not have, each worked around here and propose
 - **G7 — Timeouts on the token layer.** `fcmAccessToken` retries the exchange with backoff and has no deadline; a
   caller with a budget wraps it and the exchange runs on. Proposed: `signal` or `timeoutMs` in `FcmOptions` and
   `ApnsOptions`. Workaround: `retries: 0` and Brigade's own deadline around the call.
+- **G8 — Closing an identity's sockets from the server.** Ember ends a socket's access when its token expires, but
+  nothing outside the socket can close it sooner. Proposed: an internal call on the shard that closes (or marks
+  `authExpired`) every socket whose identity matches a claim (`sid`, `sub`), used by an app's session-end hook.
+  Workaround: the 5-minute token and the D1 check on every refresh ("Auth").
 
 ## Order of work
 
@@ -318,10 +362,13 @@ What Brigade needs that Ember does not have, each worked around here and propose
    auth hook. Brigade's existing mutation and paging tests run against both engines.
 4. **Dashboard on Ember's React client**, switched by `/config`.
 5. **App on Ember's React Native client** next to Brigade Sync, picked per instance.
-6. **Monitoring, status page and Slack** calling the Ember shard; the watchdog unchanged.
+6. **Monitoring, status page and Slack** calling the Ember shard of a workspace whose `workspace.engine` is `ember`,
+   `WorkspaceDO` otherwise; the watchdog unchanged.
 7. **Migration route and per-workspace cutover** on `dev`, then staging and production with the owner's approval.
-8. **Removal** of `WorkspaceDO`'s engine, `packages/sync`'s protocol and server parts and the Queue consumer's page path,
-   once every workspace of an environment has run on Ember for the keep window.
+8. **Removal** of `WorkspaceDO`'s engine and the Queue consumer's page path, once every workspace of an environment
+   has run on Ember for the keep window. The Brigade Sync protocol (`packages/sync`'s client and the adapter) is
+   removed separately, and only once `minApp` is past every app release without the Ember client **and** no supported
+   self-hosted instance runs the old engine; until then the app keeps both clients.
 
 Open questions: Q33 (when, if ever, auth moves to Ember's `Auth`), Q34 (whether the hosted instance stops using the
 relay once direct sends are proven).

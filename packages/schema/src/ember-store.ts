@@ -13,7 +13,10 @@
 // still needs `transaction` to undo a failed `apply` without failing the whole Ember mutation, so the store keeps an
 // undo log: every write inside `transaction` records the row's JSON before it, and a throw restores those rows in
 // reverse order. Nested calls roll back only their own writes; an outer rollback also undoes the inner, committed
-// ones. If restoring throws, that error escapes the Ember handler and Ember rolls the whole mutation back instead.
+// ones. If restoring throws (Ember's write limit, say), the rows are in neither state: `runMutation` would turn that
+// into an `internal` result the handler returns, and Ember would commit it. So the store is then broken: every later
+// call throws, and `undoFailure()` returns the error, which the handler must rethrow so Ember rolls the whole mutation
+// back (`EmberStore`).
 
 import { StoreError, type Store, type Tables } from "./store.ts";
 
@@ -58,10 +61,19 @@ const isWriter = (db: EmberRowsReader): db is EmberRowsWriter =>
  * A `Store` over `db`. Over a query's `ctx.db` (no `insert`) it reads only, and a write throws. `tables` limits it to
  * the tables Brigade defines (a misspelt or unknown name is a programming error, as in the Durable Object's store).
  */
+/**
+ * A `Store` over Ember, plus `undoFailure()`: the error of a rollback that could not be replayed, after which the
+ * store refuses every call. A handler that ran a mutation through it rethrows it, so Ember fails the whole mutation
+ * instead of committing a half-undone one.
+ */
+export type EmberStore<S extends Tables> = Store<S> & {
+  undoFailure(): { error: unknown } | undefined;
+};
+
 export function createEmberStore<S extends Tables>(
   db: EmberRowsReader | EmberRowsWriter,
   tables?: ReadonlySet<string>,
-): Store<S> {
+): EmberStore<S> {
   // Rows written inside `transaction`, with their JSON before the write (undefined: absent).
   const undo: { table: string; id: string; before: string | undefined }[] = [];
   let depth = 0;
@@ -135,12 +147,23 @@ export function createEmberStore<S extends Tables>(
       if (!rows.has(doc.id)) rows.set(doc.id, { _id: doc._id, data: doc.data });
   };
 
-  const store: Store<S> = {
+  let broken: { error: unknown } | undefined;
+  const live = () => {
+    if (broken)
+      throw new Error("A rollback in this store failed; the Ember mutation must fail", {
+        cause: broken.error,
+      });
+  };
+
+  const store: EmberStore<S> = {
+    undoFailure: () => broken,
     get(table, id) {
+      live();
       const doc = lookup(checked(table), id);
       return doc ? (JSON.parse(doc.data) as S[typeof table]) : undefined;
     },
     insert(table, row) {
+      live();
       writer();
       if (lookup(checked(table), row.id))
         throw new StoreError(`Duplicate id ${row.id} in ${table}`);
@@ -149,6 +172,7 @@ export function createEmberStore<S extends Tables>(
       return JSON.parse(data) as S[typeof table];
     },
     update(table, id, patch) {
+      live();
       writer();
       const doc = lookup(checked(table), id);
       if (!doc) throw new StoreError(`No row ${id} in ${table}`);
@@ -162,6 +186,7 @@ export function createEmberStore<S extends Tables>(
       return JSON.parse(data) as S[typeof table];
     },
     delete(table, id) {
+      live();
       writer();
       const doc = lookup(checked(table), id);
       if (!doc) return false;
@@ -169,6 +194,7 @@ export function createEmberStore<S extends Tables>(
       return true;
     },
     scan(table) {
+      live();
       const entry = held(checked(table));
       if (!entry.complete) {
         fill(
@@ -183,6 +209,7 @@ export function createEmberStore<S extends Tables>(
       return rowsOf<S[typeof table]>(entry.rows.values());
     },
     range(table, from, to) {
+      live();
       const entry = held(checked(table));
       // A range is read through the index, not the whole table (`range` exists so a large table such as `timeline`
       // is never scanned), and each range at most once: one already read, or inside one, comes from what is held.
@@ -204,14 +231,20 @@ export function createEmberStore<S extends Tables>(
       return rowsOf<S[typeof table]>(inRange);
     },
     transaction(fn) {
+      live();
       const mark = undo.length;
       depth++;
       try {
         return fn();
       } catch (error) {
-        for (let i = undo.length - 1; i >= mark; i--) {
-          const entry = undo[i]!;
-          write(entry.table, entry.id, entry.before);
+        try {
+          for (let i = undo.length - 1; i >= mark; i--) {
+            const entry = undo[i]!;
+            write(entry.table, entry.id, entry.before);
+          }
+        } catch (failure) {
+          broken ??= { error: failure };
+          throw failure;
         }
         undo.length = mark;
         throw error;

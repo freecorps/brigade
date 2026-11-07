@@ -33,9 +33,13 @@ export function createEmberMemoryStore<S extends Tables>(
     if (current) return fn(current);
     const box: { value?: R; error?: { error: unknown } } = {};
     const handler = (ctx: MutationCtx) => {
-      current = createEmberStore<S>(ctx.db as never, new Set(NAMES));
+      const store = createEmberStore<S>(ctx.db as never, new Set(NAMES));
+      current = store;
       try {
-        box.value = fn(current);
+        box.value = fn(store);
+        // As a Brigade handler does: a rollback that could not be replayed fails the whole Ember mutation.
+        const failure = store.undoFailure();
+        if (failure) throw failure.error;
       } catch (error) {
         box.error = { error };
         throw error; // Ember rolls the mutation back

@@ -19,7 +19,7 @@ const row = () => defineTable({ id: v.string(), data: v.string() }).index(EMBER_
 const schema = defineSchema({ tables: { notes: row(), other: row() } });
 
 /** A fresh shard: `tx` runs `fn` as one Ember mutation over the store, `read` as one query. */
-function shard(limits?: { rowsRead?: number }) {
+function shard(limits?: { rowsRead?: number; rowsWritten?: number }) {
   const engine = createEngine({
     schema,
     driver: createNodeSqliteDriver(),
@@ -32,7 +32,11 @@ function shard(limits?: { rowsRead?: number }) {
     engine.runMutation(
       mutationGeneric({
         handler: (ctx: MutationCtx) => {
-          box.value = fn(createEmberStore<Tables>(ctx.db as never, names));
+          const store = createEmberStore<Tables>(ctx.db as never, names);
+          box.value = fn(store);
+          // As a Brigade handler does: a rollback that could not be replayed fails the whole Ember mutation.
+          const failure = store.undoFailure();
+          if (failure) throw failure.error;
           return null;
         },
       } as never) as never,
@@ -184,6 +188,32 @@ describe("createEmberStore", () => {
       ).toThrow("outer");
     });
     expect(read((store) => store.scan("notes"))).toEqual([note("outer")]);
+  });
+
+  test("a rollback that cannot be replayed breaks the store, and the Ember mutation fails as a whole", () => {
+    const { tx, read } = shard({ rowsWritten: 6 });
+    tx((store) => store.insert("notes", note("before")));
+    let later: unknown;
+    expect(() =>
+      tx((store) => {
+        store.insert("other", { id: "kept?", n: 1 });
+        // Four inserts fit under the limit; undoing them as well does not.
+        expect(() =>
+          store.transaction(() => {
+            for (const id of ["a", "b", "c", "d"]) store.insert("notes", note(id));
+            throw new Error("boom");
+          }),
+        ).toThrow(/Too many/i);
+        try {
+          store.get("notes", "before");
+        } catch (error) {
+          later = error;
+        }
+      }),
+    ).toThrow(/Too many/i);
+    expect(String(later)).toMatch(/rollback in this store failed/);
+    expect(read((store) => store.scan("notes"))).toEqual([note("before")]);
+    expect(read((store) => store.scan("other"))).toEqual([]);
   });
 
   test("over a query's ctx.db it reads and refuses writes", () => {

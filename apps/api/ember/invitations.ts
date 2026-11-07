@@ -12,7 +12,7 @@ import {
   v,
   type MutationCtx,
 } from "@freecorps/ember-server";
-import type { Actor } from "@freecorps/brigade-schema";
+import { isRole, type Actor } from "@freecorps/brigade-schema";
 import { InvitationLedger, type InvitationEmailPlan } from "../src/invitation-ledger.ts";
 import type { InvitationResult } from "../src/invitations.ts";
 import { readRole } from "../src/members.ts";
@@ -148,7 +148,13 @@ export const apply = internalMutationGeneric({
       ctx,
       input.workspaceId,
       { ok: false, code: "not_found" } as InvitationResult,
-      (ledger) => {
+      (ledger, shard) => {
+        // A removal that reached the shard first (its tombstone): adding now would bring the member back. Owed to the
+        // repair instead, which adds them only if D1 still has them, with D1's role.
+        if (removedMeanwhile(shard, input.name, input.args, (ctx as MutationCtx).now)) {
+          ledger.owe(input.name, input.args, input.now);
+          return { ok: true };
+        }
         const out = ledger.apply(input.actor, input.name, input.args, input.now);
         if (out.ok) fenced(ctx, input.name);
         return out;
@@ -162,6 +168,16 @@ export const apply = internalMutationGeneric({
  */
 function fenced(ctx: unknown, name: string): void {
   if (name.startsWith("member.")) bumpFence((ctx as MutationCtx).db);
+}
+
+/**
+ * Whether `member.add` comes after a removal of the same member that the shard already ran (`member_gone`): the
+ * Durable Object's member lock kept the two apart, so on Ember the add waits out the tombstone in the repair.
+ */
+function removedMeanwhile(shard: EmberShard, name: string, args: unknown, now: number): boolean {
+  if (name !== "member.add") return false;
+  const id = Reflect.get(Object(args), "id");
+  return typeof id === "string" && shard.gone(id, now);
 }
 
 /**
@@ -231,7 +247,11 @@ export const settle = internalMutationGeneric({
     ctx,
     input: { workspaceId: string; key: string; name: string; args: unknown; run: boolean },
   ): boolean =>
-    withLedger(ctx, input.workspaceId, false, (ledger) => {
+    withLedger(ctx, input.workspaceId, false, (ledger, shard) => {
+      // Removed since the repair read D1: kept owed, and read again once the tombstone is over.
+      if (input.run && removedMeanwhile(shard, input.name, input.args, (ctx as MutationCtx).now)) {
+        return false;
+      }
       const settled = ledger.settle(input.key, input.name, input.args, input.run);
       if (settled && input.run) fenced(ctx, input.name);
       return settled;
@@ -277,10 +297,15 @@ export const repair = internalActionGeneric({
         let run = true;
         if (row.name === "member.add") {
           const userId = String(Reflect.get(Object(parsed), "id"));
+          const role = await readRole(
+            (ctx.env as { DB: D1Database }).DB,
+            input.workspaceId,
+            userId,
+          );
           // Gone from D1: the removal (or a reconcile) already settled the shard.
-          run =
-            (await readRole((ctx.env as { DB: D1Database }).DB, input.workspaceId, userId)) !==
-            undefined;
+          run = role !== undefined;
+          // D1's role now, not the invitation's: a role changed since the accept is the one the copy keeps.
+          if (role !== undefined && isRole(role)) parsed = { ...Object(parsed), role };
         }
         const settled = (await ctx.runMutation(SETTLE, {
           ...input,

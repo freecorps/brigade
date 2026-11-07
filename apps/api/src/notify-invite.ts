@@ -25,6 +25,31 @@ export type InviteNotifyEnv = {
   DASHBOARD_URL?: string;
 };
 
+/**
+ * How long the engine lookup (D1's `workspace_engine`) may take before the invitation email is tried again later: a
+ * stalled D1 read must not hold the rest of the Queue's batch.
+ */
+export const INVITE_ENGINE_BUDGET_MS = 5000;
+
+/** `lookup`, or a throw (so the message is retried) once `INVITE_ENGINE_BUDGET_MS` is past. */
+async function boundedLookup<T>(
+  lookup: Promise<T>,
+  budgetMs = INVITE_ENGINE_BUDGET_MS,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("reading the workspace's engine took too long")),
+      budgetMs,
+    );
+  });
+  try {
+    return await Promise.race([lookup, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Whether `event` asks for an invitation email. */
 export function asksForInvitation(event: BrigadeEvent): boolean {
   return event.type === "member.invited";
@@ -54,7 +79,7 @@ export async function notifyInvitation(
   sender: EmailSender | undefined,
 ): Promise<number | undefined> {
   if (!sender) return undefined;
-  const workspace = await workspaceInvitations(env, event.workspaceId);
+  const workspace = await boundedLookup(workspaceInvitations(env, event.workspaceId));
   const plan = await workspace.planInvitationEmail(event);
   if (!plan.send) {
     return plan.reason === "held"

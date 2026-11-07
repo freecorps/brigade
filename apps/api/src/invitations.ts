@@ -322,7 +322,8 @@ export class Invitations {
       const id = authId("invitation", now, this.options.randomBytes);
       const expiresAt = now + INVITATION_TTL_MS;
       try {
-        const [, reserved] = await db.batch([
+        const sendId = newId("snd", now, this.options.randomBytes);
+        const [, reserved, inserted] = await db.batch([
           // One that ran out still holds the address's pending slot (`invitation_pending_email_idx`).
           db
             .prepare(
@@ -330,17 +331,33 @@ export class Invitations {
                where "organizationId" = ? and email = ? and status = 'pending' and "expiresAt" <= ?`,
             )
             .bind(workspaceId, email, iso(now)),
-          this.reserveSend(workspaceId, id, email, actorId, now, false),
-          // `changes()` is the reservation's: no invitation without its email counted.
+          this.reserveSend(workspaceId, id, email, actorId, now, false, sendId),
+          // `changes()` is the reservation's: no invitation without its email counted. The pending cap again, in the
+          // write: without the DO's member lock (Ember) two invites can pass the read above at once.
           db
             .prepare(
               `insert into invitation (id, "organizationId", email, role, status, "expiresAt", "createdAt", "inviterId")
-               select ?, ?, ?, ?, 'pending', ?, ?, ? where changes() = 1`,
+               select ?1, ?2, ?3, ?4, 'pending', ?5, ?6, ?7 where changes() = 1
+                 and (select count(*) from invitation
+                      where "organizationId" = ?2 and status = 'pending' and "expiresAt" > ?6) < ?8`,
             )
-            .bind(id, workspaceId, email, role, iso(expiresAt), iso(now), actorId),
+            .bind(
+              id,
+              workspaceId,
+              email,
+              role,
+              iso(expiresAt),
+              iso(now),
+              actorId,
+              MAX_PENDING_INVITATIONS,
+            ),
+          // No invitation: its reservation counts no send.
+          db.prepare(`delete from invitation_send where id = ? and changes() = 0`).bind(sendId),
         ]);
-        if (reserved!.meta.changes !== 1)
+        if (reserved!.meta.changes !== 1) {
           return await this.capped(workspaceId, id, email, actorId, now);
+        }
+        if (inserted!.meta.changes !== 1) return { ok: false, code: "limit_reached" };
       } catch (error) {
         // The unique index: another pending invitation for that address got in first (D1 edited meanwhile).
         if (String(error).includes("UNIQUE")) return { ok: false, code: "already_invited" };

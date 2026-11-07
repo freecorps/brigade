@@ -3,7 +3,13 @@
 // (`invitation_repair`). Its own module, without Better Auth, so an Ember mutation (ember/invitations.ts) and the
 // Node tests can use it.
 
-import { MEMBERS_ACTOR, newId, type Actor, type RandomBytes } from "@freecorps/brigade-schema";
+import {
+  isRole,
+  MEMBERS_ACTOR,
+  newId,
+  type Actor,
+  type RandomBytes,
+} from "@freecorps/brigade-schema";
 import type { InvitationResult } from "./invitations.ts";
 import { readRole } from "./members.ts";
 import { LEDGER_RETENTION_MS } from "./paging.ts";
@@ -193,6 +199,8 @@ export class InvitationLedger implements InvitationShardSide {
           done = this.settleRepair(key) && done;
           continue;
         }
+        // D1's role now, not the invitation's: a role changed since the accept is the one the copy keeps.
+        if (isRole(role)) parsed = { ...Object(parsed), role };
       }
       if (!this.run(MEMBERS_ACTOR, name, parsed, Date.now())) {
         done = false;

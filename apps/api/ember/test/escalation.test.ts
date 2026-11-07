@@ -100,6 +100,7 @@ function shard() {
   }
   return {
     engine,
+    server,
     mutate,
     table,
     outbox,
@@ -516,6 +517,48 @@ describe("invitations' shard side, on Ember", () => {
       { ok: false, code: "stale" },
     );
     expect(s.table("members").map((row) => row.id)).toContain(BIA);
+  });
+
+  test("an add after the shard ran the member's removal is owed to the repair, not applied", () => {
+    const s = shard();
+    const BIA = "usr_bia";
+    const add = { id: BIA, name: "Bia", role: "responder", invitationId: id("inv") };
+    expect(
+      s.call("invitations:apply", {
+        workspaceId: WS,
+        actor: MEMBERS_ACTOR,
+        name: "member.add",
+        args: add,
+        now: T,
+      }).value,
+    ).toEqual({ ok: true });
+    expect(s.server("member.remove", { id: BIA, role: "responder", reason: "removed" })).toEqual({
+      ok: true,
+    });
+    // A second accept whose shard step arrives after that removal.
+    const late = s.call("invitations:apply", {
+      workspaceId: WS,
+      actor: MEMBERS_ACTOR,
+      name: "member.add",
+      args: add,
+      now: T,
+    });
+    expect(late.value).toEqual({ ok: true });
+    expect(late.scheduled.map((job) => job.fn)).toContain("invitations:repair");
+    expect(s.table("members").map((row) => row.id)).not.toContain(BIA);
+    const owed = s.call("invitations:owed", { workspaceId: WS }).value as { key: string }[];
+    expect(owed).toHaveLength(1);
+    // The repair read D1 before the tombstone: still owed, read again later.
+    expect(
+      s.call("invitations:settle", {
+        workspaceId: WS,
+        key: owed[0]!.key,
+        name: "member.add",
+        args: add,
+        run: true,
+      }).value,
+    ).toBe(false);
+    expect(s.table("members").map((row) => row.id)).not.toContain(BIA);
   });
 
   test("the daily count and a send's ledger row come from the shard's own tables", () => {

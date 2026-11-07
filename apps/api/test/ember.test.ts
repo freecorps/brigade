@@ -3,7 +3,7 @@
 import { env, exports } from "cloudflare:workers";
 import { createExecutionContext } from "cloudflare:test";
 import { newId } from "@freecorps/brigade-schema";
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, test, vi } from "vite-plus/test";
 import {
   EMBER_BODY_MAX,
   serveEmber,
@@ -23,6 +23,7 @@ import {
 import { deleteMembership, writeRole } from "../src/members.ts";
 import { sendOverdue } from "../ember/local.ts";
 import { provisionWorkspace, workspaceInvitations } from "../src/ember-invitations.ts";
+import { INVITE_ENGINE_BUDGET_MS, notifyInvitation } from "../src/notify-invite.ts";
 import { getFunctionName } from "@freecorps/ember-server";
 import { generateRecipient, toBase64url } from "@freecorps/brigade-push";
 import type { BrigadeEvent } from "../src/outbox.ts";
@@ -1156,5 +1157,40 @@ describe("invitation caps on an Ember workspace", () => {
     expect(await (await invite(`cap-b-${people}@example.com`)).json()).toEqual({
       error: "rate_limited",
     });
+  });
+});
+
+describe("an invitation email's engine lookup", () => {
+  test("a stalled D1 read throws after its budget, so the message is retried", async () => {
+    vi.useFakeTimers();
+    try {
+      const stalled = {
+        prepare: () => ({ bind: () => ({ first: () => new Promise(() => {}) }) }),
+      } as unknown as D1Database;
+      const sent = vi.fn();
+      const event: BrigadeEvent = {
+        id: "evt_stalled",
+        type: "member.invited",
+        source: "brigade://ws_x/workspace",
+        workspaceId: "ws_x",
+        time: new Date().toISOString(),
+        actor: { kind: "user", id: "usr_x" },
+        subject: "inv_x",
+        data: { invitationId: "inv_x", send: 1 },
+        specversion: "1.0",
+      };
+      const outcome = notifyInvitation(
+        event,
+        1,
+        { WORKSPACE: env.WORKSPACE, SHARD: env.SHARD, DB: stalled },
+        { id: "test", send: sent },
+      );
+      const settled = expect(outcome).rejects.toThrow(/took too long/);
+      await vi.advanceTimersByTimeAsync(INVITE_ENGINE_BUDGET_MS);
+      await settled;
+      expect(sent).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

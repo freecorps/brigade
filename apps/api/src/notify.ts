@@ -18,6 +18,7 @@ import {
 import type { InstanceKey } from "@freecorps/brigade-push/instance";
 import { formatIncidentNumber, type DeliveryError } from "@freecorps/brigade-schema";
 import { within } from "./deadline.ts";
+import { workspacePager } from "./ember-paging.ts";
 import { emailSender, type EmailEnv, type EmailSender } from "./email.ts";
 import { asksForEmail, asksForReminder, asksForRotationEmail } from "./mailer.ts";
 import { emailRetryDelay, notifyEmail, type EmailNotifyEnv } from "./notify-email.ts";
@@ -143,6 +144,8 @@ export type NotifyEnv = EmailEnv &
   RelayInstanceEnv &
   DirectPushEnv & {
     WORKSPACE: Env["WORKSPACE"];
+    /** Ember's shards, for a workspace D1's `workspace_engine` says is on Ember (src/ember-paging.ts). */
+    SHARD?: Env["SHARD"];
     /** The status pages' snapshots and custom hostname lookups (src/status-domain.ts `syncStatusHost`). */
     STATUS?: Env["STATUS"];
     DB?: Env["DB"];
@@ -383,7 +386,7 @@ async function withinBudget(
  */
 export async function consumeDeadLetters(
   batch: MessageBatch<unknown>,
-  env: Pick<NotifyEnv, "WORKSPACE">,
+  env: Pick<NotifyEnv, "WORKSPACE" | "DB" | "SHARD">,
 ): Promise<void> {
   await Promise.all(
     batch.messages.map(async (message) => {
@@ -393,7 +396,7 @@ export async function consumeDeadLetters(
         return message.ack();
       }
       try {
-        const result = await env.WORKSPACE.getByName(event.workspaceId).recordDeadLetter(event);
+        const result = await workspacePager(env, event.workspaceId).recordDeadLetter(event);
         log("dead-lettered page handled", { event: event.id, incident: event.subject, result });
         message.ack();
       } catch (error) {
@@ -724,7 +727,7 @@ export async function notifyPush(
 ): Promise<false | PushAgain> {
   // Most events page nobody (the delivery rows' own `notification.*` among them): no shard call for those.
   if (!asksForPage(event)) return false;
-  const workspace: PageShard = shard ?? env.WORKSPACE.getByName(event.workspaceId);
+  const workspace: PageShard = shard ?? workspacePager(env, event.workspaceId);
   const plan = await within<PagePlan>(workspace.planPage(event), SHARD_CALL_TIMEOUT_MS, "planPage");
   if (!plan.send) return false;
   const receipts = receiptUrl(env.DASHBOARD_URL);

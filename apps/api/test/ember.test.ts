@@ -13,7 +13,15 @@ import {
   workspaceShard,
 } from "../src/ember.ts";
 import { EMBER_TOKEN_TTL_S, mintEmberToken, verifyEmberToken } from "../src/ember-token.ts";
+import {
+  emberPager,
+  ENGINE_CACHE_MS,
+  freshMembers,
+  pageEngine,
+  workspacePager,
+} from "../src/ember-paging.ts";
 import { deleteMembership, writeRole } from "../src/members.ts";
+import type { BrigadeEvent } from "../src/outbox.ts";
 import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
@@ -571,5 +579,160 @@ describe("events from an Ember workspace", () => {
       if (left !== null) await new Promise((resolve) => setTimeout(resolve, 100));
     }
     expect(left).toBeNull();
+  });
+});
+
+describe("pages for an Ember workspace", () => {
+  test("are planned and recorded on its Ember shard, after its member list is checked against D1", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const minted = await api(`/ember-token/${workspaceId}`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    const { token, shard } = (await minted.json()) as { token: string; shard: string };
+    const random = (n: number) => crypto.getRandomValues(new Uint8Array(n));
+    const incident = newId("inc", Date.now(), random);
+    const declared = await api("/ember/api/mutation", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        fn: "workspace:mutate",
+        shard,
+        args: {
+          name: "incident.declare",
+          args: { id: incident, title: "Checkout is down", severity: "sev1" },
+        },
+      }),
+    });
+    expect(await declared.json()).toMatchObject({ ok: true, value: { ok: true } });
+    const stub = env.SHARD.getByName(shard) as unknown as {
+      query(
+        s: string,
+        fn: string,
+        args: unknown,
+        identity: null,
+        internal: boolean,
+      ): Promise<Outcome>;
+    };
+    expect((await stub.query(shard, "members:reconciledAt", {}, null, true)).value).toBeNull();
+
+    const event: BrigadeEvent = {
+      id: newId("evt", Date.now(), random),
+      type: "incident.declared",
+      source: `brigade://${workspaceId}/workspace`,
+      workspaceId,
+      time: new Date().toISOString(),
+      actor: { kind: "user", id: userId },
+      subject: incident,
+      data: {},
+      specversion: "1.0",
+    };
+    const pager = workspacePager(env, workspaceId);
+    // The shard holds the incident (WorkspaceDO does not: it would answer `not_found`); its one member declared it.
+    expect(await pager.planPage(event)).toEqual({ send: false, reason: "nobody" });
+    expect((await stub.query(shard, "members:reconciledAt", {}, null, true)).value).toBeTypeOf(
+      "number",
+    );
+    await pager.recordPage(event, [], true, []);
+    expect(await pager.recordDeadLetter(event)).not.toBe("other_workspace");
+    // A workspace still on WorkspaceDO keeps its Durable Object.
+    const other = await owner();
+    expect(await workspacePager(env, other.workspaceId).planPage(event)).toEqual({
+      send: false,
+      reason: "not_found",
+    });
+  });
+});
+
+describe("the engine a page goes to", () => {
+  test("survives D1 failing: the engine last known, or WorkspaceDO", async () => {
+    const failing = {
+      prepare: () => ({
+        bind: () => ({ first: () => Promise.reject(new Error("D1 is down")) }),
+      }),
+    } as unknown as D1Database;
+    const stalled = {
+      prepare: () => ({ bind: () => ({ first: () => new Promise(() => {}) }) }),
+    } as unknown as D1Database;
+    const { workspaceId } = await owner();
+    expect(await pageEngine(failing, workspaceId)).toBe("brigade");
+    expect(await pageEngine(stalled, `${workspaceId}_x`)).toBe("brigade");
+    // Known from D1, it stays known while D1 is out.
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const now = Date.now();
+    expect(await pageEngine(env.DB, workspaceId, now)).toBe("ember");
+    expect(await pageEngine(failing, workspaceId, now + ENGINE_CACHE_MS + 1)).toBe("ember");
+  });
+});
+
+/** `env.SHARD` with some calls answered by `hook` (undefined: the real shard), and every call recorded. */
+function hooked(
+  hook: (kind: "query" | "mutation", fn: string, args: unknown) => Promise<Outcome> | undefined,
+) {
+  const calls: { kind: string; fn: string; args: unknown }[] = [];
+  const SHARD = {
+    getByName(name: string) {
+      const real = env.SHARD.getByName(name) as unknown as Record<
+        "query" | "mutation",
+        (
+          s: string,
+          fn: string,
+          args: unknown,
+          identity: null,
+          internal: boolean,
+        ) => Promise<Outcome>
+      >;
+      const via =
+        (kind: "query" | "mutation") =>
+        (s: string, fn: string, args: unknown, identity: null, internal: boolean) => {
+          calls.push({ kind, fn, args });
+          return hook(kind, fn, args) ?? real[kind](s, fn, args, identity, internal);
+        };
+      return { query: via("query"), mutation: via("mutation") };
+    },
+  } as unknown as Env["SHARD"];
+  return { env: { DB: env.DB, SHARD }, calls };
+}
+
+describe("the member check before an Ember page", () => {
+  test("a reconcile a member change overtook reads D1 again, and the check passes", async () => {
+    const { userId, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    let stale = 1;
+    const shard = hooked((_kind, fn) =>
+      fn === "members:reconcile" && stale-- > 0
+        ? Promise.resolve({ ok: true, value: { ok: false, code: "stale" } })
+        : undefined,
+    );
+    expect(await freshMembers(shard.env, workspaceId, Date.now())).toBe(true);
+    expect(shard.calls.filter((call) => call.fn === "members:reconcile")).toHaveLength(2);
+  });
+
+  test("a failed check's repair is asked for again when the plan carrying it failed", async () => {
+    const { userId, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    let plans = 0;
+    const shard = hooked((_kind, fn) => {
+      if (fn === "members:reconciledAt") return Promise.reject(new Error("shard reset"));
+      if (fn === "paging:plan" && plans++ === 0) return Promise.reject(new Error("shard reset"));
+      return undefined;
+    });
+    const event = {
+      id: "evt_x",
+      type: "incident.declared",
+      workspaceId,
+      actor: { kind: "user", id: userId },
+    } as unknown as BrigadeEvent;
+    const pager = emberPager(shard.env, workspaceId);
+    await expect(pager.planPage(event)).rejects.toThrow();
+    // The check is now backed off, but the repair is still pending: the retried page asks for it.
+    await pager.planPage(event);
+    await pager.planPage(event);
+    const asked = shard.calls
+      .filter((call) => call.fn === "paging:plan")
+      .map((call) => (call.args as { repair?: boolean }).repair ?? false);
+    expect(asked).toEqual([true, true, false]);
   });
 });

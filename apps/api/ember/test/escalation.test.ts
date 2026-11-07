@@ -324,3 +324,37 @@ describe("acknowledging on Ember", () => {
     ).toEqual({ ok: false, code: "not_found" });
   });
 });
+
+describe("reminders after a member comes back", () => {
+  test("a removed member is taken off their follow-ups, so coming back owns nothing to remind", () => {
+    const s = shard();
+    const incident = id("inc");
+    s.mutate("incident.declare", { id: incident, title: "Checkout is down" });
+    const followUp = id("fup");
+    s.mutate("followUp.create", {
+      id: followUp,
+      incidentId: incident,
+      title: "Add an index",
+      ownerId: CAIO,
+      dueDate: "2026-11-07",
+      link: null,
+    });
+    const remove = s.call("members:apply", {
+      workspaceId: WS,
+      actor: { kind: "user", id: ANA, role: "owner" },
+      name: "member.remove",
+      args: { id: CAIO, role: "owner", reason: "removed" },
+    });
+    expect(remove.value).toEqual({ ok: true });
+    expect(s.table("follow_ups").find((row) => row.id === followUp)?.ownerId).toBeNull();
+    // The removal wrote `follow_ups` (`dropFollowUpOwner`), which arms the reminders tick itself (here the one
+    // `followUp.create` scheduled is still pending, so no second job).
+    s.engine.runMutation("workspace:serverMutate", {
+      name: "member.sync",
+      args: { id: CAIO, name: "Caio", role: "responder" },
+      actor: { kind: "user", id: CAIO, role: "responder" },
+    });
+    s.tick(60 * MINUTE);
+    expect(s.call("paging:remind", {}).value).toEqual({ reminded: 0 });
+  });
+});

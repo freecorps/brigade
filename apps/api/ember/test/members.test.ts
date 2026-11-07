@@ -54,11 +54,13 @@ describe("members on Ember", () => {
       found: true,
       copy: { role: "responder" },
       leftovers: true,
+      gen: 0,
     });
     expect(s.query("members:state", { workspaceId: WS, targetId: "usr_eva" })).toEqual({
       found: true,
       copy: null,
       leftovers: false,
+      gen: 0,
     });
     expect(s.query("members:state", { workspaceId: "ws_other", targetId: "usr_bia" })).toEqual({
       found: false,
@@ -114,6 +116,35 @@ describe("members on Ember", () => {
         members: [{ id: "usr_ana", role: "admin", resetAt: null }],
       }),
     ).toEqual({ ok: true, removed: [], changed: [] });
+  });
+
+  test("a repair's snapshot that a member change overtook is refused as stale", () => {
+    const s = shard();
+    const gen = (
+      s.query("members:state", { workspaceId: WS, targetId: "usr_bia" }) as { gen: number }
+    ).gen;
+    // Meanwhile a change is applied (D1 made Bia a viewer): the snapshot read before it still says responder.
+    expect(
+      s.call("members:apply", {
+        workspaceId: WS,
+        actor: owner,
+        name: "member.changeRole",
+        args: { id: "usr_bia", from: "responder", to: "viewer" },
+      }),
+    ).toEqual({ ok: true });
+    const stale = [
+      { id: "usr_ana", role: "owner", resetAt: null },
+      { id: "usr_bia", role: "responder", resetAt: null },
+    ];
+    expect(s.call("members:reconcile", { workspaceId: WS, members: stale, gen })).toEqual({
+      ok: false,
+      code: "stale",
+    });
+    expect(s.table("members").find((m) => m.id === "usr_bia")?.role).toBe("viewer");
+    const now = (
+      s.query("members:state", { workspaceId: WS, targetId: "usr_bia" }) as { gen: number }
+    ).gen;
+    expect(now).toBe(gen + 1);
   });
 
   test("armRepair schedules the repair action", () => {

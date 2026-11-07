@@ -44,6 +44,41 @@ const RECONCILE = makeFunctionReference<"mutation">("members:reconcile");
 
 /** After a change D1 has and the shard missed, the repair runs this soon (`MEMBER_REPAIR_DELAY_MS` on the DO). */
 export const EMBER_MEMBER_REPAIR_DELAY_MS = 10 * 1000;
+/** A repair that failed (D1 or the shard) runs again this much later, until it succeeds (`MEMBER_REPAIR_RETRY_MS`). */
+export const EMBER_MEMBER_REPAIR_RETRY_MS = 30 * 1000;
+/** A repair whose snapshot of D1 a member change overtook reads D1 again this soon. */
+const STALE_RETRY_MS = 1000;
+
+type FenceDoc = { _id: string; key: string; n: number };
+type FenceDb = {
+  query(t: "member_fence"): {
+    withIndex(
+      i: "by_key",
+      r: (q: { eq(f: "key", v: string): unknown }) => unknown,
+    ): {
+      first(): FenceDoc | null;
+    };
+  };
+  insert(t: "member_fence", v: { key: string; n: number }): string;
+  patch(id: string, v: { n: number }): void;
+};
+
+/**
+ * How many member changes this shard applied: a repair reads it before D1 and hands it back with its snapshot, and
+ * `reconcile` refuses the snapshot if a change came in between (the Durable Object's member lock, as a fence).
+ */
+function fence(db: unknown): FenceDoc | null {
+  return (db as FenceDb)
+    .query("member_fence")
+    .withIndex("by_key", (q) => q.eq("key", "members"))
+    .first();
+}
+
+function bumpFence(db: unknown): void {
+  const doc = fence(db);
+  if (doc) (db as FenceDb).patch(doc._id, { n: doc.n + 1 });
+  else (db as FenceDb).insert("member_fence", { key: "members", n: 1 });
+}
 
 const actorArg = v.object({
   kind: v.union(
@@ -61,7 +96,14 @@ const actorArg = v.object({
 /** What the shard holds of `targetId`; `tokenBacked` whether the API token `tokenId` is still good here. */
 export type MemberState =
   | { found: false }
-  | { found: true; copy: { role: Role } | null; leftovers: boolean; tokenBacked?: boolean };
+  | {
+      found: true;
+      copy: { role: Role } | null;
+      leftovers: boolean;
+      tokenBacked?: boolean;
+      /** The member fence (`fence`), for a repair to hand back with its snapshot of D1. */
+      gen: number;
+    };
 
 export const state = internalQueryGeneric({
   args: { workspaceId: v.string(), targetId: v.string(), tokenId: v.optional(v.string()) },
@@ -85,6 +127,7 @@ export const state = internalQueryGeneric({
       found: true,
       copy: copy ? { role: copy.role } : null,
       leftovers,
+      gen: fence((ctx as QueryCtx).db)?.n ?? 0,
       ...(tokenBacked === undefined ? {} : { tokenBacked }),
     };
   },
@@ -108,7 +151,9 @@ export const apply = internalMutationGeneric({
       return { ok: false, error: { code: "forbidden", message: "Not a Brigade role" } };
     }
     const actor = input.actor as Actor;
-    return run(c, serverMutations, input.name, input.args, () => actor, workspaceLimits());
+    const out = run(c, serverMutations, input.name, input.args, () => actor, workspaceLimits());
+    if (out.ok) bumpFence(c.db);
+    return out;
   },
 });
 
@@ -125,6 +170,8 @@ export const reconcile = internalMutationGeneric({
     members: v.array(
       v.object({ id: v.string(), role: v.string(), resetAt: v.union(v.number(), v.null()) }),
     ),
+    /** The fence read before D1 was: a member change applied since makes this snapshot `stale`. */
+    gen: v.optional(v.number()),
   },
   handler: (
     ctx,
@@ -133,6 +180,9 @@ export const reconcile = internalMutationGeneric({
     const c = ctx as MutationCtx;
     const before = createEmberStore<BrigadeTables>(c.db as never, TABLE_SET);
     if (workspaceId(before) !== input.workspaceId) return { ok: false, code: "not_found" };
+    if (input.gen !== undefined && (fence(c.db)?.n ?? 0) !== input.gen) {
+      return { ok: false, code: "stale" };
+    }
     const was = new Map(before.scan("members").map((member) => [member.id, member.role]));
     const out = run(
       c,
@@ -143,6 +193,7 @@ export const reconcile = internalMutationGeneric({
       workspaceLimits(),
     );
     if (!out.ok && out.error.code !== "conflict") return { ok: false, code: out.error.code };
+    if (out.ok) bumpFence(c.db);
     const now = new Map(input.members.map((member) => [member.id, member.role]));
     const removed = [...was.keys()].filter((id) => !now.has(id));
     const changed = [...was]
@@ -162,68 +213,103 @@ export const armRepair = internalMutationGeneric({
 });
 
 /**
- * Reads D1's members and reconciles the shard with them; throws when D1 or the shard failed, so Ember's scheduler
- * tries again. A workspace too large for one `member.reconcile` catches up `targetId` alone, as the DO does.
+ * Reads D1's members and reconciles the shard with them. Never gives up: a failure (D1, the shard) schedules the
+ * repair again `EMBER_MEMBER_REPAIR_RETRY_MS` later, and a snapshot a member change overtook (`stale`) reads D1 again
+ * at once, so the copy catches up however long D1 is out. A workspace too large for one `member.reconcile` catches
+ * up `targetId` alone, as the DO does.
  */
 export const repair = internalActionGeneric({
   args: { workspaceId: v.string(), targetId: v.optional(v.string()) },
   handler: async (ctx, input): Promise<null> => {
-    const db = ctx.env.DB as D1Database;
-    const members: ReconciledMember[] = (await readDirectory(db, input.workspaceId)).flatMap((m) =>
-      isRole(m.role) ? [{ id: m.userId, role: m.role, resetAt: m.resetAt ?? null }] : [],
-    );
-    // A workspace D1 does not know (a dev shard): nothing to repair.
-    if (members.length === 0) return null;
-    if (members.length > MAX_RECONCILED_MEMBERS) {
+    let again: number | null;
+    try {
+      again = await repairOnce(ctx, input);
+    } catch (error) {
       console.error(
         JSON.stringify({
-          message: "too many members to reconcile on Ember: catching up the one member only",
+          message: "Ember member repair failed; trying again",
           workspace: input.workspaceId,
-          members: members.length,
-          error: "member_limit",
+          error: error instanceof Error ? error.message : String(error),
         }),
       );
-      if (input.targetId === undefined) return null;
-      const target = members.find((member) => member.id === input.targetId);
-      const held = (await ctx.runQuery(STATE, {
-        workspaceId: input.workspaceId,
-        targetId: input.targetId,
-      } as never)) as MemberState;
-      if (!held.found) return null;
-      // Caught up already: the copy agrees with D1, or there is nothing of a removed member left.
-      if (target ? !held.copy || held.copy.role === target.role : !held.leftovers) return null;
-      const out = (await ctx.runMutation(APPLY, {
-        workspaceId: input.workspaceId,
-        actor: MEMBERS_ACTOR,
-        ...(target
-          ? {
-              name: "member.changeRole",
-              args: { id: target.id, from: held.copy!.role, to: target.role },
-            }
-          : {
-              name: "member.remove",
-              args: { id: input.targetId, role: held.copy?.role ?? null, reason: "reconciled" },
-            }),
-      } as never)) as MutateResult;
-      if (!out.ok && out.error.code !== "conflict")
-        throw new Error(`member repair: ${out.error.code}`);
-      if (out.ok) await closeSockets(ctx.env, input.workspaceId, [input.targetId]);
-      return null;
+      again = EMBER_MEMBER_REPAIR_RETRY_MS;
     }
-    const out = (await ctx.runMutation(RECONCILE, {
-      workspaceId: input.workspaceId,
-      members,
-    } as never)) as
-      | { ok: true; removed: string[]; changed: string[] }
-      | { ok: false; code: string };
-    if (!out.ok) {
-      if (out.code !== "not_found") throw new Error(`member reconcile: ${out.code}`);
-      return null;
-    }
-    await closeSockets(ctx.env, input.workspaceId, [...out.removed, ...out.changed]);
+    if (again !== null) await ctx.scheduler.runAfter(again, "members:repair", input);
     return null;
   },
 });
+
+/** One repair; answers when to try again (null: done). Throws when D1 or the shard failed. */
+async function repairOnce(
+  ctx: {
+    env: Record<string, unknown>;
+    runQuery(ref: unknown, args: unknown): Promise<unknown>;
+    runMutation(ref: unknown, args: unknown): Promise<unknown>;
+  },
+  input: { workspaceId: string; targetId?: string },
+): Promise<number | null> {
+  // The fence first, then D1: a change the shard applies after this read makes the snapshot stale.
+  const before = (await ctx.runQuery(STATE, {
+    workspaceId: input.workspaceId,
+    targetId: input.targetId ?? "",
+  })) as MemberState;
+  if (!before.found) return null;
+  const db = ctx.env.DB as D1Database;
+  const members: ReconciledMember[] = (await readDirectory(db, input.workspaceId)).flatMap((m) =>
+    isRole(m.role) ? [{ id: m.userId, role: m.role, resetAt: m.resetAt ?? null }] : [],
+  );
+  // A workspace D1 does not know (a dev shard): nothing to repair, as on the DO.
+  if (members.length === 0) return null;
+  if (members.length > MAX_RECONCILED_MEMBERS) {
+    console.error(
+      JSON.stringify({
+        message: "too many members to reconcile on Ember: catching up the one member only",
+        workspace: input.workspaceId,
+        members: members.length,
+        error: "member_limit",
+      }),
+    );
+    if (input.targetId === undefined) return null;
+    const target = members.find((member) => member.id === input.targetId);
+    // Caught up already: the copy agrees with D1, or there is nothing of a removed member left.
+    if (target ? !before.copy || before.copy.role === target.role : !before.leftovers) return null;
+    const now = (await ctx.runQuery(STATE, {
+      workspaceId: input.workspaceId,
+      targetId: input.targetId,
+    })) as MemberState;
+    if (!now.found) return null;
+    if (now.gen !== before.gen) return STALE_RETRY_MS;
+    const out = (await ctx.runMutation(APPLY, {
+      workspaceId: input.workspaceId,
+      actor: MEMBERS_ACTOR,
+      ...(target
+        ? {
+            name: "member.changeRole",
+            args: { id: target.id, from: before.copy!.role, to: target.role },
+          }
+        : {
+            name: "member.remove",
+            args: { id: input.targetId, role: before.copy?.role ?? null, reason: "reconciled" },
+          }),
+    })) as MutateResult;
+    if (!out.ok && out.error.code !== "conflict")
+      throw new Error(`member repair: ${out.error.code}`);
+    if (out.ok) await closeSockets(ctx.env, input.workspaceId, [input.targetId]);
+    return null;
+  }
+  const out = (await ctx.runMutation(RECONCILE, {
+    workspaceId: input.workspaceId,
+    members,
+    gen: before.gen,
+  })) as { ok: true; removed: string[]; changed: string[] } | { ok: false; code: string };
+  if (!out.ok) {
+    if (out.code === "not_found") return null;
+    if (out.code === "stale") return STALE_RETRY_MS;
+    throw new Error(`member reconcile: ${out.code}`);
+  }
+  await closeSockets(ctx.env, input.workspaceId, [...out.removed, ...out.changed]);
+  return null;
+}
 
 /**
  * Closes the sockets of `userIds` and of the API tokens they created, as `Membership.repair` does after a reconcile:

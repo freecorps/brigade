@@ -13,6 +13,7 @@ import {
   workspaceShard,
 } from "../src/ember.ts";
 import { EMBER_TOKEN_TTL_S, mintEmberToken, verifyEmberToken } from "../src/ember-token.ts";
+import { deleteMembership, writeRole } from "../src/members.ts";
 import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
@@ -474,5 +475,61 @@ describe("members on an Ember workspace", () => {
       headers: { Cookie: cookie },
     });
     expect(last.status).toBe(409);
+  });
+});
+
+describe("member writes without the Durable Object's lock", () => {
+  test("a role change or removal checked against roles D1 no longer has changes nothing", async () => {
+    const { userId, workspaceId } = await owner();
+    const add = async (id: string, role: string) =>
+      env.DB.prepare(
+        `insert into member (id, "organizationId", "userId", role, "createdAt") values (?, ?, ?, ?, ?)`,
+      )
+        .bind(`mem_${id}`, workspaceId, id, role, new Date().toISOString())
+        .run();
+    for (const [id, role] of [
+      ["usr_adm", "admin"],
+      ["usr_bia", "responder"],
+    ] as const) {
+      await env.DB.prepare(
+        `insert into "user" (id, name, email, "emailVerified", "createdAt", "updatedAt") values (?, ?, ?, 1, ?, ?)`,
+      )
+        .bind(
+          id,
+          id,
+          `${id}-${workspaceId}@example.com`,
+          new Date().toISOString(),
+          new Date().toISOString(),
+        )
+        .run();
+      await add(id, role);
+    }
+    const admin = { id: "usr_adm", role: "admin" as const };
+    // The admin was demoted after their change was checked: refused.
+    await env.DB.prepare(
+      `update member set role = 'viewer' where "userId" = 'usr_adm' and "organizationId" = ?`,
+    )
+      .bind(workspaceId)
+      .run();
+    expect(await writeRole(env.DB, workspaceId, "usr_bia", "responder", "admin", admin)).toBe(
+      false,
+    );
+    expect(
+      await deleteMembership(env.DB, workspaceId, "usr_bia", { role: "responder", by: admin }),
+    ).toBe(false);
+    // Bia was promoted after her removal was checked: refused, even by an owner.
+    await env.DB.prepare(
+      `update member set role = 'owner' where "userId" = 'usr_bia' and "organizationId" = ?`,
+    )
+      .bind(workspaceId)
+      .run();
+    const ownerBy = { id: userId, role: "owner" as const };
+    expect(
+      await deleteMembership(env.DB, workspaceId, "usr_bia", { role: "responder", by: ownerBy }),
+    ).toBe(false);
+    // As checked: done.
+    expect(
+      await deleteMembership(env.DB, workspaceId, "usr_bia", { role: "owner", by: ownerBy }),
+    ).toBe(true);
   });
 });

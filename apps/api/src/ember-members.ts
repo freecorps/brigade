@@ -3,9 +3,10 @@
 // (ember/members.ts). This copy goes once `WorkspaceDO`'s engine is removed (RFC 0016 step 8).
 //
 // The Durable Object runs a change under its member lock, so no two changes (or a change and a reconcile) of one
-// workspace interleave between reading D1 and writing it. Here D1's own conditional writes are the guard: `writeRole`
-// changes a role only if it is still the one read, `deleteMembership` never drops the last owner, and a change that
-// lost a race answers `conflict`, as the DO does when D1 moved. The shard's step runs after D1's, as on the DO; if
+// workspace interleave between reading D1 and writing it. Here D1's own conditional writes are the guard: the write
+// happens only if the target and the caller still hold the roles the rules were checked against (and never drops the
+// last owner), so a change that lost a race answers `conflict`, as the DO does when D1 moved. The repair is fenced
+// too: `members:reconcile` refuses a snapshot of D1 read before a change the shard applied since (ember/members.ts). The shard's step runs after D1's, as on the DO; if
 // it fails, the shard schedules a repair that reads D1 again (`members:armRepair`), and the request answers
 // `not_applied`.
 
@@ -106,6 +107,12 @@ export function emberMembers(env: MembersEnv) {
     }
     if (!result.ok) {
       log("member change not applied to the Ember shard", { name, error: result.error.code });
+      // D1 has the change: their sockets go now, as on success; the repair brings the copy along.
+      try {
+        await closeSockets(workspaceId, targetId);
+      } catch (error) {
+        log("closing a changed member's Ember sockets failed", { error });
+      }
       try {
         await call("mutation", workspaceId, "members:armRepair", { workspaceId, targetId });
       } catch (error) {
@@ -215,10 +222,16 @@ export function emberMembers(env: MembersEnv) {
 
     let written: boolean;
     try {
+      // Conditional on what the rules were checked against, the caller's role included: without the Durable
+      // Object's member lock, a change that raced another (or the caller's own demotion) answers `conflict`.
+      const by = { id: actor.id, role: actor.role };
       written =
         memberChange.kind === "role"
-          ? await writeRole(env.DB, workspaceId, targetId, target.role, memberChange.role)
-          : await deleteMembership(env.DB, workspaceId, targetId);
+          ? await writeRole(env.DB, workspaceId, targetId, target.role, memberChange.role, by)
+          : await deleteMembership(env.DB, workspaceId, targetId, {
+              role: target.role,
+              ...(actorId === targetId ? {} : { by }),
+            });
     } catch (error) {
       log("member change: writing D1 failed", { error });
       return { ok: false, code: "unavailable" };

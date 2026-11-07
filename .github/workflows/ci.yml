@@ -50,7 +50,7 @@ jobs:
             command: vp run --filter "@freecorps/*" --filter "!@freecorps/brigade-api" test
           - {
               name: api 1/4,
-              command: cd apps/api && vpx wrangler types --check && vp test --shard=1/4,
+              command: cd apps/api && vpx wrangler types --check && vp test --shard=1/4 && vp test --config vite.ember.config.ts,
             }
           - { name: api 2/4, command: cd apps/api && vp test --shard=2/4 }
           - { name: api 3/4, command: cd apps/api && vp test --shard=3/4 }
@@ -61,7 +61,8 @@ jobs:
         with:
           node-version: "24"
           cache: true
-      # apps/api's `test` script is `wrangler types --check && vp test`; the first shard runs the type check once.
+      # apps/api's `test` script is `wrangler types --check && vp test && vp test --config vite.ember.config.ts`; the
+      # first shard runs the type check and the Ember functions' Node tests (ember/test) once.
       - run: ${{ matrix.command }}
       # Fails if a test changed a committed file or left a new one.
       - run: test -z "$(git status --porcelain)" || { git status --porcelain; git diff; exit 1; }

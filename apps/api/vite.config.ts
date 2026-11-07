@@ -80,6 +80,8 @@ export default defineConfig(async ({ command, mode }) => ({
           workspaceSource(),
         ],
   test: {
+    // The workspace's Ember functions are tested in Node (vite.ember.config.ts): workerd has no node:sqlite.
+    exclude: ["**/node_modules/**", "ember/**"],
     // Most tests sign people up through Better Auth first, which hashes each password (scrypt): two to four per
     // test, seconds of setup on a loaded runner (CI, or the whole monorepo's tests at once), past the default 5 s.
     testTimeout: 15_000,

@@ -636,6 +636,10 @@ describe("pages for an Ember workspace", () => {
       "number",
     );
     await pager.recordPage(event, [], true, []);
+    // The email plans go to the same shard (WorkspaceDO, holding nothing, would answer `not_found`).
+    expect(await pager.planEmail(event)).toEqual({ send: false, reason: "not_an_email" });
+    expect(await pager.planReminder(event)).toEqual({ send: false, reason: "not_a_reminder" });
+    expect(await pager.planRotationEmail(event)).toEqual({ send: false, reason: "not_a_rotation" });
     expect(await pager.recordDeadLetter(event)).not.toBe("other_workspace");
     // A workspace still on WorkspaceDO keeps its Durable Object.
     const other = await owner();
@@ -734,5 +738,42 @@ describe("the member check before an Ember page", () => {
       .filter((call) => call.fn === "paging:plan")
       .map((call) => (call.args as { repair?: boolean }).repair ?? false);
     expect(asked).toEqual([true, true, false]);
+  });
+});
+
+describe("acknowledging an incident on an Ember workspace", () => {
+  test("runs incident.ack on its Ember shard, once per idempotency key", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const minted = await api(`/ember-token/${workspaceId}`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    const { token, shard } = (await minted.json()) as { token: string; shard: string };
+    const incident = newId("inc", Date.now(), (n) => crypto.getRandomValues(new Uint8Array(n)));
+    const declared = await api("/ember/api/mutation", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        fn: "workspace:mutate",
+        shard,
+        args: { name: "incident.declare", args: { id: incident, title: "Checkout is down" } },
+      }),
+    });
+    expect(await declared.json()).toMatchObject({ ok: true, value: { ok: true } });
+    const ack = (key: string) =>
+      api(`/workspaces/${workspaceId}/incidents/${incident}/ack`, {
+        method: "POST",
+        headers: { Cookie: cookie, "Idempotency-Key": key },
+      });
+    const first = await ack("tap-1");
+    expect(first.status).toBe(200);
+    // The same tap again: what the first answered. Another tap: already acknowledged.
+    expect((await ack("tap-1")).status).toBe(200);
+    const second = await ack("tap-2");
+    expect(second.status).toBe(409);
+    expect(await second.json()).toEqual({ error: "conflict" });
+    expect(await first.json()).toEqual({ ok: true });
   });
 });

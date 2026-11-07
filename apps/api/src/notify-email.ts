@@ -17,6 +17,7 @@ import {
   type EmailPlan,
 } from "./mailer.ts";
 import type { BrigadeEvent } from "./outbox.ts";
+import { workspacePager } from "./ember-paging.ts";
 
 /**
  * Deliveries of a failed page's event before an email that keeps failing is recorded on the timeline. Below the
@@ -33,6 +34,8 @@ export const MAX_OWNER_RECIPIENTS = 50;
 
 export type EmailNotifyEnv = {
   WORKSPACE: Env["WORKSPACE"];
+  /** Ember's shards, for a workspace D1's `workspace_engine` says is on Ember (src/ember-paging.ts). */
+  SHARD?: Env["SHARD"];
   /** D1: the recipients' addresses, names and locales (Better Auth's `user` and `member`). */
   DB?: D1Database;
   /** The dashboard's origin, for a link to the incident (a secret like `RELAY_URL`); no link without it. */
@@ -68,7 +71,7 @@ export async function notifyEmail(
   sender: EmailSender | undefined,
 ): Promise<number | undefined> {
   if (!sender) return undefined;
-  const workspace = env.WORKSPACE.getByName(event.workspaceId);
+  const workspace = workspacePager(env, event.workspaceId);
   const plan = await workspace.planEmail(event);
   if (!plan.send) {
     return plan.reason === "held" ? heldDelay(attempts, plan.until, Date.now()) : undefined;

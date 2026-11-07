@@ -19,6 +19,7 @@ import {
   type Recipient,
 } from "./notify-email.ts";
 import type { BrigadeEvent } from "./outbox.ts";
+import { workspacePager } from "./ember-paging.ts";
 
 /**
  * The owners' email for one member event. Returns the seconds to wait before trying it again, or undefined when it is
@@ -33,7 +34,7 @@ export async function notifyRotation(
   sender: EmailSender | undefined,
 ): Promise<number | undefined> {
   if (!sender) return undefined;
-  const workspace = env.WORKSPACE.getByName(event.workspaceId);
+  const workspace = workspacePager(env, event.workspaceId);
   const plan = await workspace.planRotationEmail(event);
   if (!plan.send) {
     return plan.reason === "held" ? heldDelay(attempts, plan.until, Date.now()) : undefined;

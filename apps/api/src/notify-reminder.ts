@@ -19,6 +19,7 @@ import {
   type Recipient,
 } from "./notify-email.ts";
 import type { BrigadeEvent } from "./outbox.ts";
+import { workspacePager } from "./ember-paging.ts";
 
 /**
  * The reminder for one event. Returns the seconds to wait before trying it again, or undefined when it is done:
@@ -32,7 +33,7 @@ export async function notifyReminder(
   sender: EmailSender | undefined,
 ): Promise<number | undefined> {
   if (!sender) return undefined;
-  const workspace = env.WORKSPACE.getByName(event.workspaceId);
+  const workspace = workspacePager(env, event.workspaceId);
   const plan = await workspace.planReminder(event);
   if (!plan.send) {
     return plan.reason === "held" ? heldDelay(attempts, plan.until, Date.now()) : undefined;

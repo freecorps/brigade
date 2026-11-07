@@ -70,7 +70,7 @@ import {
 import { BOOTSTRAP_PATH, bootstrapFirstUser } from "./bootstrap.ts";
 import { EMBER_BASE_PATH, issueEmberToken, serveEmber, workspaceEngine } from "./ember.ts";
 import { emberMembers } from "./ember-members.ts";
-import { workspaceSessions } from "./ember-workspace.ts";
+import { emberMutation, workspaceSessions } from "./ember-workspace.ts";
 import { forgetSessionEnd, recordSessionEnd, sweepSessionEnds } from "./session-end.ts";
 import { within } from "./deadline.ts";
 import { DEVICES_REGISTER_PATH, registerDevices } from "./device-route.ts";
@@ -1192,12 +1192,21 @@ export async function acknowledgeIncident(
 
   let result: AckResult;
   try {
-    result = await env.WORKSPACE.getByName(workspaceId).acknowledge(
-      workspaceId,
-      actor,
-      incidentId,
-      key,
-    );
+    // On Ember (RFC 0016) the shard's `paging:acknowledge`; D1 above already stood in for the DO's member tombstone.
+    result =
+      (await workspaceEngine(env.DB, workspaceId)) === "ember"
+        ? await emberMutation<AckResult>(env, workspaceId, "paging:acknowledge", {
+            workspaceId,
+            actor,
+            incidentId,
+            mutationId: key,
+          })
+        : await env.WORKSPACE.getByName(workspaceId).acknowledge(
+            workspaceId,
+            actor,
+            incidentId,
+            key,
+          );
   } catch (error) {
     return failed("WorkspaceDO.acknowledge failed", workspaceId, error);
   }

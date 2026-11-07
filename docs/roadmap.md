@@ -610,3 +610,19 @@ Validate the risky assumptions before writing product code. Each spike produces 
     `eas.json`)
 - [ ] Public site + docs (en, pt-BR); contribution guide; community translations
 - [ ] More chat providers (Teams, Discord, Mattermost), UnifiedPush
+
+## Brigade on Ember (RFC 0016)
+
+Brigade moves onto [Ember](https://github.com/freecorps/ember) step by step, each step with a fallback and a test,
+the old path removed only at the end. Order and details: RFC 0016 "Order of work".
+
+- [ ] Relay sends through `@freecorps/ember-push`'s transport (provider token, FCM access token), Brigade's envelope
+      and payloads unchanged, then the real-device check on `dev` (RFC 0016 "Real-device check"; needs Heitor's phones)
+- [ ] Direct sends from the API with the relay as fallback (needs the APNs and FCM secrets on `brigade-api-dev`)
+- [ ] The workspace shard on Ember behind `workspace.engine`, with the page lease and the D1 auth hook
+- [ ] Dashboard on Ember's React client
+- [ ] App on Ember's React Native client, picked per instance from `/config`
+- [ ] Monitoring, status page and Slack on the Ember shard for a workspace whose `workspace.engine` is `ember`,
+      `WorkspaceDO` otherwise (the watchdog stays outside Ember)
+- [ ] Per-workspace migration and cutover: `dev`, then staging and production with Heitor's approval
+- [ ] Removal of what Ember replaced, after the keep window

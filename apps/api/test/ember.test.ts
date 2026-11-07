@@ -1,10 +1,12 @@
 // Ember inside the API Worker (RFC 0016, src/ember.ts): the token, the auth hook's D1 checks, and `/ember` serving a
 // workspace only once D1 says its engine is `ember`.
 import { env, exports } from "cloudflare:workers";
+import { createExecutionContext } from "cloudflare:test";
 import { newId } from "@freecorps/brigade-schema";
 import { describe, expect, test } from "vite-plus/test";
 import {
   EMBER_BODY_MAX,
+  serveEmber,
   setWorkspaceEngine,
   verifyIdentity,
   workspaceEngine,
@@ -137,7 +139,12 @@ describe("the Ember auth hook", () => {
     // (they go once the workspaces' shards are told).
     const signedOut = await api("/auth/sign-out", { method: "POST", headers: { Cookie: cookie } });
     expect(signedOut.status).toBe(200);
-    expect(await verifyIdentity(env, await mint(userId, session.id))).toBeNull();
+    const stillValid = await mint(userId, session.id);
+    expect(await verifyEmberToken(SECRET, stillValid, Date.now())).toBeDefined();
+    expect(await verifyIdentity(env, stillValid)).toBeNull();
+    // And once the shards were told and `session_end` is empty for it: still refused.
+    await env.DB.prepare(`delete from session_end where "sessionId" = ?`).bind(session.id).run();
+    expect(await verifyIdentity(env, stillValid)).toBeNull();
     expect(await verifyIdentity(env, "not a token")).toBeNull();
   });
 });
@@ -222,6 +229,44 @@ describe("/ember", () => {
     expect(big.status).toBe(413);
   });
 
+  test("an API token's HTTP calls spend its budget, however the token is sent", async () => {
+    const { workspaceId } = await owner();
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const keys: string[] = [];
+    const limited = {
+      ...env,
+      API_TOKEN_LIMIT: {
+        limit: async ({ key }: { key: string }) => (keys.push(key), { success: false }),
+      } as RateLimit,
+    } as Env;
+    const token = (await mintEmberToken(
+      SECRET,
+      { sub: "tok_ci", ws: workspaceId, role: "owner", kind: "token" },
+      Date.now(),
+    ))!.token;
+    const body = JSON.stringify({
+      fn: "workspace:query",
+      args: {},
+      shard: workspaceShard(workspaceId),
+    });
+    for (const kind of ["query", "mutation"]) {
+      for (const [query, headers] of [
+        ["", { Authorization: `Bearer ${token}` }],
+        ["", { Authorization: `bearer ${token}` }],
+        [`?token=${token}`, {}],
+      ] as const) {
+        const response = await serveEmber(
+          new Request(`${ORIGIN}/ember/api/${kind}${query}`, { method: "POST", headers, body }),
+          limited,
+          createExecutionContext(),
+        );
+        expect(response.status).toBe(429);
+        expect(response.headers.get("Retry-After")).toBe("60");
+      }
+    }
+    expect(keys).toEqual(Array(6).fill("tok_ci"));
+  });
+
   test("never serves the runtime's admin, storage or action paths", async () => {
     for (const path of [
       "/ember/api/_ember/env",
@@ -262,6 +307,16 @@ describe("/ember", () => {
     const body = (await listed.json()) as { ok: true; value: { ok: true; rows: { id: string }[] } };
     expect(body.value.rows.map((row) => row.id)).toEqual([id]);
 
+    // The same token in every form the runtime reads is the same caller.
+    const viaQuery = await api(`/ember/api/query?token=${token}`, {
+      method: "POST",
+      body: JSON.stringify({
+        fn: "workspace:query",
+        args: { name: "incidents.active", args: {} },
+        shard,
+      }),
+    });
+    expect(viaQuery.status).toBe(200);
     // The internal server mutation is not callable with a client's token.
     const server = await call("mutation", "workspace:serverMutate", {
       name: "workspace.create",

@@ -148,6 +148,13 @@ const SERVED = new Set([
  */
 export const EMBER_BODY_MAX = 256 * 1024;
 
+/** The token the runtime will read from `request`, parsed as it does: `Authorization: Bearer` (any case), else `?token=`. */
+function emberBearer(request: Request, url: URL): string | null {
+  const header = request.headers.get("Authorization");
+  if (header?.toLowerCase().startsWith("bearer ")) return header.slice(7).trim() || null;
+  return url.searchParams.get("token");
+}
+
 /** The workspace `shard` names (`workspace:<id>`), or undefined. */
 function shardWorkspace(shard: unknown): string | undefined {
   if (typeof shard !== "string" || !shard.startsWith("workspace:")) return undefined;
@@ -190,8 +197,8 @@ export async function serveEmber(
   }
   // An API token's HTTP calls spend its per-token budget (RFC 0014), as its REST calls do. A socket's frames do not:
   // a socket is one exchange, as a Brigade Sync socket is today.
-  const bearer = /^Bearer (.+)$/.exec(request.headers.get("Authorization") ?? "")?.[1];
-  if (bearer !== undefined) {
+  const bearer = emberBearer(request, url);
+  if (bearer !== null) {
     const claims = await verifyEmberToken(env.BETTER_AUTH_SECRET, bearer, Date.now());
     if (claims?.kind === "token" && !(await withinLimit(env.API_TOKEN_LIMIT, claims.sub))) {
       return json({ error: "rate_limited" }, 429, { "Retry-After": "60" });

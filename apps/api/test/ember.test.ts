@@ -113,7 +113,9 @@ describe("Ember tokens", () => {
 
 describe("the Ember auth hook", () => {
   test("takes the role from D1, and refuses a member gone or a session ended", async () => {
-    const { userId, workspaceId } = await owner();
+    const { userId, cookie, workspaceId } = await owner();
+    const current = await api("/auth/get-session", { headers: { Cookie: cookie } });
+    const { session } = (await current.json()) as { session: { id: string } };
     const now = Date.now();
     const mint = async (sub: string, sid?: string) =>
       (await mintEmberToken(
@@ -122,17 +124,19 @@ describe("the Ember auth hook", () => {
         now,
       ))!.token;
     // The claim said viewer; D1 says owner, and D1 is the truth.
-    expect(await verifyIdentity(env, await mint(userId, "ses_1"))).toMatchObject({
+    expect(await verifyIdentity(env, await mint(userId, session.id))).toMatchObject({
       subject: userId,
-      claims: { role: "owner", ws: workspaceId, sid: "ses_1" },
+      claims: { role: "owner", ws: workspaceId, sid: session.id },
     });
-    expect(await verifyIdentity(env, await mint("usr_nobody"))).toBeNull();
-    await env.DB.prepare(
-      `insert into session_end ("workspaceId", "sessionId", "userId", "endedAt") values (?, ?, ?, ?)`,
-    )
-      .bind(workspaceId, "ses_1", userId, now)
-      .run();
-    expect(await verifyIdentity(env, await mint(userId, "ses_1"))).toBeNull();
+    // A member's token always names a session, and one that is not theirs or not in D1 is refused.
+    expect(await verifyIdentity(env, await mint(userId))).toBeNull();
+    expect(await verifyIdentity(env, await mint(userId, "ses_made_up"))).toBeNull();
+    expect(await verifyIdentity(env, await mint("usr_nobody", session.id))).toBeNull();
+    // Signing out deletes the session row: refused from then on, whether or not its `session_end` rows are still there
+    // (they go once the workspaces' shards are told).
+    const signedOut = await api("/auth/sign-out", { method: "POST", headers: { Cookie: cookie } });
+    expect(signedOut.status).toBe(200);
+    expect(await verifyIdentity(env, await mint(userId, session.id))).toBeNull();
     expect(await verifyIdentity(env, "not a token")).toBeNull();
   });
 });

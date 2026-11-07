@@ -297,7 +297,8 @@ reads D1 through the module's `env` (`cloudflare:workers`), since the runtime ca
 Shard without one.
 
 - **Admission.** The Ember auth hook verifies the token's signature and expiry **and** checks D1 that the session
-  has not ended (`session_end`, RFC 0002 "Auth") and that the member still backs the actor, with D1's role, as today's upgrade does (RFC 0004 "Session revocation"). A revoked session never opens a socket,
+  is still there (its row: a sign-out, reset or takeover deletes it; `session_end` is only the queue of shard work
+  after that, RFC 0002 "Auth") and that the member still backs the actor, with D1's role, as today's upgrade does (RFC 0004 "Session revocation"). A revoked session never opens a socket,
   with or without an unexpired token.
 - **An admitted socket.** Every refresh runs the same hook, so a socket keeps access only while its session does.
   Ember already stops a socket's patches and refuses its frames once its token expires, until a fresh one arrives

@@ -57,8 +57,8 @@ export const workspaceShard = (workspaceId: string) => `workspace:${workspaceId}
 type EmberAuthEnv = { DB: D1Database; BETTER_AUTH_SECRET: string };
 
 /**
- * The identity for `token` (RFC 0016 "Auth"), or null: a token this instance minted, unexpired, whose session has not
- * ended (`session_end`) and whose member is still in the workspace in D1. A member's role is D1's at this moment, so a
+ * The identity for `token` (RFC 0016 "Auth"), or null: a token this instance minted, unexpired, whose session is still
+ * in D1 (a member's token always names one) and whose member is still in the workspace in D1. A member's role is D1's at this moment, so a
  * demotion holds from the socket's next refresh; an API token keeps its creator's role from the mint, and the shard
  * checks the token's own row (revoked, expired, scopes) on every call (ember/workspace.ts `actorOf`).
  */
@@ -71,14 +71,15 @@ export async function verifyIdentity(
   if (!claims) return null;
   let role = claims.role;
   if (claims.kind !== "token") {
-    if (claims.sid !== undefined) {
-      const ended = await env.DB.prepare(
-        `select 1 from session_end where "workspaceId" = ? and "sessionId" = ? limit 1`,
-      )
-        .bind(claims.ws, claims.sid)
-        .first();
-      if (ended) return null;
-    }
+    // The session must still be in D1: a sign-out, a password reset or a takeover deletes its row (`session_end` is
+    // only a queue of the shard work left after that, and is emptied once done, so it cannot say a session ended).
+    if (claims.sid === undefined) return null;
+    const session = await env.DB.prepare(
+      `select 1 as found from "session" where id = ? and "userId" = ? limit 1`,
+    )
+      .bind(claims.sid, claims.sub)
+      .first();
+    if (!session) return null;
     const current = await memberRole(env.DB, claims.ws, claims.sub);
     if (current === undefined) return null;
     role = current;

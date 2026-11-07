@@ -6,7 +6,7 @@
 import type { EmberEnv } from "@freecorps/ember-runtime";
 import type { SignOutUserResult } from "../ember/sessions.ts";
 import { ember, workspaceEngine, workspaceShard } from "./ember.ts";
-import type { EndedSession, SignOutResult } from "./workspace.ts";
+import { ENDED_SESSION_MS, type EndedSession, type SignOutResult } from "./workspace.ts";
 
 /** The outcome of an Ember call, as the runtime's Shard answers it. */
 type Outcome =
@@ -70,7 +70,12 @@ export async function workspaceSessions(
   return emberSessions(env);
 }
 
-/** Closes the sockets on the workspace's Ember shard that `match` names, and refuses their tokens there for a while. */
+/**
+ * Closes the sockets on the workspace's Ember shard that `match` names, and has the shard refuse, for
+ * `ENDED_SESSION_MS`, any token issued before now that it matches: Ember's counterpart of `WorkspaceDO`'s
+ * `ended_session`, so a socket admitted with that session just before it ended, and still on its way, is refused too.
+ * (A token minted later for the same session cannot exist: the session's row is gone, and the auth hook checks it.)
+ */
 async function revoke(
   env: SessionsEnv,
   workspaceId: string,
@@ -78,6 +83,7 @@ async function revoke(
 ): Promise<void> {
   await ember.revokeSockets(env as unknown as EmberEnv, workspaceShard(workspaceId), match, {
     close: true,
+    forMs: ENDED_SESSION_MS,
   });
 }
 

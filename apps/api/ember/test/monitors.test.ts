@@ -72,7 +72,10 @@ describe("monitors on Ember", () => {
     });
     expect(created.value).toEqual({ ok: true });
     expect(created.scheduled.map((job) => job.fn)).toContain("monitors:tick");
-    const due = s.call("monitors:check", {}).value as {
+    const checked = s.call("monitors:check", {});
+    // A fallback tick, so an action that dies before `arm` never ends the chain.
+    expect(checked.scheduled.map((job) => job.fn)).toContain("monitors:tick");
+    const due = checked.value as {
       workspaceId: string;
       pushes: { region: string; checks: { id: string }[]; config: string }[];
     };
@@ -87,10 +90,10 @@ describe("monitors on Ember", () => {
       at: T,
     });
     expect((s.call("monitors:check", {}).value as { pushes: unknown[] }).pushes).toEqual([]);
-    // Monitors left: the next tick is armed.
+    // Monitors left: the next tick is wanted, and the fallback from `check` already stands for it.
     const armed = s.call("monitors:arm", {});
     expect(armed.value).toBeGreaterThan(T);
-    expect(armed.scheduled.map((job) => job.fn)).toContain("monitors:tick");
+    expect(armed.scheduled).toEqual([]);
   });
 
   test("a probe's report is applied once per report id, and a verdict does not arm the tick", () => {

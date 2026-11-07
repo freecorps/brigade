@@ -108,6 +108,11 @@ export const check = internalMutationGeneric({
     c.sql.exec("delete from ember_ticks where key = ?", "monitors");
     monitoring.checkDue(c.now);
     const pushes = monitoring.pushesDue(c.now);
+    // A fallback a tick from now while the monitors want ticks at all, as the DO sets one before its alarm's work: an
+    // action that dies after this commit (before `arm`) never ends the chain. `arm` brings it forward if need be.
+    if (pushes.length > 0 || monitoring.nextAt(c.now) !== null) {
+      tickAt(c, c.now + MONITOR_TICK_MS, "monitors");
+    }
     shard.check();
     return { workspaceId, pushes };
   },

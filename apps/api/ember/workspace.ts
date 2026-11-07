@@ -40,6 +40,7 @@ import { nextSeq, scheduleDrain } from "./events.ts";
 import { armUpkeep, expectPages } from "./ticks.ts";
 import { asksForPage } from "../src/paging.ts";
 import { MEMBER_TOMBSTONE_MS } from "../src/members.ts";
+import { bumpFence } from "./members.ts";
 import { BRIGADE_TABLES } from "./schema.ts";
 
 const TABLE_SET: ReadonlySet<string> = new Set(BRIGADE_TABLES);
@@ -223,8 +224,11 @@ export function run(
 function tombstones(ctx: MutationCtx, name: unknown, args: unknown): void {
   const id = (args as { id?: unknown } | null)?.id;
   if (typeof id !== "string") return;
-  if (name === "member.remove") markGone(ctx, [id]);
-  else if (name === "member.sync") ctx.sql.exec("delete from member_gone where user_id = ?", id);
+  if (name === "member.remove") {
+    markGone(ctx, [id]);
+    // Fenced too: a D1 read taken before this removal proves nothing after it (ember/devices.ts).
+    bumpFence(ctx.db);
+  } else if (name === "member.sync") ctx.sql.exec("delete from member_gone where user_id = ?", id);
 }
 
 /** Tombstones for `userIds`, removed now. */

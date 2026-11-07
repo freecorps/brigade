@@ -74,6 +74,11 @@ function fence(db: unknown): FenceDoc | null {
     .first();
 }
 
+/** How many member changes this shard applied (`member_fence`): what a caller reading D1 fences its read with. */
+export function fenceGen(db: unknown): number {
+  return fence(db)?.n ?? 0;
+}
+
 /** One more member change applied: a repair holding a snapshot of D1 from before it is `stale`. */
 export function bumpFence(db: unknown): void {
   const doc = fence(db);

@@ -159,21 +159,22 @@ describe("devices on Ember", () => {
     expect(s.server("member.remove", { id: BIA, role: "responder", reason: "removed" })).toEqual({
       ok: true,
     });
-    expect(s.register(bia, device(1))).toEqual({ ok: false, code: "gone" });
-    s.tick(1000);
-    // D1 read from before the removal: no proof she is back.
-    expect(s.register(bia, device(1), { memberSince: T - 1 })).toEqual({
+    const gone = s.register(bia, device(1)) as { ok: false; code: "gone"; gen: number };
+    expect(gone).toMatchObject({ ok: false, code: "gone" });
+    // The Worker read D1 (she is back), but another removal came in since: that read proves nothing now.
+    expect(s.server("member.sync", { id: BIA, name: "Bia", role: "responder" }, bia)).toEqual({
+      ok: true,
+    });
+    expect(s.server("member.remove", { id: BIA, role: "responder", reason: "removed" })).toEqual({
+      ok: true,
+    });
+    expect(s.register(bia, device(1), { memberGen: gone.gen })).toMatchObject({
       ok: false,
       code: "gone",
     });
-    // Back in D1, read after the removal: the tombstone goes, and the phone registers.
-    const back = s.raw("devices:register", {
-      workspaceId: WS,
-      actor: bia,
-      args: device(1),
-      memberSince: T + 500,
-    });
-    expect(back.value).toEqual({ ok: true });
+    // Read again after that: the tombstone goes, and the phone registers.
+    const again = s.register(bia, device(1)) as { gen: number };
+    expect(s.register(bia, device(1), { memberGen: again.gen })).toEqual({ ok: true });
     expect(s.register(bia, device(2))).toEqual({ ok: true });
   });
 });

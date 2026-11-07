@@ -14,19 +14,18 @@ import {
   type EmberStore,
 } from "@freecorps/brigade-schema";
 import type { DeviceRegisterResult } from "../src/workspace.ts";
-import { MEMBER_TOMBSTONE_MS } from "../src/members.ts";
-import { EMBER_MEMBER_REPAIR_DELAY_MS } from "./members.ts";
+import { EMBER_MEMBER_REPAIR_DELAY_MS, fenceGen } from "./members.ts";
 import { emberWorkspace } from "./shard-facade.ts";
 import { run, touchDevice, workspaceLimits, type MutateResult } from "./workspace.ts";
 
 /**
- * What `devices:register` answers: `DeviceRegisterResult`, or `gone` (the member's tombstone stands: the Worker checks
- * D1 and calls again with `member`), or `forbidden` with `heldBy`, the session another member last registered this
+ * What `devices:register` answers: `DeviceRegisterResult`, or `gone` with the member fence (the member's tombstone stands:
+ * the Worker checks D1 and calls again with `memberGen`), or `forbidden` with `heldBy`, the session another member last registered this
  * phone with (the Worker checks it in D1 and calls again with `free` when it is over).
  */
 export type DeviceRegisterAnswer =
   | DeviceRegisterResult
-  | { ok: false; code: "gone" }
+  | { ok: false; code: "gone"; gen: number }
   | { ok: false; code: "forbidden"; heldBy?: string };
 
 function runIn(
@@ -45,10 +44,10 @@ function runIn(
  * sessions: with `resetAt`, the member's devices from before their password reset come off first (`device.signOut`);
  * with `free`, the phone comes off the member who last registered it with that session (over, as D1 said at
  * `free.before`), unless they registered it again since; then `device.register`, and `device.touch` when it went
- * through or changed nothing (`conflict`). `memberSince`: the Worker found them in D1 despite a tombstone (re-added),
- * reading D1 from that time on: the tombstone is dropped only when its removal came before that read (their copy comes
- * back with the `member.add` of the acceptance that put them back in D1). A removal after the read is `gone` again. A
- * shard that serves another workspace, or none yet, answers `not_found`.
+ * through or changed nothing (`conflict`). `memberGen`: the Worker found them in D1 despite a tombstone (re-added) after
+ * the shard answered `gone` with that member fence (`member_fence`): the tombstone is dropped only while no member
+ * change came in since (their copy comes back with the `member.add` of the acceptance that put them back in D1), else
+ * it is `gone` again. A shard that serves another workspace, or none yet, answers `not_found`.
  */
 export const register = internalMutationGeneric({
   args: {
@@ -57,7 +56,7 @@ export const register = internalMutationGeneric({
     args: v.any(),
     resetAt: v.optional(v.number()),
     sessionId: v.optional(v.string()),
-    memberSince: v.optional(v.number()),
+    memberGen: v.optional(v.number()),
     free: v.optional(v.object({ sessionId: v.string(), before: v.number() })),
   },
   handler: (
@@ -68,7 +67,7 @@ export const register = internalMutationGeneric({
       args: Record<string, unknown>;
       resetAt?: number;
       sessionId?: string;
-      memberSince?: number;
+      memberGen?: number;
       free?: { sessionId: string; before: number };
     },
   ): DeviceRegisterAnswer => {
@@ -77,14 +76,10 @@ export const register = internalMutationGeneric({
     if (shard.workspace() !== input.workspaceId) return { ok: false, code: "not_found" };
     const { actor, args } = input;
     if (shard.gone(actor.id, c.now)) {
-      if (input.memberSince === undefined) return { ok: false, code: "gone" };
-      const [row] = c.sql.exec("select until from member_gone where user_id = ?", actor.id) as {
-        until: number;
-      }[];
-      // Removed after the Worker began reading D1: its proof is older than the removal.
-      if (row && row.until - MEMBER_TOMBSTONE_MS >= input.memberSince) {
-        return { ok: false, code: "gone" };
-      }
+      // The member fence as the Worker read D1 after it: a member change since (a removal again) makes that read
+      // no proof, whatever the clocks say.
+      const gen = fenceGen(c.db);
+      if (input.memberGen !== gen) return { ok: false, code: "gone", gen };
       c.sql.exec("delete from member_gone where user_id = ?", actor.id);
     }
     const store = shard.store;

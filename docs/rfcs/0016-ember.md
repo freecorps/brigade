@@ -372,6 +372,8 @@ were built for a deployment people depend on.
    escalation timers, and writes them to the workspace's Ember shard through internal mutations in batches,
    idempotent by row id, so the copy can run again and overwrite the last one. It checks counts and a hash per table
    on both sides. Writes made to `WorkspaceDO` after a workspace's copy are lost at the switch: accepted.
+   The copy ends by arming the shard's upkeep ticks (`paging:tick` at the earliest escalation timer, replay or held
+   push; `paging:remind` once), since rows written by the copy are not a mutation that arms them (ember/ticks.ts).
 3. **Switch.** D1's `workspace_engine` turns to `ember` for every copied workspace. `WorkspaceDO` then forwards what
    still reaches it (a late Queue event, an alert route, a probe) to the Ember shard, and closes its sockets so the
    apps reconnect through the Brigade Sync adapter ("Clients").

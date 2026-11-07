@@ -194,13 +194,16 @@ describe("follow-up reminders on Ember", () => {
     });
     expect(created.value).toEqual({ ok: true });
     // The mutation itself arms the tick, at 09:00 UTC.
-    expect(ticks(created).map((job) => job.runAt)).toEqual([T + 60 * MINUTE]);
-    expect(s.call("paging:tick", {}).value).toMatchObject({ reminded: 0 });
+    expect(created.scheduled.filter((job) => job.fn === "paging:remind")).toHaveLength(1);
+    expect(s.call("paging:remind", {}).value).toEqual({ reminded: 0 });
     s.tick(60 * MINUTE);
-    expect(s.call("paging:tick", {}).value).toMatchObject({ reminded: 1 });
+    // The paging tick reads no follow-up and reminds nobody: a large follow-up history never weighs on a page.
+    expect(s.call("paging:tick", {}).value).toEqual({ fired: 0, released: 0, replayed: 0 });
+    expect(s.outbox().filter((e) => e.type === "follow_up.reminder_due")).toEqual([]);
+    expect(s.call("paging:remind", {}).value).toEqual({ reminded: 1 });
     expect(s.outbox().filter((e) => e.type === "follow_up.reminder_due")).toHaveLength(1);
     s.tick(MINUTE);
-    expect(s.call("paging:tick", {}).value).toMatchObject({ reminded: 0 });
+    expect(s.call("paging:remind", {}).value).toEqual({ reminded: 0 });
   });
 });
 
@@ -264,7 +267,7 @@ describe("emails on Ember", () => {
       link: null,
     });
     s.tick(60 * MINUTE);
-    s.call("paging:tick", {});
+    s.call("paging:remind", {});
     const due = s.outbox().find((e) => e.type === "follow_up.reminder_due")!;
     expect(s.call("mailer:planReminder", { event: due }).value).toMatchObject({
       send: true,

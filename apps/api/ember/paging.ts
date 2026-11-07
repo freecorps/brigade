@@ -56,16 +56,13 @@ function pager(ctx: MutationCtx): {
 }
 
 /**
- * Schedules the next tick at the earliest the pager needs one (replays, held pushes), or an escalation level or a
- * reminder of follow-ups falls due, if any does.
+ * Schedules the next tick at the earliest the pager needs one (replays, held pushes) or an escalation level falls due,
+ * if any does. Reminders have their own tick (`remind`): no follow-up is read here.
  */
 function scheduleTick(ctx: MutationCtx, p: Pager, shard: EmberShard): void {
-  const due = [
-    p.replayAt(),
-    p.releaseAt(ctx.now),
-    escalations(shard).nextAt(),
-    nextReminderAt(shard.store, ctx.now),
-  ].filter((at): at is number => at !== null);
+  const due = [p.replayAt(), p.releaseAt(ctx.now), escalations(shard).nextAt()].filter(
+    (at): at is number => at !== null,
+  );
   if (due.length > 0) tickAt(ctx, Math.min(...due));
 }
 
@@ -139,17 +136,17 @@ export const record = internalMutationGeneric({
 
 /**
  * The synchronous part of `WorkspaceDO`'s alarm, in its order: escalation levels that came due (`Escalations.fireDue`),
- * lost pages replayed (`replayDue`), held pushes released (`releaseDue`) and reminders of follow-ups due
- * (`followUp.remind`, the DO's `remind`); then the next tick, at the earliest any of them needs one.
+ * lost pages replayed (`replayDue`) and held pushes released (`releaseDue`); then the next tick, at the earliest any of
+ * them needs one.
  */
 export const tick = internalMutationGeneric({
   args: {},
-  handler: (ctx): { fired: number; released: number; replayed: number; reminded: number } => {
+  handler: (ctx): { fired: number; released: number; replayed: number } => {
     const c = ctx as MutationCtx;
     // Whatever this tick schedules goes `TICK_RETRY_MS` out at the soonest.
     holdTicks(c);
     const { pager: p, workspace, check, shard } = pager(c);
-    if (workspace === undefined) return { fired: 0, released: 0, replayed: 0, reminded: 0 };
+    if (workspace === undefined) return { fired: 0, released: 0, replayed: 0 };
     // This tick is the one scheduled: the next is whatever is due after it.
     c.sql.exec("delete from ember_ticks where key = 'paging'");
     // A level that throws is logged and left due (its timer): the rest of the tick still runs, as on the DO.
@@ -161,37 +158,52 @@ export const tick = internalMutationGeneric({
     }
     const replayed = p.replayDue(c.now);
     const released = p.releaseDue(c.now);
-    const reminded = remind(c, shard);
     scheduleTick(c, p, shard);
     // A storage failure anywhere above (caught by the orchestrators, as `releaseDue` does) fails the whole tick
     // instead, as the DO's alarm does, and the scheduler runs it again.
     check();
-    return { fired, released, replayed, reminded };
+    return { fired, released, replayed };
   },
 });
 
-/** The DO's `remind`: each member's reminder of follow-ups due (`followUp.remind`), each on its own. */
-function remind(ctx: MutationCtx, shard: EmberShard): number {
-  const next = nextReminderAt(shard.store, ctx.now);
-  if (next === null || next > ctx.now) return 0;
-  let reminded = 0;
-  for (const reminder of remindersDue(shard.store, ctx.now)) {
-    const { result } = shard.mutate({
-      clientId: "api",
-      mutationId: `remind:${reminder.userId}:${reminder.date}`,
-      actor: ACCOUNT_ACTOR,
-      name: "followUp.remind",
-      args: reminder,
-      now: ctx.now,
-      internal: true,
-    });
-    if (result.ok) reminded++;
-    else if (result.error.code !== "conflict") {
-      log("reminding of follow-ups failed", { code: result.error.code });
+/**
+ * The DO's `remind`, in a transaction of its own, so a large follow-up history never weighs on a page's: each
+ * member's reminder of follow-ups due (`followUp.remind`, each on its own), then this tick again at the next reminder.
+ * Armed by any mutation that wrote a reminder's tables (ember/ticks.ts `armUpkeep`).
+ */
+export const remind = internalMutationGeneric({
+  args: {},
+  handler: (ctx): { reminded: number } => {
+    const c = ctx as MutationCtx;
+    holdTicks(c);
+    const { shard } = emberWorkspace(c);
+    if (shard.workspace() === undefined) return { reminded: 0 };
+    c.sql.exec("delete from ember_ticks where key = 'reminders'");
+    let reminded = 0;
+    const next = nextReminderAt(shard.store, c.now);
+    if (next !== null && next <= c.now) {
+      for (const reminder of remindersDue(shard.store, c.now)) {
+        const { result } = shard.mutate({
+          clientId: "api",
+          mutationId: `remind:${reminder.userId}:${reminder.date}`,
+          actor: ACCOUNT_ACTOR,
+          name: "followUp.remind",
+          args: reminder,
+          now: c.now,
+          internal: true,
+        });
+        if (result.ok) reminded++;
+        else if (result.error.code !== "conflict") {
+          log("reminding of follow-ups failed", { code: result.error.code });
+        }
+      }
     }
-  }
-  return reminded;
-}
+    const after = nextReminderAt(shard.store, c.now);
+    if (after !== null) tickAt(c, after, "reminders");
+    shard.check();
+    return { reminded };
+  },
+});
 
 /** The client id of a notification action's mutations (src/workspace.ts `NOTIFICATION_CLIENT_ID`). */
 const NOTIFICATION_CLIENT_ID = "notification";

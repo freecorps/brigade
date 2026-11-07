@@ -1,10 +1,10 @@
-// The shard's one upkeep tick (`paging:tick`, ember/paging.ts): the synchronous part of `WorkspaceDO`'s alarm, as one
-// scheduler job at the earliest any area needs it. `ember_ticks` holds the earliest scheduled, so the many calls that
+// The shard's upkeep ticks (`paging:tick` and `paging:remind`, ember/paging.ts): the synchronous part of
+// `WorkspaceDO`'s alarm, as scheduler jobs at the earliest each needs one. `ember_ticks` holds the earliest scheduled, so the many calls that
 // each want one leave a single job. A module of its own, so `run()` (ember/workspace.ts) can arm it after a mutation
 // that moved a timer, without importing the paging functions.
 
 import type { MutationCtx } from "@freecorps/ember-server";
-import { nextReminderAt, type BrigadeTables, type Store } from "@freecorps/brigade-schema";
+import type { BrigadeTables, Store } from "@freecorps/brigade-schema";
 
 export const TICK = "paging:tick";
 
@@ -32,47 +32,56 @@ export function holdTicks(ctx: MutationCtx): number {
 }
 
 /**
- * Schedules a tick at `at` unless one is already due by then (`ember_ticks` holds the earliest one scheduled), so
- * the many calls that each want one leave a single job.
+ * The ticks, each its own job and transaction: `paging` (escalation levels, replays, held pushes) and `reminders`
+ * (follow-up reminders), apart so a large follow-up history never weighs on a page's transaction (Ember's per-
+ * transaction read limit), and a reminder that fails never rolls back a level that fired.
  */
-export function tickAt(ctx: MutationCtx, at: number): void {
+const JOBS = { paging: TICK, reminders: "paging:remind" } as const;
+export type TickKey = keyof typeof JOBS;
+
+/**
+ * Schedules tick `key` at `at` unless one is already due by then (`ember_ticks` holds the earliest one scheduled),
+ * so the many calls that each want one leave a single job.
+ */
+export function tickAt(ctx: MutationCtx, at: number, key: TickKey = "paging"): void {
   at = Math.max(at, floors.get(ctx) ?? 0);
-  const [row] = ctx.sql.exec("select at from ember_ticks where key = 'paging'") as { at: number }[];
+  const [row] = ctx.sql.exec("select at from ember_ticks where key = ?", key) as { at: number }[];
   // An overdue tick is still queued (the scheduler runs late, never skips): keep it. One overdue past the lease is
   // taken for lost (its run threw) and replaced at once, since its work is due already.
   if (row && row.at < ctx.now - TICK_LEASE_MS) at = ctx.now;
   const when = Math.max(ctx.now, at);
   if (row && row.at <= when && row.at >= ctx.now - TICK_LEASE_MS) return;
   ctx.sql.exec(
-    "insert into ember_ticks (key, at) values ('paging', ?) on conflict (key) do update set at = excluded.at",
+    "insert into ember_ticks (key, at) values (?, ?) on conflict (key) do update set at = excluded.at",
+    key,
     when,
   );
-  ctx.scheduler.runAt(when, TICK, {});
+  ctx.scheduler.runAt(when, JOBS[key], {});
 }
 
-/** The tables whose changes can move the next reminder of follow-ups due (the DO's `REMINDER_TABLES`). */
-export const REMINDER_TABLES: ReadonlySet<string> = new Set([
-  "follow_ups",
-  "member_settings",
-  "members",
-]);
-
 /**
- * After a mutation that wrote `tables`: a tick at the next escalation level or reminder they may have moved, as the
- * DO's `onCommit` arms its alarm. Nothing for a mutation that wrote neither (a page, an acknowledgement).
+ * After a mutation that wrote `tables`, as the DO's `onCommit` arms its alarm: the paging tick at the next escalation
+ * level, and the reminders tick at once when a reminder may have moved (it reads the follow-ups in its own
+ * transaction, never in this one). Nothing for a mutation that wrote neither (a page, an acknowledgement).
  */
 export function armUpkeep(
   ctx: MutationCtx,
   store: Store<BrigadeTables>,
   tables: ReadonlySet<string>,
 ): void {
-  const due: number[] = [];
   if (tables.has("escalation_timers")) {
-    for (const timer of store.scan("escalation_timers")) due.push(timer.at);
+    const due = store.scan("escalation_timers").map((timer) => timer.at);
+    if (due.length > 0) tickAt(ctx, Math.min(...due));
   }
-  if ([...tables].some((table) => REMINDER_TABLES.has(table))) {
-    const at = nextReminderAt(store, ctx.now);
-    if (at !== null) due.push(at);
+  // A follow-up or a member's email choices can make a reminder due. A member change only moves one already planned
+  // (a reminders tick is pending): with none, nobody owns a follow-up due, and every member sync stays free.
+  const planned = () =>
+    (ctx.sql.exec("select 1 from ember_ticks where key = 'reminders'") as unknown[]).length > 0;
+  if (
+    tables.has("follow_ups") ||
+    tables.has("member_settings") ||
+    (tables.has("members") && planned())
+  ) {
+    tickAt(ctx, ctx.now, "reminders");
   }
-  if (due.length > 0) tickAt(ctx, Math.min(...due));
 }

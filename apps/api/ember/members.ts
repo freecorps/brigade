@@ -207,13 +207,48 @@ export const repair = internalActionGeneric({
       } as never)) as MutateResult;
       if (!out.ok && out.error.code !== "conflict")
         throw new Error(`member repair: ${out.error.code}`);
+      if (out.ok) await closeSockets(ctx.env, input.workspaceId, [input.targetId]);
       return null;
     }
     const out = (await ctx.runMutation(RECONCILE, {
       workspaceId: input.workspaceId,
       members,
-    } as never)) as { ok: boolean; code?: string };
-    if (!out.ok && out.code !== "not_found") throw new Error(`member reconcile: ${out.code}`);
+    } as never)) as
+      | { ok: true; removed: string[]; changed: string[] }
+      | { ok: false; code: string };
+    if (!out.ok) {
+      if (out.code !== "not_found") throw new Error(`member reconcile: ${out.code}`);
+      return null;
+    }
+    await closeSockets(ctx.env, input.workspaceId, [...out.removed, ...out.changed]);
     return null;
   },
 });
+
+/**
+ * Closes the sockets of `userIds` and of the API tokens they created, as `Membership.repair` does after a reconcile:
+ * they reconnect with D1's answer (refused when removed, with the new role otherwise). A failure is logged, not
+ * thrown: the reconcile committed, and each socket's next token refresh reads D1 anyway.
+ */
+async function closeSockets(env: Record<string, unknown>, workspaceId: string, userIds: string[]) {
+  if (userIds.length === 0) return;
+  try {
+    // Imported here: src/ember.ts builds the runtime from this module.
+    const { ember, workspaceShard } = await import("../src/ember.ts");
+    const shard = workspaceShard(workspaceId);
+    await Promise.all(
+      userIds.flatMap((userId) => [
+        ember.revokeSockets(env as never, shard, { subject: userId }, { close: true }),
+        ember.revokeSockets(env as never, shard, { claim: "by", value: userId }, { close: true }),
+      ]),
+    );
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        message: "closing repaired members' Ember sockets failed",
+        workspace: workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
+}

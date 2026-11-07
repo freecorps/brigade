@@ -22,6 +22,7 @@
         "@freecorps/brigade-status-edge": "workspace:*",
         "@freecorps/brigade-sync": "workspace:*",
         "@freecorps/brigade-ui": "workspace:*",
+        "@freecorps/ember-runtime": "0.3.0",
         "@freecorps/ember-server": "0.3.0",
         "better-auth": "1.7.13",
       },
@@ -720,6 +721,8 @@
     "@freecorps/brigade-web": ["@freecorps/brigade-web@workspace:apps/web"],
 
     "@freecorps/ember-push": ["@freecorps/ember-push@0.2.0", "", { "dependencies": { "@freecorps/ember-server": "0.2.0", "@freecorps/ember-values": "0.2.0" } }, "sha512-OOr34dmXYpJqC5nQcyW8LMq8KtV/qgWx89TFndXeWn8s05hzEVt9+S+/YPM8GixnlBfCBwL/fGe1cAGWxaEs7w=="],
+
+    "@freecorps/ember-runtime": ["@freecorps/ember-runtime@0.3.0", "", { "dependencies": { "@freecorps/ember-server": "0.3.0", "@freecorps/ember-values": "0.3.0" } }, "sha512-ctKP8/H7nvHYl/4yAFzF/Ufnm7LkuAu8ZFtaWmdbXUhW1Guvq/RpaVFQq3VtHW8IxOzMvORGjXEwtJcufbHa7Q=="],
 
     "@freecorps/ember-server": ["@freecorps/ember-server@0.3.0", "", { "dependencies": { "@freecorps/ember-values": "0.3.0" } }, "sha512-aNPVR6FMyl8X3eE6qPimkK6YeZGKCjlLbGpsRI7ulM+IefeZKtLsx5i3OqhwbJlBsN2NFLwKHnyo8PWOG7ZPxw=="],
 

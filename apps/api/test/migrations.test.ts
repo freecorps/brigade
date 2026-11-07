@@ -50,6 +50,8 @@ test("every Brigade table is there, with the indexes the actor lookup uses", asy
     "takeover_notice",
     "user",
     "verification",
+    // migrations/0017_workspace_engine.sql (RFC 0016 "Data migration").
+    "workspace_engine",
   ]);
   expect(results.map((row) => row.name)).toContain("member_organizationId_idx");
   expect(results.map((row) => row.name)).toContain("rateLimit_lastRequest_idx");

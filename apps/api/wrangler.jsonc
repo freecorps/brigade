@@ -22,12 +22,17 @@
       { "name": "PROBE", "class_name": "ProbeDO" },
       // WatchdogDO: the one object behind the external dead-man switch (RFC 0007, src/watchdog.ts).
       { "name": "WATCHDOG", "class_name": "WatchdogDO" },
+      // Ember's shard and system objects (RFC 0016 "Running Ember inside Brigade", src/ember.ts): a workspace's Ember
+      // shard is `workspace:<id>`, reached only once D1's `workspace_engine` says `ember`.
+      { "name": "SHARD", "class_name": "Shard" },
+      { "name": "SYSTEM", "class_name": "System" },
     ],
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["WorkspaceDO"] },
     { "tag": "v2", "new_sqlite_classes": ["ProbeDO"] },
     { "tag": "v3", "new_sqlite_classes": ["WatchdogDO"] },
+    { "tag": "v4", "new_sqlite_classes": ["Shard", "System"] },
   ],
   // The dead-man switch's clock: a heartbeat through the paging pipeline every minute (src/index.ts `scheduled`).
   // Inherited by the environments. Locally it never fires on its own: under `vp run dev` (the Vite plugin) run it with
@@ -204,6 +209,8 @@
           { "name": "WORKSPACE", "class_name": "WorkspaceDO" },
           { "name": "PROBE", "class_name": "ProbeDO" },
           { "name": "WATCHDOG", "class_name": "WatchdogDO" },
+          { "name": "SHARD", "class_name": "Shard" },
+          { "name": "SYSTEM", "class_name": "System" },
         ],
       },
       "d1_databases": [
@@ -297,6 +304,8 @@
           { "name": "WORKSPACE", "class_name": "WorkspaceDO" },
           { "name": "PROBE", "class_name": "ProbeDO" },
           { "name": "WATCHDOG", "class_name": "WatchdogDO" },
+          { "name": "SHARD", "class_name": "Shard" },
+          { "name": "SYSTEM", "class_name": "System" },
         ],
       },
       "d1_databases": [

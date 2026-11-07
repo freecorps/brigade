@@ -244,9 +244,9 @@ async function migrate(
  * The token's creator as D1 has them now: a member of its workspace with a Brigade role, whose membership is older
  * than the token (one who left, or was removed, and came back does not revive it). Undefined otherwise.
  */
-async function creatorNow(
+export async function creatorNow(
   db: D1Database,
-  token: TokenRow,
+  token: Pick<TokenRow, "workspaceId" | "createdBy" | "createdAt">,
 ): Promise<{ role: Role; emailVerified: boolean } | undefined> {
   const row = await db
     .prepare(
@@ -271,7 +271,7 @@ function remember(hash: string, token: TokenRow, now: number): void {
 }
 
 /** One of the token's requests on `API_TOKEN_LIMIT`; true when there was one left, or the limiter failed (fail open). */
-async function withinLimit(limiter: RateLimit, tokenId: string): Promise<boolean> {
+export async function withinLimit(limiter: RateLimit, tokenId: string): Promise<boolean> {
   try {
     const { success } = await limiter.limit({ key: tokenId });
     return success;

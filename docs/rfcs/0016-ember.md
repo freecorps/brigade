@@ -285,15 +285,20 @@ Object is possible later (Ember runs Better Auth too) but not part of this migra
 - Moving the users and sessions table means either signing every phone out (and with it every page, RFC 0006) or a
   live session migration. Neither is worth doing in the same step as the engine.
 
-**How.** Better Auth's `jwt` plugin on the D1 instance mints a short-lived token for a session, carrying the session
-id (`sid`, the id, never the token); its `exp` is the earlier of 5 minutes and the session's own expiry, so a token
-never outlives its session and an admitted socket stops at the session's expiry as RFC 0004 requires. The clients get
-it from `/auth/token` and send it in Ember's `hello`, and again in `{t:"auth"}` before it expires (Ember's client
-refreshes 30 s ahead); a session already past its expiry gets no token.
+**How.** The API mints a short-lived token for a caller it resolved as it resolves a sync upgrade (the session, or an
+API token, then the member in D1): `POST /ember-token/:workspace` (src/ember.ts, src/ember-token.ts). It is an HS256
+JWT signed with a key derived from `BETTER_AUTH_SECRET`, so an instance needs no new secret and no JWKS, and it
+carries the user (`sub`), the one workspace it is for (`ws`: the shard refuses a token for another), the role, the
+session id (`sid`, the id, never the token) and, for an API token, `kind: "token"`. Its `exp` is the earlier of 5
+minutes and the session's own expiry, so a token never outlives its session and an admitted socket stops at the
+session's expiry as RFC 0004 requires; a session already past its expiry gets no token. The clients send it in
+Ember's `hello`, and again in `{t:"auth"}` before it expires (Ember's client refreshes 30 s ahead). The auth hook
+reads D1 through the module's `env` (`cloudflare:workers`), since the runtime calls it in the Worker and in each
+Shard without one.
 
-- **Admission.** The Ember auth hook verifies the token against the instance's JWKS (Ember's `remoteAuth({ from })`
-  shape) **and** checks D1 that the session has not ended (`session_end`, RFC 0002 "Auth") and that the member still
-  backs the actor, as today's upgrade does (RFC 0004 "Session revocation"). A revoked session never opens a socket,
+- **Admission.** The Ember auth hook verifies the token's signature and expiry **and** checks D1 that the session
+  is still there (its row: a sign-out, reset or takeover deletes it; `session_end` is only the queue of shard work
+  after that, RFC 0002 "Auth") and that the member still backs the actor, with D1's role, as today's upgrade does (RFC 0004 "Session revocation"). A revoked session never opens a socket,
   with or without an unexpired token.
 - **An admitted socket.** Every refresh runs the same hook, so a socket keeps access only while its session does.
   Ember already stops a socket's patches and refuses its frames once its token expires, until a fresh one arrives
@@ -345,40 +350,38 @@ shard's first wake, as with `ember deploy`. What `ember deploy` would provision 
 added to `wrangler.jsonc` by hand; the catalog and dashboard are optional. Mounting under a prefix and the binding
 names are not a documented contract yet (gap G4).
 
+**As built** (src/ember.ts). The runtime is mounted at `/ember` (`basePath`, Ember 0.3.0), and the API exports `Shard`
+and `System` (bindings `SHARD`, `SYSTEM`, Durable Object migration `v4`). Brigade hands it only the three paths its
+clients use, `/ember/ws`, `/ember/api/query` and `/ember/api/mutation`, and only for a `workspace:<id>` shard whose
+workspace D1 has on `ember`; everything else under `/ember` (admin, storage, actions, health) answers 404. The
+instance's monitor cap reaches mutations through `setWorkspaceLimits`, set from the module's `env` when the module
+loads, in the Worker and in each Shard alike.
+
 ## Data migration
 
-Per workspace, in the shard that owns it, never as a bulk job:
+**Decision (owner, 2026-11-07): one copy of every workspace, then one switch, then the old engine goes.** Brigade
+says it is not for production use yet and no team pages through it, so the migration need not keep every write made
+while it runs. That replaces the per-workspace fenced copy and 30-day rollback this section described before, which
+were built for a deployment people depend on.
 
-1. **Ready.** The API Worker ships both engines; D1 gains `workspace.engine` (`brigade` or `ember`, default
-   `brigade`). Nothing reads Ember yet.
-2. **Copy.** An operator route (`POST /admin/workspaces/:id/migrate`, owner-only, `dev` first) asks `WorkspaceDO` to
-   migrate. It refuses while the outbox or `page_pending` has rows, or a due escalation timer is minutes away, and
-   then, in one turn of the object: stops taking writes (they answer `503 migrating`, which the apps and the API's
-   clients retry), writes every row, counter, device, delivery row, member and pending escalation timer to the
-   Ember shard through one internal mutation per batch (idempotent by row id), and checks counts and a hash per
-   table on both sides.
-3. **Switch.** D1's `workspace.engine` flips to `ember` and `WorkspaceDO` keeps a `forwarded` mark: every request it
-   gets from then on (the Queue's late event, an alert route, a probe) is forwarded to the Ember shard, and an old
-   socket is closed so it reconnects to the Brigade Sync adapter ("Clients"); nothing an app sees answers `410 moved`.
-   Escalation runs continue from the copied timers (jobs at the same due time).
-4. **Rollback.** Within the keep window (30 days) the same route with `engine: "brigade"` reverses the copy, fenced
-   the same way: the Ember shard refuses the same conditions as step 2 (pending pages, a due timer), then stops taking
-   writes (`503 migrating`), records the high-water mark of its change log, and copies back to `WorkspaceDO` every
-   change up to it in **everything step 2 copied**: rows, counters (so an `INC-n` is never reused), devices, delivery
-   rows, members and pending escalation timers. It checks counts and a hash per table, then, in the same turn of the
-   Ember shard, **cancels its scheduler jobs for the workspace** (they now live as `WorkspaceDO` timers) and stays
-   fenced: it answers `503 migrating` (retried by the sender) and runs nothing. Then D1's `engine` flips back,
-   `WorkspaceDO` drops its `forwarded` mark and takes requests again, and only after that does the Ember shard turn its
-   fence into a `forwarded` mark toward `WorkspaceDO`. So the two never forward to each other: while one forwards, the
-   other is either the owner or answering `503`. As a guard, a forwarded request carries `Brigade-Forwarded: 1`, and a
-   shard that would forward it again answers `503` instead, so no request ever takes more than one hop. One store runs
-   each timer and no escalation or page goes out twice. A write that commits after the mark cannot exist, because the fence
-   came first. After the window the old storage is deleted by a later PR.
+1. **Both engines ship.** The API Worker runs `WorkspaceDO` and Ember side by side; D1's `workspace_engine`
+   (migrations/0017) says which one holds each workspace, `brigade` when it has no row. Nothing reaches an Ember shard
+   until its workspace says `ember`: the API mints no Ember token for it and `/ember` answers 404 for its shard
+   (src/ember.ts).
+2. **Copy.** An operator route asks every `WorkspaceDO` for its rows, counters, members, devices and pending
+   escalation timers, and writes them to the workspace's Ember shard through internal mutations in batches,
+   idempotent by row id, so the copy can run again and overwrite the last one. It checks counts and a hash per table
+   on both sides. Writes made to `WorkspaceDO` after a workspace's copy are lost at the switch: accepted.
+3. **Switch.** D1's `workspace_engine` turns to `ember` for every copied workspace. `WorkspaceDO` then forwards what
+   still reaches it (a late Queue event, an alert route, a probe) to the Ember shard, and closes its sockets so the
+   apps reconnect through the Brigade Sync adapter ("Clients").
+4. **Back.** Until the old engine is deleted, writing `brigade` again turns a workspace back to its `WorkspaceDO`,
+   with its rows as they were at the copy; what was written on Ember since is lost. Accepted for the same reason.
+5. **Delete.** Once every environment has run on Ember for some days, a PR removes `WorkspaceDO`'s engine, the Queue
+   consumer's page path and the old sync code, and a later migration drops their storage.
 
-Freecorps' own workspaces go first, on `dev`, then `staging`, then production. Code ships by continuous delivery
-(RFC 0002 "Continuous delivery": a merge to `main` whose CI passes deploys what changed), so each step's code reaches
-production with no engine reading it until a workspace is switched. **Running the migration route against staging
-or production data needs the owner's approval** each time: that is an operator action, not a deploy.
+`dev` goes first, then `staging`, then production. The owner approved running the copy against staging and
+production data for this migration.
 
 ## Real-device check
 
@@ -473,9 +476,10 @@ What Brigade needs that Ember does not have, each worked around here and propose
 5. **App on Ember's React Native client** next to Brigade Sync, picked per instance.
 6. **Monitoring, status page and Slack** calling the Ember shard of a workspace whose `workspace.engine` is `ember`,
    `WorkspaceDO` otherwise; the watchdog unchanged.
-7. **Migration route and per-workspace cutover** on `dev`, then staging and production with the owner's approval.
+7. **Migration route, one copy of every workspace and the switch** ("Data migration") on `dev`, then staging and
+   production (approved by the owner).
 8. **Removal** of `WorkspaceDO`'s engine and the Queue consumer's page path, once every workspace of an environment
-   has run on Ember for the keep window. The Brigade Sync protocol (`packages/sync`'s client and the adapter) is
+   has run on Ember for some days. The Brigade Sync protocol (`packages/sync`'s client and the adapter) is
    removed separately, and only once `minApp` is past every app release without the Ember client **and** no supported
    self-hosted instance runs the old engine; until then the app keeps both clients.
 

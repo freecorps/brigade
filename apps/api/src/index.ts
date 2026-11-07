@@ -68,6 +68,7 @@ import {
   type RelaySetup,
 } from "./relay-instance.ts";
 import { BOOTSTRAP_PATH, bootstrapFirstUser } from "./bootstrap.ts";
+import { EMBER_BASE_PATH, issueEmberToken, serveEmber } from "./ember.ts";
 import { forgetSessionEnd, recordSessionEnd, sweepSessionEnds } from "./session-end.ts";
 import { within } from "./deadline.ts";
 import { DEVICES_REGISTER_PATH, registerDevices } from "./device-route.ts";
@@ -86,6 +87,8 @@ export { SlackBridge } from "./slack-bridge.ts";
 export { StatusPages } from "./status-pages.ts";
 export { WatchdogDO } from "./watchdog.ts";
 export { WorkspaceDO } from "./workspace.ts";
+// Ember's Durable Objects (RFC 0016 "Running Ember inside Brigade"), bound as SHARD and SYSTEM.
+export { Shard, System } from "@freecorps/ember-runtime";
 
 const WORKSPACE_PATH = /^\/workspaces\/([^/]+)$/;
 const MEMBER_PATH = /^\/workspaces\/([^/]+)\/members\/([^/]+)$/;
@@ -97,6 +100,7 @@ const SLACK_INSTALL_PATH = /^\/workspaces\/([^/]+)\/slack\/install$/;
 const SLACK_CHANNELS_PATH = /^\/workspaces\/([^/]+)\/slack\/channels$/;
 const WEBHOOKS_PATH = /^\/workspaces\/([^/]+)\/webhooks(?:\/([^/]+)\/(rotate|headers))?$/;
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
+const EMBER_TOKEN_PATH = /^\/ember-token\/([^/]+)$/;
 const HEARTBEAT_PATH = /^\/heartbeat\/([^/]+)$/;
 const ALERTS_PATH = /^\/alerts\/([^/]+)$/;
 const STATUS_PAGE_PATH = /^\/workspaces\/([^/]+)\/status-page$/;
@@ -188,6 +192,12 @@ export default {
     const waitUntil = (promise: Promise<unknown>) => ctx.waitUntil(promise);
     const sync = SYNC_PATH.exec(pathname)?.[1];
     if (sync !== undefined) return openSync(request, env, auth, sync, waitUntil);
+    // Ember (RFC 0016): the runtime under `/ember`, for workspaces already on it, and the token its clients send.
+    if (pathname === EMBER_BASE_PATH || pathname.startsWith(`${EMBER_BASE_PATH}/`)) {
+      return serveEmber(request, env, ctx);
+    }
+    const emberToken = EMBER_TOKEN_PATH.exec(pathname)?.[1];
+    if (emberToken !== undefined) return issueEmberToken(request, env, auth, emberToken, waitUntil);
     if (pathname === "/workspaces") return createWorkspace(request, auth);
     // Before anyone signs in: the sign-up mode, and the first owner of a new instance (RFC 0002 "Auth").
     if (pathname === "/config") {

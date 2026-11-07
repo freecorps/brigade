@@ -19,7 +19,7 @@ const allEvents = queryGeneric({
       .map((row) => row.event),
 } as never);
 
-const user = (id: string, role: string): Identity => ({ subject: id, claims: { role } });
+const user = (id: string, role: string): Identity => ({ subject: id, claims: { role, ws: WS } });
 
 /** A provisioned workspace shard: the owner created it and their member row is in. */
 function shard() {
@@ -106,7 +106,7 @@ describe("a workspace on Ember", () => {
     expect(s.events().length).toBe(before + 1);
   });
 
-  test("no identity, or one without a Brigade role, is no one", () => {
+  test("no identity, one without a Brigade role, or one for another workspace, is no one", () => {
     const s = shard();
     const id = newId("inc", T, (n) => new Uint8Array(n).fill(1));
     expect(s.mutate(null, "incident.declare", { id, title: "x" })).toMatchObject({
@@ -114,11 +114,23 @@ describe("a workspace on Ember", () => {
       error: { code: "forbidden" },
     });
     expect(
-      s.mutate({ subject: OWNER, claims: { role: "root" } }, "incident.declare", {
+      s.mutate({ subject: OWNER, claims: { role: "root", ws: WS } }, "incident.declare", {
         id,
         title: "x",
       }),
     ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    // A token for another workspace, even an owner's.
+    const elsewhere: Identity = { subject: OWNER, claims: { role: "owner", ws: "ws_other" } };
+    expect(s.mutate(elsewhere, "incident.declare", { id, title: "x" })).toMatchObject({
+      ok: false,
+      error: { code: "forbidden" },
+    });
+    expect(
+      s.query({ subject: OWNER, claims: { role: "owner" } }, "incidents.active"),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "forbidden" },
+    });
     expect(s.query(null, "incidents.active")).toMatchObject({
       ok: false,
       error: { code: "forbidden" },
@@ -208,7 +220,7 @@ describe("a workspace on Ember", () => {
         expiresAt: T + 60_000,
       }),
     ).toEqual({ ok: true });
-    const asToken: Identity = { subject: token, claims: { kind: "token", role: "owner" } };
+    const asToken: Identity = { subject: token, claims: { kind: "token", role: "owner", ws: WS } };
     expect(s.query(asToken, "incidents.active")).toMatchObject({ ok: true });
     const id = newId("inc", T, (n) => new Uint8Array(n).fill(1));
     // `incident:declare` is not among its scopes, whatever its creator's role allows.

@@ -9,6 +9,7 @@ import { env as moduleEnv } from "cloudflare:workers";
 import { createEmberWorker, type EmberAuthHook } from "@freecorps/ember-runtime";
 import type { Identity } from "@freecorps/ember-server";
 import schema from "../ember/schema.ts";
+import * as devices from "../ember/devices.ts";
 import * as events from "../ember/events.ts";
 import * as local from "../ember/local.ts";
 import * as invitations from "../ember/invitations.ts";
@@ -143,7 +144,18 @@ workspace.setWorkspaceLimits({ monitors: instanceMonitorCap(moduleEnv as unknown
 
 export const ember = createEmberWorker({
   schema,
-  functions: { workspace, sessions, members, events, paging, mailer, local, rest, invitations },
+  functions: {
+    workspace,
+    sessions,
+    members,
+    events,
+    paging,
+    mailer,
+    local,
+    rest,
+    invitations,
+    devices,
+  },
   basePath: EMBER_BASE_PATH,
   auth: brigadeEmberAuth,
 });

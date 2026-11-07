@@ -5,6 +5,7 @@
 
 import { isRole, type Actor, type Role } from "@freecorps/brigade-schema";
 import { countRequest, WORKSPACE_LIMIT, type Auth } from "./auth.ts";
+import { workspaceRegisterDevice } from "./ember-devices.ts";
 import { json, readJson } from "./member-route.ts";
 import { ORGANIZATION_ID, type DeviceRegisterResult } from "./workspace.ts";
 
@@ -28,7 +29,8 @@ export type DeviceRegistrationAnswer = Record<
  * `POST /devices/register` `{ device, workspaces }`: `device` is `device.register`'s args, `workspaces` the ids the
  * phone is registered in for the signed-in member (at most `WORKSPACE_LIMIT`). The Worker checks the origin, the
  * session and the member's role in each workspace in D1 (one query), then each shard runs `device.register` as that
- * member, with its RBAC and its event through the outbox (`WorkspaceDO.registerDevice`), all at once. Answers 200
+ * member, with its RBAC and its event through the outbox (`WorkspaceDO.registerDevice`, or its Ember shard's:
+ * src/ember-devices.ts), all at once. Answers 200
  * with `{ workspaces: DeviceRegistrationAnswer }`; 400 `invalid_args` for a body that is not that; 401 without a
  * session; 429 past `DEVICE_REGISTER_LIMIT`; 503 when D1 fails before any shard is asked.
  */
@@ -103,7 +105,8 @@ export async function registerDevices(
       }
       const actor: Actor = { kind: "user", id: userId, role: member.role };
       try {
-        const result = await env.WORKSPACE.getByName(workspaceId).registerDevice(
+        const register = await workspaceRegisterDevice(env, workspaceId);
+        const result = await register(
           workspaceId,
           actor,
           device as Record<string, unknown>,
@@ -115,7 +118,7 @@ export async function registerDevices(
       } catch (error) {
         console.error(
           JSON.stringify({
-            message: "WorkspaceDO.registerDevice failed",
+            message: "registering a device on the workspace's shard failed",
             workspace: workspaceId,
             error: String(error),
           }),

@@ -9,20 +9,25 @@ import type { MutationCtx } from "@freecorps/ember-server";
 import {
   createEmberStore,
   mutations,
+  ROLES,
+  type Actor,
   type EmberRowsWriter,
   serverMutations,
   type BrigadeTables,
   type EmberStore,
 } from "@freecorps/brigade-schema";
-import type { MutationResultMessage } from "@freecorps/brigade-sync/protocol";
+import {
+  MUTATION_RETENTION_MS,
+  type MutationResultMessage,
+} from "@freecorps/brigade-sync/protocol";
 import type { MutateInput, MutateOutcome } from "../src/shard.ts";
 import { BRIGADE_TABLES } from "./schema.ts";
 import { run, workspaceId, workspaceLimits } from "./workspace.ts";
 
 const TABLE_SET: ReadonlySet<string> = new Set(BRIGADE_TABLES);
 
-/** How long a stored mutation result is kept, as the DO keeps it (`RESULT_RETENTION_MS`). */
-const RESULT_RETENTION_MS = 24 * 60 * 60 * 1000;
+/** How long a stored mutation result and a request key are kept, as the DO keeps them (`RESULT_RETENTION_MS`). */
+const RESULT_RETENTION_MS = MUTATION_RETENTION_MS;
 
 type Row = Record<string, unknown>;
 
@@ -80,7 +85,14 @@ function watched(db: EmberRowsWriter, failed: (error: unknown) => void): EmberRo
       return {
         withIndex: (index, range) => {
           const r = guard(() => q.withIndex(index, range));
-          return { collect: () => guard(() => r.collect()), first: () => guard(() => r.first()) };
+          return {
+            collect: () => guard(() => r.collect()),
+            first: () => guard(() => r.first()),
+            order: (order) => {
+              const o = guard(() => r.order(order));
+              return { take: (n) => guard(() => o.take(n)) };
+            },
+          };
         },
       };
     },
@@ -147,6 +159,73 @@ export class EmberShard {
    */
   check(): void {
     if (this.failure) throw this.failure.error;
+  }
+
+  /** When the stored result of a mutation was written (`Shard.storedAt`), within the retention. */
+  storedAt(actorId: string, clientId: string, mutationId: string, now: number): number | undefined {
+    const [row] = this.ctx.sql.exec(
+      `select at from mutation_results
+       where actor_id = ? and client_id = ? and mutation_id = ? and at >= ?`,
+      actorId,
+      clientId,
+      mutationId,
+      now - RESULT_RETENTION_MS,
+    ) as { at: number }[];
+    return row?.at;
+  }
+
+  /**
+   * Ties an HTTP request's `Idempotency-Key` to what the request is (`Shard.claimRequestKey`): true when the key is
+   * new or was first sent with this same request, within the results' retention.
+   */
+  claimRequestKey(actorId: string, key: string, request: string, now: number): boolean {
+    const [row] = this.ctx.sql.exec(
+      "select request from request_keys where actor_id = ? and key = ? and at >= ?",
+      actorId,
+      key,
+      now - RESULT_RETENTION_MS,
+    ) as { request: string }[];
+    if (row) return row.request === request;
+    this.ctx.sql.exec(
+      `insert into request_keys (actor_id, key, at, request) values (?, ?, ?, ?)
+       on conflict (actor_id, key) do update set at = excluded.at, request = excluded.request`,
+      actorId,
+      key,
+      now,
+      request,
+    );
+    this.ctx.sql.exec("delete from request_keys where at < ?", now - RESULT_RETENTION_MS);
+    return true;
+  }
+
+  /**
+   * Whether `userId` was removed from this workspace within `MEMBER_TOMBSTONE_MS` (`member_gone`, written by `run()`
+   * and `members:reconcile`): a request the Worker authenticated against D1 just before the removal still in flight is
+   * refused, as the DO's tombstone refuses it (`Membership.refuses`). A member synced again clears it.
+   */
+  gone(userId: string, now: number): boolean {
+    const [row] = this.ctx.sql.exec(
+      "select 1 from member_gone where user_id = ? and until > ?",
+      userId,
+      now,
+    ) as unknown[];
+    return row !== undefined;
+  }
+
+  /**
+   * An API token actor as this shard backs it (`WorkspaceDO.tokenActor`, RFC 0014), or undefined: its listed copy must
+   * exist, be neither revoked nor expired and have the same creator; its role is the lower of what the Worker read in
+   * D1 and the creator's copy here. Any other actor is returned as it is.
+   */
+  tokenActor(actor: Actor, now: number): Actor | undefined {
+    if (actor.kind !== "token") return actor;
+    const row = this.store.get("api_tokens", actor.id);
+    if (!row || row.revokedAt !== null || row.createdBy !== actor.by) return undefined;
+    if (row.expiresAt !== null && row.expiresAt <= now) return undefined;
+    const copy = this.store.get("members", row.createdBy);
+    return copy && ROLES.indexOf(copy.role) > ROLES.indexOf(actor.role)
+      ? { ...actor, role: copy.role }
+      : actor;
   }
 
   mutate(input: MutateInput): MutateOutcome {

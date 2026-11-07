@@ -38,7 +38,11 @@ export interface EmberRowsReader {
     withIndex(
       index: string,
       range: (q: EmberIdRange) => unknown,
-    ): { collect(): EmberRowDoc[]; first(): EmberRowDoc | null };
+    ): {
+      collect(): EmberRowDoc[];
+      first(): EmberRowDoc | null;
+      order(order: "desc"): { take(n: number): EmberRowDoc[] };
+    };
   };
 }
 
@@ -68,6 +72,16 @@ const isWriter = (db: EmberRowsReader): db is EmberRowsWriter =>
  */
 export type EmberStore<S extends Tables> = Store<S> & {
   undoFailure(): { error: unknown } | undefined;
+  /**
+   * The rows whose id is at least `from` and below `to`, newest id first, at most `limit` (the Durable Object's
+   * `SqlStore.rangeDescending`): read off the index, `limit` at a time, never the whole range.
+   */
+  rangeDescending<T extends keyof S & string>(
+    table: T,
+    from: string,
+    to: string,
+    limit: number,
+  ): S[T][];
 };
 
 export function createEmberStore<S extends Tables>(
@@ -230,6 +244,37 @@ export function createEmberStore<S extends Tables>(
       // Rows held from earlier reads and writes are the current ones; those outside the range are left out here.
       const inRange = [...entry.rows].filter(([id]) => id >= from && id < to).map(([, doc]) => doc);
       return rowsOf<S[typeof table]>(inRange);
+    },
+    rangeDescending(table, from, to, limit) {
+      live();
+      // As SQL's `limit 0`: nothing, and nothing read.
+      if (!(limit > 0)) return [];
+      const entry = held(checked(table));
+      const covered = entry.complete || entry.ranges.some(([lo, hi]) => lo <= from && to <= hi);
+      // Rows held in `[lo, to)`, newest first: what this call read and wrote there.
+      const newest = (lo: string) =>
+        rowsOf<S[typeof table]>(
+          [...entry.rows].filter(([id]) => id >= lo && id < to).map(([, doc]) => doc),
+        )
+          .reverse()
+          .slice(0, limit);
+      if (covered) return newest(from);
+      // `limit` at a time off the index, each batch below the last: a row this call deleted is skipped without ever
+      // reading the rest of the range. `lo` is how far down the index was read; held rows below it are left out, since
+      // rows the index holds between them and `lo` were not read.
+      let below = to;
+      for (;;) {
+        const docs = db
+          .query(table)
+          .withIndex(EMBER_ROW_INDEX, (q) => q.gte("id", from).lt("id", below))
+          .order("desc")
+          .take(limit);
+        fill(table, docs);
+        if (docs.length < limit) return newest(from);
+        below = docs[docs.length - 1]!.id;
+        const out = newest(below);
+        if (out.length === limit) return out;
+      }
     },
     transaction(fn) {
       live();

@@ -946,3 +946,57 @@ describe("the shard's own send of late pages", () => {
     ).rejects.toThrow("storage reset");
   });
 });
+
+describe("the public HTTP API on an Ember workspace", () => {
+  test("an API token listed there declares and reads incidents, once per idempotency key, until revoked", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const minted = await api(`/workspaces/${workspaceId}/api-tokens`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+      body: JSON.stringify({
+        name: "Deploy bot",
+        scopes: ["incident:declare", "incident:read"],
+        expiresInDays: null,
+      }),
+    });
+    expect(minted.status).toBe(201);
+    const { id: tokenId, token } = (await minted.json()) as { id: string; token: string };
+    const call = (
+      init: { method?: string; body?: unknown; key?: string } = {},
+    ): Promise<Response> =>
+      api(`/workspaces/${workspaceId}/incidents`, {
+        method: init.method ?? "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(init.key ? { "Idempotency-Key": init.key } : {}),
+        },
+        ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+      });
+    const declared = await call({
+      method: "POST",
+      body: { title: "Checkout down" },
+      key: "deploy-1",
+    });
+    expect(declared.status).toBe(201);
+    const { incident } = (await declared.json()) as { incident: { id: string } };
+    // The same key and body: the same incident. The same key for another body: refused.
+    const again = await call({ method: "POST", body: { title: "Checkout down" }, key: "deploy-1" });
+    expect(((await again.json()) as { incident: { id: string } }).incident.id).toBe(incident.id);
+    const reused = await call({ method: "POST", body: { title: "Other" }, key: "deploy-1" });
+    expect(reused.status).toBe(422);
+    expect(await reused.json()).toEqual({ error: "idempotency_key_reused" });
+    // Read from the Ember shard: WorkspaceDO holds no incident of this workspace.
+    const listed = await call();
+    expect(listed.status).toBe(200);
+    expect(JSON.stringify(await listed.json())).toContain(incident.id);
+
+    const revoked = await api(`/workspaces/${workspaceId}/api-tokens/${tokenId}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+    expect(revoked.status).toBe(200);
+    expect((await call()).status).toBe(401);
+  });
+});

@@ -16,6 +16,15 @@ const RESULTS_SCHEMA = `
     primary key (actor_id, client_id, mutation_id)
   ) without rowid;
   create index if not exists mutation_results_at on mutation_results (at);
+  create table if not exists request_keys (
+    actor_id text not null,
+    key text not null,
+    at integer not null,
+    request text not null,
+    primary key (actor_id, key)
+  ) without rowid;
+  create index if not exists request_keys_at on request_keys (at);
+  create table if not exists member_gone (user_id text primary key, until integer not null) without rowid;
 `;
 
 /** One DDL text (`create … ; create …`) as single statements. */

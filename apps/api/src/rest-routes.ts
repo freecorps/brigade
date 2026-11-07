@@ -42,9 +42,12 @@ import {
   type RestWrite,
 } from "./rest.ts";
 import { IDEMPOTENCY_KEY_HEADER, ORGANIZATION_ID } from "./workspace.ts";
+import { workspaceRest } from "./ember-rest.ts";
 
 export type RestEnv = Pick<Env, "DB" | "WORKSPACE" | "API_TOKEN_LIMIT"> & {
   API_TOKEN_KEY?: string;
+  /** Ember's shards, for a workspace D1's `workspace_engine` says is on Ember (src/ember-rest.ts). */
+  SHARD?: Env["SHARD"];
 };
 
 const INCIDENTS_PATH = /^\/workspaces\/([^/]+)\/incidents(?:\/([^/]+)(\/updates(?:\/([^/]+))?)?)?$/;
@@ -242,8 +245,8 @@ class Route {
     if (Array.isArray(read)) return json({ error: "invalid_args", issues: read }, 400);
     const actor = await this.actor(READ_PERMISSION[read.kind]);
     if (actor instanceof Response) return actor;
-    return this.call(() =>
-      this.env.WORKSPACE.getByName(this.workspaceId).restRead(this.workspaceId, actor, read),
+    return this.call(async () =>
+      (await workspaceRest(this.env, this.workspaceId)).restRead(this.workspaceId, actor, read),
     );
   }
 
@@ -279,8 +282,8 @@ class Route {
     }
     const write = make(body);
     return this.call(
-      () =>
-        this.env.WORKSPACE.getByName(this.workspaceId).restWrite(
+      async () =>
+        (await workspaceRest(this.env, this.workspaceId)).restWrite(
           this.workspaceId,
           actor,
           write,
@@ -325,7 +328,7 @@ class Route {
         typeof error === "object" && error !== null && Reflect.get(error, name) === true;
       console.error(
         JSON.stringify({
-          message: "WorkspaceDO REST call failed",
+          message: "workspace shard REST call failed",
           workspace: this.workspaceId,
           error: String(error),
         }),

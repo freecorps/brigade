@@ -12,6 +12,7 @@ import schema from "../ember/schema.ts";
 import * as events from "../ember/events.ts";
 import * as local from "../ember/local.ts";
 import * as mailer from "../ember/mailer.ts";
+import * as rest from "../ember/rest.ts";
 import * as members from "../ember/members.ts";
 import * as paging from "../ember/paging.ts";
 import * as sessions from "../ember/sessions.ts";
@@ -140,7 +141,7 @@ workspace.setWorkspaceLimits({ monitors: instanceMonitorCap(moduleEnv as unknown
 
 export const ember = createEmberWorker({
   schema,
-  functions: { workspace, sessions, members, events, paging, mailer, local },
+  functions: { workspace, sessions, members, events, paging, mailer, local, rest },
   basePath: EMBER_BASE_PATH,
   auth: brigadeEmberAuth,
 });

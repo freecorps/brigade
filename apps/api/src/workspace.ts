@@ -63,6 +63,7 @@ import type { StatusDomainView } from "./status-domain.ts";
 import { CF_CALL_MS, saasConfig, type SaasEnv } from "./status-domain-cf.ts";
 import { DomainChecker } from "./status-domain-check.ts";
 import {
+  InvitationLedger,
   Invitations,
   type InvitationEmailPlan,
   type InvitationResult,
@@ -306,6 +307,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   private readonly escalations: Escalations;
   private readonly membership: Membership;
   private readonly invitations: Invitations;
+  private readonly invitationLedger: InvitationLedger;
   private readonly status: StatusPublisher;
   private readonly statusMail: StatusMailer;
   /**
@@ -427,16 +429,23 @@ export class WorkspaceDO extends DurableObject<Env> {
       committed: (version, changes) => this.broadcast(version, changes, undefined),
       closeSockets: (judge) => this.closeSockets(judge),
       wake: (at) => this.wake(at, "member repair"),
-      repairMore: (workspaceId) => this.invitations.repair(workspaceId),
+      repairMore: (workspaceId) => this.invitationLedger.repair(workspaceId),
     });
-    this.invitations = new Invitations({
-      db: env.DB,
+    this.invitationLedger = new InvitationLedger({
       shard: this.shard,
       sql: ctx.storage.sql,
-      membership: this.membership,
       randomBytes,
       log: (message, fields) => this.log(message, fields),
       committed: (version, changes) => this.broadcast(version, changes, undefined),
+      armRepair: (now) => this.membership.armRepair(now),
+      db: env.DB,
+    });
+    this.invitations = new Invitations({
+      db: env.DB,
+      randomBytes,
+      log: (message, fields) => this.log(message, fields),
+      shard: this.invitationLedger,
+      locked: (fn) => this.membership.locked(fn),
     });
     // The public status page's snapshot (RFC 0012): pushed to KV from the alarm after every change to it.
     this.status = new StatusPublisher({
@@ -680,13 +689,13 @@ export class WorkspaceDO extends DurableObject<Env> {
     ) {
       return { send: false, reason: "nothing" };
     }
-    return this.invitations.planEmail(data.invitationId, data.send, Date.now());
+    return this.invitationLedger.planEmail(data.invitationId, data.send, Date.now());
   }
 
   /** What an invitation email's send did (RPC from the queue consumer). */
   recordInvitationEmail(event: BrigadeEvent, key: string, done: boolean): void {
     if (this.shard.workspace() !== event.workspaceId) return;
-    this.invitations.recordEmail(key, done);
+    this.invitationLedger.recordEmail(key, done);
   }
 
   /**

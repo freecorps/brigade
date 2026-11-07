@@ -11,6 +11,7 @@ import { linkFallback, type EmailSender } from "./email.ts";
 import { INVITATION_CLAIM_MS } from "./invitations.ts";
 import { emailRetryDelay, MAX_EMAIL_ATTEMPTS, RECIPIENTS_TIMEOUT_MS } from "./notify-email.ts";
 import type { BrigadeEvent } from "./outbox.ts";
+import { workspaceInvitations } from "./ember-invitations.ts";
 
 export type InviteNotifyEnv = {
   WORKSPACE: Env["WORKSPACE"];
@@ -51,7 +52,7 @@ export async function notifyInvitation(
   sender: EmailSender | undefined,
 ): Promise<number | undefined> {
   if (!sender) return undefined;
-  const workspace = env.WORKSPACE.getByName(event.workspaceId);
+  const workspace = await workspaceInvitations(env, event.workspaceId);
   const plan = await workspace.planInvitationEmail(event);
   if (!plan.send) {
     return plan.reason === "held"

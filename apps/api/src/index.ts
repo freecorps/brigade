@@ -73,6 +73,11 @@ import { EMBER_BASE_PATH, issueEmberToken, serveEmber, workspaceEngine } from ".
 import { emberMembers } from "./ember-members.ts";
 import { pageEngine } from "./ember-paging.ts";
 import { emberMutation, workspaceSessions } from "./ember-workspace.ts";
+import {
+  provisionWorkspace,
+  workspaceInvitations as invitationsOf,
+  type ProvisionEnv,
+} from "./ember-invitations.ts";
 import { forgetSessionEnd, recordSessionEnd, sweepSessionEnds } from "./session-end.ts";
 import { within } from "./deadline.ts";
 import { DEVICES_REGISTER_PATH, registerDevices } from "./device-route.ts";
@@ -789,7 +794,9 @@ export async function takeoverNotice(
 
 function provisionWith(env: Env): NonNullable<AuthBindings["onWorkspaceCreated"]> {
   return async ({ id, name, ownerId, locale }) => {
-    const result = await env.WORKSPACE.getByName(id).provision(
+    // `WorkspaceDO` until the switch; then the Ember shard (`NEW_WORKSPACE_ENGINE`, src/ember-invitations.ts).
+    const result = await provisionWorkspace(
+      env as ProvisionEnv,
       { id, name, locale },
       { kind: "user", id: ownerId, role: "owner" },
     );
@@ -1030,7 +1037,8 @@ export async function workspaceInvitations(
   const invited = body?.role;
   if (!email || !isRole(invited)) return json({ error: "invalid_args" }, 400);
   try {
-    const result = await env.WORKSPACE.getByName(workspaceId).invite(
+    const shard = await invitationsOf(env, workspaceId);
+    const result = await shard.invite(
       workspaceId,
       caller.userId,
       email,
@@ -1040,7 +1048,7 @@ export async function workspaceInvitations(
     );
     return invitationAnswer(result, 201);
   } catch (error) {
-    return failed("WorkspaceDO.invite failed", workspaceId, error);
+    return failed("the shard's invite failed", workspaceId, error);
   }
 }
 
@@ -1078,7 +1086,7 @@ export async function changeInvitation(
   }
   if (resend && !caller.emailVerified) return json({ error: "unverified" }, 403);
   try {
-    const shard = env.WORKSPACE.getByName(workspaceId);
+    const shard = await invitationsOf(env, workspaceId);
     return invitationAnswer(
       resend
         ? await shard.resendInvitation(
@@ -1132,7 +1140,7 @@ export async function answerInvitation(
   if (!session.user.emailVerified) return json({ error: "unverified" }, 403);
   const invitee = { id: session.user.id, email: session.user.email };
   try {
-    const shard = env.WORKSPACE.getByName(workspaceId);
+    const shard = await invitationsOf(env, workspaceId);
     if (action === "accept") {
       const result = await shard.acceptInvitation(workspaceId, invitationId, invitee);
       // `not_applied`: D1 has the member; the dashboard can open the workspace while the shard catches up.

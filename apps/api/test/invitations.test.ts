@@ -23,7 +23,7 @@ import {
 import { WORKSPACE_LIMIT } from "../src/auth.ts";
 import { describe, expect, test } from "vite-plus/test";
 import type { EmailSender, OutgoingEmail } from "../src/email.ts";
-import { Invitations } from "../src/invitations.ts";
+import { InvitationLedger, Invitations } from "../src/invitations.ts";
 import { Membership } from "../src/members.ts";
 import { consumeEvents, type NotifyEnv } from "../src/notify.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
@@ -685,14 +685,24 @@ describe("failures", () => {
       closeSockets: () => {},
       wake: (at) => void state.storage.setAlarm(at),
     });
-    return new Invitations({
-      db: options.db ?? env.DB,
+    const ledger = new InvitationLedger({
       shard: options.shardFails ? failing : shard,
       sql: state.storage.sql,
-      membership,
       randomBytes: random,
       log: () => {},
       committed: () => {},
+      armRepair: (now) => membership.armRepair(now),
+      db: options.db ?? env.DB,
+    });
+    const orchestrator = new Invitations({
+      db: options.db ?? env.DB,
+      randomBytes: random,
+      log: () => {},
+      shard: ledger,
+      locked: (fn) => membership.locked(fn),
+    });
+    return Object.assign(orchestrator, {
+      repair: (workspaceId: string | undefined) => ledger.repair(workspaceId),
     });
   };
 

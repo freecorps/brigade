@@ -22,6 +22,7 @@ import {
 } from "../src/ember-paging.ts";
 import { deleteMembership, writeRole } from "../src/members.ts";
 import { sendOverdue } from "../ember/local.ts";
+import { provisionWorkspace, workspaceInvitations } from "../src/ember-invitations.ts";
 import { getFunctionName } from "@freecorps/ember-server";
 import { generateRecipient, toBase64url } from "@freecorps/brigade-push";
 import type { BrigadeEvent } from "../src/outbox.ts";
@@ -998,5 +999,122 @@ describe("the public HTTP API on an Ember workspace", () => {
     });
     expect(revoked.status).toBe(200);
     expect((await call()).status).toBe(401);
+  });
+});
+
+describe("invitations on an Ember workspace", () => {
+  test("invite, resend too soon, accept and revoke run D1 and the Ember shard, and plan the email there", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const verify = (id: string) =>
+      env.DB.prepare(`update "user" set "emailVerified" = 1 where id = ?`).bind(id).run();
+    await verify(userId);
+    const signUp = async (name: string) => {
+      const address = `ember-${name.toLowerCase()}-${++people}@example.com`;
+      const response = await api("/auth/sign-up/email", {
+        method: "POST",
+        body: JSON.stringify({ name, email: address, password: PASSWORD }),
+      });
+      const { user } = (await response.json()) as { user: { id: string } };
+      await verify(user.id);
+      return { id: user.id, email: address, cookie: await sessionCookie(address, PASSWORD) };
+    };
+    const ivo = await signUp("Ivo");
+    const invite = (email: string) =>
+      api(`/workspaces/${workspaceId}/invitations`, {
+        method: "POST",
+        headers: { Cookie: cookie },
+        body: JSON.stringify({ email, role: "responder" }),
+      });
+    const sent = await invite(ivo.email);
+    expect(sent.status).toBe(201);
+    const { invitation } = (await sent.json()) as { invitation: { id: string } };
+    // The same address again: already invited, as on the DO.
+    expect(await (await invite(ivo.email)).json()).toEqual({ error: "already_invited" });
+    // A resend right away is too soon: the shard's ledger counted the first send.
+    const resent = await api(`/workspaces/${workspaceId}/invitations/${invitation.id}/resend`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    expect(await resent.json()).toEqual({ error: "too_soon" });
+
+    // The email the event asks for is planned once, from the Ember shard's ledger.
+    const shard = await workspaceInvitations(env, workspaceId);
+    const event = {
+      id: newId("evt", Date.now(), (n) => crypto.getRandomValues(new Uint8Array(n))),
+      type: "member.invited",
+      source: `brigade://${workspaceId}/workspace`,
+      workspaceId,
+      time: new Date().toISOString(),
+      actor: { kind: "user", id: userId },
+      subject: invitation.id,
+      data: { invitationId: invitation.id, send: 1 },
+      specversion: "1.0",
+    } as BrigadeEvent;
+    const plan = await shard.planInvitationEmail(event);
+    expect(plan).toMatchObject({ send: true, key: `${invitation.id}:1` });
+    await shard.recordInvitationEmail(event, `${invitation.id}:1`, true);
+    expect(await shard.planInvitationEmail(event)).toEqual({ send: false, reason: "nothing" });
+
+    const accepted = await api(`/invitations/${invitation.id}/accept`, {
+      method: "POST",
+      headers: { Cookie: ivo.cookie },
+    });
+    expect(accepted.status).toBe(200);
+    const role = await env.DB.prepare(
+      `select role from member where "organizationId" = ? and "userId" = ?`,
+    )
+      .bind(workspaceId, ivo.id)
+      .first<{ role: string }>();
+    expect(role?.role).toBe("responder");
+    const stub = env.SHARD.getByName(workspaceShard(workspaceId)) as unknown as {
+      query(
+        s: string,
+        fn: string,
+        args: unknown,
+        identity: null,
+        internal: boolean,
+      ): Promise<Outcome>;
+    };
+    const state = await stub.query(
+      workspaceShard(workspaceId),
+      "members:state",
+      { workspaceId, targetId: ivo.id },
+      null,
+      true,
+    );
+    expect(state.value).toMatchObject({ copy: { role: "responder" } });
+
+    const other = await signUp("Lia");
+    const second = (await (await invite(other.email)).json()) as { invitation: { id: string } };
+    const revoked = await api(`/workspaces/${workspaceId}/invitations/${second.invitation.id}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+    expect(revoked.status).toBe(200);
+    const status = await env.DB.prepare(`select status from invitation where id = ?`)
+      .bind(second.invitation.id)
+      .first<{ status: string }>();
+    expect(status?.status).toBe("canceled");
+  });
+
+  test("a new workspace goes to Ember once NEW_WORKSPACE_ENGINE says so", async () => {
+    const id = `ws_${newId("ws", Date.now(), (n) => crypto.getRandomValues(new Uint8Array(n))).slice(3)}`;
+    const out = await provisionWorkspace(
+      { DB: env.DB, WORKSPACE: env.WORKSPACE, SHARD: env.SHARD, NEW_WORKSPACE_ENGINE: "ember" },
+      { id, name: "Acme" },
+      { kind: "user", id: "usr_ana", role: "owner" },
+    );
+    expect(out).toEqual({ ok: true });
+    expect(await workspaceEngine(env.DB, id)).toBe("ember");
+    // Again (a retry): fine.
+    expect(
+      await provisionWorkspace(
+        { DB: env.DB, WORKSPACE: env.WORKSPACE, SHARD: env.SHARD, NEW_WORKSPACE_ENGINE: "ember" },
+        { id, name: "Acme" },
+        { kind: "user", id: "usr_ana", role: "owner" },
+      ),
+    ).toEqual({ ok: true });
   });
 });

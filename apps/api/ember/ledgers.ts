@@ -2,6 +2,7 @@
 // as Ember's app-private SQL tables (G9): declared by ember/schema.ts, used through ember/shard-facade.ts. A module of
 // its own, so the schema can import it without the functions.
 
+import { INVITATIONS_SCHEMA } from "../src/invitation-ledger.ts";
 import { MAILER_SCHEMA } from "../src/mailer.ts";
 import { PAGING_SCHEMA } from "../src/paging.ts";
 import { RECEIPTS_SCHEMA } from "../src/receipts.ts";
@@ -43,6 +44,7 @@ export const LEDGER_DDL: string[] = [
   ...statements(PAGING_SCHEMA),
   ...statements(MAILER_SCHEMA),
   ...statements(RECEIPTS_SCHEMA),
+  ...statements(INVITATIONS_SCHEMA),
   TICKS_SCHEMA,
 ];
 export const LEDGER_TABLES: string[] = [

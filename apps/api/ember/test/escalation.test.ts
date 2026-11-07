@@ -5,6 +5,7 @@ import { describe, expect, test } from "vite-plus/test";
 import type { BrigadeEvent } from "../../src/outbox.ts";
 import * as events from "../events.ts";
 import { local } from "./stubs.ts";
+import * as invitations from "../invitations.ts";
 import * as mailer from "../mailer.ts";
 import * as rest from "../rest.ts";
 import * as members from "../members.ts";
@@ -40,7 +41,17 @@ function shard() {
   const engine = createEngine({
     schema,
     driver: createNodeSqliteDriver(),
-    functions: { workspace, local, events, members, paging, mailer, rest, test: { rows } },
+    functions: {
+      workspace,
+      local,
+      events,
+      members,
+      paging,
+      mailer,
+      rest,
+      invitations,
+      test: { rows },
+    },
     now: () => clock,
   });
   engine.migrate();
@@ -445,5 +456,62 @@ describe("a member removed and back, on Ember", () => {
       }).value,
     ).toMatchObject({ ok: true });
     expect(read()).toMatchObject({ ok: true });
+  });
+});
+
+describe("invitations' shard side, on Ember", () => {
+  test("a mutation owed after a failed step is armed for the repair, and settles once it runs", () => {
+    const s = shard();
+    const invitationId = "inv_01M6VX0000000000000000000A";
+    const owe = s.call("invitations:owe", {
+      workspaceId: WS,
+      name: "invitation.create",
+      args: {
+        id: invitationId,
+        role: "responder",
+        expiresAt: T + 86_400_000,
+        send: 1,
+        invitedBy: ANA,
+      },
+      now: T,
+    });
+    expect(owe.scheduled.map((job) => job.fn)).toContain("invitations:repair");
+    const owed = s.call("invitations:owed", { workspaceId: WS }).value as {
+      key: string;
+      args: string;
+    }[];
+    expect(owed).toHaveLength(1);
+    expect(
+      s.call("invitations:settle", {
+        workspaceId: WS,
+        key: owed[0]!.key,
+        name: "invitation.create",
+        args: JSON.parse(owed[0]!.args),
+        run: true,
+      }).value,
+    ).toBe(true);
+    expect(s.call("invitations:owed", { workspaceId: WS }).value).toEqual([]);
+    expect(s.outbox().filter((e) => e.type === "member.invited")).toHaveLength(1);
+  });
+
+  test("the daily count and a send's ledger row come from the shard's own tables", () => {
+    const s = shard();
+    expect(s.call("invitations:sentToday", { workspaceId: WS, now: T }).value).toBe(0);
+    s.call("invitations:recordSend", {
+      workspaceId: WS,
+      invitationId: "inv_x",
+      send: 1,
+      now: T,
+      origin: null,
+    });
+    expect(s.call("invitations:sentToday", { workspaceId: WS, now: T }).value).toBe(1);
+    expect(s.call("invitations:sends", { workspaceId: WS, invitationId: "inv_x" }).value).toEqual({
+      count: 1,
+      last: T,
+    });
+    expect(s.call("invitations:check", { workspaceId: "ws_other" }).value).toEqual({
+      found: false,
+      tokenBacked: false,
+    });
   });
 });

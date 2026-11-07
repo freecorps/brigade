@@ -16,15 +16,18 @@ import {
   type BrigadeTables,
   type EmberStore,
 } from "@freecorps/brigade-schema";
-import type { MutationResultMessage } from "@freecorps/brigade-sync/protocol";
+import {
+  MUTATION_RETENTION_MS,
+  type MutationResultMessage,
+} from "@freecorps/brigade-sync/protocol";
 import type { MutateInput, MutateOutcome } from "../src/shard.ts";
 import { BRIGADE_TABLES } from "./schema.ts";
 import { run, workspaceId, workspaceLimits } from "./workspace.ts";
 
 const TABLE_SET: ReadonlySet<string> = new Set(BRIGADE_TABLES);
 
-/** How long a stored mutation result is kept, as the DO keeps it (`RESULT_RETENTION_MS`). */
-const RESULT_RETENTION_MS = 24 * 60 * 60 * 1000;
+/** How long a stored mutation result and a request key are kept, as the DO keeps them (`RESULT_RETENTION_MS`). */
+const RESULT_RETENTION_MS = MUTATION_RETENTION_MS;
 
 type Row = Record<string, unknown>;
 
@@ -193,6 +196,20 @@ export class EmberShard {
     );
     this.ctx.sql.exec("delete from request_keys where at < ?", now - RESULT_RETENTION_MS);
     return true;
+  }
+
+  /**
+   * Whether `userId` was removed from this workspace within `MEMBER_TOMBSTONE_MS` (`member_gone`, written by `run()`
+   * and `members:reconcile`): a request the Worker authenticated against D1 just before the removal still in flight is
+   * refused, as the DO's tombstone refuses it (`Membership.refuses`). A member synced again clears it.
+   */
+  gone(userId: string, now: number): boolean {
+    const [row] = this.ctx.sql.exec(
+      "select 1 from member_gone where user_id = ? and until > ?",
+      userId,
+      now,
+    ) as unknown[];
+    return row !== undefined;
   }
 
   /**

@@ -33,7 +33,7 @@ import {
 } from "@freecorps/brigade-schema";
 import { readDirectory } from "../src/members.ts";
 import { BRIGADE_TABLES } from "./schema.ts";
-import { run, workspaceId, workspaceLimits, type MutateResult } from "./workspace.ts";
+import { markGone, run, workspaceId, workspaceLimits, type MutateResult } from "./workspace.ts";
 
 const TABLE_SET: ReadonlySet<string> = new Set(BRIGADE_TABLES);
 
@@ -229,6 +229,7 @@ export const reconcile = internalMutationGeneric({
     markReconciled(c.db, c.now);
     const now = new Map(input.members.map((member) => [member.id, member.role]));
     const removed = [...was.keys()].filter((id) => !now.has(id));
+    markGone(c, removed);
     const changed = [...was]
       .filter(([id, role]) => now.has(id) && now.get(id) !== role)
       .map(([id]) => id);

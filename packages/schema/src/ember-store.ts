@@ -249,22 +249,30 @@ export function createEmberStore<S extends Tables>(
       live();
       const entry = held(checked(table));
       const covered = entry.complete || entry.ranges.some(([lo, hi]) => lo <= from && to <= hi);
-      const inRange = () =>
-        [...entry.rows].filter(([id]) => id >= from && id < to).map(([, doc]) => doc);
-      const newest = (docs: Iterable<Held | null>) =>
-        rowsOf<S[typeof table]>(docs).reverse().slice(0, limit);
-      if (covered) return newest(inRange());
-      const docs = db
-        .query(table)
-        .withIndex(EMBER_ROW_INDEX, (q) => q.gte("id", from).lt("id", to))
-        .order("desc")
-        .take(limit);
-      fill(table, docs);
-      const out = newest(inRange());
-      // Rows this call deleted in the range can leave fewer than `limit` where the index has more: read the range then.
-      if (out.length < limit && docs.length === limit)
-        return store.range(table, from, to).reverse().slice(0, limit);
-      return out;
+      // Rows held in `[lo, to)`, newest first: what this call read and wrote there.
+      const newest = (lo: string) =>
+        rowsOf<S[typeof table]>(
+          [...entry.rows].filter(([id]) => id >= lo && id < to).map(([, doc]) => doc),
+        )
+          .reverse()
+          .slice(0, limit);
+      if (covered) return newest(from);
+      // `limit` at a time off the index, each batch below the last: a row this call deleted is skipped without ever
+      // reading the rest of the range. `lo` is how far down the index was read; held rows below it are left out, since
+      // rows the index holds between them and `lo` were not read.
+      let below = to;
+      for (;;) {
+        const docs = db
+          .query(table)
+          .withIndex(EMBER_ROW_INDEX, (q) => q.gte("id", from).lt("id", below))
+          .order("desc")
+          .take(limit);
+        fill(table, docs);
+        if (docs.length < limit) return newest(from);
+        below = docs[docs.length - 1]!.id;
+        const out = newest(below);
+        if (out.length === limit) return out;
+      }
     },
     transaction(fn) {
       live();

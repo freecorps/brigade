@@ -245,6 +245,8 @@ export const acknowledge = internalMutationGeneric({
     if (shard.workspace() !== input.workspaceId) return { ok: false, code: "not_found" };
     const actor = shard.tokenActor(input.actor, c.now);
     if (!actor) return { ok: false, code: "unauthenticated" };
+    // Removed just now, after the route read D1: refused, as the DO's tombstone refuses it.
+    if (shard.gone(actor.by ?? actor.id, c.now)) return { ok: false, code: "not_a_member" };
     // The key names a tap on one incident's page: the same key for another incident is another ack.
     const id = `${input.incidentId}:${input.mutationId}`;
     const result =

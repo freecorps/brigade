@@ -6,6 +6,7 @@ import type { BrigadeEvent } from "../../src/outbox.ts";
 import * as events from "../events.ts";
 import { local } from "./stubs.ts";
 import * as mailer from "../mailer.ts";
+import * as rest from "../rest.ts";
 import * as members from "../members.ts";
 import * as paging from "../paging.ts";
 import schema from "../schema.ts";
@@ -39,7 +40,7 @@ function shard() {
   const engine = createEngine({
     schema,
     driver: createNodeSqliteDriver(),
-    functions: { workspace, local, events, members, paging, mailer, test: { rows } },
+    functions: { workspace, local, events, members, paging, mailer, rest, test: { rows } },
     now: () => clock,
   });
   engine.migrate();
@@ -357,5 +358,56 @@ describe("reminders after a member comes back", () => {
     });
     s.tick(60 * MINUTE);
     expect(s.call("paging:remind", {}).value).toEqual({ reminded: 0 });
+  });
+});
+
+describe("a member removed while their request is in flight, on Ember", () => {
+  test("is refused for MEMBER_TOMBSTONE_MS: an ack, a REST read or write, as the DO's tombstone refuses", () => {
+    const s = shard();
+    const incident = id("inc");
+    s.mutate("incident.declare", { id: incident, title: "Checkout is down" });
+    expect(
+      s.call("members:apply", {
+        workspaceId: WS,
+        actor: { kind: "user", id: ANA, role: "owner" },
+        name: "member.remove",
+        args: { id: CAIO, role: "owner", reason: "removed" },
+      }).value,
+    ).toEqual({ ok: true });
+    // The route read D1 just before the removal: it still says Caio is an owner.
+    const caio: Actor = { kind: "user", id: CAIO, role: "owner" };
+    expect(
+      s.call("paging:acknowledge", {
+        workspaceId: WS,
+        actor: caio,
+        incidentId: incident,
+        mutationId: "k",
+      }).value,
+    ).toEqual({ ok: false, code: "not_a_member" });
+    expect(
+      s.call("rest:read", {
+        workspaceId: WS,
+        actor: caio,
+        read: { kind: "incident", id: incident },
+      }).value,
+    ).toEqual({ ok: false, code: "not_a_member" });
+    expect(
+      s.call("rest:write", {
+        workspaceId: WS,
+        actor: caio,
+        write: { kind: "declare", body: { title: "Late" } },
+        key: "late-1",
+        seed: Array.from({ length: 32 }, () => 7),
+        request: "r",
+      }).value,
+    ).toEqual({ ok: false, code: "not_a_member" });
+    s.tick(60 * 1000 + 1);
+    expect(
+      s.call("rest:read", {
+        workspaceId: WS,
+        actor: caio,
+        read: { kind: "incident", id: incident },
+      }).value,
+    ).toMatchObject({ ok: true });
   });
 });

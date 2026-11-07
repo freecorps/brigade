@@ -280,6 +280,19 @@ describe("createEmberStore", () => {
     expect(afterDelete).toEqual(["n98", "n97", "n96"]);
   });
 
+  test("rangeDescending past rows this call deleted reads on down the index, never the whole range", () => {
+    // 100 rows, a 30-row read limit: a read of the whole range would go past it.
+    const { tx } = shard({ rowsRead: 30 });
+    tx((store) => {
+      for (let i = 0; i < 100; i++) store.insert("notes", note(`n${String(i).padStart(2, "0")}`));
+    });
+    const ids = tx((store) => {
+      for (let i = 90; i < 100; i++) store.delete("notes", `n${i}`);
+      return (store as EmberStore<Tables>).rangeDescending("notes", "n", "n~", 3).map((r) => r.id);
+    });
+    expect(ids).toEqual(["n89", "n88", "n87"]);
+  });
+
   test("each table is read from Ember once per call, so repeated scans stay under Ember's read limit", () => {
     // 50 rows, a 200-row read limit: 100 scans and 100 lookups would read 10,050 rows without the store's cache.
     const { tx } = shard({ rowsRead: 200 });

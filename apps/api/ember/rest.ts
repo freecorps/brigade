@@ -27,6 +27,7 @@ export const read = internalMutationGeneric({
     if (shard.workspace() !== input.workspaceId) return { ok: false, code: "not_found" };
     const acting = shard.tokenActor(input.actor, c.now);
     if (!acting) return REFUSED;
+    if (shard.gone(acting.by ?? acting.id, c.now)) return { ok: false, code: "not_a_member" };
     const out = readRest(shard as never, acting, input.read);
     shard.check();
     return out;
@@ -59,6 +60,7 @@ export const write = internalMutationGeneric({
     if (shard.workspace() !== input.workspaceId) return { ok: false, code: "not_found" };
     const acting = shard.tokenActor(input.actor, c.now);
     if (!acting) return REFUSED;
+    if (shard.gone(acting.by ?? acting.id, c.now)) return { ok: false, code: "not_a_member" };
     const out = writeRest(
       {
         shard: shard as never,
@@ -95,10 +97,11 @@ export const tokenRun = internalMutationGeneric({
       args: Record<string, unknown>;
       mutationId: string;
     },
-  ): { ok: true } | { ok: false; code: MutationErrorCode } => {
+  ): { ok: true } | { ok: false; code: MutationErrorCode | "not_a_member" } => {
     const c = ctx as MutationCtx;
     const { shard } = emberWorkspace(c);
     if (shard.workspace() !== input.workspaceId) return { ok: false, code: "not_found" };
+    if (shard.gone(input.actor.id, c.now)) return { ok: false, code: "not_a_member" };
     const { result } = shard.mutate({
       clientId: "api",
       mutationId: input.mutationId,

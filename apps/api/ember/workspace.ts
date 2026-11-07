@@ -39,6 +39,7 @@ import type { BrigadeEvent } from "../src/outbox.ts";
 import { nextSeq, scheduleDrain } from "./events.ts";
 import { armUpkeep, expectPages } from "./ticks.ts";
 import { asksForPage } from "../src/paging.ts";
+import { MEMBER_TOMBSTONE_MS } from "../src/members.ts";
 import { BRIGADE_TABLES } from "./schema.ts";
 
 const TABLE_SET: ReadonlySet<string> = new Set(BRIGADE_TABLES);
@@ -210,8 +211,33 @@ export function run(
   if (outcome.ok) {
     armUpkeep(ctx, base, written);
     expectPages(ctx, pages);
+    tombstones(ctx, name, args);
   }
   return outcome.ok ? { ok: true } : { ok: false, error: outcome.error };
+}
+
+/**
+ * A removed member's tombstone (`member_gone`, `MEMBER_TOMBSTONE_MS`, the DO's `Membership.tombstone`): a request the
+ * Worker authenticated just before the removal is refused (`EmberShard.gone`). A member synced again clears it.
+ */
+function tombstones(ctx: MutationCtx, name: unknown, args: unknown): void {
+  const id = (args as { id?: unknown } | null)?.id;
+  if (typeof id !== "string") return;
+  if (name === "member.remove") markGone(ctx, [id]);
+  else if (name === "member.sync") ctx.sql.exec("delete from member_gone where user_id = ?", id);
+}
+
+/** Tombstones for `userIds`, removed now. */
+export function markGone(ctx: MutationCtx, userIds: readonly string[]): void {
+  for (const userId of userIds) {
+    ctx.sql.exec(
+      `insert into member_gone (user_id, until) values (?, ?)
+       on conflict (user_id) do update set until = excluded.until`,
+      userId,
+      ctx.now + MEMBER_TOMBSTONE_MS,
+    );
+  }
+  ctx.sql.exec("delete from member_gone where until <= ?", ctx.now);
 }
 
 type EventsWriter = {

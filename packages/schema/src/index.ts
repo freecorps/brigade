@@ -5,6 +5,7 @@ export * from "./text.ts";
 export * from "./validate.ts";
 export * from "./json-schema.ts";
 export * from "./store.ts";
+export * from "./ember-store.ts";
 export * from "./tables.ts";
 export * from "./mutation.ts";
 export * from "./query.ts";

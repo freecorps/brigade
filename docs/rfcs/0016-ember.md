@@ -170,6 +170,25 @@ server-only ones: `devices`, `counters`, `receipt_key`, …) with Brigade's own 
 `_id` is its own; client-made Brigade ids keep working). `packages/schema` gains an Ember-backed `Store` (`get`,
 `insert`, `update`, `delete`, `scan`, `transaction`) over `ctx.db`, so **every mutation's `apply` runs unchanged**:
 
+**The store (built).** `createEmberStore(ctx.db)` (`packages/schema/src/ember-store.ts`) keeps each row as
+`{ id, data }`: Brigade's id, indexed `by_row_id` (Ember reserves `by_id`), and the row as JSON text, like
+`store_rows` today, so no row Brigade has written is refused (Ember refuses `$`-prefixed field names) and adding a
+field needs no Ember migration. It imports nothing from Ember (`ctx.db` is typed structurally), so the package stays
+framework-light.
+
+- **Rollback inside a mutation.** Ember's `ctx.db` has no savepoints, and `runMutation` undoes a failed `apply`
+  without failing the Ember mutation that ran it. The store keeps an undo log (each write's row before it) and
+  replays it backwards on a throw, nested as `transaction` requires; if replaying fails, the error escapes the
+  handler and Ember rolls the whole mutation back.
+- **Ember's read limit.** Ember refuses a transaction that reads more than 16,384 rows, and Brigade's mutations scan
+  tables and look rows up again and again (an `alert.ingest` of 50 alerts in a workspace with a few hundred alerts
+  went past it). The store holds what one call has read and written, so a table is read from Ember at most once per
+  mutation or query; that keeps every mutation of today's suite under the limit. A workspace with more than 16,384
+  rows in a table some mutation scans needs that mutation's reads narrowed to an index first.
+- **Tested on both stores.** `packages/schema`'s tests run twice: as they are, and with `createMemoryStore` backed by
+  a real Ember shard engine (`vite.ember.config.ts`, on `node:sqlite`), so every mutation and query test runs its
+  `apply` over Ember's `ctx.db` too.
+
 ```ts
 // apps/api/ember/incidents.ts (AGPL app code)
 export const declare = brigadeMutation("incident.declare"); // validates, resolves the actor, runs runMutation

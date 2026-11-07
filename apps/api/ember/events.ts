@@ -21,9 +21,11 @@ import {
   DRAIN_BATCH,
   DRAIN_BATCH_BYTES,
   DRAIN_BATCHES_PER_RUN,
+  DRAIN_SEND_TIMEOUT_MS,
   MAX_EVENT_BYTES,
   type BrigadeEvent,
 } from "../src/outbox.ts";
+import { within } from "../src/deadline.ts";
 
 /** How long a scheduled drain may stay unfinished before the next event schedules another. */
 export const DRAIN_LEASE_MS = 5 * 60 * 1000;
@@ -177,7 +179,13 @@ export const drain = internalActionGeneric({
         );
       }
       if (next.bodies.length > 0) {
-        await queue.sendBatch(next.bodies.map((body) => ({ body, contentType: "json" as const })));
+        // Bounded as on the DO: a Queue that never answers must not hold the shard's alarm. A timeout throws, and
+        // Ember retries the drain; the batch stays until a send resolves.
+        await within(
+          queue.sendBatch(next.bodies.map((body) => ({ body, contentType: "json" as const }))),
+          DRAIN_SEND_TIMEOUT_MS,
+          "sendBatch",
+        );
       }
       count += next.bodies.length;
       const last = batch === DRAIN_BATCHES_PER_RUN - 1;

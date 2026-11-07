@@ -12,37 +12,39 @@ import type { PagePlan } from "./paging.ts";
 export const EMBER_RECEIPT_KEY_ID = "k2";
 
 const encoder = new TextEncoder();
-const keys = new Map<string, Promise<CryptoKey>>();
+/** Per workspace: its derived key, and which secret it was derived from (a rotated secret derives anew). */
+const keys = new Map<string, { secret: string; key: Promise<CryptoKey> }>();
 /** Workspaces whose receipt key an isolate keeps derived. */
 const MAX_KEYS = 256;
 
 /** `workspaceId`'s receipt key: HKDF of `secret`, kept per isolate. */
 function receiptKey(secret: string, workspaceId: string): Promise<CryptoKey> {
-  const cacheKey = `${workspaceId}\n${secret}`;
-  let key = keys.get(cacheKey);
-  if (!key) {
-    key = crypto.subtle
-      .importKey("raw", encoder.encode(secret), "HKDF", false, ["deriveKey"])
-      .then((base) =>
-        crypto.subtle.deriveKey(
-          {
-            name: "HKDF",
-            hash: "SHA-256",
-            salt: new Uint8Array(),
-            info: encoder.encode(`brigade-receipt:v1:${workspaceId}`),
-          },
-          base,
-          { name: "HMAC", hash: "SHA-256", length: 256 },
-          false,
-          ["sign", "verify"],
-        ),
-      );
-    // A failed derivation is not kept: the next call tries again.
-    key.catch(() => keys.delete(cacheKey));
-    // Bounded: past `MAX_KEYS` the oldest goes (a Map keeps insertion order); deriving one again is cheap.
-    if (keys.size >= MAX_KEYS) keys.delete(keys.keys().next().value!);
-    keys.set(cacheKey, key);
-  }
+  const known = keys.get(workspaceId);
+  if (known?.secret === secret) return known.key;
+  const key = crypto.subtle
+    .importKey("raw", encoder.encode(secret), "HKDF", false, ["deriveKey"])
+    .then((base) =>
+      crypto.subtle.deriveKey(
+        {
+          name: "HKDF",
+          hash: "SHA-256",
+          salt: new Uint8Array(),
+          info: encoder.encode(`brigade-receipt:v1:${workspaceId}`),
+        },
+        base,
+        { name: "HMAC", hash: "SHA-256", length: 256 },
+        false,
+        ["sign", "verify"],
+      ),
+    );
+  // A failed derivation is not kept: the next call tries again.
+  key.catch(() => {
+    if (keys.get(workspaceId)?.key === key) keys.delete(workspaceId);
+  });
+  // Bounded: past `MAX_KEYS` the oldest goes (a Map keeps insertion order); deriving one again is cheap.
+  keys.delete(workspaceId);
+  if (keys.size >= MAX_KEYS) keys.delete(keys.keys().next().value!);
+  keys.set(workspaceId, { secret, key });
   return key;
 }
 

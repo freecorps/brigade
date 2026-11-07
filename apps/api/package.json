@@ -28,6 +28,7 @@
     "@better-auth/expo": "1.7.13",
     "@freecorps/brigade-i18n": "workspace:*",
     "@freecorps/brigade-push": "workspace:*",
+    "@freecorps/brigade-relay": "workspace:*",
     "@freecorps/brigade-schema": "workspace:*",
     "@freecorps/brigade-slack": "workspace:*",
     "@freecorps/brigade-status-edge": "workspace:*",

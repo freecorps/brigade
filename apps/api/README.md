@@ -609,6 +609,26 @@ vp run setup:relay -- --relay own --apns-key-file ~/keys/AuthKey_XXXXXXXXXX.p8 -
   --relay-domain relay.example.com [--app-url https://apps.apple.com/…]
 ```
 
+### Sending without the relay
+
+An instance that holds the app's own APNs key (Freecorps' for the store app, or a company's for its own build) can send
+pages itself, with the relay as the fallback per device (RFC 0016 "Push", step 2; `src/direct-push.ts`). It runs the
+relay's own code, so phones see no difference. It is off unless all four of these secrets are set on the API Worker
+(the relay's names; values from your own copy of the files, never from the relay, whose secrets cannot be read):
+
+```sh
+wrangler secret put APNS_KEY --env dev < AuthKey_<KEY ID>.p8   # the .p8 file's text
+printf %s '<KEY ID>' | wrangler secret put APNS_KEY_ID --env dev
+printf %s '<TEAM ID>' | wrangler secret put APNS_TEAM_ID --env dev
+printf %s 'app.freecorps.brigade' | wrangler secret put APNS_TOPIC --env dev   # the app's bundle id
+wrangler secret put FCM_SERVICE_ACCOUNT --env dev < service-account.json      # optional: Android too
+```
+
+Anything but "delivered" or "the token is gone" (or no answer within 6 s) goes on through the relay's `/send`, then
+the device's relay handle, in the same attempt, and is logged as `direct send failed, paging the device through the
+relay` (never a token or key). Without a relay, a topic APNs refuses is a failed page, never a dropped phone. Deleting
+`APNS_TOPIC` turns it off.
+
 ## First owner
 
 A new instance has sign-up closed, so its first owner comes from a one-time, server-side path (RFC 0002 "The first

@@ -124,6 +124,9 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   (`RELAY`, apps/api wrangler.jsonc): Cloudflare answers a Worker's fetch to another workers.dev Worker on the same
   account with 404. Any other instance, such as a self-hosted one using Freecorps' hosted relay, posts to `RELAY_URL`
   over the internet. Either way every send carries the bearer token.
+  An instance holding the app's own credentials (`APNS_KEY`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC`, and
+  `FCM_SERVICE_ACCOUNT` for Android) sends a device with a raw token itself, running the relay's code, and falls back to
+  the relay for anything but delivered or a token gone (RFC 0016 "Push", step 2).
 
 ## Device registration
 

@@ -153,6 +153,38 @@ export function parsePush(body: Record<string, unknown>, platform: Platform): Pu
 }
 
 /**
+ * `POST /send` once its caller is authorized: the body checked (a device token, its platform and APNs environment,
+ * the push fields of `parsePush`) and delivered, or `400 invalid_body`. Also what an instance holding the app's own
+ * credentials runs in its own Worker to send without the relay (apps/api src/direct-push.ts, RFC 0016 step 2), so the
+ * two cannot drift.
+ */
+export async function sendBody(body: unknown, env: ProviderEnv, send: Send): Promise<Response> {
+  if (!isRecord(body)) return json({ error: "invalid_body" }, 400);
+  const platform = body.platform ?? "ios";
+  if (
+    typeof body.deviceToken !== "string" ||
+    !PLATFORMS.includes(platform as Platform) ||
+    (body.environment !== undefined && !ENVIRONMENTS.includes(body.environment as ApnsEnvironment))
+  ) {
+    return json({ error: "invalid_body" }, 400);
+  }
+  const push = parsePush(body, platform as Platform);
+  if (push === null) return json({ error: "invalid_body" }, 400);
+  return deliver(
+    {
+      platform: platform as Platform,
+      token: body.deviceToken,
+      ...(body.environment === undefined
+        ? {}
+        : { environment: body.environment as ApnsEnvironment }),
+    },
+    push,
+    env,
+    send,
+  );
+}
+
+/**
  * Sends one push and answers as `/send` always has: `200 { status, apnsId, apnsUniqueId, reason, ms }` (APNs) or
  * `200 { status, fcmId, ms }` (FCM) when the provider took it, `502` with the provider's status and reason when it did
  * not, `502 apns_unreachable`/`fcm_unreachable`, `500 relay_misconfigured`, `400 invalid_body` for a token or collapse

@@ -2445,13 +2445,25 @@ describe("relay handles (RFC 0015)", () => {
   async function handlePhone(
     ws: Awaited<ReturnType<typeof workspace>>,
     actor: Actor,
-    options: { voip?: boolean; envelope?: 2; token?: boolean; id?: string; tag?: string } = {},
+    // `token: "apns"`: a hex token, as APNs issues them, for a send that reaches the (fake) APNs directly.
+    options: {
+      voip?: boolean;
+      envelope?: 2;
+      token?: boolean | "apns";
+      id?: string;
+      tag?: string;
+    } = {},
   ) {
     const recipient = await generateRecipient();
     const deviceId = options.id ?? newId("dev", Date.now(), random);
     const handle = `k1.${toBase64url(random(96))}`;
     const tag = options.tag ?? toBase64url(random(32));
-    const pushToken = options.token ? toBase64url(random(32)).replace(/[-_]/g, "a") : undefined;
+    const pushToken =
+      options.token === "apns"
+        ? Array.from(random(32), (b) => b.toString(16).padStart(2, "0")).join("")
+        : options.token
+          ? toBase64url(random(32)).replace(/[-_]/g, "a")
+          : undefined;
     await ws.run(actor, "device.register", {
       id: deviceId,
       platform: "ios",
@@ -2767,6 +2779,83 @@ describe("relay handles (RFC 0015)", () => {
       shard.store.get("member_devices", ringing.deviceId),
     );
     expect(summary?.voip).toBe(false);
+  });
+
+  // Direct sends (RFC 0016 step 2) for a phone that has a handle as well as its raw token: the handle stays the last
+  // hop of the alert and the way the phone rings when it has no raw VoIP token.
+  describe("with direct sends on", () => {
+    let apnsKey: string;
+    beforeAll(async () => {
+      const pair = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+        "sign",
+        "verify",
+      ])) as CryptoKeyPair;
+      const der = new Uint8Array(
+        (await crypto.subtle.exportKey("pkcs8", pair.privateKey)) as ArrayBuffer,
+      );
+      apnsKey = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...der))}\n-----END PRIVATE KEY-----\n`;
+    });
+    const directHandleEnv = () =>
+      ({
+        ...handleEnv(),
+        APNS_KEY: apnsKey,
+        APNS_KEY_ID: "KEYID12345",
+        APNS_TEAM_ID: "TEAMID1234",
+        APNS_TOPIC: "app.freecorps.brigade",
+      }) as Parameters<typeof consumeEvents>[1];
+    const toApple = (request: V1Request) =>
+      new URL(request.url).hostname.endsWith("push.apple.com");
+    const path = (request: V1Request) => new URL(request.url).pathname;
+
+    test("a direct send whose relay /send then times out still pages the phone through its handle", async () => {
+      const ws = await workspace();
+      const phone = await handlePhone(ws, bia, { token: "apns" });
+      const { incident, event } = await ws.declare(MONITOR_ACTOR, "sev2");
+      const fake = v1Relay((request) => {
+        if (toApple(request)) {
+          return Response.json({ reason: "InvalidProviderToken" }, { status: 403 });
+        }
+        if (path(request) === "/send") {
+          throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+        }
+        return Response.json({ status: 200 });
+      });
+      expect(await deliver(event, fake.send, { environment: directHandleEnv() })).toEqual({
+        acked: ["msg-0"],
+        retried: [],
+      });
+      // Apple refused the instance's key, the relay's /send timed out, and the handle took the page.
+      expect(fake.requests.filter(toApple).length).toBeGreaterThan(0);
+      expect(fake.requests.filter((r) => path(r) === "/send").length).toBeGreaterThan(0);
+      const viaHandle = fake.requests.filter((r) => path(r) === "/v1/send");
+      expect(viaHandle).toHaveLength(1);
+      expect(viaHandle[0]!.body).toMatchObject({ handle: phone.handle });
+      const rows = await ws.withShard((shard) =>
+        shard.store.scan("deliveries").filter((row) => row.incidentId === incident),
+      );
+      expect(rows.find((row) => row.deviceId === phone.deviceId)?.acceptedAt).not.toBeNull();
+    });
+
+    test("a SEV1 sent directly rings through the handle when the phone has no raw VoIP token", async () => {
+      const ws = await workspace();
+      const phone = await handlePhone(ws, ana, { token: "apns", voip: true, envelope: 2 });
+      const { event } = await ws.declare(MONITOR_ACTOR, "sev1");
+      const fake = v1Relay((request) =>
+        toApple(request) ? new Response(null, { status: 200 }) : Response.json({ status: 200 }),
+      );
+      await deliver(event, fake.send, { environment: directHandleEnv() });
+      // The alert went to Apple from the instance, not to the relay; the call through the relay, by the handle.
+      expect(fake.requests.filter(toApple).length).toBeGreaterThan(0);
+      expect(fake.requests.filter((r) => path(r) === "/send")).toHaveLength(0);
+      const calls = fake.requests.filter((r) => !toApple(r) && r.body.kind === "call");
+      expect(calls).toHaveLength(1);
+      expect(path(calls[0]!)).toBe("/v1/send");
+      expect(calls[0]!.body).toMatchObject({
+        handle: phone.handle,
+        callId: await callIdOf(event.id),
+      });
+      expect(calls[0]!.body).not.toHaveProperty("deviceToken");
+    });
   });
 
   test("the same tag under a new id (a reinstall) replaces the old device; another tag does not", async () => {

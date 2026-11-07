@@ -383,6 +383,25 @@ were built for a deployment people depend on.
 `dev` goes first, then `staging`, then production. The owner approved running the copy against staging and
 production data for this migration.
 
+### Parity: what `WorkspaceDO` does, on Ember
+
+No workspace is switched until every row below is on Ember. The API reaches a workspace's shard through
+`src/ember-workspace.ts`, which picks the engine from D1 for each call; each area moves there with its Ember functions
+(`apps/api/ember/`) and tests on both engines.
+
+| Area                         | `WorkspaceDO` calls                                                                                                                                                               | On Ember                                                                 |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Client mutations and queries | sync frames, `restRead`, `restWrite`, `apiTokenRun`                                                                                                                               | `workspace:mutate`, `workspace:query` (#184); REST and API tokens: to do |
+| Sessions                     | `endSession`, `signOutUser`, `catchUpSessionEnds`                                                                                                                                 | `sessions:*` (this step), sockets closed with `revokeSockets`            |
+| Members and invitations      | `provision`, `changeMember`, `finishLeave`, `reconcileMembers`, `invite`, `resendInvitation`, `revokeInvitation`, `acceptInvitation`, `declineInvitation`, invitation email plans | to do                                                                    |
+| Devices                      | `registerDevice`, `apiTokenUsed`                                                                                                                                                  | to do                                                                    |
+| Paging and escalation        | `planPage`, `recordPage`, `receipt`, `acknowledge`, reminders, rotation emails, email plans, escalation timers                                                                    | to do                                                                    |
+| Alerts and monitors          | `report`, `heartbeat`, `alert`, `alertTooLarge`, the alert engine's reroute (needed by a takeover's routes too)                                                                   | to do                                                                    |
+| Status page                  | `configureStatusPage`, subscriptions, domain, status emails, the snapshot push                                                                                                    | to do                                                                    |
+| Slack and webhooks           | `slack*`, `planSlack`, `recordSlack`, webhook plans                                                                                                                               | to do                                                                    |
+| Export and postmortems       | `buildExport`, `recordExport`, postmortem drafts and revisions                                                                                                                    | to do                                                                    |
+| Clients                      | Brigade Sync sockets                                                                                                                                                              | the adapter ("Clients"): to do                                           |
+
 ## Real-device check
 
 What proves Ember's push on real hardware, with what the steps above built:

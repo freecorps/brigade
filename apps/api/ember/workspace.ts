@@ -95,6 +95,9 @@ export function actorOf(
 export type WorkspaceLimits = { monitors?: number };
 let instanceLimits: WorkspaceLimits | undefined;
 
+/** The caps `setWorkspaceLimits` set, for the server-side functions next to this file. */
+export const workspaceLimits = (): WorkspaceLimits | undefined => instanceLimits;
+
 /**
  * Sets the instance's caps for every mutation this isolate runs, as `WorkspaceDO` passes them from its env today:
  * Ember mutations have no `env`, so the Worker's entry calls this once with `instanceMonitorCap(env)` before serving.
@@ -119,7 +122,7 @@ const bytesFrom =
   };
 
 /** The workspace this shard holds: its one `workspace` row, written when the workspace is provisioned. */
-function workspaceId(store: Pick<Store<BrigadeTables>, "scan">): string | undefined {
+export function workspaceId(store: Pick<Store<BrigadeTables>, "scan">): string | undefined {
   return store.scan("workspace")[0]?.id;
 }
 
@@ -127,7 +130,7 @@ function workspaceId(store: Pick<Store<BrigadeTables>, "scan">): string | undefi
  * Runs `name` from `registry` as `actor`, and writes its events in the same transaction as `BrigadeEvent` envelopes
  * (RFC 0005). The envelope is the one `writeOutbox` builds for the Durable Object, with this shard as its source.
  */
-function run(
+export function run(
   ctx: MutationCtx,
   registry: typeof mutations | typeof serverMutations,
   name: unknown,

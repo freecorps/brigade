@@ -331,3 +331,66 @@ describe("/ember", () => {
     ).toBe(401);
   });
 });
+
+describe("sessions on an Ember workspace", () => {
+  test("signing out on a phone takes it off the Ember shard and clears its session_end row", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const minted = await api(`/ember-token/${workspaceId}`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    const { token, shard } = (await minted.json()) as { token: string; shard: string };
+    const phone = newId("dev", Date.now(), (n) => crypto.getRandomValues(new Uint8Array(n)));
+    const registered = await api("/ember/api/mutation", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        fn: "workspace:mutate",
+        shard,
+        args: {
+          name: "device.register",
+          args: {
+            id: phone,
+            platform: "ios",
+            environment: "sandbox",
+            pushToken: "a".repeat(64),
+            voipToken: null,
+            publicKey: `B${"A".repeat(86)}`,
+          },
+        },
+      }),
+    });
+    expect(await registered.json()).toMatchObject({ ok: true, value: { ok: true } });
+    const devices = async () => {
+      const stub = env.SHARD.getByName(shard) as unknown as {
+        query(s: string, fn: string, args: unknown, identity: unknown): Promise<Outcome>;
+      };
+      const out = await stub.query(
+        shard,
+        "workspace:query",
+        { name: "devices.all", args: {} },
+        {
+          subject: userId,
+          claims: { role: "owner", ws: workspaceId },
+        },
+      );
+      return ((out.value as { rows: { id: string }[] }).rows ?? []).map((row) => row.id);
+    };
+    expect(await devices()).toEqual([phone]);
+
+    const signedOut = await api("/auth/sign-out", {
+      method: "POST",
+      headers: { Cookie: cookie, "Brigade-Device": phone },
+    });
+    expect(signedOut.status).toBe(200);
+    expect(await devices()).toEqual([]);
+    const left = await env.DB.prepare(
+      `select count(*) as n from session_end where "workspaceId" = ?`,
+    )
+      .bind(workspaceId)
+      .first<{ n: number }>();
+    expect(left?.n).toBe(0);
+  });
+});

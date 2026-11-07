@@ -69,6 +69,7 @@ import {
 } from "./relay-instance.ts";
 import { BOOTSTRAP_PATH, bootstrapFirstUser } from "./bootstrap.ts";
 import { EMBER_BASE_PATH, issueEmberToken, serveEmber } from "./ember.ts";
+import { workspaceSessions } from "./ember-workspace.ts";
 import { forgetSessionEnd, recordSessionEnd, sweepSessionEnds } from "./session-end.ts";
 import { within } from "./deadline.ts";
 import { DEVICES_REGISTER_PATH, registerDevices } from "./device-route.ts";
@@ -546,7 +547,7 @@ export function endSessionWith(
           if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, retryMs * attempt));
           try {
             // `not_found`: a shard never provisioned has no sockets or devices; nothing to retry.
-            await env.WORKSPACE.getByName(workspaceId).endSession(workspaceId, session);
+            await (await workspaceSessions(env, workspaceId)).endSession(workspaceId, session);
             await forgetSessionEnd(env.DB, workspaceId, session.sessionId);
             return;
           } catch (error) {
@@ -630,11 +631,9 @@ export function signOutWith(
         for (let attempt = 1; attempt <= SIGN_OUT_ATTEMPTS; attempt++) {
           if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, retryMs * attempt));
           try {
-            const result = await env.WORKSPACE.getByName(workspace.id).signOutUser(
-              workspace.id,
-              userId,
-              { takeOver: sole },
-            );
+            const result = await (
+              await workspaceSessions(env, workspace.id)
+            ).signOutUser(workspace.id, userId, { takeOver: sole });
             if (!result.ok) {
               // A shard never provisioned has nothing of theirs: no retry changes that.
               failure = result.code;

@@ -181,6 +181,12 @@ acceptable for pages:
   60 s later (`ctx.scheduler.runAfter`) finds a lease still there and runs the page from the shard's alarm (Ember runs
   action jobs in the alarm when no Queue is bound; Brigade needs that per job, gap G2). Until G2, the page action is
   dispatched through `dispatchAction` with the shard-local path for page events.
+- **The check repeats while the lease lasts.** The check job, in the same mutation that finds the lease still there,
+  schedules the next check 60 s later, so a lease is never left without a durable job to look at it again: a run the
+  check started that stops too (or skips a live claim whose action then stopped) is looked at once more a minute
+  later, until every push is settled and `deliver` clears the lease. It ends as RFC 0005's alarm path does today:
+  once the page went, or after `PAGE_LOCAL_TRIES` (3) local tries, left to the Queue's copy of the action job. Test:
+  the claiming action stops after its claim and before its send, and the next check sends the push.
 - **A second run while the first is still sending** (the 60 s check, a Queue redelivery) sends only what the first has
   not: before each push, `deliver` claims its delivery row (event id and device) for 30 s in a mutation, the way RFC
   0005's email ledger holds a send for 60 s. A run that finds a row sent skips it; one that finds a live claim skips it
@@ -224,9 +230,11 @@ Object is possible later (Ember runs Better Auth too) but not part of this migra
 - Moving the users and sessions table means either signing every phone out (and with it every page, RFC 0006) or a
   live session migration. Neither is worth doing in the same step as the engine.
 
-**How.** Better Auth's `jwt` plugin on the D1 instance mints a short-lived token (5 minutes) for a session, carrying
-the session id (`sid`, the id, never the token) and the session's expiry; the clients get it from `/auth/token` and
-send it in Ember's `hello`, and again in `{t:"auth"}` before it expires (Ember's client refreshes 30 s ahead).
+**How.** Better Auth's `jwt` plugin on the D1 instance mints a short-lived token for a session, carrying the session
+id (`sid`, the id, never the token); its `exp` is the earlier of 5 minutes and the session's own expiry, so a token
+never outlives its session and an admitted socket stops at the session's expiry as RFC 0004 requires. The clients get
+it from `/auth/token` and send it in Ember's `hello`, and again in `{t:"auth"}` before it expires (Ember's client
+refreshes 30 s ahead); a session already past its expiry gets no token.
 
 - **Admission.** The Ember auth hook verifies the token against the instance's JWKS (Ember's `remoteAuth({ from })`
   shape) **and** checks D1 that the session has not ended (`session_end`, RFC 0002 "Auth") and that the member still
@@ -237,7 +245,14 @@ send it in Ember's `hello`, and again in `{t:"auth"}` before it expires (Ember's
   (`authExpired`); so the worst case after a revocation is the token's 5 minutes, and only when the close below fails.
 - **Session end.** Better Auth's session-delete hook, which today asks each of the user's shards to close the
   session's sockets (`WorkspaceDO.endSession`), calls the Ember shard instead: it closes every socket whose identity
-  carries that `sid` (gap G8), with the same 3 tries and `session_end` sweep as today. A password reset and a member
+  carries that `sid` (gap G8), with the same 3 tries and `session_end` sweep as today.
+- **Old apps on the adapter.** An app version that only speaks Brigade Sync sends no JWT: its upgrade is
+  authenticated by the Worker from the session cookie, as today, and the Worker passes the session id and expiry to
+  the adapter (`Brigade-Session`, `Brigade-Session-Expires`, RFC 0004). The adapter checks `session_end` and the
+  member at the upgrade, gives the socket an identity carrying the same `sid` and an expiry equal to the session's,
+  and refuses an upgrade carrying a session it was told ended. So the session-end close above, a password reset and
+  a member removal reach adapter sockets by the same `sid` and user id, and one still open closes at the session's
+  expiry; no socket, adapter or Ember, outlives its session. A password reset and a member
   removal close the same way (by user id). An expired session is the token's own expiry.
 - **Sensitive mutations** (removing a member, changing a role, acknowledging from a notification) also check the
   session in D1 at the moment they run, as today.
@@ -289,10 +304,14 @@ Per workspace, in the shard that owns it, never as a bulk job:
    Escalation runs continue from the copied timers (jobs at the same due time).
 4. **Rollback.** Within the keep window (30 days) the same route with `engine: "brigade"` reverses the copy, fenced
    the same way: the Ember shard refuses the same conditions as step 2 (pending pages, a due timer), then stops taking
-   writes (`503 migrating`), records the high-water mark of its change log, copies every change up to it (rows,
-   timers, devices, delivery rows) back to `WorkspaceDO`, checks counts and a hash per table, and only then flips
-   `engine` back and lifts the fence on `WorkspaceDO`. A write that commits after the mark cannot exist, because the
-   fence came first. After the window the old storage is deleted by a later PR.
+   writes (`503 migrating`), records the high-water mark of its change log, and copies back to `WorkspaceDO` every
+   change up to it in **everything step 2 copied**: rows, counters (so an `INC-n` is never reused), devices, delivery
+   rows, members and pending escalation timers. It checks counts and a hash per table, then, in the same turn of the
+   Ember shard, **cancels its scheduler jobs for the workspace** (they now live as `WorkspaceDO` timers) and keeps its
+   fence as a `forwarded` mark, as `WorkspaceDO` did after step 3: from then on it forwards to `WorkspaceDO` or refuses,
+   and runs nothing. Only then does `engine` flip back and the fence on `WorkspaceDO` lift, so one store runs each
+   timer and no escalation or page goes out twice. A write that commits after the mark cannot exist, because the fence
+   came first. After the window the old storage is deleted by a later PR.
 
 Freecorps' own workspaces go first, on `dev`, then `staging`, then production. Code ships by continuous delivery
 (RFC 0002 "Continuous delivery": a merge to `main` whose CI passes deploys what changed), so each step's code reaches

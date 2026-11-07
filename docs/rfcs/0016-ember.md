@@ -346,6 +346,22 @@ What proves Ember's push on real hardware, with what the steps above built:
 3. **Direct (step 2).** With the four secrets set on `brigade-api-dev`, the same page goes out without the relay
    (the API's log says `direct`), and with `APNS_KEY_ID` set wrong it still arrives (the relay fallback).
 
+**Result, step 1 (2026-11-06).** `dev` running this step, release builds of the app pointed at it, a workspace with
+one declaring member and three paged ones:
+
+- **iPhone 15 Pro Max (iOS 27.2), locked:** a SEV1 rang through CallKit and its alert showed the incident's title (the
+  extension opened the envelope); answering acknowledged the incident. A SEV2 with the app closed arrived as an alert
+  only, and opened the incident when tapped.
+- **iOS Simulator:** the same alert, opened by the extension, `Delivered` in "Who was paged". With no CallKit there,
+  the call ends as `failed` and the app posts the page again (RFC 0010, Q14), as designed.
+- **Android emulator (Google APIs image, FCM):** a SEV1 rang (Answer / Decline) and its alert arrived opened in the
+  background, with the app swiped away (no process, not force-stopped) and in the foreground.
+- **The relay's logs:** every `APNs response` signed by Ember (`signer: ember`) and answered 200, sandbox; every `FCM
+  response` 200 with Ember's access token; 12 pages in a minute (26 pushes) reused the token, with no
+  `TooManyProviderTokenUpdates`, `ExpiredProviderToken` or fallback to the relay's own signers.
+- **Not checked:** a Critical Alert (Xcode's development profile cannot carry the entitlement; it needs an ad hoc or
+  store build), item 2's refusals, and `Unregistered` after an uninstall, which APNs reports only some time later.
+
 ## Ember gaps
 
 What Brigade needs that Ember does not have, each worked around here and proposed for Ember, clean-room:

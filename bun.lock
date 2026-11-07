@@ -22,6 +22,7 @@
         "@freecorps/brigade-status-edge": "workspace:*",
         "@freecorps/brigade-sync": "workspace:*",
         "@freecorps/brigade-ui": "workspace:*",
+        "@freecorps/ember-server": "0.2.0",
         "better-auth": "1.7.13",
       },
       "devDependencies": {

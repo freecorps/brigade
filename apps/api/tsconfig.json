@@ -17,5 +17,12 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src", "test", "worker-configuration.d.ts", "vite.config.ts"]
+  "include": [
+    "src",
+    "test",
+    "ember",
+    "worker-configuration.d.ts",
+    "vite.config.ts",
+    "vite.ember.config.ts"
+  ]
 }

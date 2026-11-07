@@ -5,6 +5,7 @@ import { describe, expect, test } from "vite-plus/test";
 import * as members from "../members.ts";
 import schema from "../schema.ts";
 import * as events from "../events.ts";
+import { local } from "./stubs.ts";
 import * as workspace from "../workspace.ts";
 
 const T = Date.UTC(2026, 10, 7, 12, 0, 0);
@@ -24,7 +25,7 @@ function shard() {
   const engine = createEngine({
     schema,
     driver: createNodeSqliteDriver(),
-    functions: { workspace, events, members, test: { rows } },
+    functions: { workspace, local, events, members, test: { rows } },
     now: () => T,
   });
   engine.migrate();

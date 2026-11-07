@@ -4,6 +4,7 @@
 
 import { MAILER_SCHEMA } from "../src/mailer.ts";
 import { PAGING_SCHEMA } from "../src/paging.ts";
+import { RECEIPTS_SCHEMA } from "../src/receipts.ts";
 
 const RESULTS_SCHEMA = `
   create table if not exists mutation_results (
@@ -32,6 +33,7 @@ export const LEDGER_DDL: string[] = [
   ...statements(RESULTS_SCHEMA),
   ...statements(PAGING_SCHEMA),
   ...statements(MAILER_SCHEMA),
+  ...statements(RECEIPTS_SCHEMA),
   TICKS_SCHEMA,
 ];
 export const LEDGER_TABLES: string[] = [

@@ -4,6 +4,7 @@ import { newId, REMINDER_HOUR, type Actor } from "@freecorps/brigade-schema";
 import { describe, expect, test } from "vite-plus/test";
 import type { BrigadeEvent } from "../../src/outbox.ts";
 import * as events from "../events.ts";
+import { local } from "./stubs.ts";
 import * as mailer from "../mailer.ts";
 import * as members from "../members.ts";
 import * as paging from "../paging.ts";
@@ -38,7 +39,7 @@ function shard() {
   const engine = createEngine({
     schema,
     driver: createNodeSqliteDriver(),
-    functions: { workspace, events, members, paging, mailer, test: { rows } },
+    functions: { workspace, local, events, members, paging, mailer, test: { rows } },
     now: () => clock,
   });
   engine.migrate();

@@ -9,9 +9,11 @@ import {
 import { createNodeSqliteDriver } from "@freecorps/ember-server/testing";
 import { newId, type Actor } from "@freecorps/brigade-schema";
 import { describe, expect, test } from "vite-plus/test";
-import { PAGE_HOLD_MS } from "../../src/paging.ts";
+import { PAGE_HOLD_MS, PAGE_LOCAL_TRIES, PAGE_QUEUE_GRACE_MS } from "../../src/paging.ts";
+import { RECEIPT_RATE_PER_MINUTE } from "../../src/receipts.ts";
 import type { BrigadeEvent } from "../../src/outbox.ts";
 import * as events from "../events.ts";
+import { local } from "./stubs.ts";
 import * as members from "../members.ts";
 import * as paging from "../paging.ts";
 import schema from "../schema.ts";
@@ -91,6 +93,7 @@ function shard() {
     driver: createNodeSqliteDriver(),
     functions: {
       workspace,
+      local,
       events,
       members,
       paging,
@@ -363,5 +366,100 @@ describe("paging on Ember", () => {
     // The disk is back: the next tick releases it.
     expect(s.call("paging:tick", {}).value).toMatchObject({ released: 1 });
     expect(s.sql("select state from page_held")).toEqual([{ state: "released" }]);
+  });
+});
+
+describe("pages the Queue is late with, on Ember", () => {
+  test("a page written is watched, and the shard's send is armed for when the Queue's grace runs out", () => {
+    const s = shard();
+    s.device(BIA, 1);
+    const id = newId("inc", T, (n) => new Uint8Array(n).fill(1));
+    const declared = s.engine.runMutation(
+      "workspace:mutate",
+      { name: "incident.declare", args: { id, title: "Database down", severity: "sev1" } },
+      { identity: { subject: ANA, claims: { role: "owner", ws: WS } } },
+    );
+    const sends = declared.scheduled.filter((job) => job.fn === "local:send") as unknown as {
+      runAt: number;
+    }[];
+    expect(sends.map((job) => job.runAt)).toEqual([T + PAGE_QUEUE_GRACE_MS]);
+    const event = s.outbox().find((e) => e.type === "incident.declared")!;
+    expect(s.sql("select event_id from page_pending")).toEqual([{ event_id: event.id }]);
+    // The shard's own plan leaves it watched; the Queue's ends the watch.
+    s.call("paging:plan", { event, local: true });
+    expect(s.sql("select event_id from page_pending")).toHaveLength(1);
+    s.call("paging:plan", { event });
+    expect(s.sql("select event_id from page_pending")).toEqual([]);
+  });
+
+  test("an overdue page is leased; sent, its watch ends; refused, it comes back, at most PAGE_LOCAL_TRIES times", () => {
+    const s = shard();
+    s.device(BIA, 1);
+    const { event } = s.declare();
+    expect(s.call("paging:overdue", {}).value).toEqual([]);
+    s.tick(PAGE_QUEUE_GRACE_MS);
+    const leased = s.call("paging:overdue", {});
+    expect(leased.value).toMatchObject([{ event: { id: event.id }, tries: 1 }]);
+    // Leased: not handed out again until its lease runs out, and the next send is armed for then.
+    expect(s.call("paging:overdue", {}).value).toEqual([]);
+    expect(leased.scheduled.some((job) => job.fn === "local:send")).toBe(true);
+    for (let tries = 1; tries < PAGE_LOCAL_TRIES; tries++) {
+      s.call("paging:localDone", { eventId: event.id, tries, sent: false });
+      s.tick(60 * 1000);
+      expect(s.call("paging:overdue", {}).value).toMatchObject([{ tries: tries + 1 }]);
+    }
+    // Out of tries: left to the Queue.
+    s.call("paging:localDone", { eventId: event.id, tries: PAGE_LOCAL_TRIES, sent: false });
+    expect(s.sql("select event_id from page_pending")).toEqual([]);
+  });
+
+  test("a Retry-After holds a leased page back; a sent one ends its watch", () => {
+    const s = shard();
+    s.device(BIA, 1);
+    const { event } = s.declare();
+    s.tick(PAGE_QUEUE_GRACE_MS);
+    s.call("paging:overdue", {});
+    s.call("paging:localDone", {
+      eventId: event.id,
+      tries: 1,
+      sent: false,
+      until: s.now() + 300_000,
+    });
+    s.tick(60 * 1000);
+    expect(s.call("paging:overdue", {}).value).toEqual([]);
+    s.tick(240 * 1000);
+    expect(s.call("paging:overdue", {}).value).toMatchObject([{ tries: 2 }]);
+    s.call("paging:localDone", { eventId: event.id, tries: 2, sent: true });
+    expect(s.sql("select event_id from page_pending")).toEqual([]);
+  });
+});
+
+describe("delivery receipts, on Ember", () => {
+  test("a receipt is recorded once, releases what its page held back, and is rate limited per device", () => {
+    const s = shard();
+    const phone = s.device(BIA, 1);
+    const { incident, event } = s.declare();
+    s.call("paging:plan", { event });
+    s.call("paging:record", {
+      event,
+      outcomes: [{ deviceId: phone, userId: BIA, ok: true }],
+      final: true,
+    });
+    s.mutate("incident.setSeverity", { id: incident, severity: "sev3" });
+    const later = another(event, 9);
+    s.call("paging:plan", { event: later });
+    expect(s.sql("select state from page_held")).toEqual([{ state: "held" }]);
+    const claim = { workspaceId: WS, incidentId: incident, eventId: event.id, deviceId: phone };
+    expect(s.call("paging:receipt", claim).value).toBe("recorded");
+    // The page is confirmed: the push held behind it goes now, without waiting for the hold.
+    expect(s.sql("select state from page_held")).toEqual([{ state: "released" }]);
+    expect(s.call("paging:receipt", claim).value).toBe("already");
+    expect(s.call("paging:receipt", { ...claim, workspaceId: "ws_other" }).value).toBe("invalid");
+    expect(s.call("paging:receipt", { ...claim, eventId: another(event, 8).id }).value).toBe(
+      "not_found",
+    );
+    // Three counted so far (the other workspace's is refused before the rate).
+    for (let i = 3; i < RECEIPT_RATE_PER_MINUTE; i++) s.call("paging:receipt", claim);
+    expect(s.call("paging:receipt", claim).value).toBe("rate_limited");
   });
 });

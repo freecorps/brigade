@@ -38,7 +38,8 @@ import {
 import type { MemberChangeResult } from "./members.ts";
 import { emailSender } from "./email.ts";
 import { consumeDeadLetters, consumeEvents, type NotifyEnv } from "./notify.ts";
-import { receiptWorkspace } from "./receipts.ts";
+import { receiptWorkspace, type ReceiptResult } from "./receipts.ts";
+import { emberReceipt } from "./ember-receipts.ts";
 import { beginSlackInstall, listSlackChannels } from "./slack-bridge.ts";
 import type { FeedFormat } from "./status-feed.ts";
 import { configureStatusPage, serveStatusFeed, serveStatusPage } from "./status-route.ts";
@@ -1546,7 +1547,13 @@ export async function receiveReceipt(request: Request, env: Env): Promise<Respon
     return json({ error: "rate_limited" }, RECEIPT_STATUS.rate_limited);
   }
   try {
-    const result = await env.WORKSPACE.getByName(workspace).receipt(token as string);
+    // On Ember (RFC 0016) the Worker checks the token and the shard records it (src/ember-receipts.ts).
+    const result =
+      (await pageEngine(env.DB, workspace)) === "ember"
+        ? await emberReceipt(env, workspace, token as string, Date.now(), (claim) =>
+            emberMutation<ReceiptResult>(env, workspace, "paging:receipt", claim),
+          )
+        : await env.WORKSPACE.getByName(workspace).receipt(token as string);
     const status = RECEIPT_STATUS[result];
     return status === 200 ? json({ ok: true }) : json({ error: result }, status);
   } catch (error) {

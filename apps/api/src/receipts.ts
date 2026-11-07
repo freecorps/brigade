@@ -10,7 +10,7 @@ import { deliveryId, NOTIFIER_ACTOR } from "@freecorps/brigade-schema";
 import { fromBase64url, toBase64url } from "@freecorps/brigade-push";
 import type { Shard } from "./shard.ts";
 import type { RowChange } from "./store.ts";
-import { WORKSPACE_ID } from "./workspace.ts";
+import { WORKSPACE_ID } from "./workspace-ids.ts";
 
 /** How long a page's token is good for: APNs keeps a page 15 minutes, a retry adds about a minute. */
 export const RECEIPT_TTL_MS = 30 * 60 * 1000;
@@ -27,7 +27,8 @@ const VERSION = "v1";
 const KEY_ID = "k1";
 const RATE_WINDOW_MS = 60 * 1000;
 
-const SCHEMA = `
+/** The shard's key and per-device rate (`receipt_rate`, the part Ember keeps too: ember/ledgers.ts). */
+export const RECEIPTS_SCHEMA = `
   create table if not exists receipt_key (id integer primary key check (id = 1), key blob not null);
   create table if not exists receipt_rate (
     device_id text primary key,
@@ -135,11 +136,89 @@ export type ReceiptsOptions = {
   committed: (version: number, changes: readonly RowChange[]) => void;
 };
 
+/** A token for each device of one page under `key` (id `keyId`), good for `RECEIPT_TTL_MS` from `now`. */
+export async function mintReceiptTokens(
+  key: CryptoKey,
+  keyId: string,
+  claim: Omit<ReceiptClaim, "keyId" | "deviceId" | "expiresAt">,
+  deviceIds: readonly string[],
+  now: number,
+): Promise<Map<string, string>> {
+  const expiresAt = Math.ceil((now + RECEIPT_TTL_MS) / 1000);
+  const tokens = new Map<string, string>();
+  for (const deviceId of deviceIds) {
+    const full = { ...claim, keyId, deviceId, expiresAt };
+    const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, signed(full)));
+    tokens.set(
+      deviceId,
+      [
+        VERSION,
+        full.keyId,
+        full.workspaceId,
+        full.incidentId,
+        full.eventId,
+        full.deviceId,
+        expiresAt,
+        toBase64url(mac),
+      ].join("."),
+    );
+  }
+  return tokens;
+}
+
+/**
+ * Whether `token` is one minted under `key` (id `keyId`) for `workspaceId` and still good at `now`: its claim, or
+ * `invalid` (malformed, another key, another workspace, a MAC that does not check) or `expired`.
+ */
+export async function checkReceiptToken(
+  key: CryptoKey,
+  keyId: string,
+  token: unknown,
+  workspaceId: string,
+  now: number,
+): Promise<{ ok: true; claim: ReceiptClaim } | { ok: false; result: "invalid" | "expired" }> {
+  const parsed = parseReceiptToken(token);
+  if (!parsed || parsed.claim.keyId !== keyId || parsed.claim.workspaceId !== workspaceId) {
+    return { ok: false, result: "invalid" };
+  }
+  const { claim, mac } = parsed;
+  // `verify` compares in constant time.
+  const genuine = await crypto.subtle.verify("HMAC", key, new Uint8Array(mac), signed(claim));
+  if (!genuine) return { ok: false, result: "invalid" };
+  if (claim.expiresAt * 1000 < now) return { ok: false, result: "expired" };
+  return { ok: true, claim };
+}
+
+/**
+ * Whether one more receipt from `deviceId` fits its rate (`RECEIPT_RATE_PER_MINUTE`, a fixed one-minute window; old
+ * windows are dropped as they are met), counting it. `exec` runs SQL on the shard's `receipt_rate`: the DO's storage
+ * or an Ember mutation's `ctx.sql`.
+ */
+export function allowReceipt(
+  exec: (query: string, ...params: (string | number)[]) => Record<string, unknown>[],
+  deviceId: string,
+  now: number,
+): boolean {
+  const window = now - (now % RATE_WINDOW_MS);
+  exec("delete from receipt_rate where window_start < ?", window);
+  const row = exec("select count from receipt_rate where device_id = ?", deviceId)[0] as
+    | { count: number }
+    | undefined;
+  if (row && row.count >= RECEIPT_RATE_PER_MINUTE) return false;
+  exec(
+    `insert into receipt_rate (device_id, window_start, count) values (?, ?, 1)
+     on conflict (device_id) do update set count = count + 1`,
+    deviceId,
+    window,
+  );
+  return true;
+}
+
 export class Receipts {
   private key: Promise<CryptoKey> | undefined;
 
   constructor(private readonly options: ReceiptsOptions) {
-    options.storage.sql.exec(SCHEMA);
+    options.storage.sql.exec(RECEIPTS_SCHEMA);
   }
 
   /** A token for each device of one page, good for `RECEIPT_TTL_MS` from `now`. */
@@ -148,49 +227,16 @@ export class Receipts {
     deviceIds: readonly string[],
     now: number,
   ): Promise<Map<string, string>> {
-    const key = await this.hmacKey();
-    const expiresAt = Math.ceil((now + RECEIPT_TTL_MS) / 1000);
-    const tokens = new Map<string, string>();
-    for (const deviceId of deviceIds) {
-      const full = { ...claim, keyId: KEY_ID, deviceId, expiresAt };
-      const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, signed(full)));
-      tokens.set(
-        deviceId,
-        [
-          VERSION,
-          full.keyId,
-          full.workspaceId,
-          full.incidentId,
-          full.eventId,
-          full.deviceId,
-          expiresAt,
-          toBase64url(mac),
-        ].join("."),
-      );
-    }
-    return tokens;
+    return mintReceiptTokens(await this.hmacKey(), KEY_ID, claim, deviceIds, now);
   }
 
   /** Checks a receipt's token and records the delivery once. Never throws for a bad token. */
   async receive(token: unknown, now: number): Promise<ReceiptResult> {
-    const parsed = parseReceiptToken(token);
-    if (
-      !parsed ||
-      parsed.claim.keyId !== KEY_ID ||
-      parsed.claim.workspaceId !== this.options.shard.workspace()
-    ) {
-      return "invalid";
-    }
-    const { claim, mac } = parsed;
-    // `verify` compares in constant time.
-    const genuine = await crypto.subtle.verify(
-      "HMAC",
-      await this.hmacKey(),
-      new Uint8Array(mac),
-      signed(claim),
-    );
-    if (!genuine) return "invalid";
-    if (claim.expiresAt * 1000 < now) return "expired";
+    const workspaceId = this.options.shard.workspace();
+    if (workspaceId === undefined) return "invalid";
+    const checked = await checkReceiptToken(await this.hmacKey(), KEY_ID, token, workspaceId, now);
+    if (!checked.ok) return checked.result;
+    const { claim } = checked;
     if (!this.allow(claim.deviceId, now)) return "rate_limited";
 
     const id = deliveryId(claim.incidentId, claim.eventId, claim.deviceId);
@@ -221,22 +267,10 @@ export class Receipts {
     return "invalid";
   }
 
-  /** A fixed one-minute window per device; old windows are dropped as they are met. */
+  /** A fixed one-minute window per device (`allowReceipt`). */
   private allow(deviceId: string, now: number): boolean {
     const { sql } = this.options.storage;
-    const window = now - (now % RATE_WINDOW_MS);
-    sql.exec("delete from receipt_rate where window_start < ?", window);
-    const row = sql
-      .exec<{ count: number }>("select count from receipt_rate where device_id = ?", deviceId)
-      .toArray()[0];
-    if (row && row.count >= RECEIPT_RATE_PER_MINUTE) return false;
-    sql.exec(
-      `insert into receipt_rate (device_id, window_start, count) values (?, ?, 1)
-       on conflict (device_id) do update set count = count + 1`,
-      deviceId,
-      window,
-    );
-    return true;
+    return allowReceipt((query, ...params) => sql.exec(query, ...params).toArray(), deviceId, now);
   }
 
   /** The shard's HMAC key: made once, kept in its storage, never sent anywhere. */

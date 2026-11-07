@@ -6,21 +6,25 @@
 // `paging:tick` and `paging:remind` are the synchronous part of the Durable Object's alarm, each its own job and
 // transaction (ember/ticks.ts): the tick fires escalation levels (`Escalations.fireDue`), replays lost pages
 // (`replayDue`) and releases held pushes (`releaseDue`); the reminder sends follow-up reminders (`followUp.remind`).
-// Each schedules itself again at its next due time. `paging:acknowledge` is the app's notification action. Not here
-// yet: delivery receipts, and the page the shard sends itself when the Queue is late (`overdue`, the DO's
-// `pageLocally`), which sends through the relay (RFC 0016 "Parity").
+// Each schedules itself again at its next due time. `paging:acknowledge` is the app's notification action and
+// `paging:receipt` a delivery receipt the Worker checked (src/ember-receipts.ts). `paging:overdue` and
+// `paging:localDone` are the shard side of a page the Queue is late with, sent by ember/local.ts.
 
 import { internalMutationGeneric, v, type MutationCtx } from "@freecorps/ember-server";
 import {
   ACCOUNT_ACTOR,
+  deliveryId,
+  NOTIFIER_ACTOR,
   nextReminderAt,
   remindersDue,
   ROLES,
   type Actor,
 } from "@freecorps/brigade-schema";
 import type { AckResult } from "../src/workspace.ts";
+import { allowReceipt, type ReceiptResult } from "../src/receipts.ts";
 import {
   asksForPage,
+  PAGE_LOCAL_TRIES,
   Pager,
   type DeadLetterResult,
   type DeviceOutcome,
@@ -79,8 +83,11 @@ const event = v.any();
  * one transaction: a plan that throws leaves the page watched, as on the DO.
  */
 export const plan = internalMutationGeneric({
-  args: { event, repair: v.optional(v.boolean()) },
-  handler: (ctx, { event: e, repair }: { event: BrigadeEvent; repair?: boolean }): PagePlan => {
+  args: { event, repair: v.optional(v.boolean()), local: v.optional(v.boolean()) },
+  handler: (
+    ctx,
+    { event: e, repair, local }: { event: BrigadeEvent; repair?: boolean; local?: boolean },
+  ): PagePlan => {
     const c = ctx as MutationCtx;
     const { pager: p, workspace, check, shard } = pager(c);
     if (workspace !== e.workspaceId) return { send: false, reason: "not_found" } as PagePlan;
@@ -92,7 +99,9 @@ export const plan = internalMutationGeneric({
       });
     }
     const out = p.plan(e, c.now);
-    if (asksForPage(e)) p.arrived(e.id);
+    // Brought by the Queue: the shard need not send it. Not for its own send (`local`, ember/local.ts), which ends
+    // the watch itself once the page went (`localDone`).
+    if (asksForPage(e) && !local) p.arrived(e.id);
     scheduleTick(c, p, shard);
     check();
     return out;
@@ -259,3 +268,108 @@ function tokenActor(shard: EmberShard, actor: Actor, now: number): Actor | undef
     ? { ...actor, role: copy.role }
     : actor;
 }
+
+/**
+ * `WorkspaceDO.receipt`'s shard side (RFC 0006 "Delivery receipts"): the Worker checked the token's MAC and expiry
+ * (src/ember-receipts.ts); here the device's rate (`allowReceipt`), the delivery recorded once (`delivery.confirm`, a
+ * replay `already`) and, for a first receipt, the pushes that page held back released at once.
+ */
+export const receipt = internalMutationGeneric({
+  args: {
+    workspaceId: v.string(),
+    incidentId: v.string(),
+    eventId: v.string(),
+    deviceId: v.string(),
+  },
+  handler: (
+    ctx,
+    claim: { workspaceId: string; incidentId: string; eventId: string; deviceId: string },
+  ): ReceiptResult => {
+    const c = ctx as MutationCtx;
+    const { pager: p, workspace, check, shard } = pager(c);
+    if (workspace !== claim.workspaceId) return "invalid";
+    const exec = (query: string, ...params: (string | number)[]) =>
+      c.sql.exec(query, ...params) as Record<string, unknown>[];
+    if (!allowReceipt(exec, claim.deviceId, c.now)) return "rate_limited";
+    const id = deliveryId(claim.incidentId, claim.eventId, claim.deviceId);
+    const mutationId = `receipt:${id}`;
+    const stored = shard.storedResult(NOTIFIER_ACTOR.id, "receipts", mutationId, c.now);
+    let result: ReceiptResult;
+    if (stored) result = stored.ok ? "already" : receiptAnswer(stored.error.code);
+    else {
+      const out = shard.mutate({
+        clientId: "receipts",
+        mutationId,
+        actor: NOTIFIER_ACTOR,
+        name: "delivery.confirm",
+        args: { id },
+        now: c.now,
+        internal: true,
+      }).result;
+      result = out.ok ? "recorded" : receiptAnswer(out.error.code);
+    }
+    // The page the phone confirmed no longer holds a lower-urgency push back from it: that goes out now.
+    if (result === "recorded") p.releaseDue(c.now);
+    scheduleTick(c, p, shard);
+    check();
+    return result;
+  },
+});
+
+function receiptAnswer(code: string): ReceiptResult {
+  if (code === "conflict") return "already";
+  if (code === "not_found") return "not_found";
+  log("receipt refused", { code });
+  return "invalid";
+}
+
+/**
+ * The pages the Queue has not brought in time, leased to the shard's own send (`local:send`, ember/local.ts): see
+ * `Pager.overdue`. Each is due again a lease later, so a send that never finishes comes back; the next send is
+ * scheduled at the earliest still watched.
+ */
+export const overdue = internalMutationGeneric({
+  args: {},
+  handler: (ctx): { event: BrigadeEvent; tries: number }[] => {
+    const c = ctx as MutationCtx;
+    const { pager: p, workspace, check } = pager(c);
+    if (workspace === undefined) return [];
+    c.sql.exec("delete from ember_ticks where key = 'local'");
+    const leased = p.overdue(c.now);
+    const next = p.pendingAt();
+    if (next !== null) tickAt(c, next, "local");
+    check();
+    return leased;
+  },
+});
+
+/**
+ * How the shard's own send of a page ended (`WorkspaceDO.pageOneLocally`): sent (`sent`), or out of tries, ends the
+ * watch (`arrived`); the relay's `Retry-After` holds it back until `until` (`postpone`); otherwise its lease brings it
+ * back.
+ */
+export const localDone = internalMutationGeneric({
+  args: {
+    eventId: v.string(),
+    tries: v.number(),
+    sent: v.boolean(),
+    until: v.optional(v.number()),
+  },
+  handler: (
+    ctx,
+    input: { eventId: string; tries: number; sent: boolean; until?: number },
+  ): null => {
+    const c = ctx as MutationCtx;
+    const { pager: p, workspace, check } = pager(c);
+    if (workspace === undefined) return null;
+    if (input.sent) p.arrived(input.eventId);
+    else if (input.tries >= PAGE_LOCAL_TRIES) {
+      p.arrived(input.eventId);
+      log("page sent from the shard still failing; left to the queue", { event: input.eventId });
+    } else if (input.until !== undefined) p.postpone(input.eventId, input.until);
+    const next = p.pendingAt();
+    if (next !== null) tickAt(c, next, "local");
+    check();
+    return null;
+  },
+});

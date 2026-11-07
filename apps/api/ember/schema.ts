@@ -20,12 +20,22 @@ export default defineSchema({
       TableName,
       ReturnType<typeof rows>
     >),
-    // A mutation's events, as `BrigadeEvent` envelopes (RFC 0005), written in its transaction. Delivery (webhooks,
-    // Slack, email, pages) reads them; a later step schedules it.
-    events: defineTable({ id: v.string(), type: v.string(), at: v.number(), event: v.string() })
+    // A mutation's events, as `BrigadeEvent` envelopes (RFC 0005), written in its transaction and sent to the events
+    // Queue by the drain (ember/events.ts).
+    // `seq` orders them as the drain sends them (ember/events.ts); the drain deletes what it sent.
+    events: defineTable({
+      id: v.string(),
+      seq: v.number(),
+      type: v.string(),
+      at: v.number(),
+      event: v.string(),
+    })
       .index("by_event_id", ["id"])
+      .index("by_seq", ["seq"])
       .index("by_at", ["at"]),
     // How many member changes the shard has applied (`key: "members"`): fences a repair's snapshot of D1 (ember/members.ts).
     member_fence: defineTable({ key: v.string(), n: v.number() }).index("by_key", ["key"]),
+    // When the pending drain was scheduled (one row, `key: "drain"`), so one drain runs at a time.
+    event_drain: defineTable({ key: v.string(), scheduledAt: v.number() }).index("by_key", ["key"]),
   },
 });

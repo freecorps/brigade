@@ -100,6 +100,7 @@ export const pending = internalQueryGeneric({
     const rows = ((ctx as QueryCtx).db as unknown as Db)
       .query("events")
       .withIndex("by_seq")
+      .order("asc")
       .take(DRAIN_BATCH) as EventDoc[];
     if (rows.length === 0) return null;
     const bodies: BrigadeEvent[] = [];

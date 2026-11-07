@@ -23,7 +23,7 @@ import {
 import { WORKSPACE_LIMIT } from "../src/auth.ts";
 import { describe, expect, test } from "vite-plus/test";
 import type { EmailSender, OutgoingEmail } from "../src/email.ts";
-import { Invitations } from "../src/invitations.ts";
+import { InvitationLedger, Invitations } from "../src/invitations.ts";
 import { Membership } from "../src/members.ts";
 import { consumeEvents, type NotifyEnv } from "../src/notify.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
@@ -161,14 +161,19 @@ const sendsInD1 = (
   );
 
 /** Lets an invitation be sent again now (`INVITATION_RESEND_INTERVAL_MS` past its last send). */
-const allowResend = (t: Team, id: string) =>
-  t.withState((state) =>
+const allowResend = async (t: Team, id: string) => {
+  await t.withState((state) =>
     state.storage.sql.exec(
       "update invitation_sends set at = ? where invitation_id = ?",
       Date.now() - INVITATION_RESEND_INTERVAL_MS - 1,
       id,
     ),
   );
+  // D1's reservation holds the interval too (without the DO's lock, on Ember, it is what does).
+  await env.DB.prepare(`update invitation_send set at = ? where "invitationId" = ?`)
+    .bind(Date.now() - INVITATION_RESEND_INTERVAL_MS - 1, id)
+    .run();
+};
 
 const resend = (t: Team, by: Person, id: string) =>
   api(`/workspaces/${t.id}/invitations/${id}/resend`, {
@@ -416,13 +421,7 @@ describe("accepting and declining", () => {
     });
     expect(soon.status).toBe(429);
     expect(await soon.json()).toEqual({ error: "too_soon" });
-    await t.withState((state) =>
-      state.storage.sql.exec(
-        "update invitation_sends set at = ? where invitation_id = ?",
-        Date.now() - INVITATION_RESEND_INTERVAL_MS - 1,
-        id,
-      ),
-    );
+    await allowResend(t, id);
     const resent = await api(`/workspaces/${t.id}/invitations/${id}/resend`, {
       method: "POST",
       headers: { Cookie: t.ana.cookie },
@@ -685,14 +684,24 @@ describe("failures", () => {
       closeSockets: () => {},
       wake: (at) => void state.storage.setAlarm(at),
     });
-    return new Invitations({
-      db: options.db ?? env.DB,
+    const ledger = new InvitationLedger({
       shard: options.shardFails ? failing : shard,
       sql: state.storage.sql,
-      membership,
       randomBytes: random,
       log: () => {},
       committed: () => {},
+      armRepair: (now) => membership.armRepair(now),
+      db: options.db ?? env.DB,
+    });
+    const orchestrator = new Invitations({
+      db: options.db ?? env.DB,
+      randomBytes: random,
+      log: () => {},
+      shard: ledger,
+      locked: (fn) => membership.locked(fn),
+    });
+    return Object.assign(orchestrator, {
+      repair: (workspaceId: string | undefined) => ledger.repair(workspaceId),
     });
   };
 

@@ -1,10 +1,11 @@
 import { createEngine, queryGeneric, v, type QueryCtx } from "@freecorps/ember-server";
 import { createNodeSqliteDriver } from "@freecorps/ember-server/testing";
-import { newId, REMINDER_HOUR, type Actor } from "@freecorps/brigade-schema";
+import { MEMBERS_ACTOR, newId, REMINDER_HOUR, type Actor } from "@freecorps/brigade-schema";
 import { describe, expect, test } from "vite-plus/test";
 import type { BrigadeEvent } from "../../src/outbox.ts";
 import * as events from "../events.ts";
 import { local } from "./stubs.ts";
+import * as invitations from "../invitations.ts";
 import * as mailer from "../mailer.ts";
 import * as rest from "../rest.ts";
 import * as members from "../members.ts";
@@ -40,7 +41,17 @@ function shard() {
   const engine = createEngine({
     schema,
     driver: createNodeSqliteDriver(),
-    functions: { workspace, local, events, members, paging, mailer, rest, test: { rows } },
+    functions: {
+      workspace,
+      local,
+      events,
+      members,
+      paging,
+      mailer,
+      rest,
+      invitations,
+      test: { rows },
+    },
     now: () => clock,
   });
   engine.migrate();
@@ -89,6 +100,7 @@ function shard() {
   }
   return {
     engine,
+    server,
     mutate,
     table,
     outbox,
@@ -445,5 +457,128 @@ describe("a member removed and back, on Ember", () => {
       }).value,
     ).toMatchObject({ ok: true });
     expect(read()).toMatchObject({ ok: true });
+  });
+});
+
+describe("invitations' shard side, on Ember", () => {
+  test("a mutation owed after a failed step is armed for the repair, and settles once it runs", () => {
+    const s = shard();
+    const invitationId = "inv_01M6VX0000000000000000000A";
+    const owe = s.call("invitations:owe", {
+      workspaceId: WS,
+      name: "invitation.create",
+      args: {
+        id: invitationId,
+        role: "responder",
+        expiresAt: T + 86_400_000,
+        send: 1,
+        invitedBy: ANA,
+      },
+      now: T,
+    });
+    expect(owe.scheduled.map((job) => job.fn)).toContain("invitations:repair");
+    const owed = s.call("invitations:owed", { workspaceId: WS }).value as {
+      key: string;
+      args: string;
+    }[];
+    expect(owed).toHaveLength(1);
+    expect(
+      s.call("invitations:settle", {
+        workspaceId: WS,
+        key: owed[0]!.key,
+        name: "invitation.create",
+        args: JSON.parse(owed[0]!.args),
+        run: true,
+      }).value,
+    ).toBe(true);
+    expect(s.call("invitations:owed", { workspaceId: WS }).value).toEqual([]);
+    expect(s.outbox().filter((e) => e.type === "member.invited")).toHaveLength(1);
+  });
+
+  test("a member an accept added fences a member repair holding D1 from before it", () => {
+    const s = shard();
+    const BIA = "usr_bia";
+    expect(
+      s.call("invitations:apply", {
+        workspaceId: WS,
+        actor: MEMBERS_ACTOR,
+        name: "member.add",
+        args: { id: BIA, name: "Bia", role: "responder", invitationId: id("inv") },
+        now: T,
+      }).value,
+    ).toEqual({ ok: true });
+    // A repair read the fence (0) and D1 before Bia accepted: its snapshot would take her off.
+    const before = [ANA, CAIO, EVA].map((member) => ({
+      id: member,
+      role: "owner",
+      resetAt: null,
+    }));
+    expect(s.call("members:reconcile", { workspaceId: WS, members: before, gen: 0 }).value).toEqual(
+      { ok: false, code: "stale" },
+    );
+    expect(s.table("members").map((row) => row.id)).toContain(BIA);
+  });
+
+  test("an add after the shard ran the member's removal is owed to the repair, not applied", () => {
+    const s = shard();
+    const BIA = "usr_bia";
+    const add = { id: BIA, name: "Bia", role: "responder", invitationId: id("inv") };
+    expect(
+      s.call("invitations:apply", {
+        workspaceId: WS,
+        actor: MEMBERS_ACTOR,
+        name: "member.add",
+        args: add,
+        now: T,
+      }).value,
+    ).toEqual({ ok: true });
+    expect(s.server("member.remove", { id: BIA, role: "responder", reason: "removed" })).toEqual({
+      ok: true,
+    });
+    // A second accept whose shard step arrives after that removal.
+    const late = s.call("invitations:apply", {
+      workspaceId: WS,
+      actor: MEMBERS_ACTOR,
+      name: "member.add",
+      args: add,
+      now: T,
+    });
+    expect(late.value).toEqual({ ok: true });
+    expect(late.scheduled.map((job) => job.fn)).toContain("invitations:repair");
+    expect(s.table("members").map((row) => row.id)).not.toContain(BIA);
+    const owed = s.call("invitations:owed", { workspaceId: WS }).value as { key: string }[];
+    expect(owed).toHaveLength(1);
+    // The repair read D1 before the tombstone: still owed, read again later.
+    expect(
+      s.call("invitations:settle", {
+        workspaceId: WS,
+        key: owed[0]!.key,
+        name: "member.add",
+        args: add,
+        run: true,
+      }).value,
+    ).toBe(false);
+    expect(s.table("members").map((row) => row.id)).not.toContain(BIA);
+  });
+
+  test("the daily count and a send's ledger row come from the shard's own tables", () => {
+    const s = shard();
+    expect(s.call("invitations:sentToday", { workspaceId: WS, now: T }).value).toBe(0);
+    s.call("invitations:recordSend", {
+      workspaceId: WS,
+      invitationId: "inv_x",
+      send: 1,
+      now: T,
+      origin: null,
+    });
+    expect(s.call("invitations:sentToday", { workspaceId: WS, now: T }).value).toBe(1);
+    expect(s.call("invitations:sends", { workspaceId: WS, invitationId: "inv_x" }).value).toEqual({
+      count: 1,
+      last: T,
+    });
+    expect(s.call("invitations:check", { workspaceId: "ws_other" }).value).toEqual({
+      found: false,
+      tokenBacked: false,
+    });
   });
 });

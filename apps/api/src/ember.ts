@@ -11,6 +11,7 @@ import type { Identity } from "@freecorps/ember-server";
 import schema from "../ember/schema.ts";
 import * as events from "../ember/events.ts";
 import * as local from "../ember/local.ts";
+import * as invitations from "../ember/invitations.ts";
 import * as mailer from "../ember/mailer.ts";
 import * as rest from "../ember/rest.ts";
 import * as members from "../ember/members.ts";
@@ -46,9 +47,10 @@ export async function workspaceEngine(
 }
 
 /**
- * Records that `workspaceId` is now held by `engine`. Nothing calls it outside the tests yet: the migration route that
- * will (RFC 0016 "Data migration") ships with what a switch needs first, `WorkspaceDO` forwarding the requests that
- * still reach it after `ember`, and the Ember shard's sockets revoked and its writes fenced before `brigade` again.
+ * Records that `workspaceId` is now held by `engine`. Outside the tests only a new workspace provisioned on Ember
+ * (`NEW_WORKSPACE_ENGINE`, src/ember-invitations.ts) calls it; the migration route that switches existing ones (RFC
+ * 0016 "Data migration") ships with what a switch needs first, `WorkspaceDO` forwarding the requests that still reach
+ * it after `ember`, and the Ember shard's sockets revoked and its writes fenced before `brigade` again.
  */
 export async function setWorkspaceEngine(
   db: D1Database,
@@ -141,7 +143,7 @@ workspace.setWorkspaceLimits({ monitors: instanceMonitorCap(moduleEnv as unknown
 
 export const ember = createEmberWorker({
   schema,
-  functions: { workspace, sessions, members, events, paging, mailer, local, rest },
+  functions: { workspace, sessions, members, events, paging, mailer, local, rest, invitations },
   basePath: EMBER_BASE_PATH,
   auth: brigadeEmberAuth,
 });

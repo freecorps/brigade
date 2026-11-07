@@ -74,7 +74,8 @@ function fence(db: unknown): FenceDoc | null {
     .first();
 }
 
-function bumpFence(db: unknown): void {
+/** One more member change applied: a repair holding a snapshot of D1 from before it is `stale`. */
+export function bumpFence(db: unknown): void {
   const doc = fence(db);
   if (doc) (db as FenceDb).patch(doc._id, { n: doc.n + 1 });
   else (db as FenceDb).insert("member_fence", { key: "members", n: 1 });

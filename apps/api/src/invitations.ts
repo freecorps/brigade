@@ -36,10 +36,23 @@ import {
   type Role,
 } from "@freecorps/brigade-schema";
 import { authId, WORKSPACE_LIMIT } from "./auth.ts";
-import { readRole, type Membership } from "./members.ts";
-import { LEDGER_RETENTION_MS } from "./paging.ts";
-import type { Logger, Shard } from "./shard.ts";
-import type { RowChange } from "./store.ts";
+import { readRole } from "./members.ts";
+import type { Logger } from "./shard.ts";
+import {
+  INVITATION_CLAIM_MS,
+  INVITATIONS_SCHEMA,
+  InvitationLedger,
+  type InvitationEmailPlan,
+  type InvitationShardSide,
+} from "./invitation-ledger.ts";
+
+export {
+  INVITATION_CLAIM_MS,
+  INVITATIONS_SCHEMA,
+  InvitationLedger,
+  type InvitationEmailPlan,
+  type InvitationShardSide,
+};
 
 /** An invitation as D1 has it (Better Auth's row; dates as ISO strings, as Better Auth writes them to SQLite). */
 export type InvitationRow = {
@@ -106,33 +119,8 @@ export type ListedInvitation = {
 export type Invitee = { id: string; email: string };
 
 /** One invitation email the notifier should send (`WorkspaceDO.planInvitationEmail`). */
-export type InvitationEmailPlan =
-  | { send: true; key: string; origin: string | null }
-  | { send: false; reason: "held"; until: number }
-  | { send: false; reason: "nothing" };
 
-/** How long a plan holds an invitation email for the delivery that asked (like `EMAIL_CLAIM_MS`). */
-export const INVITATION_CLAIM_MS = 60_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-const SCHEMA = `
-  create table if not exists invitation_sends (
-    key text primary key,
-    invitation_id text not null,
-    at integer not null,
-    origin text,
-    done integer not null default 0,
-    claimed_until integer not null default 0
-  ) without rowid;
-  create index if not exists invitation_sends_at on invitation_sends (at);
-  create index if not exists invitation_sends_invitation on invitation_sends (invitation_id, at);
-  create table if not exists invitation_repair (
-    key text primary key,
-    name text not null,
-    args text not null,
-    at integer not null
-  ) without rowid;
-`;
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
@@ -271,16 +259,18 @@ export class Invitations {
   constructor(
     private readonly options: {
       db: D1Database;
-      shard: Shard;
-      sql: SqlStorage;
-      membership: Membership;
       randomBytes: RandomBytes;
       log: Logger;
-      committed(version: number, changes: RowChange[]): void;
+      /** The shard's side (`InvitationLedger` in the DO). */
+      shard: InvitationShardSide;
+      /**
+       * Runs `fn` so no invitation, acceptance or member change of the workspace interleaves with it between reading
+       * D1 and writing it: the DO's member lock. Without one (Ember), D1's conditional writes are the guard: every
+       * write re-checks its condition in SQL.
+       */
+      locked<T>(fn: () => Promise<T>): Promise<T>;
     },
-  ) {
-    options.sql.exec(SCHEMA);
-  }
+  ) {}
 
   /**
    * `actorId` invites `email` (already `invitationEmail`) as `role`. `origin`: the dashboard the request came
@@ -296,10 +286,10 @@ export class Invitations {
     origin: string | null,
     token?: Actor,
   ): Promise<InvitationResult<{ invitation: ListedInvitation }>> {
-    return this.options.membership.locked(async () => {
+    return this.options.locked(async () => {
       const { db, log } = this.options;
       const now = Date.now();
-      this.prune(now);
+      await this.options.shard.prune(now);
       const actor = await this.manager(workspaceId, actorId);
       if (!actor.ok) return actor;
       if (!checkInvite(acting(actorId, actor.role, token), role).ok)
@@ -325,12 +315,15 @@ export class Invitations {
       if (found.member > 0) return { ok: false, code: "already_member" };
       if (found.same > 0) return { ok: false, code: "already_invited" };
       if (found.pending >= MAX_PENDING_INVITATIONS) return { ok: false, code: "limit_reached" };
-      if (this.sentToday(now) >= INVITATIONS_DAILY_CAP) return { ok: false, code: "rate_limited" };
+      if ((await this.options.shard.sentToday(now)) >= INVITATIONS_DAILY_CAP) {
+        return { ok: false, code: "rate_limited" };
+      }
 
       const id = authId("invitation", now, this.options.randomBytes);
       const expiresAt = now + INVITATION_TTL_MS;
       try {
-        const [, reserved] = await db.batch([
+        const sendId = newId("snd", now, this.options.randomBytes);
+        const [, reserved, inserted] = await db.batch([
           // One that ran out still holds the address's pending slot (`invitation_pending_email_idx`).
           db
             .prepare(
@@ -338,16 +331,33 @@ export class Invitations {
                where "organizationId" = ? and email = ? and status = 'pending' and "expiresAt" <= ?`,
             )
             .bind(workspaceId, email, iso(now)),
-          this.reserveSend(id, email, actorId, now, false),
-          // `changes()` is the reservation's: no invitation without its email counted.
+          this.reserveSend(workspaceId, id, email, actorId, now, false, sendId),
+          // `changes()` is the reservation's: no invitation without its email counted. The pending cap again, in the
+          // write: without the DO's member lock (Ember) two invites can pass the read above at once.
           db
             .prepare(
               `insert into invitation (id, "organizationId", email, role, status, "expiresAt", "createdAt", "inviterId")
-               select ?, ?, ?, ?, 'pending', ?, ?, ? where changes() = 1`,
+               select ?1, ?2, ?3, ?4, 'pending', ?5, ?6, ?7 where changes() = 1
+                 and (select count(*) from invitation
+                      where "organizationId" = ?2 and status = 'pending' and "expiresAt" > ?6) < ?8`,
             )
-            .bind(id, workspaceId, email, role, iso(expiresAt), iso(now), actorId),
+            .bind(
+              id,
+              workspaceId,
+              email,
+              role,
+              iso(expiresAt),
+              iso(now),
+              actorId,
+              MAX_PENDING_INVITATIONS,
+            ),
+          // No invitation: its reservation counts no send.
+          db.prepare(`delete from invitation_send where id = ? and changes() = 0`).bind(sendId),
         ]);
-        if (reserved!.meta.changes !== 1) return await this.capped(id, email, actorId, now);
+        if (reserved!.meta.changes !== 1) {
+          return await this.capped(workspaceId, id, email, actorId, now);
+        }
+        if (inserted!.meta.changes !== 1) return { ok: false, code: "limit_reached" };
       } catch (error) {
         // The unique index: another pending invitation for that address got in first (D1 edited meanwhile).
         if (String(error).includes("UNIQUE")) return { ok: false, code: "already_invited" };
@@ -363,8 +373,8 @@ export class Invitations {
         createdAt: now,
         invitedBy: { id: actorId, name: actor.name },
       };
-      this.recordSend(id, 1, now, origin);
-      const applied = this.apply(
+      await this.options.shard.recordSend(id, 1, now, origin);
+      const applied = await this.options.shard.apply(
         acting(actorId, actor.role, token),
         "invitation.create",
         { id, role, expiresAt, send: 1, invitedBy: actorId },
@@ -382,10 +392,10 @@ export class Invitations {
     origin: string | null,
     token?: Actor,
   ): Promise<InvitationResult<{ expiresAt: number }>> {
-    return this.options.membership.locked(async () => {
+    return this.options.locked(async () => {
       const { db, log } = this.options;
       const now = Date.now();
-      this.prune(now);
+      await this.options.shard.prune(now);
       const actor = await this.manager(workspaceId, actorId);
       if (!actor.ok) return actor;
       let row: InvitationRow | undefined;
@@ -401,16 +411,18 @@ export class Invitations {
       }
       if (!checkInvite(acting(actorId, actor.role, token), row.role).ok)
         return { ok: false, code: "forbidden" };
-      const sends = this.sends(invitationId);
+      const sends = await this.options.shard.sends(invitationId);
       if (sends.last !== null && now - sends.last < INVITATION_RESEND_INTERVAL_MS) {
         return { ok: false, code: "too_soon" };
       }
-      if (this.sentToday(now) >= INVITATIONS_DAILY_CAP) return { ok: false, code: "rate_limited" };
+      if ((await this.options.shard.sentToday(now)) >= INVITATIONS_DAILY_CAP) {
+        return { ok: false, code: "rate_limited" };
+      }
       const expiresAt = now + INVITATION_TTL_MS;
       const sendId = newId("snd", now, this.options.randomBytes);
       try {
         const [reserved, updated] = await db.batch([
-          this.reserveSend(invitationId, row.email, actorId, now, true, sendId),
+          this.reserveSend(workspaceId, invitationId, row.email, actorId, now, true, sendId),
           db
             .prepare(
               `update invitation set "expiresAt" = ?
@@ -421,7 +433,7 @@ export class Invitations {
           db.prepare(`delete from invitation_send where id = ? and changes() = 0`).bind(sendId),
         ]);
         if (reserved!.meta.changes !== 1) {
-          return await this.capped(invitationId, row.email, actorId, now);
+          return await this.capped(workspaceId, invitationId, row.email, actorId, now);
         }
         if (updated!.meta.changes !== 1) return { ok: false, code: "conflict" };
       } catch (error) {
@@ -440,8 +452,8 @@ export class Invitations {
       } catch (error) {
         log("invitation: counting sends failed", { error });
       }
-      this.recordSend(invitationId, send, now, origin);
-      const applied = this.apply(
+      await this.options.shard.recordSend(invitationId, send, now, origin);
+      const applied = await this.options.shard.apply(
         acting(actorId, actor.role, token),
         "invitation.create",
         { id: invitationId, role: row.role, expiresAt, send, invitedBy: actorId },
@@ -458,7 +470,7 @@ export class Invitations {
     invitationId: string,
     token?: Actor,
   ): Promise<InvitationResult> {
-    return this.options.membership.locked(async () => {
+    return this.options.locked(async () => {
       const { db, log } = this.options;
       const actor = await this.manager(workspaceId, actorId);
       if (!actor.ok) return actor;
@@ -484,7 +496,7 @@ export class Invitations {
         log("invitation: writing D1 failed", { error });
         return { ok: false, code: "unavailable" };
       }
-      return this.apply(
+      return this.options.shard.apply(
         acting(actorId, actor.role, token),
         "invitation.revoke",
         { id: invitationId, role: row.role, revokedBy: actorId },
@@ -503,7 +515,7 @@ export class Invitations {
     invitationId: string,
     invitee: Invitee,
   ): Promise<InvitationResult<{ role: Role }>> {
-    return this.options.membership.locked(async () => {
+    return this.options.locked(async () => {
       const { db, log } = this.options;
       const now = Date.now();
       const checked = await this.answerable(workspaceId, invitationId, invitee, now);
@@ -569,7 +581,7 @@ export class Invitations {
         return { ok: false, code: "unavailable" };
       }
       if (!added) return { ok: false, code: "conflict" };
-      const applied = this.apply(
+      const applied = await this.options.shard.apply(
         MEMBERS_ACTOR,
         "member.add",
         { id: invitee.id, name, role, invitationId: row.id },
@@ -581,7 +593,7 @@ export class Invitations {
 
   /** The invitee turns the invitation down (signed in with the invited address, verified, as for accepting). */
   decline(workspaceId: string, invitationId: string, invitee: Invitee): Promise<InvitationResult> {
-    return this.options.membership.locked(async () => {
+    return this.options.locked(async () => {
       const { db, log } = this.options;
       const now = Date.now();
       const checked = await this.answerable(workspaceId, invitationId, invitee, now);
@@ -596,7 +608,7 @@ export class Invitations {
         log("invitation: writing D1 failed", { error });
         return { ok: false, code: "unavailable" };
       }
-      return this.apply(
+      return this.options.shard.apply(
         MEMBERS_ACTOR,
         "invitation.decline",
         { id: invitationId, userId: invitee.id },
@@ -663,191 +675,16 @@ export class Invitations {
   }
 
   /**
-   * Runs one invitation mutation for a change D1 already has. A failure is `not_applied`, logged as an error, and
-   * the mutation is recorded for the repair alarm, which runs it as `MEMBERS_ACTOR`.
-   */
-  private apply(
-    actor: Actor,
-    name: string,
-    args: Record<string, unknown>,
-    now: number,
-  ): InvitationResult {
-    if (this.run(actor, name, args, now)) return { ok: true };
-    try {
-      this.options.sql.exec(
-        `insert into invitation_repair (key, name, args, at) values (?, ?, ?, ?)
-         on conflict (key) do update set args = excluded.args`,
-        `${name}:${String(args.id)}:${typeof args.send === "number" ? args.send : ""}`,
-        name,
-        JSON.stringify(args),
-        now,
-      );
-      this.options.membership.armRepair(now);
-    } catch (error) {
-      this.options.log("arming the invitation repair failed", { error });
-    }
-    return { ok: false, code: "not_applied" };
-  }
-
-  private run(actor: Actor, name: string, args: unknown, now: number): boolean {
-    const { shard, log } = this.options;
-    try {
-      const { result, changes } = shard.mutate({
-        clientId: "api",
-        mutationId: newId("mut", now, this.options.randomBytes),
-        actor,
-        name,
-        args,
-        now,
-        internal: true,
-      });
-      if (!result.ok) {
-        log("invitation change not applied to the shard", { name, code: result.error.code });
-        return false;
-      }
-      this.options.committed(result.version, changes);
-      return true;
-    } catch (error) {
-      log("invitation change not applied to the shard", { name, error });
-      return false;
-    }
-  }
-
-  /**
-   * The repair alarm's share, run under the member lock: runs every mutation a failed shard step left owed, as
-   * `MEMBERS_ACTOR`, oldest first. An owed `member.add` runs only while D1 still has that member: one removed (or
-   * gone) since must not be added back, nor announced after their removal; one whose arguments cannot be read is
-   * dropped (logged). True when none is left. Never throws.
-   */
-  async repair(workspaceId: string | undefined): Promise<boolean> {
-    let owed: { key: string; name: string; args: string }[];
-    try {
-      owed = this.options.sql
-        .exec<{
-          key: string;
-          name: string;
-          args: string;
-        }>("select key, name, args from invitation_repair order by at, key")
-        .toArray();
-    } catch (error) {
-      this.options.log("reading the invitation repair failed", { error });
-      return false;
-    }
-    let done = true;
-    for (const { key, name, args } of owed) {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(args);
-      } catch (error) {
-        // Nothing can ever run it: drop it rather than hold up the rest on every alarm.
-        this.options.log("invitation repair: dropping an owed mutation it cannot read", {
-          name,
-          error,
-        });
-        done = this.settleRepair(key) && done;
-        continue;
-      }
-      if (name === "member.add") {
-        // Without the workspace's id D1 cannot be asked, and "not in D1" would drop an add that is still owed:
-        // leave it for a later alarm.
-        if (workspaceId === undefined) {
-          this.options.log("invitation repair: the shard has no workspace id yet", { name });
-          done = false;
-          continue;
-        }
-        let role: string | undefined;
-        try {
-          const userId = String(Reflect.get(Object(parsed), "id"));
-          role = await readRole(this.options.db, workspaceId, userId);
-        } catch (error) {
-          this.options.log("invitation repair: reading D1 failed", { error });
-          done = false;
-          continue;
-        }
-        // Gone from D1: the removal (or the reconcile) already settled the shard. Nothing is owed any more.
-        if (role === undefined) {
-          done = this.settleRepair(key) && done;
-          continue;
-        }
-      }
-      if (!this.run(MEMBERS_ACTOR, name, parsed, Date.now())) {
-        done = false;
-        continue;
-      }
-      done = this.settleRepair(key) && done;
-    }
-    return done;
-  }
-
-  /** Forgets an owed mutation once it ran (or is no longer owed); false when that failed. */
-  private settleRepair(key: string): boolean {
-    try {
-      this.options.sql.exec("delete from invitation_repair where key = ?", key);
-      return true;
-    } catch (error) {
-      this.options.log("settling the invitation repair failed", { error });
-      return false;
-    }
-  }
-
-  /**
-   * The email `member.invited` asks for, claimed for the caller for `INVITATION_CLAIM_MS`: `held` while another
-   * delivery has it, `nothing` once it is done (or unknown: pruned, or never recorded).
-   */
-  planEmail(invitationId: string, send: number, now: number): InvitationEmailPlan {
-    const key = `${invitationId}:${send}`;
-    const { sql } = this.options;
-    const row = sql
-      .exec<{
-        done: number;
-        claimed_until: number;
-        origin: string | null;
-      }>("select done, claimed_until, origin from invitation_sends where key = ?", key)
-      .toArray()[0];
-    if (!row || row.done) return { send: false, reason: "nothing" };
-    if (row.claimed_until > now) return { send: false, reason: "held", until: row.claimed_until };
-    sql.exec(
-      "update invitation_sends set claimed_until = ? where key = ?",
-      now + INVITATION_CLAIM_MS,
-      key,
-    );
-    return { send: true, key, origin: row.origin };
-  }
-
-  /** What the email's send did: `done` (sent, or given up) ends it; otherwise the claim goes, for the retry. */
-  recordEmail(key: string, done: boolean): void {
-    this.options.sql.exec(
-      done
-        ? "update invitation_sends set done = 1, claimed_until = 0 where key = ?"
-        : "update invitation_sends set claimed_until = 0 where key = ?",
-      key,
-    );
-  }
-
-  private recordSend(invitationId: string, send: number, now: number, origin: string | null): void {
-    try {
-      this.options.sql.exec(
-        `insert into invitation_sends (key, invitation_id, at, origin) values (?, ?, ?, ?)
-         on conflict (key) do nothing`,
-        `${invitationId}:${send}`,
-        invitationId,
-        now,
-        origin,
-      );
-    } catch (error) {
-      // Without its row the email is not sent (`planEmail` finds nothing); the dashboard's Resend is the way back.
-      this.options.log("recording an invitation send failed", { error });
-    }
-  }
-
-  /**
    * Counts one more email of `invitationId` in D1's `invitation_send`, only while the caps that span workspaces all
    * have room: `INVITATIONS_PER_ADDRESS_DAILY_CAP` for `email` (its `invitationAddressKey`, which is what the row's
    * `email` holds, so `+tags` share one count), `INVITATIONS_PER_INVITER_DAILY_CAP` for `inviterId`
-   * and `INVITATION_MAX_SENDS` for the invitation (and, with `pending`, only while it is still pending). One
-   * statement, so D1 decides it atomically whichever shards are inviting at once.
+   * and `INVITATION_MAX_SENDS` for the invitation (and, with `pending`, only while it is still pending), and the
+   * workspace's own: `INVITATIONS_DAILY_CAP`, and with `pending` `INVITATION_RESEND_INTERVAL_MS`, which the shard
+   * checked already but cannot hold without the DO's member lock (Ember). One statement, so D1 decides it atomically
+   * whichever shards are inviting at once.
    */
   private reserveSend(
+    workspaceId: string,
     invitationId: string,
     email: string,
     inviterId: string,
@@ -862,7 +699,11 @@ export class Invitations {
          where (select count(*) from invitation_send where email = ?3 and at > ?6) < ?7
            and (select count(*) from invitation_send where "inviterId" = ?4 and at > ?6) < ?8
            and (select count(*) from invitation_send where "invitationId" = ?2) < ?9
-           and (?10 = 0 or exists (select 1 from invitation where id = ?2 and status = 'pending'))`,
+           and (?10 = 0 or exists (select 1 from invitation where id = ?2 and status = 'pending'))
+           and (select count(*) from invitation_send s join invitation i on i.id = s."invitationId"
+                where i."organizationId" = ?11 and s.at > ?6) < ?12
+           and (?10 = 0 or not exists
+                (select 1 from invitation_send where "invitationId" = ?2 and at > ?13))`,
       )
       .bind(
         id,
@@ -875,11 +716,15 @@ export class Invitations {
         INVITATIONS_PER_INVITER_DAILY_CAP,
         INVITATION_MAX_SENDS,
         pending ? 1 : 0,
+        workspaceId,
+        INVITATIONS_DAILY_CAP,
+        now - INVITATION_RESEND_INTERVAL_MS,
       );
   }
 
   /** Which cap refused a `reserveSend` (read again after it); `conflict` when none did (no longer pending). */
   private async capped(
+    workspaceId: string,
     invitationId: string,
     email: string,
     inviterId: string,
@@ -890,10 +735,26 @@ export class Invitations {
         `select
            (select count(*) from invitation_send where email = ?1 and at > ?4) as address,
            (select count(*) from invitation_send where "inviterId" = ?2 and at > ?4) as inviter,
-           (select count(*) from invitation_send where "invitationId" = ?3) as sends`,
+           (select count(*) from invitation_send where "invitationId" = ?3) as sends,
+           (select count(*) from invitation_send s join invitation i on i.id = s."invitationId"
+            where i."organizationId" = ?5 and s.at > ?4) as workspace,
+           (select max(at) from invitation_send where "invitationId" = ?3) as last`,
       )
-      .bind(invitationAddressKey(email), inviterId, invitationId, now - DAY_MS)
-      .first<{ address: number; inviter: number; sends: number }>();
+      .bind(invitationAddressKey(email), inviterId, invitationId, now - DAY_MS, workspaceId)
+      .first<{
+        address: number;
+        inviter: number;
+        sends: number;
+        workspace: number;
+        last: number | null;
+      }>();
+    // The shard's checks before D1, again here: without the DO's member lock (Ember) two calls can pass them at once.
+    if (counts?.last != null && now - counts.last < INVITATION_RESEND_INTERVAL_MS) {
+      return { ok: false, code: "too_soon" };
+    }
+    if (counts && counts.workspace >= INVITATIONS_DAILY_CAP) {
+      return { ok: false, code: "rate_limited" };
+    }
     if (counts && counts.sends >= INVITATION_MAX_SENDS) return { ok: false, code: "send_limit" };
     if (counts && counts.address >= INVITATIONS_PER_ADDRESS_DAILY_CAP) {
       return { ok: false, code: "address_limited" };
@@ -919,38 +780,6 @@ export class Invitations {
         .run();
     } catch (error) {
       this.options.log("pruning the invitation sends failed", { error });
-    }
-  }
-
-  /** Invitation emails asked for in the last day, for `INVITATIONS_DAILY_CAP`. */
-  private sentToday(now: number): number {
-    return this.options.sql
-      .exec<{ sends: number }>(
-        "select count(*) as sends from invitation_sends where at > ?",
-        now - DAY_MS,
-      )
-      .one().sends;
-  }
-
-  /** How many emails one invitation asked for, and when the last one was. */
-  private sends(invitationId: string): { count: number; last: number | null } {
-    return this.options.sql
-      .exec<{
-        count: number;
-        last: number | null;
-      }>(
-        "select count(*) as count, max(at) as last from invitation_sends where invitation_id = ?",
-        invitationId,
-      )
-      .one();
-  }
-
-  private prune(now: number): void {
-    try {
-      // Long past any retry and the daily cap.
-      this.options.sql.exec("delete from invitation_sends where at < ?", now - LEDGER_RETENTION_MS);
-    } catch (error) {
-      this.options.log("pruning the invitation ledger failed", { error });
     }
   }
 }

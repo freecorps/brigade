@@ -140,6 +140,9 @@ function run(
       onError: (error, mutation) => console.error("mutation failed", { mutation, error }),
     },
   );
+  // A rollback the store could not replay left rows half undone: fail the whole Ember mutation (`EmberStore`).
+  const failure = store.undoFailure();
+  if (failure) throw failure.error;
   if (committing && !outcome.ok)
     throw new Error(`${String(name)}: its events could not be written`);
   return outcome.ok ? { ok: true } : { ok: false, error: outcome.error };

@@ -205,6 +205,22 @@ describe("createEmberStore", () => {
     });
   });
 
+  test("a range already read is not read again, and never reads the rest of the table", () => {
+    // 100 rows, a 30-row read limit: a range of 10 read 50 times, or a whole-table read, would go past it.
+    const { tx } = shard({ rowsRead: 30 });
+    tx((store) => {
+      for (let i = 0; i < 100; i++) store.insert("notes", note(`n${String(i).padStart(2, "0")}`));
+    });
+    const ids = tx((store) => {
+      for (let i = 0; i < 50; i++) {
+        store.range("notes", "n10", "n20");
+        store.range("notes", "n12", "n15");
+      }
+      return store.range("notes", "n12", "n15").map((r) => r.id);
+    });
+    expect(ids).toEqual(["n12", "n13", "n14"]);
+  });
+
   test("each table is read from Ember once per call, so repeated scans stay under Ember's read limit", () => {
     // 50 rows, a 200-row read limit: 100 scans and 100 lookups would read 10,050 rows without the store's cache.
     const { tx } = shard({ rowsRead: 200 });

@@ -68,7 +68,10 @@ export function createEmberStore<S extends Tables>(
   // What this call has read and written, per table: a row's document (null: known absent), and whether the whole
   // table is held. Brigade's mutations scan tables and look rows up again and again; Ember counts every row read
   // against its per-transaction limit (16,384), so each table is read from Ember at most once per call.
-  const cache = new Map<string, { rows: Map<string, Held | null>; complete: boolean }>();
+  const cache = new Map<
+    string,
+    { rows: Map<string, Held | null>; complete: boolean; ranges: [string, string][] }
+  >();
 
   const checked = (table: string): string => {
     if (tables && !tables.has(table)) throw new Error(`Unknown table ${table}`);
@@ -76,7 +79,7 @@ export function createEmberStore<S extends Tables>(
   };
   const held = (table: string) => {
     let entry = cache.get(table);
-    if (!entry) cache.set(table, (entry = { rows: new Map(), complete: false }));
+    if (!entry) cache.set(table, (entry = { rows: new Map(), complete: false, ranges: [] }));
     return entry;
   };
   const lookup = (table: string, id: string): Held | null => {
@@ -181,7 +184,12 @@ export function createEmberStore<S extends Tables>(
     },
     range(table, from, to) {
       const entry = held(checked(table));
-      if (!entry.complete) {
+      // A range is read through the index, not the whole table (`range` exists so a large table such as `timeline`
+      // is never scanned), and each range at most once: one already read, or inside one, comes from what is held.
+      // Bounds compare as Ember's index does (encoded bytes), which agrees with code units on every id in use (ASCII),
+      // as SQLite's byte order does for the Durable Object's store.
+      const covered = entry.complete || entry.ranges.some(([lo, hi]) => lo <= from && to <= hi);
+      if (!covered) {
         fill(
           table,
           db
@@ -189,6 +197,7 @@ export function createEmberStore<S extends Tables>(
             .withIndex(EMBER_ROW_INDEX, (q) => q.gte("id", from).lt("id", to))
             .collect(),
         );
+        entry.ranges.push([from, to]);
       }
       // Rows held from earlier reads and writes are the current ones; those outside the range are left out here.
       const inRange = [...entry.rows].filter(([id]) => id >= from && id < to).map(([, doc]) => doc);

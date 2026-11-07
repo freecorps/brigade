@@ -4,6 +4,7 @@ import { env, exports } from "cloudflare:workers";
 import { newId } from "@freecorps/brigade-schema";
 import { describe, expect, test } from "vite-plus/test";
 import {
+  EMBER_BODY_MAX,
   setWorkspaceEngine,
   verifyIdentity,
   workspaceEngine,
@@ -141,6 +142,38 @@ describe("the Ember auth hook", () => {
   });
 });
 
+describe("the Ember auth hook on an API token", () => {
+  test("follows its D1 row and its creator's role now", async () => {
+    const { userId, workspaceId } = await owner();
+    const now = Date.now();
+    const id = newId("tok", now, (n) => crypto.getRandomValues(new Uint8Array(n)));
+    await env.DB.prepare(
+      `insert into api_token (id, workspace_id, hash, name, created_by, scopes, created_at)
+       values (?, ?, ?, 'CI', ?, '["incident:read"]', ?)`,
+    )
+      .bind(id, workspaceId, `hash-${id}`, userId, now)
+      .run();
+    const token = (await mintEmberToken(
+      SECRET,
+      { sub: id, ws: workspaceId, role: "viewer", kind: "token" },
+      now,
+    ))!.token;
+    expect(await verifyIdentity(env, token)).toMatchObject({
+      subject: id,
+      claims: { role: "owner", kind: "token", ws: workspaceId },
+    });
+    // Minted for another workspace's token id: no row there.
+    const elsewhere = (await mintEmberToken(
+      SECRET,
+      { sub: id, ws: "ws_other", role: "owner", kind: "token" },
+      now,
+    ))!.token;
+    expect(await verifyIdentity(env, elsewhere)).toBeNull();
+    await env.DB.prepare(`update api_token set revoked_at = ? where id = ?`).bind(now, id).run();
+    expect(await verifyIdentity(env, token)).toBeNull();
+  });
+});
+
 describe("/ember", () => {
   test("serves nothing for a workspace still on WorkspaceDO, and mints it no token", async () => {
     const { cookie, workspaceId } = await owner();
@@ -160,6 +193,15 @@ describe("/ember", () => {
       headers: { Upgrade: "websocket" },
     });
     expect(socket.status).toBe(404);
+  });
+
+  test("refuses an HTTP call's body past the limit before reading the rest", async () => {
+    const { workspaceId } = await owner();
+    const big = await api("/ember/api/query", {
+      method: "POST",
+      body: JSON.stringify({ shard: workspaceShard(workspaceId), pad: "x".repeat(EMBER_BODY_MAX) }),
+    });
+    expect(big.status).toBe(413);
   });
 
   test("never serves the runtime's admin, storage or action paths", async () => {

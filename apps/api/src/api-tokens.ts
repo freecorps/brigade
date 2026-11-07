@@ -271,7 +271,7 @@ function remember(hash: string, token: TokenRow, now: number): void {
 }
 
 /** One of the token's requests on `API_TOKEN_LIMIT`; true when there was one left, or the limiter failed (fail open). */
-async function withinLimit(limiter: RateLimit, tokenId: string): Promise<boolean> {
+export async function withinLimit(limiter: RateLimit, tokenId: string): Promise<boolean> {
   try {
     const { success } = await limiter.limit({ key: tokenId });
     return success;

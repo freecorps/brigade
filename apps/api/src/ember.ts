@@ -10,7 +10,10 @@ import { createEmberWorker, type EmberAuthHook } from "@freecorps/ember-runtime"
 import type { Identity } from "@freecorps/ember-server";
 import schema from "../ember/schema.ts";
 import * as workspace from "../ember/workspace.ts";
+import type { Role } from "@freecorps/brigade-schema";
 import { memberRole, resolveActor } from "./actor.ts";
+import { withinLimit } from "./api-tokens.ts";
+import { readBounded } from "./body.ts";
 import type { Auth } from "./auth.ts";
 import { mintEmberToken, verifyEmberToken } from "./ember-token.ts";
 import { json } from "./member-route.ts";
@@ -35,7 +38,11 @@ export async function workspaceEngine(
   return row?.engine === "ember" ? "ember" : "brigade";
 }
 
-/** Records that `workspaceId` is now held by `engine`. */
+/**
+ * Records that `workspaceId` is now held by `engine`. Nothing calls it outside the tests yet: the migration route that
+ * will (RFC 0016 "Data migration") ships with what a switch needs first, `WorkspaceDO` forwarding the requests that
+ * still reach it after `ember`, and the Ember shard's sockets revoked and its writes fenced before `brigade` again.
+ */
 export async function setWorkspaceEngine(
   db: D1Database,
   workspaceId: string,
@@ -57,10 +64,12 @@ export const workspaceShard = (workspaceId: string) => `workspace:${workspaceId}
 type EmberAuthEnv = { DB: D1Database; BETTER_AUTH_SECRET: string };
 
 /**
- * The identity for `token` (RFC 0016 "Auth"), or null: a token this instance minted, unexpired, whose session is still
- * in D1 (a member's token always names one) and whose member is still in the workspace in D1. A member's role is D1's at this moment, so a
- * demotion holds from the socket's next refresh; an API token keeps its creator's role from the mint, and the shard
- * checks the token's own row (revoked, expired, scopes) on every call (ember/workspace.ts `actorOf`).
+ * The identity for `token` (RFC 0016 "Auth"), or null: a token this instance minted and unexpired, whose subject D1
+ * still backs. A member's: their session is still in D1 (a member's token always names one) and they are still in the
+ * workspace, with D1's role at this moment, so a demotion holds from the socket's next refresh. An API token's: its
+ * row is in D1 for this workspace, neither revoked nor expired, and its creator is still a member, with the creator's
+ * role now. The shard checks the token's own copy (scopes, revocation) on every call too (ember/workspace.ts
+ * `actorOf`).
  */
 export async function verifyIdentity(
   env: EmberAuthEnv,
@@ -69,8 +78,17 @@ export async function verifyIdentity(
 ): Promise<Identity | null> {
   const claims = await verifyEmberToken(env.BETTER_AUTH_SECRET, token, now);
   if (!claims) return null;
-  let role = claims.role;
-  if (claims.kind !== "token") {
+  let role: Role | undefined;
+  if (claims.kind === "token") {
+    const row = await env.DB.prepare(
+      `select created_by as createdBy, expires_at as expiresAt from api_token
+       where id = ? and workspace_id = ? and revoked_at is null limit 1`,
+    )
+      .bind(claims.sub, claims.ws)
+      .first<{ createdBy: string; expiresAt: number | null }>();
+    if (!row || (row.expiresAt !== null && row.expiresAt <= now)) return null;
+    role = await memberRole(env.DB, claims.ws, row.createdBy);
+  } else {
     // The session must still be in D1: a sign-out, a password reset or a takeover deletes its row (`session_end` is
     // only a queue of the shard work left after that, and is emptied once done, so it cannot say a session ended).
     if (claims.sid === undefined) return null;
@@ -80,10 +98,9 @@ export async function verifyIdentity(
       .bind(claims.sid, claims.sub)
       .first();
     if (!session) return null;
-    const current = await memberRole(env.DB, claims.ws, claims.sub);
-    if (current === undefined) return null;
-    role = current;
+    role = await memberRole(env.DB, claims.ws, claims.sub);
   }
+  if (role === undefined) return null;
   return {
     subject: claims.sub,
     iat: claims.iat,
@@ -123,17 +140,14 @@ const SERVED = new Set([
   `${EMBER_BASE_PATH}/api/mutation`,
 ]);
 
-/** The workspace a request to the runtime is for: `?shard=` on the socket, the body's `shard` on an HTTP call. */
-async function requestedWorkspace(request: Request, url: URL): Promise<string | undefined> {
-  let shard: unknown;
-  if (url.pathname === `${EMBER_BASE_PATH}/ws`) shard = url.searchParams.get("shard");
-  else {
-    try {
-      shard = ((await request.clone().json()) as { shard?: unknown } | null)?.shard;
-    } catch {
-      return undefined;
-    }
-  }
+/**
+ * The most an HTTP call's body may hold: a Brigade mutation's arguments are a few kilobytes, and the shard is read from
+ * the body before anything checks the caller, so the Worker never buffers more than this for anyone.
+ */
+export const EMBER_BODY_MAX = 256 * 1024;
+
+/** The workspace `shard` names (`workspace:<id>`), or undefined. */
+function shardWorkspace(shard: unknown): string | undefined {
   if (typeof shard !== "string" || !shard.startsWith("workspace:")) return undefined;
   const id = shard.slice("workspace:".length);
   return WORKSPACE_ID.test(id) ? id : undefined;
@@ -150,11 +164,38 @@ export async function serveEmber(
 ): Promise<Response> {
   const url = new URL(request.url);
   if (!SERVED.has(url.pathname)) return json({ error: "not_found" }, 404);
-  const workspaceId = await requestedWorkspace(request, url);
-  if (workspaceId === undefined || (await workspaceEngine(env.DB, workspaceId)) !== "ember") {
-    return json({ error: "not_found" }, 404);
+  const notFound = () => json({ error: "not_found" }, 404);
+  if (url.pathname === `${EMBER_BASE_PATH}/ws`) {
+    const workspaceId = shardWorkspace(url.searchParams.get("shard"));
+    if (workspaceId === undefined || (await workspaceEngine(env.DB, workspaceId)) !== "ember") {
+      return notFound();
+    }
+    return ember.fetch(request, env as never, ctx);
   }
-  return ember.fetch(request, env as never, ctx);
+  if (request.method !== "POST")
+    return json({ error: "method_not_allowed" }, 405, { Allow: "POST" });
+  const body = await readBounded(request, EMBER_BODY_MAX);
+  if (body === undefined) return json({ error: "payload_too_large" }, 413);
+  let shard: unknown;
+  try {
+    shard = (JSON.parse(body) as { shard?: unknown } | null)?.shard;
+  } catch {
+    return notFound();
+  }
+  const workspaceId = shardWorkspace(shard);
+  if (workspaceId === undefined || (await workspaceEngine(env.DB, workspaceId)) !== "ember") {
+    return notFound();
+  }
+  // An API token's HTTP calls spend its per-token budget (RFC 0014), as its REST calls do. A socket's frames do not:
+  // a socket is one exchange, as a Brigade Sync socket is today.
+  const bearer = /^Bearer (.+)$/.exec(request.headers.get("Authorization") ?? "")?.[1];
+  if (bearer !== undefined) {
+    const claims = await verifyEmberToken(env.BETTER_AUTH_SECRET, bearer, Date.now());
+    if (claims?.kind === "token" && !(await withinLimit(env.API_TOKEN_LIMIT, claims.sub))) {
+      return json({ error: "rate_limited" }, 429, { "Retry-After": "60" });
+    }
+  }
+  return ember.fetch(new Request(request, { method: "POST", body }), env as never, ctx);
 }
 
 /**
@@ -177,7 +218,11 @@ export async function issueEmberToken(
     return json({ error: "not_on_ember" }, 409);
   }
   const { actor } = resolved;
-  // The dev actor (local runs only) has no session; neither does an API token, whose row the shard checks.
+  // A member's token names their session, which the hook checks in D1; only the dev actor (local runs) has none,
+  // and it is not a member D1 backs, so it gets no token rather than one every call would refuse.
+  if (actor.kind !== "token" && resolved.sessionId === undefined) {
+    return json({ error: "unauthenticated" }, 401);
+  }
   const minted = await mintEmberToken(
     env.BETTER_AUTH_SECRET,
     {

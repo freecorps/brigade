@@ -245,15 +245,19 @@ refreshes 30 s ahead); a session already past its expiry gets no token.
   (`authExpired`); so the worst case after a revocation is the token's 5 minutes, and only when the close below fails.
 - **Session end.** Better Auth's session-delete hook, which today asks each of the user's shards to close the
   session's sockets (`WorkspaceDO.endSession`), calls the Ember shard instead: it closes every socket whose identity
-  carries that `sid` (gap G8), with the same 3 tries and `session_end` sweep as today.
+  carries that `sid` (gap G8), with the same 3 tries and `session_end` sweep as today. A password reset and a member
+  removal close the same way (by user id). An expired session ends an Ember socket at its token's `exp`, which is
+  never later than the session's expiry.
 - **Old apps on the adapter.** An app version that only speaks Brigade Sync sends no JWT: its upgrade is
   authenticated by the Worker from the session cookie, as today, and the Worker passes the session id and expiry to
   the adapter (`Brigade-Session`, `Brigade-Session-Expires`, RFC 0004). The adapter checks `session_end` and the
   member at the upgrade, gives the socket an identity carrying the same `sid` and an expiry equal to the session's,
-  and refuses an upgrade carrying a session it was told ended. So the session-end close above, a password reset and
-  a member removal reach adapter sockets by the same `sid` and user id, and one still open closes at the session's
-  expiry; no socket, adapter or Ember, outlives its session. A password reset and a member
-  removal close the same way (by user id). An expired session is the token's own expiry.
+  and refuses an upgrade carrying a session it was told ended. Adapter sockets have no token to refresh, so the
+  adapter gives each one the same 5-minute bound itself: it checks the socket's session and member in D1 again every
+  5 minutes and before every mutation it runs, and closes the socket (`1012`, as RFC 0004 does) when the session
+  ended or the member is gone. Once G8 exists the session-end close above reaches adapter sockets at once by the same
+  `sid` and user id; until then the bound is those 5 minutes. An adapter socket still open closes at the session's
+  expiry. No socket, adapter or Ember, outlives its session by more than 5 minutes, or at all once G8 is in.
 - **Sensitive mutations** (removing a member, changing a role, acknowledging from a notification) also check the
   session in D1 at the moment they run, as today.
 
@@ -307,10 +311,13 @@ Per workspace, in the shard that owns it, never as a bulk job:
    writes (`503 migrating`), records the high-water mark of its change log, and copies back to `WorkspaceDO` every
    change up to it in **everything step 2 copied**: rows, counters (so an `INC-n` is never reused), devices, delivery
    rows, members and pending escalation timers. It checks counts and a hash per table, then, in the same turn of the
-   Ember shard, **cancels its scheduler jobs for the workspace** (they now live as `WorkspaceDO` timers) and keeps its
-   fence as a `forwarded` mark, as `WorkspaceDO` did after step 3: from then on it forwards to `WorkspaceDO` or refuses,
-   and runs nothing. Only then does `engine` flip back and the fence on `WorkspaceDO` lift, so one store runs each
-   timer and no escalation or page goes out twice. A write that commits after the mark cannot exist, because the fence
+   Ember shard, **cancels its scheduler jobs for the workspace** (they now live as `WorkspaceDO` timers) and stays
+   fenced: it answers `503 migrating` (retried by the sender) and runs nothing. Then D1's `engine` flips back,
+   `WorkspaceDO` drops its `forwarded` mark and takes requests again, and only after that does the Ember shard turn its
+   fence into a `forwarded` mark toward `WorkspaceDO`. So the two never forward to each other: while one forwards, the
+   other is either the owner or answering `503`. As a guard, a forwarded request carries `Brigade-Forwarded: 1`, and a
+   shard that would forward it again answers `503` instead, so no request ever takes more than one hop. One store runs
+   each timer and no escalation or page goes out twice. A write that commits after the mark cannot exist, because the fence
    came first. After the window the old storage is deleted by a later PR.
 
 Freecorps' own workspaces go first, on `dev`, then `staging`, then production. Code ships by continuous delivery

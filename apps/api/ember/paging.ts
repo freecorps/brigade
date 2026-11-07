@@ -22,6 +22,9 @@ import { emberWorkspace } from "./shard-facade.ts";
 
 const TICK = "paging:tick";
 
+/** How long an overdue tick is waited for before another is scheduled in its place. */
+export const TICK_LEASE_MS = 60 * 1000;
+
 const log = (message: string, fields: Record<string, unknown>) =>
   console.error(JSON.stringify({ message, ...fields }));
 
@@ -32,7 +35,9 @@ const log = (message: string, fields: Record<string, unknown>) =>
 function tickAt(ctx: MutationCtx, at: number): void {
   const when = Math.max(ctx.now, at);
   const [row] = ctx.sql.exec("select at from ember_ticks where key = 'paging'") as { at: number }[];
-  if (row && row.at <= when && row.at >= ctx.now) return;
+  // An overdue tick is still queued (the scheduler runs late, never skips): keep it. One overdue past the lease is
+  // taken for lost (its run threw) and replaced, so the pager never stops ticking.
+  if (row && row.at <= when && row.at >= ctx.now - TICK_LEASE_MS) return;
   ctx.sql.exec(
     "insert into ember_ticks (key, at) values ('paging', ?) on conflict (key) do update set at = excluded.at",
     when,

@@ -221,4 +221,26 @@ describe("paging on Ember", () => {
         .map((row) => row.kind),
     ).toContain("page_failed");
   });
+
+  test("an overdue tick is waited for, and replaced once it looks lost", () => {
+    const s = shard();
+    const phone = s.device(BIA, 1);
+    const { incident, event } = s.declare();
+    s.call("paging:plan", { event });
+    s.call("paging:record", {
+      event,
+      outcomes: [{ deviceId: phone, userId: BIA, ok: true }],
+      final: true,
+    });
+    s.mutate("incident.setSeverity", { id: incident, severity: "sev3" });
+    const ticks = (out: { scheduled: { fn: string }[] }) =>
+      out.scheduled.filter((job) => job.fn === "paging:tick").length;
+    expect(ticks(s.call("paging:plan", { event: another(event, 9) }))).toBe(1);
+    // Its time came and it has not run yet: still queued, nothing new.
+    s.tick(PAGE_HOLD_MS + 1000);
+    expect(ticks(s.call("paging:plan", { event: another(event, 10) }))).toBe(0);
+    // Long past its time: taken for lost, another goes in.
+    s.tick(paging.TICK_LEASE_MS);
+    expect(ticks(s.call("paging:plan", { event: another(event, 11) }))).toBe(1);
+  });
 });

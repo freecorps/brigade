@@ -21,6 +21,8 @@ import {
   DRAIN_BATCH,
   DRAIN_BATCH_BYTES,
   DRAIN_BATCHES_PER_RUN,
+  DRAIN_RETRY_FIRST_MS,
+  DRAIN_RETRY_MAX_MS,
   DRAIN_SEND_TIMEOUT_MS,
   MAX_EVENT_BYTES,
   type BrigadeEvent,
@@ -161,37 +163,65 @@ export const sent = internalMutationGeneric({
   },
 });
 
-/** Sends up to `DRAIN_BATCHES_PER_RUN` batches to `EVENTS`; a failed send throws, so Ember retries the action. */
+/**
+ * Sends up to `DRAIN_BATCHES_PER_RUN` batches to `EVENTS`. A failed send (the Queue's error, or no answer within
+ * `DRAIN_SEND_TIMEOUT_MS`) never ends delivery: the drain keeps its mark fresh and schedules itself again with
+ * exponential backoff, `DRAIN_RETRY_FIRST_MS` up to `DRAIN_RETRY_MAX_MS`, as `OutboxDrain` backs off on the DO.
+ */
 export const drain = internalActionGeneric({
-  args: {},
-  handler: async (ctx): Promise<number> => {
-    const queue = ctx.env.EVENTS as Queue<BrigadeEvent>;
-    let count = 0;
-    for (let batch = 0; batch < DRAIN_BATCHES_PER_RUN; batch++) {
-      const next = (await ctx.runQuery(PENDING, {})) as Batch | null;
-      if (next === null) {
-        await ctx.runMutation(SENT, { lastSeq: 0, more: false });
-        return count;
-      }
-      if (next.dropped.length > 0) {
-        console.error(
-          JSON.stringify({ message: "event too large or unreadable, dropped", ids: next.dropped }),
-        );
-      }
-      if (next.bodies.length > 0) {
-        // Bounded as on the DO: a Queue that never answers must not hold the shard's alarm. A timeout throws, and
-        // Ember retries the drain; the batch stays until a send resolves.
-        await within(
-          queue.sendBatch(next.bodies.map((body) => ({ body, contentType: "json" as const }))),
-          DRAIN_SEND_TIMEOUT_MS,
-          "sendBatch",
-        );
-      }
-      count += next.bodies.length;
-      const last = batch === DRAIN_BATCHES_PER_RUN - 1;
-      const left = (await ctx.runMutation(SENT, { lastSeq: next.lastSeq, more: !last })) as boolean;
-      if (!left) return count;
+  args: { attempt: v.optional(v.number()) },
+  handler: async (ctx, { attempt = 0 }: { attempt?: number }): Promise<number> => {
+    try {
+      return await drainOnce(ctx);
+    } catch (error) {
+      const delay = Math.min(DRAIN_RETRY_MAX_MS, DRAIN_RETRY_FIRST_MS * 2 ** attempt);
+      console.error(
+        JSON.stringify({
+          message: "sending a workspace's events failed; trying again",
+          attempt: attempt + 1,
+          retryInMs: delay,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      // Fresh mark (deletes nothing): the next event does not start a second drain beside this one.
+      await ctx.runMutation(SENT, { lastSeq: 0, more: true });
+      await ctx.scheduler.runAfter(delay, DRAIN, { attempt: attempt + 1 });
+      return 0;
     }
-    return count;
   },
 });
+
+/** One run of the drain; throws when a send failed (the rows stay). */
+async function drainOnce(ctx: {
+  env: Record<string, unknown>;
+  runQuery(ref: unknown, args: unknown): Promise<unknown>;
+  runMutation(ref: unknown, args: unknown): Promise<unknown>;
+}): Promise<number> {
+  const queue = ctx.env.EVENTS as Queue<BrigadeEvent>;
+  let count = 0;
+  for (let batch = 0; batch < DRAIN_BATCHES_PER_RUN; batch++) {
+    const next = (await ctx.runQuery(PENDING, {})) as Batch | null;
+    if (next === null) {
+      await ctx.runMutation(SENT, { lastSeq: 0, more: false });
+      return count;
+    }
+    if (next.dropped.length > 0) {
+      console.error(
+        JSON.stringify({ message: "event too large or unreadable, dropped", ids: next.dropped }),
+      );
+    }
+    if (next.bodies.length > 0) {
+      // Bounded as on the DO: a Queue that never answers must not hold the shard's alarm.
+      await within(
+        queue.sendBatch(next.bodies.map((body) => ({ body, contentType: "json" as const }))),
+        DRAIN_SEND_TIMEOUT_MS,
+        "sendBatch",
+      );
+    }
+    count += next.bodies.length;
+    const last = batch === DRAIN_BATCHES_PER_RUN - 1;
+    const left = (await ctx.runMutation(SENT, { lastSeq: next.lastSeq, more: !last })) as boolean;
+    if (!left) return count;
+  }
+  return count;
+}

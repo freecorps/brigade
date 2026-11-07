@@ -33,10 +33,11 @@ const log = (message: string, fields: Record<string, unknown>) =>
  * the many calls that each want one leave a single job.
  */
 function tickAt(ctx: MutationCtx, at: number): void {
-  const when = Math.max(ctx.now, at);
   const [row] = ctx.sql.exec("select at from ember_ticks where key = 'paging'") as { at: number }[];
   // An overdue tick is still queued (the scheduler runs late, never skips): keep it. One overdue past the lease is
-  // taken for lost (its run threw) and replaced, so the pager never stops ticking.
+  // taken for lost (its run threw) and replaced at once, since its work is due already.
+  if (row && row.at < ctx.now - TICK_LEASE_MS) at = ctx.now;
+  const when = Math.max(ctx.now, at);
   if (row && row.at <= when && row.at >= ctx.now - TICK_LEASE_MS) return;
   ctx.sql.exec(
     "insert into ember_ticks (key, at) values ('paging', ?) on conflict (key) do update set at = excluded.at",

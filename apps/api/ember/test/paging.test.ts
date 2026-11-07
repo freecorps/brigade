@@ -241,6 +241,7 @@ describe("paging on Ember", () => {
     expect(ticks(s.call("paging:plan", { event: another(event, 10) }))).toBe(0);
     // Long past its time: taken for lost, another goes in.
     s.tick(paging.TICK_LEASE_MS);
-    expect(ticks(s.call("paging:plan", { event: another(event, 11) }))).toBe(1);
+    const replaced = s.call("paging:plan", { event: another(event, 11) }).scheduled;
+    expect(replaced.filter((job) => job.fn === "paging:tick")).toMatchObject([{ runAt: s.now() }]);
   });
 });

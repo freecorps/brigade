@@ -169,6 +169,24 @@ describe("the Ember auth hook on an API token", () => {
       now,
     ))!.token;
     expect(await verifyIdentity(env, elsewhere)).toBeNull();
+    // The creator left and came back: their membership is newer than the token, which stays dead, as on REST.
+    const since = await env.DB.prepare(
+      `select "createdAt" from member where "organizationId" = ? and "userId" = ?`,
+    )
+      .bind(workspaceId, userId)
+      .first<{ createdAt: unknown }>();
+    await env.DB.prepare(
+      `update member set "createdAt" = ? where "organizationId" = ? and "userId" = ?`,
+    )
+      .bind(new Date(now + 1000).toISOString(), workspaceId, userId)
+      .run();
+    expect(await verifyIdentity(env, token)).toBeNull();
+    await env.DB.prepare(
+      `update member set "createdAt" = ? where "organizationId" = ? and "userId" = ?`,
+    )
+      .bind(since?.createdAt, workspaceId, userId)
+      .run();
+    expect(await verifyIdentity(env, token)).not.toBeNull();
     await env.DB.prepare(`update api_token set revoked_at = ? where id = ?`).bind(now, id).run();
     expect(await verifyIdentity(env, token)).toBeNull();
   });

@@ -244,9 +244,9 @@ async function migrate(
  * The token's creator as D1 has them now: a member of its workspace with a Brigade role, whose membership is older
  * than the token (one who left, or was removed, and came back does not revive it). Undefined otherwise.
  */
-async function creatorNow(
+export async function creatorNow(
   db: D1Database,
-  token: TokenRow,
+  token: Pick<TokenRow, "workspaceId" | "createdBy" | "createdAt">,
 ): Promise<{ role: Role; emailVerified: boolean } | undefined> {
   const row = await db
     .prepare(

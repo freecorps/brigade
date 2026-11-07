@@ -12,7 +12,7 @@ import schema from "../ember/schema.ts";
 import * as workspace from "../ember/workspace.ts";
 import type { Role } from "@freecorps/brigade-schema";
 import { memberRole, resolveActor } from "./actor.ts";
-import { withinLimit } from "./api-tokens.ts";
+import { creatorNow, withinLimit } from "./api-tokens.ts";
 import { readBounded } from "./body.ts";
 import type { Auth } from "./auth.ts";
 import { mintEmberToken, verifyEmberToken } from "./ember-token.ts";
@@ -67,8 +67,8 @@ type EmberAuthEnv = { DB: D1Database; BETTER_AUTH_SECRET: string };
  * The identity for `token` (RFC 0016 "Auth"), or null: a token this instance minted and unexpired, whose subject D1
  * still backs. A member's: their session is still in D1 (a member's token always names one) and they are still in the
  * workspace, with D1's role at this moment, so a demotion holds from the socket's next refresh. An API token's: its
- * row is in D1 for this workspace, neither revoked nor expired, and its creator is still a member, with the creator's
- * role now. The shard checks the token's own copy (scopes, revocation) on every call too (ember/workspace.ts
+ * row is in D1 for this workspace, neither revoked nor expired, and its creator is still a member since before it
+ * (`creatorNow`, as on REST), with the creator's role now. The shard checks the token's own copy (scopes, revocation) on every call too (ember/workspace.ts
  * `actorOf`).
  */
 export async function verifyIdentity(
@@ -81,13 +81,15 @@ export async function verifyIdentity(
   let role: Role | undefined;
   if (claims.kind === "token") {
     const row = await env.DB.prepare(
-      `select created_by as createdBy, expires_at as expiresAt from api_token
+      `select created_by as createdBy, created_at as createdAt, expires_at as expiresAt from api_token
        where id = ? and workspace_id = ? and revoked_at is null limit 1`,
     )
       .bind(claims.sub, claims.ws)
-      .first<{ createdBy: string; expiresAt: number | null }>();
+      .first<{ createdBy: string; createdAt: number; expiresAt: number | null }>();
     if (!row || (row.expiresAt !== null && row.expiresAt <= now)) return null;
-    role = await memberRole(env.DB, claims.ws, row.createdBy);
+    // As on REST (`resolveBearer`): the creator's role now, and a membership newer than the token (they left and came
+    // back) does not revive it.
+    role = (await creatorNow(env.DB, { ...row, workspaceId: claims.ws }))?.role;
   } else {
     // The session must still be in D1: a sign-out, a password reset or a takeover deletes its row (`session_end` is
     // only a queue of the shard work left after that, and is emptied once done, so it cannot say a session ended).

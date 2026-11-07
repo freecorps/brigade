@@ -25,11 +25,13 @@ import {
   runQuery,
   serverMutations,
   isRole,
+  ROLES,
   type Actor,
   type BrigadeTables,
   type DomainEvent,
   type MutationError,
   type QueryResult,
+  type Role,
   type Store,
 } from "@freecorps/brigade-schema";
 import type { BrigadeEvent } from "../src/outbox.ts";
@@ -48,8 +50,19 @@ export type MutateResult = { ok: true } | { ok: false; error: MutationError };
 export const TOKEN_KIND = "token";
 
 /**
- * Who `identity` is: a member with the role its claims carry, or an API token, whose scopes and validity come from its
- * row in this shard (a revoked or expired token is no one). Undefined: not someone who may act here.
+ * The lower of `role` and the shard's copy of `memberId` (`members`, kept by `member.sync`, `member.changeRole`, …), as
+ * `WorkspaceDO.tokenActor` does: a demotion the shard already ran holds at once, not only once the token's claims
+ * catch up (up to 5 minutes). A member without a copy yet keeps the claim's role: their first `member.sync` writes it.
+ */
+function lowered(store: Pick<Store<BrigadeTables>, "get">, memberId: string, role: Role): Role {
+  const copy = store.get("members", memberId);
+  return copy && ROLES.indexOf(copy.role) > ROLES.indexOf(role) ? copy.role : role;
+}
+
+/**
+ * Who `identity` is: a member with the role its claims carry, lowered to the shard's copy, or an API token, whose
+ * scopes and validity come from its row in this shard (a revoked or expired token is no one) and whose role is its
+ * creator's, lowered the same way. Undefined: not someone who may act here.
  */
 export function actorOf(
   identity: Identity | null,
@@ -62,9 +75,29 @@ export function actorOf(
     const token = store.get("api_tokens", identity.subject);
     if (!token || token.revokedAt !== null) return undefined;
     if (token.expiresAt !== null && token.expiresAt <= now) return undefined;
-    return { kind: "token", id: token.id, role, by: token.createdBy, scopes: token.scopes };
+    const creator = token.createdBy;
+    return {
+      kind: "token",
+      id: token.id,
+      role: lowered(store, creator, role),
+      by: creator,
+      scopes: token.scopes,
+    };
   }
-  return { kind: "user", id: identity.subject, role };
+  return { kind: "user", id: identity.subject, role: lowered(store, identity.subject, role) };
+}
+
+/** What `MutationContext.limits` carries: the instance's caps, from the API's env (`instanceMonitorCap`). */
+export type WorkspaceLimits = { monitors?: number };
+let instanceLimits: WorkspaceLimits | undefined;
+
+/**
+ * Sets the instance's caps for every mutation this isolate runs, as `WorkspaceDO` passes them from its env today:
+ * Ember mutations have no `env`, so the Worker's entry calls this once with `instanceMonitorCap(env)` before serving.
+ * Unset, mutations use packages/schema's defaults (`MAX_MONITORS_PER_WORKSPACE`).
+ */
+export function setWorkspaceLimits(limits: WorkspaceLimits | undefined): void {
+  instanceLimits = limits;
 }
 
 const notMember = (): MutateResult => ({
@@ -143,8 +176,9 @@ function run(
   // A rollback the store could not replay left rows half undone: fail the whole Ember mutation (`EmberStore`).
   const failure = store.undoFailure();
   if (failure) throw failure.error;
-  if (committing && !outcome.ok)
-    throw new Error(`${String(name)}: its events could not be written`);
+  if (committing && !outcome.ok) {
+    throw new Error(`${String(name)}: its events could not be written`, { cause: outcome.error });
+  }
   return outcome.ok ? { ok: true } : { ok: false, error: outcome.error };
 }
 
@@ -157,7 +191,14 @@ export const mutate = mutationGeneric({
   args: { name: v.string(), args: v.any() },
   handler: (ctx: MutationCtx, { name, args }: { name: string; args: unknown }) => {
     const identity = ctx.auth.getUserIdentity();
-    return run(ctx, mutations, name, args, (store) => actorOf(identity, store, ctx.now));
+    return run(
+      ctx,
+      mutations,
+      name,
+      args,
+      (store) => actorOf(identity, store, ctx.now),
+      instanceLimits,
+    );
   },
 });
 
@@ -184,8 +225,11 @@ export const serverMutate = internalMutationGeneric({
     limits: v.optional(v.object({ monitors: v.optional(v.number()) })),
   },
   handler: (ctx, input) => {
-    // The API's own code built this actor; a role or scope it got wrong is a bug, refused rather than run.
-    if (!isRole(input.actor.role)) throw new Error(`Not a Brigade role: ${input.actor.role}`);
+    // The API's own code built this actor; a role it got wrong is a bug, refused rather than run.
+    if (!isRole(input.actor.role)) {
+      const message = `Not a Brigade role: ${input.actor.role}`;
+      return { ok: false, error: { code: "forbidden", message } } satisfies MutateResult;
+    }
     const actor = input.actor as Actor;
     return run(
       ctx as MutationCtx,
@@ -193,7 +237,7 @@ export const serverMutate = internalMutationGeneric({
       input.name,
       input.args,
       () => actor,
-      input.limits,
+      input.limits ?? instanceLimits,
     );
   },
 });

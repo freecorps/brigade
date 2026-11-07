@@ -202,10 +202,10 @@ which the adapter ("Clients") needs anyway.
 - **Actor and RBAC.** The handler resolves the actor from `ctx.auth` and calls `runMutation`/`runQuery` with
   Brigade's `can(role, permission)` check, exactly as the shard does today. A member's role is the identity's `role`
   claim: D1's, as the auth hook checked it at admission and again on every token refresh ("Auth"), so at most 5
-  minutes old, where a socket today keeps the role its upgrade read from D1 for as long as it lives. (The shard's
+  minutes old, lowered to the shard's member copy as `WorkspaceDO.tokenActor` does, so a demotion the shard ran holds at once. (The shard's
   member row cannot be the source: a member's first `member.sync` runs before it exists, and the row is a copy of
   D1.) An API token's identity carries `kind: "token"` and its creator's role; its scopes, revocation and expiry come
-  from its `api_tokens` row in the shard. System actors exist only through `serverMutate`.
+  from its `api_tokens` row in the shard. System actors exist only through `serverMutate`. The instance's caps (`MAX_MONITORS`) reach mutations through `setWorkspaceLimits`, called once by the Worker's entry, since Ember mutations have no `env`.
 - **Results are values.** `{ ok: true }` or `{ ok: false, error }` with Brigade's `MutationError` (`forbidden`,
   `conflict`, `invalid_args` with its issues, …), not thrown errors: Ember's wire carries a thrown error's code and
   message only, and a refused mutation has already written nothing (the store's undo log).

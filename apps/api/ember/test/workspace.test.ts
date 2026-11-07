@@ -125,6 +125,64 @@ describe("a workspace on Ember", () => {
     });
   });
 
+  test("a demotion the shard ran holds at once, before the identity's role claim catches up", () => {
+    const s = shard();
+    const id = newId("inc", T, (n) => new Uint8Array(n).fill(1));
+    expect(
+      s.server(
+        "member.sync",
+        { id: "usr_bia", name: "Bia", role: "viewer" },
+        { kind: "user", id: "usr_bia", role: "viewer" },
+      ),
+    ).toEqual({ ok: true });
+    // Bia's token still says responder (minted before the change): the shard's copy says viewer.
+    expect(
+      s.mutate(user("usr_bia", "responder"), "incident.declare", { id, title: "x" }),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "forbidden" },
+    });
+    // A claim lower than the copy is kept: the claim is D1's, and D1 is the truth.
+    expect(s.mutate(user(OWNER, "viewer"), "incident.declare", { id, title: "x" })).toMatchObject({
+      ok: false,
+      error: { code: "forbidden" },
+    });
+  });
+
+  test("the instance's monitor cap applies to clients' mutations too", () => {
+    const s = shard();
+    const tcp = (fill: number) => ({
+      id: newId("mon", T, (n) => new Uint8Array(n).fill(fill)),
+      name: `Database ${fill}`,
+      host: "db.example.com",
+      port: 5432,
+      intervalSeconds: 60,
+      timeoutSeconds: 10,
+      regions: ["weur"],
+    });
+    workspace.setWorkspaceLimits({ monitors: 1 });
+    try {
+      expect(s.mutate(user(OWNER, "owner"), "monitor.createTcp", tcp(1))).toEqual({ ok: true });
+      expect(s.mutate(user(OWNER, "owner"), "monitor.createTcp", tcp(2))).toMatchObject({
+        ok: false,
+        error: { code: "limit_reached" },
+      });
+    } finally {
+      workspace.setWorkspaceLimits(undefined);
+    }
+  });
+
+  test("a server actor without a Brigade role is refused, not run", () => {
+    const s = shard();
+    expect(
+      s.server(
+        "workspace.create",
+        { id: WS, name: "x" },
+        { kind: "system", id: "sys_x", role: "root" as never },
+      ),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+  });
+
   test("server-only mutations are not reachable from a client", () => {
     const s = shard();
     expect(

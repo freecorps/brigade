@@ -145,6 +145,9 @@ export function emberPager(env: EmberPagingEnv, workspaceId: string): WorkspaceP
   };
 }
 
+/** How many times a member check overtaken by a member change reads D1 again before the page goes without it. */
+const STALE_ATTEMPTS = 3;
+
 /** Per isolate, as the DO keeps it in memory: no member check before this time after one failed or was late. */
 const checkAfter = new Map<string, number>();
 
@@ -170,18 +173,19 @@ export async function freshMembers(
   const check = (async (): Promise<"ok" | "stale"> => {
     const at = (await call(env, workspaceId, "query", "members:reconciledAt", {})) as number | null;
     if (at !== null && now - at < MEMBER_STALE_MS) return "ok";
-    const again = await repairOnce(
-      {
-        env: env as unknown as Record<string, unknown>,
-        runQuery: (ref, args) =>
-          call(env, workspaceId, "query", getFunctionName(ref as never), args),
-        runMutation: (ref, args) =>
-          call(env, workspaceId, "mutation", getFunctionName(ref as never), args),
-      },
-      { workspaceId },
-    );
-    // A retry delay: a member change came in between and the snapshot was refused; not checked.
-    return again === null ? "ok" : "stale";
+    const ctx = {
+      env: env as unknown as Record<string, unknown>,
+      runQuery: (ref: unknown, args: unknown) =>
+        call(env, workspaceId, "query", getFunctionName(ref as never), args),
+      runMutation: (ref: unknown, args: unknown) =>
+        call(env, workspaceId, "mutation", getFunctionName(ref as never), args),
+    };
+    // A retry delay answers a snapshot a member change overtook: read D1 again at once, within the budget (the race
+    // below), up to `STALE_ATTEMPTS` times; still overtaken, it is not checked.
+    for (let attempt = 0; attempt < STALE_ATTEMPTS; attempt++) {
+      if ((await repairOnce(ctx, { workspaceId })) === null) return "ok";
+    }
+    return "stale";
   })().catch((error: unknown) => error);
   const outcome = await Promise.race([check, late]).finally(() => clearTimeout(timer));
   if (outcome === "ok") return true;

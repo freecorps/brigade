@@ -248,7 +248,7 @@ describe("paging on Ember", () => {
     ).toHaveLength(0);
 
     s.tick(PAGE_HOLD_MS - 60_000);
-    expect(s.call("paging:tick", {}).value).toEqual({ released: 0, replayed: 0 });
+    expect(s.call("paging:tick", {}).value).toMatchObject({ released: 0, replayed: 0 });
     s.tick(60_001);
     expect(s.call("paging:tick", {}).value).toMatchObject({ released: 1 });
     expect(s.outbox().filter((e) => e.type === "notification.released")).toMatchObject([

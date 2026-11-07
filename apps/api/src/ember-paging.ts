@@ -1,18 +1,21 @@
-// The queue consumer's calls into a workspace's shard for a page (RFC 0005 "Notifiers", RFC 0016 "Parity"), sent to
-// whichever engine holds it: its `WorkspaceDO`, or its Ember shard (ember/paging.ts) once D1's `workspace_engine`
-// says `ember`. The Ember side does what `WorkspaceDO.planPage`, `recordPage` and `recordDeadLetter` do, with the
-// member check before a page (`Membership.fresh`) run from here, since it reads D1.
+// The queue consumer's calls into a workspace's shard for a page and its emails (RFC 0005 "Notifiers", RFC 0016
+// "Parity"), sent to whichever engine holds it: its `WorkspaceDO`, or its Ember shard (ember/paging.ts,
+// ember/mailer.ts) once D1's `workspace_engine` says `ember`. The Ember side does what `WorkspaceDO.planPage`,
+// `recordPage`, `recordDeadLetter` and the email plans and records do, with the member check before a page
+// (`Membership.fresh`) run from here, since it reads D1.
 //
 // Not yet on Ember (RFC 0016 "Parity"): delivery receipts (a page there goes out without them, as the DO's does when
 // minting fails, and only its delivered stage stays unknown) and the page the shard sends itself when the Queue is
-// late (`pageLocally`).
+// late (`pageLocally`). The acknowledge route reaches `paging:acknowledge` itself (src/index.ts).
 
+import type { EmailAbout } from "@freecorps/brigade-schema";
 import { getFunctionName } from "@freecorps/ember-server";
 import { repairOnce } from "../ember/members.ts";
 import { workspaceEngine, workspaceShard, type WorkspaceEngine } from "./ember.ts";
 import { MEMBER_CHECK_BACKOFF_MS, MEMBER_CHECK_BUDGET_MS, MEMBER_STALE_MS } from "./members.ts";
 import type { PageShard } from "./notify.ts";
 import type { BrigadeEvent } from "./outbox.ts";
+import type { EmailOutcome, EmailPlan, ReminderPlan, RotationPlan } from "./mailer.ts";
 import type { DeadLetterResult, PagePlan } from "./paging.ts";
 
 type Outcome =
@@ -30,9 +33,26 @@ type EmberShardRpc = {
   query(s: string, fn: string, args: unknown, identity: null, internal: boolean): Promise<Outcome>;
 };
 
-/** A page's shard: `PageShard` and the dead-letter consumer's call. */
+type Maybe<T> = Promise<T> | T;
+
+/**
+ * What the queue consumer calls on a workspace's shard: a page (`PageShard`), the dead-letter consumer's record, and
+ * the emails (src/notify-email.ts, notify-reminder.ts, notify-rotation.ts), with `WorkspaceDO`'s signatures.
+ */
 export type WorkspacePager = PageShard & {
-  recordDeadLetter(event: BrigadeEvent): Promise<DeadLetterResult> | DeadLetterResult;
+  recordDeadLetter(event: BrigadeEvent): Maybe<DeadLetterResult>;
+  planEmail(event: BrigadeEvent): Maybe<EmailPlan>;
+  recordEmail(
+    event: BrigadeEvent,
+    key: string,
+    about: EmailAbout,
+    outcomes: EmailOutcome[],
+    final: boolean,
+  ): Maybe<void>;
+  planReminder(event: BrigadeEvent): Maybe<ReminderPlan>;
+  recordReminder(event: BrigadeEvent, outcome: EmailOutcome, final: boolean): Maybe<void>;
+  planRotationEmail(event: BrigadeEvent): Maybe<RotationPlan>;
+  recordRotationEmail(event: BrigadeEvent, outcomes: EmailOutcome[], final: boolean): Maybe<void>;
 };
 
 export type PagingEnv = {
@@ -97,6 +117,15 @@ export function workspacePager(env: PagingEnv, workspaceId: string): WorkspacePa
     recordPage: async (event, outcomes, final, skipped) =>
       (await pick()).recordPage(event, outcomes, final, skipped),
     recordDeadLetter: async (event) => (await pick()).recordDeadLetter(event),
+    planEmail: async (event) => (await pick()).planEmail(event),
+    recordEmail: async (event, key, about, outcomes, final) =>
+      (await pick()).recordEmail(event, key, about, outcomes, final),
+    planReminder: async (event) => (await pick()).planReminder(event),
+    recordReminder: async (event, outcome, final) =>
+      (await pick()).recordReminder(event, outcome, final),
+    planRotationEmail: async (event) => (await pick()).planRotationEmail(event),
+    recordRotationEmail: async (event, outcomes, final) =>
+      (await pick()).recordRotationEmail(event, outcomes, final),
   };
 }
 
@@ -145,6 +174,31 @@ export function emberPager(env: EmberPagingEnv, workspaceId: string): WorkspaceP
       return (await call(env, workspaceId, "mutation", "paging:deadLettered", {
         event,
       })) as DeadLetterResult;
+    },
+    planEmail: async (event) =>
+      (await call(env, workspaceId, "mutation", "mailer:plan", { event })) as EmailPlan,
+    async recordEmail(event, key, about, outcomes, final) {
+      await call(env, workspaceId, "mutation", "mailer:record", {
+        event,
+        key,
+        about,
+        outcomes,
+        final,
+      });
+    },
+    planReminder: async (event) =>
+      (await call(env, workspaceId, "mutation", "mailer:planReminder", { event })) as ReminderPlan,
+    async recordReminder(event, outcome, final) {
+      await call(env, workspaceId, "mutation", "mailer:recordReminder", { event, outcome, final });
+    },
+    planRotationEmail: async (event) =>
+      (await call(env, workspaceId, "mutation", "mailer:planRotation", { event })) as RotationPlan,
+    async recordRotationEmail(event, outcomes, final) {
+      await call(env, workspaceId, "mutation", "mailer:recordRotation", {
+        event,
+        outcomes,
+        final,
+      });
     },
   };
 }

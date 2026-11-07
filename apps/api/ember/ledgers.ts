@@ -1,7 +1,8 @@
-// The ledgers `WorkspaceDO`'s orchestrators keep in SQL (page deliveries, holds, replays, stored mutation results),
+// The ledgers `WorkspaceDO`'s orchestrators keep in SQL (page deliveries, holds, replays, emails, stored mutation results),
 // as Ember's app-private SQL tables (G9): declared by ember/schema.ts, used through ember/shard-facade.ts. A module of
 // its own, so the schema can import it without the functions.
 
+import { MAILER_SCHEMA } from "../src/mailer.ts";
 import { PAGING_SCHEMA } from "../src/paging.ts";
 
 const RESULTS_SCHEMA = `
@@ -30,6 +31,7 @@ const TICKS_SCHEMA = `create table if not exists ember_ticks (key text primary k
 export const LEDGER_DDL: string[] = [
   ...statements(RESULTS_SCHEMA),
   ...statements(PAGING_SCHEMA),
+  ...statements(MAILER_SCHEMA),
   TICKS_SCHEMA,
 ];
 export const LEDGER_TABLES: string[] = [

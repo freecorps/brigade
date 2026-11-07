@@ -37,6 +37,7 @@ import {
 } from "@freecorps/brigade-schema";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { nextSeq, scheduleDrain } from "./events.ts";
+import { armUpkeep } from "./ticks.ts";
 import { BRIGADE_TABLES } from "./schema.ts";
 
 const TABLE_SET: ReadonlySet<string> = new Set(BRIGADE_TABLES);
@@ -142,7 +143,15 @@ export function run(
   /** A store the caller reads through too (ember/shard-facade.ts), so its reads see this mutation's writes. */
   shared?: EmberStore<BrigadeTables>,
 ): MutateResult {
-  const store = shared ?? createEmberStore<BrigadeTables>(ctx.db as never, TABLE_SET);
+  const base = shared ?? createEmberStore<BrigadeTables>(ctx.db as never, TABLE_SET);
+  // The tables this mutation writes: a committed one that moved an escalation timer or a reminder arms the tick.
+  const written = new Set<string>();
+  const store: EmberStore<BrigadeTables> = {
+    ...base,
+    insert: (table, row) => (written.add(table), base.insert(table, row)),
+    update: (table, id, patch) => (written.add(table), base.update(table, id, patch)),
+    delete: (table, id) => (written.add(table), base.delete(table, id)),
+  };
   const who = actor(store);
   if (!who) return notMember();
   const randomBytes = bytesFrom(() => ctx.random());
@@ -194,6 +203,7 @@ export function run(
   }
   // The events go out after this transaction commits (ember/events.ts).
   if (seq.seq !== undefined) scheduleDrain(ctx);
+  if (outcome.ok) armUpkeep(ctx, base, written);
   return outcome.ok ? { ok: true } : { ok: false, error: outcome.error };
 }
 

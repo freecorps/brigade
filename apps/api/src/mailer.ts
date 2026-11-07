@@ -60,7 +60,7 @@ export const ROTATION_USER_DAILY_CAP = 20;
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
-const SCHEMA = `
+export const MAILER_SCHEMA = `
   create table if not exists email_sends (
     key text not null,
     user_id text not null,
@@ -238,7 +238,7 @@ export function asksForEmail(event: BrigadeEvent): boolean {
 
 export class Mailer {
   constructor(private readonly options: MailerOptions) {
-    options.storage.sql.exec(SCHEMA);
+    options.storage.sql.exec(MAILER_SCHEMA);
   }
 
   /**

@@ -45,7 +45,7 @@ export type MutateResult = { ok: true } | { ok: false; error: MutationError };
  * The claims Brigade's auth hook puts on an identity (RFC 0016 "Auth"): `role`, the member's role in this workspace as
  * D1 holds it, checked when the socket is admitted and again on every token refresh (at most 5 minutes old, as the
  * role a socket's upgrade read from D1 is today); for an API token (RFC 0014) also `kind: "token"`, the subject being
- * the token id (`tok_…`) and `role` its creator's.
+ * the token id (`tok_…`) and `role` its creator's; and `ws`, the workspace the token is for (src/ember-token.ts).
  */
 export const TOKEN_KIND = "token";
 
@@ -66,11 +66,15 @@ function lowered(store: Pick<Store<BrigadeTables>, "get">, memberId: string, rol
  */
 export function actorOf(
   identity: Identity | null,
-  store: Pick<Store<BrigadeTables>, "get">,
+  store: Pick<Store<BrigadeTables>, "get" | "scan">,
   now: number,
 ): Actor | undefined {
   const role = identity?.claims?.role;
   if (!identity || !isRole(role)) return undefined;
+  // A token names the one workspace it is for (`ws`): one for another workspace, or a shard holding none yet (not
+  // migrated), is no one here, whatever role it carries.
+  const ws = workspaceId(store);
+  if (ws === undefined || identity.claims?.ws !== ws) return undefined;
   if (identity.claims?.kind === TOKEN_KIND) {
     const token = store.get("api_tokens", identity.subject);
     if (!token || token.revokedAt !== null) return undefined;
@@ -115,7 +119,7 @@ const bytesFrom =
   };
 
 /** The workspace this shard holds: its one `workspace` row, written when the workspace is provisioned. */
-function workspaceId(store: Store<BrigadeTables>): string | undefined {
+function workspaceId(store: Pick<Store<BrigadeTables>, "scan">): string | undefined {
   return store.scan("workspace")[0]?.id;
 }
 

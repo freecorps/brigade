@@ -1,0 +1,214 @@
+// Ember inside the API Worker (RFC 0016, src/ember.ts): the token, the auth hook's D1 checks, and `/ember` serving a
+// workspace only once D1 says its engine is `ember`.
+import { env, exports } from "cloudflare:workers";
+import { newId } from "@freecorps/brigade-schema";
+import { describe, expect, test } from "vite-plus/test";
+import {
+  setWorkspaceEngine,
+  verifyIdentity,
+  workspaceEngine,
+  workspaceShard,
+} from "../src/ember.ts";
+import { EMBER_TOKEN_TTL_S, mintEmberToken, verifyEmberToken } from "../src/ember-token.ts";
+import { sessionCookie } from "./session.ts";
+
+const ORIGIN = "http://api.test";
+const PASSWORD = "correct horse battery staple";
+const SECRET = env.BETTER_AUTH_SECRET;
+
+let people = 0;
+let clients = 0;
+const clientIp = () => `198.51.${Math.floor(++clients / 250) % 250}.${(clients % 250) + 1}`;
+
+const api = (
+  path: string,
+  init: { method?: string; body?: string; headers?: Record<string, string> } = {},
+) =>
+  exports.default.fetch(`${ORIGIN}${path}`, {
+    ...init,
+    headers: {
+      Origin: ORIGIN,
+      "Content-Type": "application/json",
+      "cf-connecting-ip": clientIp(),
+      ...init.headers,
+    },
+  });
+
+/** A signed-in owner of a new workspace. */
+async function owner() {
+  const address = `ember-${++people}@example.com`;
+  const signedUp = await api("/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({ name: "Ana", email: address, password: PASSWORD }),
+  });
+  expect(signedUp.status).toBe(200);
+  const { user } = (await signedUp.json()) as { user: { id: string } };
+  const cookie = await sessionCookie(address, PASSWORD);
+  const created = await api("/workspaces", {
+    method: "POST",
+    headers: { Cookie: cookie },
+    body: JSON.stringify({ name: "Acme" }),
+  });
+  expect(created.status).toBe(201);
+  const { id } = (await created.json()) as { id: string };
+  return { userId: user.id, cookie, workspaceId: id };
+}
+
+type Outcome = { ok: boolean; value?: unknown; error?: unknown };
+
+/** Provisions the workspace's Ember shard as the migration will: the workspace row and its owner's member copy. */
+async function provision(workspaceId: string, userId: string) {
+  const shard = env.SHARD.getByName(workspaceShard(workspaceId)) as unknown as {
+    mutation(
+      shard: string,
+      fn: string,
+      args: unknown,
+      identity: null,
+      internal: boolean,
+    ): Promise<Outcome>;
+  };
+  const actor = { kind: "user", id: userId, role: "owner" };
+  for (const [name, args] of [
+    ["workspace.create", { id: workspaceId, name: "Acme" }],
+    ["member.sync", { id: userId, name: "Ana", role: "owner" }],
+  ] as const) {
+    const out = await shard.mutation(
+      workspaceShard(workspaceId),
+      "workspace:serverMutate",
+      { name, args, actor },
+      null,
+      true,
+    );
+    expect(out).toMatchObject({ ok: true, value: { ok: true } });
+  }
+}
+
+describe("Ember tokens", () => {
+  test("verify what was minted, and nothing tampered with or expired", async () => {
+    const now = Date.UTC(2026, 10, 7);
+    const claims = { sub: "usr_a", ws: "ws_a", role: "owner" as const, sid: "ses_a" };
+    const minted = await mintEmberToken(SECRET, claims, now);
+    expect(minted?.expiresAt).toBe(now + EMBER_TOKEN_TTL_S * 1000);
+    expect(await verifyEmberToken(SECRET, minted!.token, now)).toMatchObject(claims);
+    const [head, body, signature] = minted!.token.split(".");
+    const forged = btoa(JSON.stringify({ ...claims, role: "owner", ws: "ws_b" })).replace(
+      /=+$/,
+      "",
+    );
+    expect(await verifyEmberToken(SECRET, `${head}.${forged}.${signature}`, now)).toBeUndefined();
+    expect(await verifyEmberToken("another secret", minted!.token, now)).toBeUndefined();
+    expect(await verifyEmberToken(SECRET, `${head}.${body}`, now)).toBeUndefined();
+    expect(
+      await verifyEmberToken(SECRET, minted!.token, now + EMBER_TOKEN_TTL_S * 1000),
+    ).toBeUndefined();
+  });
+
+  test("never outlive their session, and a session past its expiry gets none", async () => {
+    const now = Date.UTC(2026, 10, 7);
+    const claims = { sub: "usr_a", ws: "ws_a", role: "owner" as const };
+    expect((await mintEmberToken(SECRET, claims, now, now + 60_000))?.expiresAt).toBe(now + 60_000);
+    expect(await mintEmberToken(SECRET, claims, now, now)).toBeUndefined();
+  });
+});
+
+describe("the Ember auth hook", () => {
+  test("takes the role from D1, and refuses a member gone or a session ended", async () => {
+    const { userId, workspaceId } = await owner();
+    const now = Date.now();
+    const mint = async (sub: string, sid?: string) =>
+      (await mintEmberToken(
+        SECRET,
+        { sub, ws: workspaceId, role: "viewer", ...(sid ? { sid } : {}) },
+        now,
+      ))!.token;
+    // The claim said viewer; D1 says owner, and D1 is the truth.
+    expect(await verifyIdentity(env, await mint(userId, "ses_1"))).toMatchObject({
+      subject: userId,
+      claims: { role: "owner", ws: workspaceId, sid: "ses_1" },
+    });
+    expect(await verifyIdentity(env, await mint("usr_nobody"))).toBeNull();
+    await env.DB.prepare(
+      `insert into session_end ("workspaceId", "sessionId", "userId", "endedAt") values (?, ?, ?, ?)`,
+    )
+      .bind(workspaceId, "ses_1", userId, now)
+      .run();
+    expect(await verifyIdentity(env, await mint(userId, "ses_1"))).toBeNull();
+    expect(await verifyIdentity(env, "not a token")).toBeNull();
+  });
+});
+
+describe("/ember", () => {
+  test("serves nothing for a workspace still on WorkspaceDO, and mints it no token", async () => {
+    const { cookie, workspaceId } = await owner();
+    expect(await workspaceEngine(env.DB, workspaceId)).toBe("brigade");
+    const token = await api(`/ember-token/${workspaceId}`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    expect(token.status).toBe(409);
+    expect(await token.json()).toEqual({ error: "not_on_ember" });
+    const query = await api("/ember/api/query", {
+      method: "POST",
+      body: JSON.stringify({ fn: "workspace:query", args: {}, shard: workspaceShard(workspaceId) }),
+    });
+    expect(query.status).toBe(404);
+    const socket = await api(`/ember/ws?shard=${workspaceShard(workspaceId)}`, {
+      headers: { Upgrade: "websocket" },
+    });
+    expect(socket.status).toBe(404);
+  });
+
+  test("never serves the runtime's admin, storage or action paths", async () => {
+    for (const path of [
+      "/ember/api/_ember/env",
+      "/ember/api/storage/x",
+      "/ember/api/action",
+      "/ember/health",
+    ]) {
+      expect((await api(path, { method: "POST", body: "{}" })).status).toBe(404);
+    }
+  });
+
+  test("once a workspace is on Ember, a member's token runs its mutations and queries there", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+
+    const minted = await api(`/ember-token/${workspaceId}`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    expect(minted.status).toBe(200);
+    const { token, shard } = (await minted.json()) as { token: string; shard: string };
+    expect(shard).toBe(workspaceShard(workspaceId));
+    const call = (kind: "query" | "mutation", fn: string, args: unknown, bearer = token) =>
+      api(`/ember/api/${kind}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${bearer}` },
+        body: JSON.stringify({ fn, args, shard }),
+      });
+
+    const id = newId("inc", Date.now(), (n) => crypto.getRandomValues(new Uint8Array(n)));
+    const declared = await call("mutation", "workspace:mutate", {
+      name: "incident.declare",
+      args: { id, title: "Checkout is down", severity: "sev1" },
+    });
+    expect(await declared.json()).toMatchObject({ ok: true, value: { ok: true } });
+    const listed = await call("query", "workspace:query", { name: "incidents.active", args: {} });
+    const body = (await listed.json()) as { ok: true; value: { ok: true; rows: { id: string }[] } };
+    expect(body.value.rows.map((row) => row.id)).toEqual([id]);
+
+    // The internal server mutation is not callable with a client's token.
+    const server = await call("mutation", "workspace:serverMutate", {
+      name: "workspace.create",
+      args: { id: workspaceId, name: "x" },
+      actor: { kind: "system", id: "sys", role: "owner" },
+    });
+    expect(server.status).toBe(400);
+    // A forged token is refused before the shard.
+    expect(
+      (await call("query", "workspace:query", { name: "incidents.active", args: {} }, "x.y.z"))
+        .status,
+    ).toBe(401);
+  });
+});

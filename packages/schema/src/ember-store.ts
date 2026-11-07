@@ -79,7 +79,8 @@ export function createEmberStore<S extends Tables>(
   let depth = 0;
   // What this call has read and written, per table: a row's document (null: known absent), and whether the whole
   // table is held. Brigade's mutations scan tables and look rows up again and again; Ember counts every row read
-  // against its per-transaction limit (16,384), so each table is read from Ember at most once per call.
+  // against its per-transaction limit (16,384), so a scanned table, a row or an id range is read from Ember once per call (a range that only partly
+  // overlaps one already read is read again).
   const cache = new Map<
     string,
     { rows: Map<string, Held | null>; complete: boolean; ranges: [string, string][] }

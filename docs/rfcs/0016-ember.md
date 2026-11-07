@@ -184,8 +184,9 @@ framework-light.
   `internal` result).
 - **Ember's read limit.** Ember refuses a transaction that reads more than 16,384 rows, and Brigade's mutations scan
   tables and look rows up again and again (an `alert.ingest` of 50 alerts in a workspace with a few hundred alerts
-  went past it). The store holds what one call has read and written, so a table is read from Ember at most once per
-  mutation or query; that keeps every mutation of today's suite under the limit. A workspace with more than 16,384
+  went past it). The store holds what one call has read and written, so in one mutation or query a scanned table is
+  read from Ember once, a row once, and an id range once (a range inside one already read is not read again; one
+  that only partly overlaps it is); that keeps every mutation of today's suite under the limit. A workspace with more than 16,384
   rows in a table some mutation scans needs that mutation's reads narrowed to an index first.
 - **Tested on both stores.** `packages/schema`'s tests run twice: as they are, and with `createMemoryStore` backed by
   a real Ember shard engine (`vite.ember.config.ts`, on `node:sqlite`), so every mutation and query test runs its

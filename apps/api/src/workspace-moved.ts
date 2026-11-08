@@ -62,6 +62,8 @@ export async function forward(
   const kind = FORWARDED[name];
   if (kind === "ack") {
     const [ws, actor, incidentId, mutationId] = args as [string, Actor, string, string];
+    // As the DO answers for another workspace's call.
+    if (ws !== workspaceId) return { ok: false, code: "not_found" } satisfies AckResult;
     return emberMutation<AckResult>(env, workspaceId, "paging:acknowledge", {
       workspaceId: ws,
       actor,

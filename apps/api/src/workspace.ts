@@ -2693,11 +2693,13 @@ export class WorkspaceDO extends DurableObject<Env> {
    * The switch to Ember for this workspace (RFC 0016 "Data migration", step 3), after its copy: from now on this
    * object runs nothing of its own (no alarm work but draining the outbox, no sockets, no writes) and forwards what
    * still reaches it to the Ember shard (`WHEN_MOVED`). Its sockets close (`1012`), so the apps reconnect through the
-   * Worker to the Brigade Sync adapter. `not_found` for a shard that serves another workspace.
+   * Worker to the Brigade Sync adapter. `not_found` for a shard that serves another workspace, or none.
    */
   async moveToEmber(workspaceId: string): Promise<{ ok: true } | { ok: false; code: "not_found" }> {
-    const held = this.shard.workspace();
-    if (held !== undefined && held !== workspaceId) return { ok: false, code: "not_found" };
+    // Only the workspace this object holds, and only one: a shard that serves none, or another, has nothing to move.
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    if (this.moved !== undefined && this.moved !== workspaceId)
+      return { ok: false, code: "not_found" };
     this.ctx.storage.sql.exec(
       "insert into moved_to_ember (workspace_id, at) values (?, ?) on conflict (workspace_id) do nothing",
       workspaceId,

@@ -104,6 +104,16 @@ describe("a WorkspaceDO moved to Ember", () => {
 
     // The ack runs on Ember, where the incident is.
     expect(await stub.acknowledge(workspaceId, actor, incident, "tap-1")).toEqual({ ok: true });
+    // Another workspace's ack is refused, as the DO refuses it.
+    expect(await stub.acknowledge("ws_another", actor, incident, "tap-2")).toEqual({
+      ok: false,
+      code: "not_found",
+    });
+    // A shard that serves no workspace has nothing to move.
+    expect(await env.WORKSPACE.getByName("never-used").moveToEmber("never-used")).toEqual({
+      ok: false,
+      code: "not_found",
+    });
     const refused = await Promise.resolve(stub.info()).then(
       () => null,
       (error: unknown) => String(error),

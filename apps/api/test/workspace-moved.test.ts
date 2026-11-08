@@ -102,6 +102,8 @@ describe("a WorkspaceDO moved to Ember", () => {
     expect(await stub.moveToEmber(workspaceId)).toEqual({ ok: true });
     expect(await closed).toBe(1012);
 
+    // A receipt the DO minted is refused once moved, as any other token it does not back.
+    expect(await stub.receipt("k1.not-a-real-token")).toBe("invalid");
     // The ack runs on Ember, where the incident is.
     expect(await stub.acknowledge(workspaceId, actor, incident, "tap-1")).toEqual({ ok: true });
     // Another workspace's ack is refused, as the DO refuses it.

@@ -1770,6 +1770,8 @@ export class WorkspaceDO extends DurableObject<Env> {
    * workspace): see `Receipts.receive`. A shard that serves no workspace yet, or another, answers `invalid`.
    */
   async receipt(token: string): Promise<ReceiptResult> {
+    // Moved to Ember: a token this object minted is refused there (RFC 0016), so it is `invalid` here too, as junk is.
+    if (this.moved !== undefined) return "invalid";
     const result = await this.receipts.receive(token, Date.now());
     // The page the phone confirmed no longer holds a lower-urgency push back from it: that goes out now
     // (src/paging.ts `releaseDue`). Never in the receipt's way: the alarm releases it otherwise.
@@ -3083,6 +3085,8 @@ export const WHEN_MOVED: Record<
   // This object's own: the move itself, and what checks `moved` inline.
   moveToEmber: "own",
   moveBack: "own",
+  // A delivery receipt is routed by its token's key id, not the engine: one this object minted still comes here.
+  receipt: "own",
   fetch: "own",
   alarm: "own",
   webSocketMessage: "own",
@@ -3138,7 +3142,7 @@ export const WHEN_MOVED: Record<
   planStatusEmail: "refuse",
   provision: "refuse",
   readPostmortemRevisions: "refuse",
-  receipt: "refuse",
+
   reconcileMembers: "refuse",
   recordExport: "refuse",
   recordInvitationEmail: "refuse",

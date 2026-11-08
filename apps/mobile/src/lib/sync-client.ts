@@ -19,6 +19,8 @@ export type WorkspaceSync = {
   client: SyncClientLike;
   shard: string;
   engine: WorkspaceEngine;
+  /** Set once Ember's client heard the workspace was turned back to `WorkspaceDO`: closed, never reused. */
+  turnedBack?: boolean;
   /** The member's kept queue; none for a client that only finishes a sign-out. */
   queue?: MemberQueue;
   /** The changes the queue gave back at launch, for the screens that made them; none until `restore`. */

@@ -478,6 +478,29 @@ const draining = drainer<Drainable & { sync: WorkspaceSync }>({
   now: Date.now,
 });
 
+/**
+ * The open workspaces' listeners for a workspace turned back from Ember (by drain key): whichever `ActiveWorkspace`
+ * holds it now reopens it on Brigade Sync, even when its client was made by an earlier one and taken back from
+ * `draining`.
+ */
+const turnBacks = new Set<(key: string) => void>();
+
+/**
+ * Turned back: the workspace's Ember client gets no token any more, so nothing it holds would drain. It is marked and,
+ * if it is draining, closed; its unsent changes stay in the queue file, and Brigade Sync's client sends them again
+ * (src/lib/pending.ts `restoreQueue`). Brigade Sync is remembered for the workspace, then its holder told.
+ */
+function turnBack(key: string, sync: WorkspaceSync, remember: () => Promise<unknown>): void {
+  if (sync.turnedBack) return;
+  sync.turnedBack = true;
+  const held = draining.take(key);
+  if (held && held.sync === sync) sync.client.close();
+  else if (held) draining.keep(key, held);
+  void remember().then(() => {
+    for (const listener of turnBacks) listener(key);
+  });
+}
+
 function drainKey(instanceId: string, userId: string, workspaceId: string): string {
   return `${instanceId} ${userId}:${workspaceId}`;
 }
@@ -719,7 +742,7 @@ function ActiveWorkspace({
   }, [authClient, sessionToken]);
 
   // Which engine holds the workspace (src/lib/engine.ts), last known, so the app opens offline on the right client.
-  const engineKey = `${knownKey}.engine`;
+  const engineKey = `${knownKey}.engines`;
   const isOnline = useLatest(online);
   // The workspace (its drain key) turned back from Ember while open: it opens again, on Brigade Sync, without asking.
   const [turnedBackIn, setTurnedBackIn] = useState<string | null>(null);
@@ -730,26 +753,37 @@ function ActiveWorkspace({
     const key = drainKey(clients.instance.id, userId, workspaceId);
     let made: WorkspaceSync | null = null;
     let live = true;
-    let turnedBack = false;
-    // Switched back while its changes were still going out: the same client, with them.
+    const heard = (turned: string) => {
+      if (live && turned === key) setTurnedBackIn(key);
+    };
+    turnBacks.add(heard);
+    const close = () => {
+      live = false;
+      turnBacks.delete(heard);
+      setCurrentSync(null);
+      setSync(null);
+      if (!made) return;
+      if (made.turnedBack) made.client.close();
+      else leaveBehind(key, made);
+    };
+    // Switched back while its changes were still going out: the same client, with them. Not one turned back since.
     const kept = draining.take(key);
-    if (kept) {
+    if (kept?.sync.turnedBack) kept.sync.client.close();
+    else if (kept) {
       made = kept.sync;
       setCurrentSync(made);
       setSync(made);
-      return () => {
-        live = false;
-        setCurrentSync(null);
-        setSync(null);
-        if (made) leaveBehind(key, made);
-      };
+      return close;
     }
     // A cookie that cannot be read still opens the workspace: the upgrade then refuses it and the screen says so,
     // instead of loading forever. A queue that cannot be read opens it too, without keeping changes.
     const remember = (engine: "ember" | "brigade") =>
-      SecureStore.setItemAsync(engineKey, engineRecord(userId, workspaceId, engine)).catch(
-        () => {},
-      );
+      SecureStore.getItemAsync(engineKey)
+        .catch(() => null)
+        .then((raw) =>
+          SecureStore.setItemAsync(engineKey, engineRecord(raw, userId, workspaceId, engine)),
+        )
+        .catch(() => {});
     void Promise.all([
       authClient.getCookie().catch(() => ""),
       openQueue(pendingFiles, { userId, workspaceId }, () =>
@@ -790,31 +824,22 @@ function ActiveWorkspace({
           cookie: () => cookie.current,
           queue,
         };
-        made =
+        let self: WorkspaceSync | undefined;
+        made = self =
           engine === "ember"
             ? createEmberWorkspaceSync({
                 ...base,
                 ...(probe.engine === "ember" ? { primed: probe.minted } : {}),
+                // Told to whoever holds the workspace then, not to this effect, which may be gone (`turnBacks`).
                 onTurnedBack: () => {
-                  if (!live || turnedBack) return;
-                  turnedBack = true;
-                  void remember("brigade").then(() => setTurnedBackIn(key));
+                  if (self) turnBack(key, self, () => remember("brigade"));
                 },
               })
             : createWorkspaceSync(base);
         setCurrentSync(made);
         setSync(made);
       });
-    return () => {
-      live = false;
-      setCurrentSync(null);
-      setSync(null);
-      if (!made) return;
-      // Turned back: its client can get no token, so nothing it holds would drain. Its unsent changes stay in the
-      // queue file, and Brigade Sync's client sends them again (src/lib/pending.ts `restoreQueue`).
-      if (turnedBack) made.client.close();
-      else leaveBehind(key, made);
-    };
+    return close;
   }, [
     clients,
     authClient,

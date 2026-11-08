@@ -39,6 +39,7 @@ import {
   type RandomBytes,
   type Row,
 } from "@freecorps/brigade-schema";
+import { MAX_PENDING_MUTATIONS } from "./client.ts";
 import type {
   ConnectionState,
   MutationOutcome,
@@ -280,11 +281,19 @@ export class EmberSyncClient implements SyncClientLike {
   ): Promise<MutationOutcome> {
     if (this.#closed)
       return { ok: false, error: { code: "closed", message: "The sync client is closed" } };
+    // Brigade Sync's limit of unconfirmed changes (RFC 0004): past it, a change is refused, not queued.
+    const client = this.#client(shard);
+    if (client.connectionState().pendingMutations >= MAX_PENDING_MUTATIONS) {
+      return {
+        ok: false,
+        error: { code: "too_many_pending", message: "Too many changes are waiting to be sent" },
+      };
+    }
     this.#use(shard, 1);
     try {
       // The optimistic run is the client's default for `workspace:mutate` (`#client`).
       return outcomeOf(
-        await this.#client(shard).mutation(WORKSPACE_MUTATE, { name, args } as never, {
+        await client.mutation(WORKSPACE_MUTATE, { name, args } as never, {
           shard: emberShard(shard),
         }),
       );

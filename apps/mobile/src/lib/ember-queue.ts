@@ -5,6 +5,7 @@
 // then the client's `load` waits, so a change restored as the `viewer` a role still loading reads as never drops out of
 // the view. Pure, so it is tested in Node.
 import {
+  MAX_PENDING_MUTATIONS,
   MUTATION_RETENTION_MS,
   RESTORE_CLOCK_SLACK_MS,
   type MutationOutcome,
@@ -25,6 +26,11 @@ export type EmberQueue = {
   restore: () => RestoredChanges;
   /** The outcome Ember's client had for a restored change (`onRestoredOutcome`). */
   settle: (record: PendingMutationRecord, outcome: MutationOutcome) => void;
+};
+
+const tooMany: MutationOutcome = {
+  ok: false,
+  error: { code: "too_many_pending", message: "Too many changes are waiting to be sent" },
 };
 
 const expired: MutationOutcome = {
@@ -72,8 +78,8 @@ export function emberQueue(
       ? records
       : [...kept, ...records.filter((record) => !seen.has(record.mid))];
     const list = all.filter((record) => keptChange(changeName(record)));
-    void queue.keep(shard, list);
-    void queue.keep(workspaceId, []);
+    // Returned to Ember's client, which reports a failed write; the next change writes the whole queue again.
+    return Promise.all([queue.keep(shard, list), queue.keep(workspaceId, [])]).then(() => {});
   };
 
   return {
@@ -86,33 +92,38 @@ export function emberQueue(
         return [...records];
       },
       put: (record) => {
-        if (records.some((other) => other.mid === record.mid)) return;
+        if (records.some((other) => other.mid === record.mid)) return undefined;
         records.push(record);
-        save();
+        return save();
       },
       remove: (mid) => {
         const before = records.length;
         records = records.filter((record) => record.mid !== mid);
-        if (records.length !== before) save();
+        if (records.length !== before) return save();
       },
     },
     restore: () => {
       if (restored) return restored;
       const at = now();
       const live: PendingMutationRecord[] = [];
+      const fail = (record: PendingMutationRecord, outcome: MutationOutcome) => {
+        outcomes.get(record.mid)?.(outcome);
+        outcomes.delete(record.mid);
+      };
       for (const record of kept) {
         // Past the retention window (Brigade Sync fails these once it reconnects), or made well "later than now" (a
         // clock that was wrong then, or is now): not sent.
         const age = at - record.createdAt;
-        if (age > MUTATION_RETENTION_MS || -age > RESTORE_CLOCK_SLACK_MS) {
-          outcomes.get(record.mid)?.(expired);
-          outcomes.delete(record.mid);
-        } else live.push(record);
+        if (age > MUTATION_RETENTION_MS || -age > RESTORE_CLOCK_SLACK_MS) fail(record, expired);
+        // Past Brigade Sync's limit of unconfirmed changes (RFC 0004), as its `restore` refuses them.
+        else if (live.length >= MAX_PENDING_MUTATIONS) fail(record, tooMany);
+        else live.push(record);
       }
       // Put first: restored changes are older than any made since (a device registration before the role was known).
       records = [...live, ...records.filter((record) => !seen.has(record.mid))];
       restored = restoredChanges(restoredList);
-      save();
+      // A failed write here is tried again by the next change, which writes the whole queue.
+      save().catch(() => {});
       open();
       return restored;
     },

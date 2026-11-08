@@ -1,5 +1,6 @@
 import {
   createSyncClient,
+  MAX_PENDING_MUTATIONS,
   MUTATION_RETENTION_MS,
   type SavedMutation,
   type SyncSocket,
@@ -178,4 +179,37 @@ test("a workspace turned back to Brigade Sync sends what Ember's client kept, wi
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(Object.keys(saved())).toEqual([WORKSPACE]);
   client.close();
+});
+
+test("past the limit of unconfirmed changes, the rest are refused as Brigade Sync's restore does", async () => {
+  const { api } = memoryFiles();
+  const before = await openQueue(api, { userId: ANA, workspaceId: WORKSPACE }, newClientId, clock);
+  await before.keep(
+    SHARD,
+    Array.from({ length: MAX_PENDING_MUTATIONS + 2 }, (_, n) =>
+      ember("incident.postUpdate", `m-${n}`, T0 - 10_000 + n),
+    ),
+  );
+  const queue = await openQueue(api, { userId: ANA, workspaceId: WORKSPACE }, newClientId, clock);
+  const kept = emberQueue(queue, WORKSPACE, clock);
+  const load = kept.storage.load();
+  const restored = kept.restore();
+  expect(await load).toHaveLength(MAX_PENDING_MUTATIONS);
+  expect(await restored.claim(restored.list.at(-1)!)).toMatchObject({
+    ok: false,
+    error: { code: "too_many_pending" },
+  });
+});
+
+test("a failed write is the client's to report", async () => {
+  const { api } = memoryFiles();
+  const queue = await openQueue(
+    { ...api, write: async () => Promise.reject(new Error("disk full")) },
+    { userId: ANA, workspaceId: WORKSPACE },
+    newClientId,
+    clock,
+  );
+  const kept = emberQueue(queue, WORKSPACE, clock);
+  kept.restore();
+  await expect(kept.storage.put(ember("incident.ack", "a-1"))).rejects.toThrow("disk full");
 });

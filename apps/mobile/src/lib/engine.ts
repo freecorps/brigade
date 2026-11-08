@@ -33,6 +33,26 @@ export type EngineFetch = (
   },
 ) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
+/** How long a token request (and its body) may take before it fails and Ember's client tries again. */
+export const TOKEN_TIMEOUT_MS = 15_000;
+
+/** `work` with an abort signal, rejected once `ms` passed. */
+async function deadline<T>(work: (signal?: AbortSignal) => Promise<T>, ms: number): Promise<T> {
+  const abort = typeof AbortController === "function" ? new AbortController() : undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      abort?.abort();
+      reject(new Error("Ember token: no answer in time"));
+    }, ms);
+  });
+  try {
+    return await Promise.race([work(abort?.signal), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** How long the app waits for the answer before it opens the workspace with the engine last known. */
 export const PROBE_TIMEOUT_MS = 5000;
 
@@ -96,24 +116,41 @@ export function chosenEngine(probe: Probe, remembered: WorkspaceEngine | null): 
   return probe.engine ?? remembered ?? "brigade";
 }
 
-/** The engine remembered for this member's workspace (secure storage), or null. */
+/** The engines remembered for a member (secure storage): one per workspace. */
+function engines(raw: string | null, userId: string): Record<string, WorkspaceEngine> {
+  if (!raw) return {};
+  try {
+    const value = JSON.parse(raw) as Record<string, unknown> | null;
+    if (value?.userId !== userId || typeof value.engines !== "object" || value.engines === null) {
+      return {};
+    }
+    const out: Record<string, WorkspaceEngine> = {};
+    for (const [workspaceId, engine] of Object.entries(value.engines)) {
+      if (engine === "ember" || engine === "brigade") out[workspaceId] = engine;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** The engine remembered for this member's workspace, or null. */
 export function rememberedEngine(
   raw: string | null,
   userId: string,
   workspaceId: string,
 ): WorkspaceEngine | null {
-  if (!raw) return null;
-  try {
-    const value = JSON.parse(raw) as Record<string, unknown> | null;
-    if (value?.userId !== userId || value.workspaceId !== workspaceId) return null;
-    return value.engine === "ember" || value.engine === "brigade" ? value.engine : null;
-  } catch {
-    return null;
-  }
+  return engines(raw, userId)[workspaceId] ?? null;
 }
 
-export function engineRecord(userId: string, workspaceId: string, engine: WorkspaceEngine): string {
-  return JSON.stringify({ userId, workspaceId, engine });
+/** The record `raw` with `workspaceId`'s engine set: every other workspace of the member keeps its own. */
+export function engineRecord(
+  raw: string | null,
+  userId: string,
+  workspaceId: string,
+  engine: WorkspaceEngine,
+): string {
+  return JSON.stringify({ userId, engines: { ...engines(raw, userId), [workspaceId]: engine } });
 }
 
 /**
@@ -129,6 +166,7 @@ export function emberTokens({
   primed,
   onTurnedBack,
   now = Date.now,
+  timeoutMs = TOKEN_TIMEOUT_MS,
 }: {
   url: string;
   cookie: () => string;
@@ -136,20 +174,30 @@ export function emberTokens({
   primed?: Minted;
   onTurnedBack: () => void;
   now?: () => number;
+  timeoutMs?: number;
 }): () => Promise<string | null> {
   let first = primed;
   return async () => {
     const ready = first;
     first = undefined;
     if (ready && ready.expiresAt - now() > 60_000) return ready.token;
-    const response = await post(fetchImpl, url, cookie());
+    // A request that hangs fails, so Ember's client asks again on its next connect instead of waiting on it.
+    const response = await deadline(
+      (signal) =>
+        post(fetchImpl, url, cookie(), signal).then(async (answer) => ({
+          status: answer.status,
+          ok: answer.ok,
+          body: answer.ok ? await answer.json().catch(() => null) : null,
+        })),
+      timeoutMs,
+    );
     if (response.status === 401 || response.status === 403) return null;
     if (response.status === 409) {
       onTurnedBack();
       return null;
     }
     if (!response.ok) throw new Error(`Ember token: ${response.status}`);
-    const token = minted(await response.json().catch(() => null));
+    const token = minted(response.body);
     if (!token) throw new Error("Ember token: no token in the answer");
     return token.token;
   };

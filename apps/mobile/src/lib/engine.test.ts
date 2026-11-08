@@ -58,12 +58,37 @@ test("no answer, a 5xx or a malformed one: the engine last known, else Brigade S
 });
 
 test("the engine is remembered per member and workspace", () => {
-  const raw = engineRecord("usr_ana", "org_test", "ember");
-  expect(rememberedEngine(raw, "usr_ana", "org_test")).toBe("ember");
-  expect(rememberedEngine(raw, "usr_bia", "org_test")).toBeNull();
+  let raw = engineRecord(null, "usr_ana", "org_a", "ember");
+  raw = engineRecord(raw, "usr_ana", "org_b", "brigade");
+  expect(rememberedEngine(raw, "usr_ana", "org_a")).toBe("ember");
+  expect(rememberedEngine(raw, "usr_ana", "org_b")).toBe("brigade");
+  expect(rememberedEngine(raw, "usr_bia", "org_a")).toBeNull();
   expect(rememberedEngine(raw, "usr_ana", "org_other")).toBeNull();
-  expect(rememberedEngine("not json", "usr_ana", "org_test")).toBeNull();
-  expect(rememberedEngine(null, "usr_ana", "org_test")).toBeNull();
+  // Another member's record is not carried over.
+  expect(
+    rememberedEngine(engineRecord(raw, "usr_bia", "org_c", "ember"), "usr_bia", "org_a"),
+  ).toBeNull();
+  expect(rememberedEngine("not json", "usr_ana", "org_a")).toBeNull();
+  expect(rememberedEngine(null, "usr_ana", "org_a")).toBeNull();
+});
+
+test("a token request that hangs fails, so the client asks again", async () => {
+  vi.useFakeTimers();
+  try {
+    const tokens = emberTokens({
+      url: URL,
+      cookie: () => "",
+      fetch: () => new Promise(() => {}),
+      onTurnedBack: () => {},
+      timeoutMs: 1000,
+    });
+    const asked = tokens();
+    const failed = expect(asked).rejects.toThrow("no answer in time");
+    vi.advanceTimersByTime(1000);
+    await failed;
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("the client's tokens: the probe's first while it has a minute left, then one per ask", async () => {

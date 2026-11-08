@@ -12,6 +12,7 @@ import {
   EARLY_RESOLVE_TTL_MS,
   FLAP_WINDOW_MS,
   MAX_ALERT_ROUTES,
+  MAX_ALERT_ROWS,
   MAX_ALERT_SOURCES,
   MAX_OPEN_ALERTS,
   mutations,
@@ -1606,22 +1607,24 @@ describe("alert routes", () => {
     );
     ingest(db, source, [firing({ status: "resolved", labels: { team: "payments" } })], T + 1500);
     expect(db.get("incidents", incident!.id)?.status).toBe("triage");
-    // MAX_ALERT_ROWS and more rows since, all resolved: the row that opened the incident is pruned.
-    for (let i = 0; i < 320; i += 40) {
-      const keys = Array.from({ length: 40 }, (_, j) => `other-${i + j}`);
-      ingest(
-        db,
-        source,
-        keys.map((dedupKey) => firing({ dedupKey })),
-        T + 2000 + i,
-      );
-      ingest(
-        db,
-        source,
-        keys.map((dedupKey) => firing({ dedupKey, status: "resolved" })),
-        T + 3000 + i,
-      );
+    // Seed newer resolved history instead of opening and resolving hundreds of unrelated incidents.
+    ingest(db, source, [firing({ dedupKey: "other" })], T + 2000);
+    ingest(db, source, [firing({ dedupKey: "other", status: "resolved" })], T + 3000);
+    const newer = alertRows(db).find((row) => row.dedupKey === "other")!;
+    for (let i = 0; i < MAX_ALERT_ROWS - 1; i++) {
+      db.insert("source_alerts", {
+        ...newer,
+        id: newId("alt", T + 3000, random),
+        dedupKey: `other-${i}`,
+      });
     }
+    expect(alertRows(db)).toHaveLength(MAX_ALERT_ROWS + 1);
+    expect(alertRows(db).some((row) => row.incidentId === incident!.id)).toBe(true);
+    // A real ingest prunes the oldest resolved row, the one that opened the incident.
+    expect(
+      ingest(db, source, [firing({ dedupKey: "other", status: "resolved" })], T + 4000).ok,
+    ).toBe(true);
+    expect(alertRows(db)).toHaveLength(MAX_ALERT_ROWS);
     expect(alertRows(db).some((row) => row.incidentId === incident!.id)).toBe(false);
     expect(
       runMutation(

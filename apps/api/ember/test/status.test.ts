@@ -351,6 +351,55 @@ describe("the status page's domain on Ember", () => {
     ).toBe("pending");
   });
 
+  test("a domain activated by hand stays active when the background check out before it settles", () => {
+    const s = shard();
+    s.call("status:configure", { workspaceId: WS, actor: owner, args: page, now: T });
+    const domain = {
+      hostname: "status.example.com",
+      cloudflareId: "cf_status_1",
+      records: [],
+    };
+    s.call("status:changeDomain", {
+      workspaceId: WS,
+      actor: owner,
+      name: "add",
+      args: { ...domain, state: "pending", error: "not_attached" },
+    });
+    s.tick(2 * 60 * 1000);
+    const background = s.call("status:domainDue", { config: true }).value as {
+      row: unknown;
+      started: number;
+    };
+    const addedAt = (
+      s.call("status:domainState", { workspaceId: WS }).value as { domain: { createdAt: number } }
+    ).domain.createdAt;
+    expect(
+      s.call("status:changeDomain", {
+        workspaceId: WS,
+        actor: owner,
+        name: "check",
+        args: { ...domain, addedAt, state: "active", error: null },
+      }).value,
+    ).toEqual({ ok: true });
+    // The background check settles within its lease with what Cloudflare said before: still pending. Dropped.
+    s.call("status:domainSettle", {
+      config: true,
+      row: background.row,
+      probed: {
+        kind: "cloudflare",
+        answer: {
+          ok: true,
+          value: { id: "cf_status_1", state: "pending", records: [], error: "not_attached" },
+        },
+      },
+      started: background.started,
+    });
+    expect(
+      (s.call("status:domainState", { workspaceId: WS }).value as { domain: { state: string } })
+        .domain.state,
+    ).toBe("active");
+  });
+
   test("another workspace's shard, and an unknown change, are refused", () => {
     const s = shard();
     expect(

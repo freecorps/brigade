@@ -161,10 +161,8 @@ describe("/sync on an Ember workspace", () => {
     expect(await a.next()).toMatchObject({ type: "error", subId: "nope" });
   });
 
-  test("without a session it is refused, and frames before hello close the socket", async () => {
+  test("frames before hello close the socket", async () => {
     const { cookie, workspaceId } = await emberOwner();
-    const anonymous = await api(`/sync/${workspaceId}`, { headers: { Upgrade: "websocket" } });
-    expect(anonymous.status).not.toBe(101);
     const a = await connect(workspaceId, cookie);
     a.send({ type: "subscribe", subId: "x", query: "incidents.active", args: {} });
     expect(await a.next()).toMatchObject({ type: "error", code: "protocol" });

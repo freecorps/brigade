@@ -1256,13 +1256,16 @@ async function openSync(
   const resolved = await resolveActor(request, env, auth, workspace, waitUntil);
   if (!resolved.ok) return resolved.response;
   // A workspace on Ember (RFC 0016): the Worker holds the socket and speaks Ember to its shard (src/sync-adapter.ts).
-  let engine: Awaited<ReturnType<typeof workspaceEngine>>;
-  try {
-    engine = await within(workspaceEngine(env.DB, workspace), 5000, "the workspace's engine");
-  } catch (error) {
-    return failed("reading the workspace's engine for a sync upgrade failed", workspace, error);
+  // The dev actor (local runs, no session) is never on Ember: Ember backs no such actor, so D1 is not asked.
+  if (resolved.sessionId !== undefined || resolved.actor.kind === "token") {
+    let engine: Awaited<ReturnType<typeof workspaceEngine>>;
+    try {
+      engine = await within(workspaceEngine(env.DB, workspace), 5000, "the workspace's engine");
+    } catch (error) {
+      return failed("reading the workspace's engine for a sync upgrade failed", workspace, error);
+    }
+    if (engine === "ember") return openSyncOnEmber(request, env, ctx, workspace, resolved);
   }
-  if (engine === "ember") return openSyncOnEmber(request, env, ctx, workspace, resolved);
   // The shard is named by the workspace id alone; entity shards will be `${workspaceId}:${entityId}`.
   const headers = new Headers({
     Upgrade: "websocket",

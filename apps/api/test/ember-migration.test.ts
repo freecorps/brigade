@@ -176,8 +176,9 @@ describe("the migration's operator routes", () => {
     const { workspaceId } = await written();
     const held = await switchWorkspace(env, workspaceId, { guard: 0 });
     expect(held).toMatchObject({ ok: false, code: "too_large" });
-    expect(held.copy?.large).toContain("incidents");
-    expect(held.copy?.rows.incidents).toBe(1);
+    const copy = "copy" in held ? held.copy : undefined;
+    expect(copy?.large).toContain("incidents");
+    expect(copy?.rows.incidents).toBe(1);
     // Not switched: D1 and the DO as they were.
     expect(await workspaceEngine(env.DB, workspaceId)).toBe("brigade");
     expect((await env.WORKSPACE.getByName(workspaceId).info()).tables).toBeGreaterThan(0);

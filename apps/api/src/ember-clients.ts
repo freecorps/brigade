@@ -2,7 +2,7 @@
 // upgrade checks, around `clients:admit` (ember/clients.ts). Run when the Worker issues an Ember token (each one, the
 // refreshes too: every step is a no-op when nothing changed) and when the Brigade Sync adapter opens a socket.
 
-import type { Actor } from "@freecorps/brigade-schema";
+import { isRole, type Actor } from "@freecorps/brigade-schema";
 import type { AdmitResult } from "../ember/clients.ts";
 import { emberMutation, emberSessions } from "./ember-workspace.ts";
 import { readRole } from "./members.ts";
@@ -36,10 +36,10 @@ export async function admitToEmber(
   | { ok: true; actor: Actor; tokenExpiresAt: number | null }
   | { ok: false; code: "not_found" | "not_a_member" | "unauthenticated" | "unavailable" }
 > {
-  const call = (memberGen?: number) =>
+  const call = (memberGen?: number, actor: Actor = who.actor) =>
     emberMutation<AdmitResult>(env, workspaceId, "clients:admit", {
       workspaceId,
-      actor: who.actor,
+      actor,
       ...(who.name !== undefined ? { name: who.name } : {}),
       ...(who.resetAt !== undefined ? { resetAt: who.resetAt } : {}),
       ...(memberGen !== undefined ? { memberGen } : {}),
@@ -54,8 +54,9 @@ export async function admitToEmber(
       log("checking a member tombstone against D1 failed", { error: String(error) });
       return { ok: false, code: "unavailable" };
     }
-    if (role === undefined) return { ok: false, code: "not_a_member" };
-    result = await call(result.gen);
+    if (role === undefined || !isRole(role)) return { ok: false, code: "not_a_member" };
+    // A member added back may hold another role now: the shard copies the one D1 just gave.
+    result = await call(result.gen, who.actor.kind === "user" ? { ...who.actor, role } : who.actor);
     // Removed again since that read: no proof either way now.
     if (!result.ok && result.code === "gone") return { ok: false, code: "unavailable" };
   }
@@ -66,7 +67,7 @@ export async function admitToEmber(
         log("catching up ended sessions failed", { error: String(error) }),
       );
     if (waitUntil) waitUntil(catching);
-    else void catching;
+    else await catching;
   }
   return result as Exclude<AdmitResult, { code: "gone" }>;
 }

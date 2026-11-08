@@ -77,6 +77,10 @@ export async function setWorkspaceEngine(
 }
 
 /** The Ember shard of a workspace. */
+/** The earlier of two optional expiries. */
+export const capAt = (a: number | undefined, b: number | null | undefined): number | undefined =>
+  b == null ? a : a === undefined ? b : Math.min(a, b);
+
 export const workspaceShard = (workspaceId: string) => `workspace:${workspaceId}`;
 
 type EmberAuthEnv = { DB: D1Database; BETTER_AUTH_SECRET: string };
@@ -309,7 +313,8 @@ export async function issueEmberToken(
       ...(resolved.sessionId === undefined ? {} : { sid: resolved.sessionId }),
     },
     Date.now(),
-    resolved.sessionExpiresAt,
+    // An API token's Ember token ends with it, so no frame is served past its expiry.
+    capAt(resolved.sessionExpiresAt, admitted.tokenExpiresAt),
   );
   if (!minted) return json({ error: "unauthenticated" }, 401);
   return json(

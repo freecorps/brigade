@@ -966,7 +966,10 @@ A copy answers what it wrote and deleted and `mismatched`, the tables whose coun
 succeeded). While a switch runs the DO refuses every call (the Queue and the callers try again); a switch whose copy
 fails or does not check out answers 409 or 503 and leaves D1 at `brigade` with the DO holding the workspace again. A
 second switch while one runs answers 409 `busy` (as does one after a switch that stopped mid-way: turn it back, then
-switch again); a switch on a workspace already on Ember only finishes it, and a copy of one answers 409. Once every workspace is switched, set
+switch again); a switch on a workspace already on Ember only finishes it, and a copy of one answers 409. A
+copy reports each table's row count (`rows`) and the tables past 8,192 rows (`large`), half of Ember's per-transaction
+read cap: a switch refuses a workspace with any (409 `too_large`, #204) unless `?force=1`, once its paths that scan
+those tables (export, postmortem drafts, the status snapshot, reminders) are known to fit. Once every workspace is switched, set
 `NEW_WORKSPACE_ENGINE=ember` and delete the secret (`wrangler secret delete MIGRATION_TOKEN`).
 
 ## Generated types

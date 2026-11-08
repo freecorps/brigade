@@ -627,10 +627,17 @@ the old path removed only at the end. Order and details: RFC 0016 "Order of work
     configured.
   - Done: the secrets on `brigade-api-dev` and the real-device check, 2026-11-06 (RFC 0016 "Result, step 2").
   - Left: the watchdog proving the instance's own key; the secrets on staging and production (Q34).
-- [ ] The workspace shard on Ember behind `workspace.engine`, with the page lease and the D1 auth hook
-- [ ] Dashboard on Ember's React client
-- [ ] App on Ember's React Native client, picked per instance from `/config`
-- [ ] Monitoring, status page and Slack on the Ember shard for a workspace whose `workspace.engine` is `ember`,
+- [x] The workspace shard on Ember behind `workspace.engine`, with the page lease and the D1 auth hook
+- [x] Dashboard on Ember's React client, picked per workspace
+- [x] App on Ember's React Native client next to Brigade Sync, picked per workspace
+  - Left: a new app build, so phones run it; until then they reach Ember workspaces through the adapter.
+- [x] Monitoring, status page and Slack on the Ember shard for a workspace whose `workspace.engine` is `ember`,
       `WorkspaceDO` otherwise (the watchdog stays outside Ember)
-- [ ] Per-workspace migration and cutover: `dev`, then staging and production with Heitor's approval
+- [x] Per-workspace migration and cutover
+  - Done: `dev` (3 workspaces) and production (1 workspace) switched on 2026-11-08, every copy checked; there is no
+    `staging` Worker on the account. New workspaces start on Ember (`NEW_WORKSPACE_ENGINE`).
 - [ ] Removal of what Ember replaced, after the keep window
+  - `WorkspaceDO`'s engine and the Queue consumer's page path once every workspace has run on Ember for some days
+    (#216).
+  - Brigade Sync (`packages/sync`'s client and the adapter) only once `minApp` is past every app release without the
+    Ember client and no supported self-hosted instance runs the old engine.

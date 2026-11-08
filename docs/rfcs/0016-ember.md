@@ -273,7 +273,8 @@ because one instance can hold workspaces on both engines during a migration.
 
 **The store app talks to many instances** (RFC 0015), some self-hosted and not migrated. So the app keeps the Brigade
 Sync client and picks the protocol from the instance's `GET /config` (`sync: "ember"` once migrated), for as long as
-supported instances run the old engine; the dashboard is served by its own instance and switches with it.
+supported instances run the old engine. The dashboard is served by its own instance and picks the client per
+workspace ("Built (step 4)" below).
 
 **App versions that only speak Brigade Sync** stay installed on phones after a workspace moves, and they only know
 how to reconnect and replay Brigade frames. So `/sync/:workspace` of a migrated workspace is served by a **Brigade Sync

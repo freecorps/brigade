@@ -128,7 +128,9 @@ async function emberToken(workspaceId: string): Promise<string | null> {
     return null;
   }
   if (!response.ok) throw new Error(`Ember token: ${response.status}`);
-  return ((await response.json()) as Minted).token;
+  const minted = (await response.json()) as Partial<Minted> | null;
+  if (typeof minted?.token !== "string") throw new Error("Ember token: no token in the answer");
+  return minted.token;
 }
 
 /** The dashboard's client for workspaces on Ember, on the same origin (`/api/ember/ws`). */

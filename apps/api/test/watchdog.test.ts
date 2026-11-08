@@ -726,6 +726,14 @@ describe("the heartbeat, end to end", () => {
       status: "ok",
       reasons: ["direct_fcm_failing"],
     });
+    // Still unknown (no relay answer yet), a failing own key is listed too.
+    const { renderOperatorStatusEmail } = await import("../src/email-templates.ts");
+    const unknown = renderOperatorStatusEmail(
+      { status: "unknown", reasons: ["direct_fcm_failing"] },
+      { email: "ops@example.com" },
+      "en",
+    );
+    expect(unknown.text).toContain("Google refused this instance's own Firebase service account");
     // Direct sends turned off: nothing of them is kept.
     await proveAt(6, { apns: "ok", fcm: "ok", d1: "ok" });
     await flushed();

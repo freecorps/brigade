@@ -381,13 +381,12 @@ export function renderOperatorStatusEmail(
   // relay, which the email says rather than "back to normal".
   const direct = facts.reasons.some((reason) => reason.startsWith("direct_"));
   const kind = facts.status === "ok" && direct ? "direct" : facts.status;
-  const reasons =
-    kind === "degraded" || kind === "direct"
-      ? facts.reasons.flatMap((reason) => {
-          const say = PAGING_REASONS[reason];
-          return say ? [say({}, { locale })] : [];
-        })
-      : [];
+  // Whatever the status: a failing own key is listed even while the status is still `unknown` (the relay not known
+  // yet), so the operators hear of it.
+  const reasons = facts.reasons.flatMap((reason) => {
+    const say = PAGING_REASONS[reason];
+    return say ? [say({}, { locale })] : [];
+  });
   return renderMessage(
     {
       subject: text(`subject_${kind}`),

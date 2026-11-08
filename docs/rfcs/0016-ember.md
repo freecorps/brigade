@@ -284,8 +284,11 @@ app opens offline on the client that holds its changes. It is the same `EmberSyn
 background, as Brigade Sync's do, because a call's "press 1" ack is sent from there. Unconfirmed changes stay in the
 member's queue file (src/lib/ember-queue.ts) as Ember's `PendingStorage`, with the queue's client id. Its `load` waits
 until the member's role is known, so restored changes are applied as that role, as with Brigade Sync. Changes Brigade
-Sync kept are taken over with their mutation ids as Ember mids. The adapter sends a Brigade mutation to Ember with
-that same client id and mid, so a change that ran before the switch is answered, not run again. A workspace turned
+Sync kept are taken over with their mutation ids as Ember mids, the ids the adapter sends them with, so a change
+Ember ran, through either client, is answered and not run again. A change that ran on `WorkspaceDO` before the switch
+and whose answer was lost can still run once more on Ember, whichever client sends it: the switch copies rows, not
+the DO's mutation results. A repeated declare is refused (`conflict`), and a repeated update adds a second timeline
+entry. A workspace turned
 back answers the next token with 409: the app closes Ember's client and opens the workspace again on Brigade Sync,
 which sends what Ember's client kept, with the same ids. Only the open workspace moves. The one-shot clients that
 register or unregister the phone in another workspace stay on Brigade Sync, which the adapter serves, until step 8

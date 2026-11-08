@@ -768,6 +768,14 @@ describe("limits on codes", () => {
     // Two codes already this hour: both requests below pass the first check, only one can store a code.
     await askCode(key, "a@example.com");
     await askCode(key, "b@example.com");
+    // Held so the race happens every time: neither stores its code until both passed the instance's check.
+    let checked = 0;
+    let bothChecked!: () => void;
+    const checks = new Promise<void>((resolve) => (bothChecked = resolve));
+    registry.before = async (name) => {
+      if (name === "canRequestCode" && ++checked === 2) bothChecked();
+      if (name === "requestCode") await checks;
+    };
     const responses = await Promise.all([
       askCode(key, "victim@example.com"),
       askCode(key, "victim@example.com"),

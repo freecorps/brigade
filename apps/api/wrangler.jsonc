@@ -202,8 +202,9 @@
   // in their Vite configs.
   "env": {
     "dev": {
-      // Anyone may sign up on dev (RFC 0002 "Sign-up modes").
-      "vars": { "SIGNUP": "open" },
+      // Anyone may sign up on dev (RFC 0002 "Sign-up modes"). Every workspace on dev is on Ember (RFC 0016 "Data
+      // migration", switched 2026-11-08), so a new one is provisioned there too.
+      "vars": { "SIGNUP": "open", "NEW_WORKSPACE_ENGINE": "ember" },
       "durable_objects": {
         "bindings": [
           { "name": "WORKSPACE", "class_name": "WorkspaceDO" },

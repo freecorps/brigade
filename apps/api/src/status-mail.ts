@@ -116,7 +116,8 @@ export type StatusEmailReport = {
   putOff?: boolean;
 };
 
-const SCHEMA = `
+/** The status page emails' ledger (ember/ledgers.ts too). */
+export const STATUS_MAIL_SCHEMA = `
   create table if not exists status_emails (
     key text primary key,
     event text,
@@ -165,7 +166,7 @@ const dayOf = (at: number) => new Date(at).toISOString().slice(0, 10);
 
 export class StatusMailer {
   constructor(private readonly deps: Deps) {
-    deps.sql.exec(SCHEMA);
+    deps.sql.exec(STATUS_MAIL_SCHEMA);
   }
 
   /**

@@ -4,6 +4,7 @@
 // (src/email-templates.ts), sends it and reports back. It runs within `STATUS_EMAIL_BUDGET_MS`, its sends share the
 // side notifiers' connection slots (src/side-connections.ts), and nothing on the paging path waits for it.
 
+import { workspaceStatus } from "./ember-status.ts";
 import { resolveLocale } from "@freecorps/brigade-i18n";
 import { renderStatusConfirmEmail, renderStatusEmail } from "./email-templates.ts";
 import { linkFallback, type EmailSender } from "./email.ts";
@@ -36,6 +37,8 @@ export const STATUS_EMAIL_BUDGET_MS = 3000;
 export type StatusNotifyEnv = {
   WORKSPACE: Env["WORKSPACE"];
   DB?: D1Database;
+  /** A workspace on Ember (D1's `workspace_engine`) plans its status emails on its shard. */
+  SHARD?: Env["SHARD"];
   /** The public page's origin for links (`/status/<slug>`); without it only the dev log sender links anywhere. */
   DASHBOARD_URL?: string;
   /** Signs the links in the emails (src/status-subscribers.ts). */
@@ -60,7 +63,7 @@ export async function notifyStatus(
   budgetMs = STATUS_EMAIL_BUDGET_MS,
 ): Promise<number | undefined> {
   if (!sender || !env.BETTER_AUTH_SECRET) return undefined;
-  const workspace = env.WORKSPACE.getByName(event.workspaceId);
+  const workspace = await workspaceStatus(env, event.workspaceId);
   const plan = await workspace.planStatusEmail(event);
   if (!plan.send) {
     return plan.reason === "held"

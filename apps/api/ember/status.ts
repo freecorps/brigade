@@ -16,9 +16,12 @@ import {
 import {
   ACCOUNT_ACTOR,
   nextMaintenanceAt,
+  statusFollowKey,
   STATUS_PAGE_ID,
   type Actor,
 } from "@freecorps/brigade-schema";
+import type { BrigadeEvent } from "../src/outbox.ts";
+import { StatusMailer, type StatusEmailPlan, type StatusEmailReport } from "../src/status-mail.ts";
 import { DeadlineError, within } from "../src/deadline.ts";
 import { StatusPublisher, type StatusPushDone, type StatusPushPlan } from "../src/status-page.ts";
 import { emberWorkspace, type EmberShard } from "./shard-facade.ts";
@@ -276,5 +279,164 @@ export const maintenance = internalMutationGeneric({
     if (next !== null) tickAt(c, next <= c.now ? c.now + 60 * 1000 : next, "maintenance");
     shard.check();
     return { advanced };
+  },
+});
+
+/** A `StatusMailer` over this mutation's shard facade (`statusEmail.continue` run as the account, as on the DO). */
+function mailerOf(ctx: MutationCtx, shard: EmberShard): StatusMailer {
+  const { storage } = emberWorkspace(ctx);
+  return new StatusMailer({
+    shard: shard as never,
+    sql: storage.sql,
+    log,
+    carryOn: (eventId) => {
+      const { result } = shard.mutate({
+        clientId: "api",
+        mutationId: `continue:${eventId}:${ctx.now}`,
+        actor: ACCOUNT_ACTOR,
+        name: "statusEmail.continue",
+        args: { eventId },
+        now: ctx.now,
+        internal: true,
+      });
+      if (!result.ok && result.error.code !== "conflict") {
+        throw new Error(`statusEmail.continue refused: ${result.error.code}`);
+      }
+    },
+  });
+}
+
+export type SubscriberChange =
+  | { action: "request"; subscriberId: string; send: number }
+  | { action: "confirm"; subscriberId: string }
+  | { action: "follow"; subscriberId: string; follows: number }
+  | { action: "remove"; subscriberId: string; reason: "unsubscribed" | "deleted" | "expired" };
+
+/** `WorkspaceDO.statusSubscription`, inside one mutation: a confirmation and a removal are recorded once. */
+function subscriptionChange(
+  c: MutationCtx,
+  shard: EmberShard,
+  mailer: StatusMailer,
+  change: SubscriberChange,
+  actor: Actor,
+): { ok: true } | { ok: false; code: string } {
+  const once =
+    change.action === "request" || change.action === "follow"
+      ? null
+      : `${change.action}:${change.subscriberId}`;
+  if (once !== null && mailer.seen(once)) return { ok: true };
+  const { action, ...args } = change;
+  const { result } = shard.mutate({
+    clientId: "status-subscribers",
+    mutationId: `${action}:${change.subscriberId}:${c.now}:${Math.floor(c.random() * 2 ** 32)}`,
+    actor,
+    name: `statusSubscriber.${action}`,
+    args,
+    now: c.now,
+    internal: true,
+  });
+  if (!result.ok) return { ok: false, code: result.error.code };
+  if (once !== null) mailer.remember(once, c.now);
+  return { ok: true };
+}
+
+/**
+ * A change to a status page subscription after the subscriber's row changed in D1 (`WorkspaceDO.statusSubscription`):
+ * its event, with the subscriber's id and never the address. A visitor's change runs as `ACCOUNT_ACTOR`.
+ */
+export const subscription = internalMutationGeneric({
+  args: { workspaceId: v.string(), change: v.any(), actor: v.optional(v.any()) },
+  handler: (
+    ctx,
+    input: { workspaceId: string; change: SubscriberChange; actor?: Actor },
+  ): { ok: true } | { ok: false; code: string } => {
+    const c = ctx as MutationCtx;
+    const { shard } = emberWorkspace(c);
+    if (shard.workspace() !== input.workspaceId) return { ok: false, code: "not_found" };
+    const out = subscriptionChange(
+      c,
+      shard,
+      mailerOf(c, shard),
+      input.change,
+      input.actor ?? ACCOUNT_ACTOR,
+    );
+    shard.check();
+    return out;
+  },
+});
+
+/** Pending subscribers whose confirmation link expired (`WorkspaceDO.expireStatusSubscribers`): removed, `expired`. */
+export const expire = internalMutationGeneric({
+  args: { workspaceId: v.string(), subscriberIds: v.array(v.string()) },
+  handler: (
+    ctx,
+    input: { workspaceId: string; subscriberIds: string[] },
+  ): { ok: true } | { ok: false; code: string } => {
+    const c = ctx as MutationCtx;
+    const { shard } = emberWorkspace(c);
+    if (shard.workspace() !== input.workspaceId) return { ok: false, code: "not_found" };
+    const mailer = mailerOf(c, shard);
+    for (const subscriberId of input.subscriberIds) {
+      const out = subscriptionChange(
+        c,
+        shard,
+        mailer,
+        { action: "remove", subscriberId, reason: "expired" },
+        ACCOUNT_ACTOR,
+      );
+      // As on the DO: the first refusal stops the sweep, and what came before it stays done.
+      if (!out.ok) {
+        shard.check();
+        return out;
+      }
+    }
+    shard.check();
+    return { ok: true };
+  },
+});
+
+/** What each follow key of the page stands for now (`WorkspaceDO.statusFollowNames`). */
+export const followNames = internalMutationGeneric({
+  args: { workspaceId: v.string() },
+  handler: (ctx, input: { workspaceId: string }): Record<string, string> => {
+    const { shard } = emberWorkspace(ctx as MutationCtx);
+    if (shard.workspace() !== input.workspaceId) return {};
+    const names: Record<string, string> = {};
+    for (const component of shard.store.scan("status_components")) {
+      names[statusFollowKey("c", component.id)] = component.name;
+      if (component.group !== null) {
+        names[statusFollowKey("g", component.group)] = `group: ${component.group}`;
+      }
+    }
+    return names;
+  },
+});
+
+/** What a status page email event asks for (`WorkspaceDO.planStatusEmail`). */
+export const planEmail = internalMutationGeneric({
+  args: { event: v.any() },
+  handler: (ctx, { event }: { event: BrigadeEvent }): StatusEmailPlan => {
+    const c = ctx as MutationCtx;
+    const { shard } = emberWorkspace(c);
+    if (shard.workspace() !== event.workspaceId) return { send: false, reason: "nothing" };
+    const out = mailerOf(c, shard).plan(event, c.now);
+    shard.check();
+    return out;
+  },
+});
+
+/** What a batch of status page emails did (`WorkspaceDO.recordStatusEmail`). */
+export const recordEmail = internalMutationGeneric({
+  args: { event: v.any(), key: v.string(), report: v.any() },
+  handler: (
+    ctx,
+    input: { event: BrigadeEvent; key: string; report: StatusEmailReport },
+  ): { retry: boolean } => {
+    const c = ctx as MutationCtx;
+    const { shard } = emberWorkspace(c);
+    if (shard.workspace() !== input.event.workspaceId) return { retry: false };
+    const out = mailerOf(c, shard).record(input.key, input.report, c.now);
+    shard.check();
+    return out;
   },
 });

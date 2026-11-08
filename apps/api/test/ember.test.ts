@@ -1409,7 +1409,7 @@ describe("the status page on an Ember workspace", () => {
     // The push runs as a scheduled job on the shard.
     let snapshot: string | null = null;
     for (let i = 0; i < 50 && snapshot === null; i++) {
-      snapshot = await env.STATUS.get(`status:${slug}`);
+      snapshot = await env.STATUS!.get(`status:${slug}`);
       if (snapshot === null) await new Promise((resolve) => setTimeout(resolve, 100));
     }
     expect(JSON.parse(snapshot!)).toMatchObject({ workspaceId });

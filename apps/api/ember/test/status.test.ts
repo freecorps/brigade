@@ -144,3 +144,44 @@ describe("the status page on Ember", () => {
     expect(s.table("status_maintenance")).toMatchObject([{ id, phase: "in_progress" }]);
   });
 });
+
+describe("status page subscriptions and emails on Ember", () => {
+  test("a subscription's request goes through, a removal is recorded once, and an email event is planned", () => {
+    const s = shard();
+    s.call("status:configure", { workspaceId: WS, actor: owner, args: page, now: T });
+    const subscriberId = newId("ssb", T, (n) => new Uint8Array(n).fill(8));
+    const change = (c: unknown) =>
+      s.call("status:subscription", { workspaceId: WS, change: c }).value;
+    expect(change({ action: "request", subscriberId, send: 1 })).toEqual({ ok: true });
+    expect(change({ action: "remove", subscriberId, reason: "unsubscribed" })).toEqual({
+      ok: true,
+    });
+    // Again (a retry after D1 failed): done already, nothing written twice.
+    expect(change({ action: "remove", subscriberId, reason: "unsubscribed" })).toEqual({
+      ok: true,
+    });
+    expect(
+      s.call("status:subscription", {
+        workspaceId: "ws_other",
+        change: { action: "request", subscriberId, send: 1 },
+      }).value,
+    ).toEqual({ ok: false, code: "not_found" });
+    expect(
+      s.call("status:planEmail", {
+        event: { id: "evt_x", type: "incident.declared", workspaceId: WS, data: {} },
+      }).value,
+    ).toMatchObject({ send: false });
+  });
+
+  test("the follow names come from the page's components", () => {
+    const s = shard();
+    s.call("status:configure", { workspaceId: WS, actor: owner, args: page, now: T });
+    const component = newId("cmp", T, (n) => new Uint8Array(n).fill(9));
+    expect(
+      s.mutate("statusComponent.create", { id: component, name: "API", group: "Core" }).value,
+    ).toEqual({ ok: true });
+    const names = s.call("status:followNames", { workspaceId: WS }).value as Record<string, string>;
+    expect(Object.values(names).sort((a, b) => a.localeCompare(b))).toEqual(["API", "group: Core"]);
+    expect(s.call("status:followNames", { workspaceId: "ws_other" }).value).toEqual({});
+  });
+});

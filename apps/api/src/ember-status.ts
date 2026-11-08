@@ -7,6 +7,10 @@ import { allows, statusPageArgs, type Actor } from "@freecorps/brigade-schema";
 import { workspaceEngine } from "./ember.ts";
 import { emberMutation } from "./ember-workspace.ts";
 import { claimSlug, releaseSlug, type StatusConfigureResult } from "./status-page.ts";
+import type { SubscriberChange } from "../ember/status.ts";
+import { within } from "./deadline.ts";
+import type { BrigadeEvent } from "./outbox.ts";
+import type { StatusEmailPlan, StatusEmailReport } from "./status-mail.ts";
 import type { TokenRefused } from "./workspace.ts";
 
 type StatusEnv = Pick<Env, "DB" | "WORKSPACE"> & { SHARD?: Env["SHARD"] };
@@ -103,3 +107,70 @@ export function emberConfigureStatusPage(
     return { ok: false, code: result.code === "forbidden" ? "forbidden" : "invalid_args" };
   };
 }
+
+/** The status page's subscriber, follow and email calls, with `WorkspaceDO`'s signatures. */
+export type WorkspaceStatus = {
+  statusSubscription(
+    workspaceId: string,
+    change: SubscriberChange,
+    actor?: Actor,
+  ): Promise<{ ok: true } | { ok: false; code: string }>;
+  expireStatusSubscribers(
+    workspaceId: string,
+    subscriberIds: string[],
+  ): Promise<{ ok: true } | { ok: false; code: string }>;
+  statusFollowNames(workspaceId: string): Promise<Record<string, string>>;
+  planStatusEmail(event: BrigadeEvent): Promise<StatusEmailPlan>;
+  recordStatusEmail(
+    event: BrigadeEvent,
+    key: string,
+    report: StatusEmailReport,
+  ): Promise<{ retry: boolean }>;
+};
+
+/**
+ * `workspaceId`'s status page calls, on `WorkspaceDO` or on its Ember shard (ember/status.ts) as D1 says. The engine
+ * lookup is bounded (`STATUS_ENGINE_BUDGET_MS`): one that stalls throws, and its caller tries again (the Queue retries
+ * the message; a route answers `unavailable`).
+ */
+export async function workspaceStatus(
+  env: Pick<Env, "WORKSPACE"> & { DB?: Env["DB"]; SHARD?: Env["SHARD"] },
+  workspaceId: string,
+): Promise<WorkspaceStatus> {
+  const { DB, SHARD } = env;
+  if (
+    DB &&
+    SHARD &&
+    (await within(workspaceEngine(DB, workspaceId), STATUS_ENGINE_BUDGET_MS, "engine lookup")) ===
+      "ember"
+  ) {
+    const shard = { SHARD };
+    return {
+      statusSubscription: (id, change, actor) =>
+        emberMutation(shard, id, "status:subscription", {
+          workspaceId: id,
+          change,
+          ...(actor ? { actor } : {}),
+        }),
+      expireStatusSubscribers: (id, subscriberIds) =>
+        emberMutation(shard, id, "status:expire", { workspaceId: id, subscriberIds }),
+      statusFollowNames: (id) =>
+        emberMutation(shard, id, "status:followNames", { workspaceId: id }),
+      planStatusEmail: (event) =>
+        emberMutation(shard, event.workspaceId, "status:planEmail", { event }),
+      recordStatusEmail: (event, key, report) =>
+        emberMutation(shard, event.workspaceId, "status:recordEmail", { event, key, report }),
+    };
+  }
+  const stub = env.WORKSPACE.getByName(workspaceId);
+  return {
+    statusSubscription: async (id, change, actor) => stub.statusSubscription(id, change, actor),
+    expireStatusSubscribers: async (id, ids) => stub.expireStatusSubscribers(id, ids),
+    statusFollowNames: async (id) => stub.statusFollowNames(id),
+    planStatusEmail: async (event) => stub.planStatusEmail(event),
+    recordStatusEmail: async (event, key, report) => stub.recordStatusEmail(event, key, report),
+  };
+}
+
+/** How long the engine lookup of a status page call may take (see `workspaceStatus`). */
+export const STATUS_ENGINE_BUDGET_MS = 5000;

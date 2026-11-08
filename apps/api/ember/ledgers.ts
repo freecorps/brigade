@@ -5,6 +5,7 @@
 import { INVITATIONS_SCHEMA } from "../src/invitation-ledger.ts";
 import { MAILER_SCHEMA } from "../src/mailer.ts";
 import { MONITORS_SCHEMA } from "../src/monitors.ts";
+import { STATUS_MAIL_SCHEMA } from "../src/status-mail.ts";
 import { PAGING_SCHEMA } from "../src/paging.ts";
 import { RECEIPTS_SCHEMA } from "../src/receipts.ts";
 
@@ -49,6 +50,7 @@ export const LEDGER_DDL: string[] = [
   ...statements(RECEIPTS_SCHEMA),
   ...statements(INVITATIONS_SCHEMA),
   ...statements(MONITORS_SCHEMA),
+  ...statements(STATUS_MAIL_SCHEMA),
   TICKS_SCHEMA,
 ];
 export const LEDGER_TABLES: string[] = [

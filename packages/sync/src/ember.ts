@@ -215,6 +215,8 @@ export class EmberSyncClient implements SyncClientLike {
     return {
       key,
       subscribe: (listener) => {
+        // A handle from before `close()` opens nothing again.
+        if (this.#closed) return () => {};
         const off = watch().subscribe(listener);
         this.#use(shard, 1);
         let done = false;

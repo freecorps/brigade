@@ -290,9 +290,11 @@ and whose answer was lost can still run once more on Ember, whichever client sen
 the DO's mutation results. A repeated declare is refused (`conflict`), and a repeated update adds a second timeline
 entry. A workspace turned
 back answers the next token with 409: the app closes Ember's client and opens the workspace again on Brigade Sync,
-which sends what Ember's client kept, with the same ids. Only the open workspace moves. The one-shot clients that
-register or unregister the phone in another workspace stay on Brigade Sync, which the adapter serves, until step 8
-removes it.
+which sends what Ember's client kept, with the same ids. The one-shot clients that register or unregister the phone
+in another workspace (an instance from before `POST /devices/register`, and a sign-out finished after the phone was
+offline) ask the same way and open Ember's client for a workspace on Ember; without an answer they open Brigade Sync,
+which the adapter serves. So an app with this build never needs the adapter for a workspace on Ember once it is
+online.
 
 **App versions that only speak Brigade Sync** stay installed on phones after a workspace moves, and they only know
 how to reconnect and replay Brigade frames. So `/sync/:workspace` of a migrated workspace is served by a **Brigade Sync

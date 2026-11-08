@@ -239,3 +239,37 @@ test("iOS asks with Critical Alerts even when notifications are granted already"
   expect(android.state.asked[0]).toMatchObject({ ios: { allowCriticalAlerts: true } });
   expect(await deps.criticalAlerts?.()).toBe(true);
 });
+
+test("a one-shot change runs on the client its opener picks (Ember's for a workspace on Ember) and closes it", async () => {
+  const opened: Array<{ workspaceId: string; cookie: string; role: string | undefined }> = [];
+  const sent: Array<[string, string, unknown]> = [];
+  let closed = 0;
+  const client = {
+    connectionState: () => "connecting" as const,
+    onConnectionChange: () => () => {},
+    mutate: async (shard: string, name: string, args: unknown) => {
+      sent.push([shard, name, args]);
+      return { ok: true as const, value: null };
+    },
+    close: () => {
+      closed += 1;
+    },
+  };
+  const mutate = phone.oneShotMutate(
+    { emberToken: (ws: string) => `https://brigade.test/api/ember-token/${ws}` } as never,
+    W,
+    "user_1",
+    async () => "session=abc",
+    async ({ workspaceId, cookie, actor }) => {
+      opened.push({ workspaceId, cookie, role: (actor() as { role?: string }).role });
+      return { client, shard: workspaceId, engine: "ember" } as unknown as WorkspaceSync;
+    },
+  );
+  expect(await mutate("device.register", { id: "dev_1" } as never)).toEqual({
+    ok: true,
+    value: null,
+  });
+  expect(opened).toEqual([{ workspaceId: W, cookie: "session=abc", role: "viewer" }]);
+  expect(sent).toEqual([[W, "device.register", { id: "dev_1" }]]);
+  expect(closed).toBe(1);
+});

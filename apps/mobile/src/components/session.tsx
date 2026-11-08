@@ -76,7 +76,7 @@ import {
 } from "@/lib/engine";
 import { knownWorkspace, memberActor, settledRole, type Server } from "@/lib/sync";
 import { createWorkspaceSync, setCurrentSync, type WorkspaceSync } from "@/lib/sync-client";
-import { createEmberWorkspaceSync } from "@/lib/ember-client";
+import { createEmberWorkspaceSync, openOneShot } from "@/lib/ember-client";
 import { clearWidget, WidgetSnapshot } from "@/components/widget";
 import { BrigadeCall } from "../../modules/brigade-call";
 
@@ -159,7 +159,7 @@ const finishing = new Map<string, Promise<FinishResult>>();
 function finishLeftover(target: Server): Promise<FinishResult> {
   let running = finishing.get(target.auth);
   if (!running) {
-    running = finishSignOut(finishDeps(target))
+    running = finishSignOut(finishDeps(target, openOneShot))
       .catch(() => "pending" as const)
       .finally(() => {
         finishing.delete(target.auth);
@@ -306,7 +306,7 @@ function BackgroundInstance({ clients }: { clients: InstanceClients }) {
     if (!userId || !workspaceId || ids === null) return null;
     const cookie = () => clients.authClient.getCookie();
     const deps = phoneDeps(
-      { mutate: oneShotMutate(clients.server, workspaceId, userId, cookie) },
+      { mutate: oneShotMutate(clients.server, workspaceId, userId, cookie, openOneShot) },
       clients.server,
       registerAllWith(clients.server, cookie),
       relayDeps(clients),
@@ -559,7 +559,7 @@ export async function removeInstance(
   if (!instance || list.instances.length <= 1) return "failed";
   const clients = clientsFor(instance);
   const key = clients.storage.unfinished;
-  const finish = finishDeps(clients.server);
+  const finish = finishDeps(clients.server, openOneShot);
   try {
     // src/lib/switcher.ts `removeWith`: an unfinished sign-out recorded there is retried first; a stuck one is
     // recorded; anything kept from offline is finished; the row goes last, never the last one. Its unsent changes stay

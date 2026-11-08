@@ -195,9 +195,19 @@ export async function switchWorkspace(
     await side.stub.moveBack();
     return { ok: false, code: "mismatch", copy };
   }
-  const ticks = await side.arm();
-  await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
-  // Only now: what still reaches the DO (an engine cached as `brigade`) goes to the shard.
+  let ticks: string[];
+  try {
+    ticks = await side.arm();
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+  } catch (error) {
+    // Not switched, or not known to be: D1 back at `brigade` (the write may have landed), then the DO.
+    await setWorkspaceEngine(env.DB, workspaceId, "brigade", Date.now());
+    await side.stub.moveBack();
+    throw error;
+  }
+  // Only now: what still reaches the DO (an engine cached as `brigade`) goes to the shard. Should this fail, D1 says
+  // `ember` already, so only a stale route reaches the DO and is refused (tried again); the switch runs again to
+  // finish (moving a moved DO again is allowed, and the copy is idempotent).
   await side.stub.forwardToEmber();
   return { ok: true, copy, ticks };
 }

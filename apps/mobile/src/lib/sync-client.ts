@@ -1,9 +1,12 @@
-// Brigade Sync clients (RFC 0004): one per signed-in member and workspace, made by the session (src/components/
+// The workspace's sync client: one per signed-in member and workspace, made by the session (src/components/
 // session.tsx) and closed when they sign out or the workspace changes, so no socket or row outlives its session.
-// Changes the shard has not confirmed are kept in the member's queue (src/lib/pending.ts) and survive a restart.
+// Brigade Sync's (RFC 0004) here, or Ember's for a workspace on Ember (RFC 0016 step 5, src/lib/ember-client.ts),
+// under the same hooks. Changes the shard has not confirmed are kept in the member's queue (src/lib/pending.ts, and src/lib/
+// ember-queue.ts for Ember's client) and survive a restart.
 import type { Actor } from "@freecorps/brigade-schema";
-import { createSyncClient, type SyncClient, type SyncSocket } from "@freecorps/brigade-sync";
+import { createSyncClient, type SyncClientLike, type SyncSocket } from "@freecorps/brigade-sync";
 import { getRandomBytes } from "expo-crypto";
+import type { WorkspaceEngine } from "@/lib/engine";
 import {
   restoreQueue,
   restoredChanges,
@@ -13,8 +16,9 @@ import {
 import type { Server } from "@/lib/sync";
 
 export type WorkspaceSync = {
-  client: SyncClient;
+  client: SyncClientLike;
   shard: string;
+  engine: WorkspaceEngine;
   /** The member's kept queue; none for a client that only finishes a sign-out. */
   queue?: MemberQueue;
   /** The changes the queue gave back at launch, for the screens that made them; none until `restore`. */
@@ -58,6 +62,7 @@ export function createWorkspaceSync({
   const sync: WorkspaceSync = {
     client,
     shard: workspaceId,
+    engine: "brigade",
     queue,
     restored: restoredChanges([]),
     restore: () => {

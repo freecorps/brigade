@@ -15,6 +15,7 @@ import {
   type ConnectivitySource,
   type OptimisticUpdate,
   type PendingMutationRecord,
+  type PendingStorage,
   type QuerySnapshot,
   type ShardConnectionState,
   type WebSocketConstructor,
@@ -47,6 +48,8 @@ import type {
   SyncErrorCode,
   SyncMutationError,
 } from "./client.ts";
+
+export type { PendingMutationRecord, PendingStorage } from "@freecorps/ember-client";
 
 type Queries = typeof brigadeQueries;
 type Mutations = typeof brigadeMutations;
@@ -85,6 +88,19 @@ export type EmberSyncClientOptions = {
   actor: Actor | (() => Actor);
   /** Stable per browser tab (Ember de-duplicates a re-sent mutation by it). Default: Ember's own. */
   clientId?: string;
+  /**
+   * Where a workspace's unconfirmed mutations are kept, so they survive a restart and are sent again with the same
+   * ids (Ember's `PendingStorage`, which also keeps the client id). Read when the workspace's client opens; its
+   * `load` may wait (the app holds it until the member's role is known, so a restored change is applied as it).
+   * Default: memory.
+   */
+  storage?(workspaceId: string): PendingStorage | undefined;
+  /** The outcome of a mutation `storage` gave back: made before a restart, so no `mutate` waits for it. */
+  onRestoredOutcome?(
+    workspaceId: string,
+    record: PendingMutationRecord,
+    outcome: MutationOutcome,
+  ): void;
   WebSocket?: WebSocketConstructor;
   connectivity?: ConnectivitySource | null;
   /** For ids. Default `crypto.getRandomValues`. */
@@ -118,6 +134,13 @@ function stateOf<R>(snapshot: QuerySnapshot<QueryResult<R>>): QueryState<R> {
   if (!result) return LOADING;
   if (!result.ok) return { rows: [], status: "error", pending: false, error: result.error };
   return { rows: result.rows, status: "ready", pending: snapshot.optimistic };
+}
+
+/** What `workspace:mutate` answered → Brigade's outcome: the shard's own refusal is a value, not an error. */
+function outcomeOf(value: unknown): MutationOutcome {
+  const result = value as { ok: true } | { ok: false; error: SyncMutationError } | null;
+  if (result?.ok === false) return { ok: false, error: result.error };
+  return { ok: true };
 }
 
 /** An Ember error on a mutation → Brigade's codes. The client retries what the network loses, so this is rare. */
@@ -255,12 +278,12 @@ export class EmberSyncClient implements SyncClientLike {
       return { ok: false, error: { code: "closed", message: "The sync client is closed" } };
     this.#use(shard, 1);
     try {
-      const result = (await this.#client(shard).mutation(
-        WORKSPACE_MUTATE,
-        { name, args } as never,
-        { shard: emberShard(shard), optimisticUpdate: this.#optimistic(shard) },
-      )) as { ok: true } | { ok: false; error: SyncMutationError };
-      return result.ok ? { ok: true } : { ok: false, error: result.error };
+      // The optimistic run is the client's default for `workspace:mutate` (`#client`).
+      return outcomeOf(
+        await this.#client(shard).mutation(WORKSPACE_MUTATE, { name, args } as never, {
+          shard: emberShard(shard),
+        }),
+      );
     } catch (error) {
       return failureOf(error);
     } finally {
@@ -302,10 +325,20 @@ export class EmberSyncClient implements SyncClientLike {
     let client = this.#clients.get(workspaceId);
     if (client) return client;
     const o = this.#options;
+    const storage = o.storage?.(workspaceId);
     client = new EmberClient({
       url: typeof o.url === "function" ? o.url() : o.url,
       auth: () => o.token(workspaceId),
       defaultShard: emberShard(workspaceId),
+      // Also what a mutation restored from `storage` runs, whose caller's closure is gone.
+      optimisticUpdates: { [WORKSPACE_MUTATE]: this.#optimistic(workspaceId) as OptimisticUpdate },
+      ...(storage ? { storage } : {}),
+      onRestoredMutationResult: (record, result) =>
+        o.onRestoredOutcome?.(
+          workspaceId,
+          record,
+          result.ok ? outcomeOf(result.value) : failureOf(result.error),
+        ),
       ...(o.clientId === undefined ? {} : { clientId: o.clientId }),
       ...(o.WebSocket === undefined ? {} : { WebSocket: o.WebSocket }),
       ...(o.connectivity === undefined ? {} : { connectivity: o.connectivity }),

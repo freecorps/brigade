@@ -36,6 +36,10 @@ export type Server = {
   /** `GET` here says who may sign up on the instance (apps/api src/sign-up.ts, RFC 0002 "Sign-up modes"). */
   config: string;
   sync: (workspaceId: string) => string;
+  /** Ember's client for a workspace on Ember (RFC 0016 step 5): its socket is `<ember>/ws`. */
+  ember: string;
+  /** `POST` here mints an Ember token for the workspace, or says it is not on Ember (src/lib/engine.ts). */
+  emberToken: (workspaceId: string) => string;
   /** `POST` here creates a workspace (the dashboard's `/api/workspaces`, apps/api `createWorkspace`). */
   workspaces: string;
   ack: (workspaceId: string, incidentId: string) => string;
@@ -70,6 +74,8 @@ export function serverAt(origin: string): Server {
     forgotPassword: `${origin}/forgot-password`,
     config: `${origin}/api/config`,
     sync: (workspaceId) => `${socket}/api/sync/${encodeURIComponent(workspaceId)}`,
+    ember: `${origin}/api/ember`,
+    emberToken: (workspaceId) => `${origin}/api/ember-token/${encodeURIComponent(workspaceId)}`,
     workspaces: `${origin}/api/workspaces`,
     devices: `${origin}/api/devices/register`,
     ack: (workspaceId, incidentId) =>

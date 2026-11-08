@@ -67,8 +67,16 @@ import {
   signOutPhone,
   type FinishResult,
 } from "@/lib/sign-out";
+import {
+  chosenEngine,
+  engineRecord,
+  probeEngine,
+  rememberedEngine,
+  type Probe,
+} from "@/lib/engine";
 import { knownWorkspace, memberActor, settledRole, type Server } from "@/lib/sync";
 import { createWorkspaceSync, setCurrentSync, type WorkspaceSync } from "@/lib/sync-client";
+import { createEmberWorkspaceSync } from "@/lib/ember-client";
 import { clearWidget, WidgetSnapshot } from "@/components/widget";
 import { BrigadeCall } from "../../modules/brigade-call";
 
@@ -710,12 +718,19 @@ function ActiveWorkspace({
     );
   }, [authClient, sessionToken]);
 
+  // Which engine holds the workspace (src/lib/engine.ts), last known, so the app opens offline on the right client.
+  const engineKey = `${knownKey}.engine`;
+  const isOnline = useLatest(online);
+  // The workspace (its drain key) turned back from Ember while open: it opens again, on Brigade Sync, without asking.
+  const [turnedBackIn, setTurnedBackIn] = useState<string | null>(null);
+
   const [sync, setSync] = useState<WorkspaceSync | null>(null);
   useEffect(() => {
     const target = server;
     const key = drainKey(clients.instance.id, userId, workspaceId);
     let made: WorkspaceSync | null = null;
     let live = true;
+    let turnedBack = false;
     // Switched back while its changes were still going out: the same client, with them.
     const kept = draining.take(key);
     if (kept) {
@@ -731,6 +746,10 @@ function ActiveWorkspace({
     }
     // A cookie that cannot be read still opens the workspace: the upgrade then refuses it and the screen says so,
     // instead of loading forever. A queue that cannot be read opens it too, without keeping changes.
+    const remember = (engine: "ember" | "brigade") =>
+      SecureStore.setItemAsync(engineKey, engineRecord(userId, workspaceId, engine)).catch(
+        () => {},
+      );
     void Promise.all([
       authClient.getCookie().catch(() => ""),
       openQueue(pendingFiles, { userId, workspaceId }, () =>
@@ -743,26 +762,70 @@ function ActiveWorkspace({
         );
         return undefined;
       }),
-    ]).then(([value, queue]) => {
-      if (!live) return;
-      cookie.current = value;
-      made = createWorkspaceSync({
-        server: target,
-        workspaceId,
-        actor: () => ({ kind: "user", id: userId, role: role.current }),
-        cookie: () => cookie.current,
-        queue,
+      SecureStore.getItemAsync(engineKey).catch(() => null),
+    ])
+      .then(async ([value, queue, raw]) => {
+        // Offline, nothing to ask: the engine last known. Turned back just now: Brigade Sync, without asking again.
+        const probe: Probe =
+          turnedBackIn === key
+            ? { engine: "brigade", remember: true }
+            : isOnline.current
+              ? await probeEngine(target.emberToken(workspaceId), value, (url, init) =>
+                  fetch(url, init),
+                )
+              : { engine: undefined };
+        return { value, queue, probe, remembered: rememberedEngine(raw, userId, workspaceId) };
+      })
+      .then(({ value, queue, probe, remembered }) => {
+        if (!live) return;
+        cookie.current = value;
+        const engine = chosenEngine(probe, remembered);
+        if (probe.engine === "ember" || (probe.engine === "brigade" && probe.remember)) {
+          if (engine !== remembered) void remember(engine);
+        }
+        const base = {
+          server: target,
+          workspaceId,
+          actor: () => ({ kind: "user" as const, id: userId, role: role.current }),
+          cookie: () => cookie.current,
+          queue,
+        };
+        made =
+          engine === "ember"
+            ? createEmberWorkspaceSync({
+                ...base,
+                ...(probe.engine === "ember" ? { primed: probe.minted } : {}),
+                onTurnedBack: () => {
+                  if (!live || turnedBack) return;
+                  turnedBack = true;
+                  void remember("brigade").then(() => setTurnedBackIn(key));
+                },
+              })
+            : createWorkspaceSync(base);
+        setCurrentSync(made);
+        setSync(made);
       });
-      setCurrentSync(made);
-      setSync(made);
-    });
     return () => {
       live = false;
       setCurrentSync(null);
       setSync(null);
-      if (made) leaveBehind(key, made);
+      if (!made) return;
+      // Turned back: its client can get no token, so nothing it holds would drain. Its unsent changes stay in the
+      // queue file, and Brigade Sync's client sends them again (src/lib/pending.ts `restoreQueue`).
+      if (turnedBack) made.client.close();
+      else leaveBehind(key, made);
     };
-  }, [clients, authClient, server, pendingFiles, userId, workspaceId]);
+  }, [
+    clients,
+    authClient,
+    server,
+    pendingFiles,
+    userId,
+    workspaceId,
+    engineKey,
+    isOnline,
+    turnedBackIn,
+  ]);
 
   // Changes kept from before a restart are applied as the member's role, so they go back only once it is known:
   // run as the `viewer` a role still loading reads as, they would drop out of the view until the shard answered
@@ -853,6 +916,7 @@ function ActiveWorkspace({
       },
     );
     await SecureStore.deleteItemAsync(knownKey).catch(() => {});
+    await SecureStore.deleteItemAsync(engineKey).catch(() => {});
     // Their shifts leave the home and lock screens with them.
     clearWidget();
     // Nothing they queued is sent or shown after they leave, whoever signs in next, nor registered for them again.
@@ -860,7 +924,18 @@ function ActiveWorkspace({
     await forgetMember(clients);
     await dropQueues(pendingFiles).catch(() => {});
     return result;
-  }, [clients, authClient, server, knownKey, pendingFiles, sync, userId, workspaceId, stopPaging]);
+  }, [
+    clients,
+    authClient,
+    server,
+    knownKey,
+    engineKey,
+    pendingFiles,
+    sync,
+    userId,
+    workspaceId,
+    stopPaging,
+  ]);
 
   const ready = Boolean(sync && restored === sync && workspaceName !== undefined);
   const value = useMemo<SessionView>(() => {

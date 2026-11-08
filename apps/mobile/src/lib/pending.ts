@@ -11,6 +11,8 @@ import {
 } from "@freecorps/brigade-sync";
 import type { NoticeTarget } from "@freecorps/brigade-i18n/incident";
 import { INCIDENT_STATUSES, isRoleId, SEVERITIES } from "@freecorps/brigade-schema";
+import { emberShard } from "@freecorps/brigade-sync/ember";
+import { savedFromEmber } from "@/lib/queue-entries";
 
 /** Files by name, in one directory of the app's own. */
 export type PendingFiles = {
@@ -72,7 +74,8 @@ export function savedText(file: string | null, aside: string | null): string | n
 }
 
 /** Device registration retries on its own (src/lib/paging.ts); a register kept from an older launch would be stale. */
-const kept = (name: string) => !name.startsWith("device.");
+export const keptChange = (name: string) => !name.startsWith("device.");
+const kept = keptChange;
 
 function hex(value: string): string {
   let out = "";
@@ -154,6 +157,11 @@ export type MemberQueue = {
   /** Whether changes not sent yet are kept: signing out loses them. */
   unsent: () => boolean;
   storage: PendingStorage;
+  /**
+   * Saves `list` as the shard's entries, whatever their shape (Ember's client keeps its own, src/lib/ember-queue.ts);
+   * `[]` removes the shard. Nothing after `drop`.
+   */
+  keep: (shard: string, list: readonly unknown[]) => void | Promise<void>;
   /** Deletes the file and ignores every later save: the member signed out. */
   drop: () => Promise<void>;
 };
@@ -188,6 +196,14 @@ export async function openQueue(
   const shards: Record<string, unknown[]> = { ...found?.shards };
   const unrestored = new Set(Object.keys(shards));
   let dropped = false;
+  const keep = (shard: string, list: readonly unknown[]) => {
+    if (dropped) return;
+    if (list.length > 0) shards[shard] = [...list];
+    else delete shards[shard];
+    if (Object.keys(shards).length === 0) return files.remove(name);
+    const file: QueueFile = { version: 1, userId, workspaceId, clientId, shards };
+    return files.write(name, JSON.stringify(file));
+  };
   return {
     clientId,
     saved: found?.shards ?? {},
@@ -198,14 +214,13 @@ export async function openQueue(
     storage: {
       save: (shard, mutations) => {
         if (dropped || unrestored.has(shard)) return;
-        const list = mutations.filter((mutation) => kept(mutation.name));
-        if (list.length > 0) shards[shard] = list;
-        else delete shards[shard];
-        if (Object.keys(shards).length === 0) return files.remove(name);
-        const file: QueueFile = { version: 1, userId, workspaceId, clientId, shards };
-        return files.write(name, JSON.stringify(file));
+        return keep(
+          shard,
+          mutations.filter((mutation) => kept(mutation.name)),
+        );
       },
     },
+    keep,
     drop: () => {
       dropped = true;
       return files.remove(name);
@@ -272,7 +287,18 @@ export function restoreQueue(
   queue: MemberQueue,
 ): RestoredChanges {
   queue.restoring(shard);
-  return restoredChanges(client.restore(shard, queue.saved[shard] ?? []));
+  // Kept by Ember's client, for a workspace since turned back to Brigade Sync: sent again by this one, with their ids.
+  const ember = emberShard(shard);
+  const fromEmber = (queue.saved[ember] ?? []).flatMap((entry) => {
+    const saved = savedFromEmber(entry);
+    return saved ? [saved] : [];
+  });
+  const restored = client.restore(shard, [...(queue.saved[shard] ?? []), ...fromEmber]);
+  if (queue.saved[ember]) {
+    queue.restoring(ember);
+    void queue.keep(ember, []);
+  }
+  return restoredChanges(restored);
 }
 
 /** What a restored change was, as the incident screens track it: its busy key and the notice it would leave. */

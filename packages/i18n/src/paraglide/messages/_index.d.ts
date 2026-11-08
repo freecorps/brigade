@@ -302,6 +302,8 @@ export * from './paging_degraded.js';
 export * from './paging_last_ok.js';
 export * from './paging_reason_apns_failing.js';
 export * from './paging_reason_d1_failing.js';
+export * from './paging_reason_direct_apns_failing.js';
+export * from './paging_reason_direct_fcm_failing.js';
 export * from './paging_reason_fcm_failing.js';
 export * from './paging_reason_no_beat.js';
 export * from './paging_reason_pipeline_slow.js';

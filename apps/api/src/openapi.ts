@@ -2109,6 +2109,8 @@ const SCHEMAS: Record<string, JsonSchema> = {
             "apns_failing",
             "fcm_failing",
             "d1_failing",
+            "direct_apns_failing",
+            "direct_fcm_failing",
           ],
         },
       },

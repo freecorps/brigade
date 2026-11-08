@@ -15056,7 +15056,9 @@
                 "relay_handles_unavailable",
                 "apns_failing",
                 "fcm_failing",
-                "d1_failing"
+                "d1_failing",
+                "direct_apns_failing",
+                "direct_fcm_failing"
               ]
             }
           },

@@ -11,7 +11,7 @@ import {
   toBase64url,
 } from "@freecorps/brigade-push";
 import { newId, type Actor, type Role } from "@freecorps/brigade-schema";
-import { DIRECT_BUDGET_MS, directSettles } from "../src/direct-push.ts";
+import { DIRECT_BUDGET_MS, directHealth, directSettles } from "../src/direct-push.ts";
 import { consumeEvents, type Fetch, type NotifyEnv } from "../src/notify.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
@@ -326,5 +326,47 @@ describe("which direct answers settle a send", () => {
     expect(directSettles(502, { error: "apns_unreachable" })).toBe(false);
     expect(directSettles(500, { error: "relay_misconfigured" })).toBe(false);
     expect(directSettles(400, { error: "invalid_body" })).toBe(false);
+  });
+});
+
+describe("the heartbeat's check of the instance's own key (RFC 0007, Q34)", () => {
+  /** APNs answering the check's request for a device that cannot exist with `status` and `reason`, or throwing. */
+  function apns(answer: { status: number; reason: string } | null) {
+    const urls: string[] = [];
+    const send: Fetch = async (request) => {
+      urls.push(`${request.method} ${request.url}`);
+      if (answer === null) throw new TypeError("connection refused");
+      return Response.json({ reason: answer.reason }, { status: answer.status });
+    };
+    return { urls, send };
+  }
+  const secrets = async () => ({
+    APNS_KEY: await apnsKey(),
+    APNS_KEY_ID: "ABC123DEFG",
+    APNS_TEAM_ID: "TEAM123456",
+    APNS_TOPIC: "app.freecorps.brigade",
+  });
+
+  test("off without the four APNs secrets: nothing is asked", async () => {
+    const { urls, send } = apns({ status: 400, reason: "BadDeviceToken" });
+    expect(await directHealth({ APNS_KEY_ID: "ABC123DEFG" }, send)).toBeUndefined();
+    expect(urls).toEqual([]);
+  });
+
+  test("APNs taking the key is ok, on the production host; FCM without an account is not configured", async () => {
+    const { urls, send } = apns({ status: 400, reason: "BadDeviceToken" });
+    expect(await directHealth(await secrets(), send)).toEqual({
+      apns: "ok",
+      fcm: "not_configured",
+    });
+    expect(urls).toEqual([`POST https://api.push.apple.com/3/device/${"0".repeat(64)}`]);
+  });
+
+  test("a key APNs refuses is an error at once; APNs out of reach is transient", async () => {
+    const refused = apns({ status: 403, reason: "InvalidProviderToken" });
+    expect(await directHealth(await secrets(), refused.send)).toMatchObject({ apns: "error" });
+    expect(logged().at(-1)).toMatchObject({ message: "direct push check failed" });
+    const down = apns(null);
+    expect(await directHealth(await secrets(), down.send)).toMatchObject({ apns: "transient" });
   });
 });

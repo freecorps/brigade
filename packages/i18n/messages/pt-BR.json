@@ -191,6 +191,8 @@
   "paging_reason_apns_failing": "O serviço de push da Apple recusou a chave do relay, ou não está respondendo, então iPhones não podem ser acionados.",
   "paging_reason_fcm_failing": "O Firebase Cloud Messaging não deu um token de acesso ao relay.",
   "paging_reason_d1_failing": "O banco de dados (D1) não respondeu a uma leitura simples.",
+  "paging_reason_direct_apns_failing": "O serviço de push da Apple recusou a chave própria desta instância, ou não está respondendo. Enquanto isso, iPhones são acionados pelo relay de push.",
+  "paging_reason_direct_fcm_failing": "O Google recusou a conta de serviço do Firebase própria desta instância, ou não está respondendo. Enquanto isso, celulares Android são acionados pelo relay de push.",
   "paging_last_ok": "Última autoverificação que passou: {time}",
   "mobile_overview_description": "A legenda de severidade e status, a partir dos tokens e do catálogo compartilhados.",
   "dates_title": "Datas e horários",
@@ -2846,6 +2848,8 @@
         "part=intro_degraded": "A autoverificação de acionamentos desta instância do Brigade encontrou um problema. Os acionamentos podem atrasar ou não sair até que seja corrigido:",
         "part=intro_ok": "A autoverificação de acionamentos desta instância do Brigade voltou a passar: um sinal passou pela fila de eventos e pelo relay de push.",
         "part=intro_unknown": "A autoverificação de acionamentos desta instância do Brigade ainda não tem resultado.",
+        "part=subject_direct": "A chave de push própria do Brigade está falhando: os acionamentos passam pelo relay",
+        "part=intro_direct": "A autoverificação de acionamentos desta instância do Brigade encontrou um problema nas credenciais de push próprias da instância. Os acionamentos continuam saindo, pelo relay de push:",
         "part=how": "Os logs do Worker têm os detalhes (procure por \"paging pipeline\"). GET /health/paging mostra o estado como os membros o veem.",
         "part=footer": "Você recebe este email porque seu endereço está em OPERATOR_EMAILS nesta instância do Brigade.",
         "part=*": "A autoverificação de acionamentos do Brigade mudou"

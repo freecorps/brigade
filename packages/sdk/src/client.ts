@@ -53,7 +53,10 @@ export type PagingHealthReason =
   | "relay_handles_unavailable"
   | "apns_failing"
   | "fcm_failing"
-  | "d1_failing";
+  | "d1_failing"
+  /** The instance's own push key is failing (it sends pages itself): the relay pages meanwhile, so `status` stays as is. */
+  | "direct_apns_failing"
+  | "direct_fcm_failing";
 
 /** `reasons` and the times only for a member of some workspace; `unknown` until a new deployment proves a beat. */
 export type PagingHealth = {

@@ -89,6 +89,12 @@ export type BeatChecks = {
    * `RELAY_SEND_TOKEN` is set too (RFC 0015 section 9: raw-token phones still page through `/send`). Absent otherwise.
    */
   sendToken?: RelayHealth;
+  /**
+   * This instance's own APNs key and Firebase account (src/direct-push.ts `directHealth`, Q34), when it sends pages
+   * itself; absent when it does not. A failure here never degrades the status: pages still go out, through the relay.
+   */
+  directApns?: BeatCheck;
+  directFcm?: BeatCheck;
 };
 export type DegradedReason =
   | "no_beat"
@@ -104,7 +110,13 @@ export type DegradedReason =
   | "relay_handles_unavailable"
   | "apns_failing"
   | "fcm_failing"
-  | "d1_failing";
+  | "d1_failing"
+  /**
+   * This instance's own push key (`BeatChecks.directApns`/`directFcm`) is failing: pages go through the relay instead,
+   * so these never make the status `degraded`; they are told to the operators (src/notify-operators.ts).
+   */
+  | "direct_apns_failing"
+  | "direct_fcm_failing";
 
 /**
  * `GET /health/paging`, as the watchdog knows it. Coarse on purpose: no URLs, ids or error text. The route
@@ -153,6 +165,10 @@ type Keys =
   | "apns_failures"
   | "fcm_failures"
   | "d1_failures"
+  | "direct_apns"
+  | "direct_fcm"
+  | "direct_apns_failures"
+  | "direct_fcm_failures"
   | "send_token"
   | "relay_limited"
   | "status"
@@ -235,6 +251,16 @@ export class WatchdogDO extends DurableObject<Env> {
       if (token === undefined) this.delete("send_token");
       else this.set("send_token", token);
       for (const key of ["apns", "fcm", "d1"] as const) this.check(key, checks?.[key] ?? "unknown");
+      // Not part of what pages need (the relay is their fallback), so not part of `failed` below.
+      for (const [key, found] of [
+        ["direct_apns", checks?.directApns],
+        ["direct_fcm", checks?.directFcm],
+      ] as const) {
+        if (found === undefined) {
+          this.delete(key);
+          this.delete(`${key}_failures`);
+        } else this.check(key, found);
+      }
       const failed = (["apns", "fcm", "d1"] as const).some((key) => this.get(key) === "error");
       // "The last time a page could have gone out": not while APNs, FCM or D1 is failing, nor the send token.
       const up = recorded === "ok" && (token === undefined || token === "ok") && !failed;
@@ -331,6 +357,8 @@ export class WatchdogDO extends DurableObject<Env> {
           apns: this.get("apns") as CheckHealth | null,
           fcm: this.get("fcm") as CheckHealth | null,
           d1: this.get("d1") as CheckHealth | null,
+          directApns: this.get("direct_apns") as CheckHealth | null,
+          directFcm: this.get("direct_fcm") as CheckHealth | null,
         },
         now,
       ),
@@ -350,7 +378,7 @@ export class WatchdogDO extends DurableObject<Env> {
    * `TRANSIENT_FAILURES_TO_DEGRADE`th in a row, which records `error`; before it the check keeps what it was, so the
    * status does not change and the beat still pings. Anything else is recorded as it is and starts the count again.
    */
-  private check(key: "apns" | "fcm" | "d1", found: BeatCheck): void {
+  private check(key: "apns" | "fcm" | "d1" | "direct_apns" | "direct_fcm", found: BeatCheck): void {
     const count: Keys = `${key}_failures`;
     if (found !== "transient") {
       this.set(count, "0");
@@ -499,7 +527,9 @@ export class WatchdogDO extends DurableObject<Env> {
  *   `relay_instance_revoked` / `relay_rate_limited` / `relay_handles_unavailable` from its signed deep health;
  * - `apns_failing` / `fcm_failing` / `d1_failing`: the deeper checks (Q19): APNs refused the relay's provider token,
  *   FCM refused the service account, or (on `TRANSIENT_FAILURES_TO_DEGRADE` proofs in a row) a provider or the D1
- *   read did not answer.
+ *   read did not answer;
+ * - `direct_apns_failing` / `direct_fcm_failing`: this instance's own key or account failed the same way (Q34). Pages
+ *   fall back to the relay, so these are listed but leave the status as it is.
  * With no beat yet, or beats but none proved and none overdue, it is `unknown`.
  */
 export function pagingStatus(
@@ -515,6 +545,8 @@ export function pagingStatus(
     apns?: CheckHealth | null;
     fcm?: CheckHealth | null;
     d1?: CheckHealth | null;
+    directApns?: CheckHealth | null;
+    directFcm?: CheckHealth | null;
   },
   now: number,
 ): Pick<PagingHealth, "status" | "reasons"> {
@@ -541,10 +573,16 @@ export function pagingStatus(
   if (times.apns === "error") reasons.push("apns_failing");
   if (times.fcm === "error") reasons.push("fcm_failing");
   if (times.d1 === "error") reasons.push("d1_failing");
-  if (reasons.length > 0) return { status: "degraded", reasons };
+  const direct: DegradedReason[] = [];
+  if (times.directApns === "error") direct.push("direct_apns_failing");
+  if (times.directFcm === "error") direct.push("direct_fcm_failing");
+  if (reasons.length > 0) return { status: "degraded", reasons: [...reasons, ...direct] };
   // A relay not known yet (every proof so far met only its limits, `relayCheck`) proves nothing: the beat pinged
   // nothing either, so the dashboard and the external check agree.
-  return { status: lastProvedAt === null || relay === null ? "unknown" : "ok", reasons };
+  return {
+    status: lastProvedAt === null || relay === null ? "unknown" : "ok",
+    reasons: direct,
+  };
 }
 
 /**

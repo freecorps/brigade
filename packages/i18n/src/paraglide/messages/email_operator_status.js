@@ -16,6 +16,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "intro_degraded" | "The paging self-check of this Brigade instance found a problem. Pages may be late or may not go out until it's fixed:" |
 * | "intro_ok" | "The paging self-check of this Brigade instance is passing again: a heartbeat went through the event queue and the push relay." |
 * | "intro_unknown" | "The paging self-check of this Brigade instance has no result yet." |
+* | "subject_direct" | "Brigade's own push key is failing: pages go through the relay" |
+* | "intro_direct" | "The paging self-check of this Brigade instance found a problem with the instance's own push credentials. Pages still go out, through the push relay:" |
 * | "how" | "The Worker's logs have the details (search for \"paging pipeline\"). GET /health/paging shows the state as members see it." |
 * | "footer" | "You get this email because your address is in OPERATOR_EMAILS for this Brigade instance." |
 * | * | "Brigade's paging self-check changed" |
@@ -33,6 +35,8 @@ export const email_operator_status = /** @type {((inputs: Email_Operator_StatusI
 		if (i?.part === "intro_degraded") return /** @type {LocalizedString} */ (`A autoverificação de acionamentos desta instância do Brigade encontrou um problema. Os acionamentos podem atrasar ou não sair até que seja corrigido:`);
 		if (i?.part === "intro_ok") return /** @type {LocalizedString} */ (`A autoverificação de acionamentos desta instância do Brigade voltou a passar: um sinal passou pela fila de eventos e pelo relay de push.`);
 		if (i?.part === "intro_unknown") return /** @type {LocalizedString} */ (`A autoverificação de acionamentos desta instância do Brigade ainda não tem resultado.`);
+		if (i?.part === "subject_direct") return /** @type {LocalizedString} */ (`A chave de push própria do Brigade está falhando: os acionamentos passam pelo relay`);
+		if (i?.part === "intro_direct") return /** @type {LocalizedString} */ (`A autoverificação de acionamentos desta instância do Brigade encontrou um problema nas credenciais de push próprias da instância. Os acionamentos continuam saindo, pelo relay de push:`);
 		if (i?.part === "how") return /** @type {LocalizedString} */ (`Os logs do Worker têm os detalhes (procure por "paging pipeline"). GET /health/paging mostra o estado como os membros o veem.`);
 		if (i?.part === "footer") return /** @type {LocalizedString} */ (`Você recebe este email porque seu endereço está em OPERATOR_EMAILS nesta instância do Brigade.`);
 		return /** @type {LocalizedString} */ (`A autoverificação de acionamentos do Brigade mudou`)
@@ -44,6 +48,8 @@ export const email_operator_status = /** @type {((inputs: Email_Operator_StatusI
 		if (i?.part === "intro_degraded") return /** @type {LocalizedString} */ (`The paging self-check of this Brigade instance found a problem. Pages may be late or may not go out until it's fixed:`);
 		if (i?.part === "intro_ok") return /** @type {LocalizedString} */ (`The paging self-check of this Brigade instance is passing again: a heartbeat went through the event queue and the push relay.`);
 		if (i?.part === "intro_unknown") return /** @type {LocalizedString} */ (`The paging self-check of this Brigade instance has no result yet.`);
+		if (i?.part === "subject_direct") return /** @type {LocalizedString} */ (`Brigade's own push key is failing: pages go through the relay`);
+		if (i?.part === "intro_direct") return /** @type {LocalizedString} */ (`The paging self-check of this Brigade instance found a problem with the instance's own push credentials. Pages still go out, through the push relay:`);
 		if (i?.part === "how") return /** @type {LocalizedString} */ (`The Worker's logs have the details (search for "paging pipeline"). GET /health/paging shows the state as members see it.`);
 		if (i?.part === "footer") return /** @type {LocalizedString} */ (`You get this email because your address is in OPERATOR_EMAILS for this Brigade instance.`);
 		return /** @type {LocalizedString} */ (`Brigade's paging self-check changed`)

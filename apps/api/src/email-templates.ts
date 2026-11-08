@@ -20,6 +20,8 @@ import {
   member_role,
   paging_reason_apns_failing,
   paging_reason_d1_failing,
+  paging_reason_direct_apns_failing,
+  paging_reason_direct_fcm_failing,
   paging_reason_fcm_failing,
   paging_reason_no_beat,
   paging_reason_pipeline_slow,
@@ -359,11 +361,14 @@ const PAGING_REASONS: Record<string, typeof paging_reason_no_beat> = {
   apns_failing: paging_reason_apns_failing,
   fcm_failing: paging_reason_fcm_failing,
   d1_failing: paging_reason_d1_failing,
+  direct_apns_failing: paging_reason_direct_apns_failing,
+  direct_fcm_failing: paging_reason_direct_fcm_failing,
 };
 
 /**
  * The email that tells the instance's operators (`OPERATOR_EMAILS`) the paging self-check changed status
- * (`brigade.status_changed`, RFC 0007 "Watching the watcher"): degraded with each reason, back to ok, or unknown.
+ * (`brigade.status_changed`, RFC 0007 "Watching the watcher"): degraded with each reason, back to ok, unknown, or ok
+ * with the instance's own push key failing (`direct`, the relay paging meanwhile).
  * Nothing in it is user content, a URL or an id.
  */
 export function renderOperatorStatusEmail(
@@ -372,8 +377,11 @@ export function renderOperatorStatusEmail(
   locale: Locale,
 ): OutgoingEmail {
   const text = (part: string) => email_operator_status({ part }, { locale });
+  // Passing, but with this instance's own push key failing (src/watchdog.ts `direct_*_failing`): pages go through the
+  // relay, which the email says rather than "back to normal".
+  const kind = facts.status === "ok" && facts.reasons.length > 0 ? "direct" : facts.status;
   const reasons =
-    facts.status === "degraded"
+    kind === "degraded" || kind === "direct"
       ? facts.reasons.flatMap((reason) => {
           const say = PAGING_REASONS[reason];
           return say ? [say({}, { locale })] : [];
@@ -381,8 +389,8 @@ export function renderOperatorStatusEmail(
       : [];
   return renderMessage(
     {
-      subject: text(`subject_${facts.status}`),
-      lines: [text(`intro_${facts.status}`)],
+      subject: text(`subject_${kind}`),
+      lines: [text(`intro_${kind}`)],
       list: reasons,
       after: [text("how")],
       footer: text("footer"),

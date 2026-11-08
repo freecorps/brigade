@@ -47,6 +47,7 @@ import {
 } from "./relay-instance.ts";
 import {
   directConfigured,
+  directHealth,
   directPost,
   directSettles,
   SENT_BY_HEADER,
@@ -420,7 +421,7 @@ export async function consumeDeadLetters(
  * signature, or its send token), and tells the watchdog, which pings the external check. Never throws, and the
  * message is acked either way: a lost heartbeat is a minute of silence, and the next one is already on its way. With
  * it go the beat's deeper checks (Q19): the push providers, through the relay's deep health, and one cheap D1 read,
- * side by side.
+ * side by side; and, when this instance sends pages itself (src/direct-push.ts), its own key and account (Q34).
  */
 export async function proveHeartbeat(
   event: BrigadeEvent,
@@ -433,6 +434,7 @@ export async function proveHeartbeat(
     | "RELAY_INSTANCE_KEY"
     | "RELAY_INSTANCE_ID"
     | "DB"
+    | keyof DirectPushEnv
   >,
   send: Fetch,
 ): Promise<void> {
@@ -441,11 +443,16 @@ export async function proveHeartbeat(
     log("heartbeat dropped: no watchdog binding", { event: event.id });
     return;
   }
-  const [relay, d1] = await Promise.all([relayHealth(env, send), d1Health(env.DB)]);
+  const [relay, d1, direct] = await Promise.all([
+    relayHealth(env, send),
+    d1Health(env.DB),
+    directHealth(env, send),
+  ]);
   const checks: BeatChecks = {
     apns: relay.apns,
     fcm: relay.fcm,
     d1,
+    ...(direct ? { directApns: direct.apns, directFcm: direct.fcm } : {}),
     ...(relay.sendToken === undefined ? {} : { sendToken: relay.sendToken }),
   };
   try {

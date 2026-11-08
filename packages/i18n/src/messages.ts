@@ -312,6 +312,8 @@ export declare const paging_degraded: ServerMessages["paging_degraded"];
 export declare const paging_last_ok: ServerMessages["paging_last_ok"];
 export declare const paging_reason_apns_failing: ServerMessages["paging_reason_apns_failing"];
 export declare const paging_reason_d1_failing: ServerMessages["paging_reason_d1_failing"];
+export declare const paging_reason_direct_apns_failing: ServerMessages["paging_reason_direct_apns_failing"];
+export declare const paging_reason_direct_fcm_failing: ServerMessages["paging_reason_direct_fcm_failing"];
 export declare const paging_reason_fcm_failing: ServerMessages["paging_reason_fcm_failing"];
 export declare const paging_reason_no_beat: ServerMessages["paging_reason_no_beat"];
 export declare const paging_reason_pipeline_slow: ServerMessages["paging_reason_pipeline_slow"];

@@ -100,8 +100,28 @@ export const arm = internalMutationGeneric({
   args: {},
   handler: (ctx): string[] => {
     const c = ctx as MutationCtx;
+    // Live again (after a turn back): its upkeep runs.
+    c.sql.exec("delete from shard_meta where key = 'retired'");
     const keys = Object.keys(JOBS) as TickKey[];
     for (const key of keys) tickAt(c, c.now, key);
     return keys;
+  },
+});
+
+/**
+ * The workspace was turned back to its `WorkspaceDO` (RFC 0016 step 4): this shard's upkeep stops (no escalation
+ * fires, no page is sent, nothing is pushed from here), so the two engines never both act. Every tick already
+ * scheduled finds the shard retired and does nothing, and none is scheduled again until `arm`.
+ */
+export const disarm = internalMutationGeneric({
+  args: {},
+  handler: (ctx): null => {
+    const c = ctx as MutationCtx;
+    c.sql.exec(
+      "insert into shard_meta (key, value) values ('retired', ?) on conflict (key) do update set value = excluded.value",
+      c.now,
+    );
+    c.sql.exec("delete from ember_ticks");
+    return null;
   },
 });

@@ -24,7 +24,7 @@ import {
   type WebhookRunResult,
 } from "../src/webhooks.ts";
 import { emberWorkspace, type EmberShard } from "./shard-facade.ts";
-import { holdTicks, tickAt } from "./ticks.ts";
+import { holdTicks, tickAt, retired } from "./ticks.ts";
 
 const log = (message: string, fields: Record<string, unknown>) =>
   console.error(JSON.stringify({ message, ...fields }));
@@ -202,6 +202,8 @@ export const slackArchive = internalMutationGeneric({
     if (shard.workspace() === undefined) return { archived: 0 };
     // The keys as parameters: `ctx.sql` refuses a schema table's name (`slack`, `webhooks`) quoted in a statement.
     c.sql.exec("delete from ember_ticks where key = ?", "slack");
+    // Turned back to its WorkspaceDO (`migration:disarm`): this shard keeps no upkeep.
+    if (retired(c)) return { archived: 0 };
     const archived = slack.archiveDue(c.now);
     const next = slack.nextArchiveAt();
     if (next !== null) tickAt(c, next, "slack");
@@ -300,6 +302,8 @@ export const webhookRedrive = internalMutationGeneric({
     const { shard, webhooks } = webhooksOf(c);
     if (shard.workspace() === undefined) return { redriven: 0 };
     c.sql.exec("delete from ember_ticks where key = ?", "webhooks");
+    // Turned back to its WorkspaceDO (`migration:disarm`): this shard keeps no upkeep.
+    if (retired(c)) return { redriven: 0 };
     const redriven = webhooks.redrive(c.now);
     const next = webhooks.nextAt();
     if (next !== null) tickAt(c, next, "webhooks");

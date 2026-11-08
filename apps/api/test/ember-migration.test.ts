@@ -148,6 +148,13 @@ describe("the migration's operator routes", () => {
     );
     expect(refused).toMatch(/moved to Ember/);
 
+    // On Ember now: a copy would overwrite live data, and a switch again only finishes the forwarding.
+    expect((await admin("POST", `/admin/ember/copy/${workspaceId}`)).status).toBe(409);
+    expect(await (await admin("POST", `/admin/ember/switch/${workspaceId}`)).json()).toEqual({
+      ok: true,
+      finished: true,
+    });
+
     expect((await admin("POST", `/admin/ember/back/${workspaceId}`)).status).toBe(200);
     expect(await workspaceEngine(env.DB, workspaceId)).toBe("brigade");
     expect((await env.WORKSPACE.getByName(workspaceId).info()).tables).toBeGreaterThan(0);

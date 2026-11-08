@@ -14,7 +14,7 @@ import {
   type AlertSourceSecret,
 } from "../src/alert-intake.ts";
 import { emberWorkspace, type EmberShard } from "./shard-facade.ts";
-import { holdTicks, tickAt } from "./ticks.ts";
+import { holdTicks, tickAt, retired } from "./ticks.ts";
 
 /**
  * How soon quiet alerts still left are routed again: the DO's alarm tick (`MONITOR_TICK_MS`, src/monitors.ts, which
@@ -125,6 +125,8 @@ export const reroute = internalMutationGeneric({
     const { shard } = emberWorkspace(c);
     if (shard.workspace() === undefined) return { left: false };
     c.sql.exec("delete from ember_ticks where key = 'reroute'");
+    // Turned back to its WorkspaceDO (`migration:disarm`): this shard keeps no upkeep.
+    if (retired(c)) return { left: false };
     const alerts = intake(c, shard);
     const left = alerts.reroute();
     const at = left ? c.now : alerts.rerouteAt(c.now);

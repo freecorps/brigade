@@ -23,7 +23,7 @@ import { within } from "../src/deadline.ts";
 import { probeName } from "../src/probe-name.ts";
 import type { ProbeReport } from "../src/probe.ts";
 import { emberWorkspace } from "./shard-facade.ts";
-import { holdTicks, tickAt } from "./ticks.ts";
+import { holdTicks, tickAt, retired } from "./ticks.ts";
 
 const CHECK = makeFunctionReference<"mutation">("monitors:check");
 const PUSHED = makeFunctionReference<"mutation">("monitors:pushed");
@@ -106,6 +106,8 @@ export const check = internalMutationGeneric({
     if (workspaceId === undefined) return null;
     // The key as a parameter: `ctx.sql` refuses a schema table's name (`monitors`) quoted in the statement.
     c.sql.exec("delete from ember_ticks where key = ?", "monitors");
+    // Turned back to its WorkspaceDO (`migration:disarm`): this shard keeps no upkeep.
+    if (retired(c)) return null;
     monitoring.checkDue(c.now);
     const pushes = monitoring.pushesDue(c.now);
     // A fallback a tick from now while the monitors want ticks at all, as the DO sets one before its alarm's work: an

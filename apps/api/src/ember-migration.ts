@@ -14,7 +14,7 @@
 
 import { BRIGADE_TABLES } from "../ember/schema.ts";
 import { COPY_PAGE } from "../ember/migration.ts";
-import { setWorkspaceEngine, workspaceShard } from "./ember.ts";
+import { setWorkspaceEngine, workspaceEngine, workspaceShard } from "./ember.ts";
 
 type MigrationEnv = Pick<Env, "DB" | "WORKSPACE" | "SHARD">;
 type Row = { id: string; data: string };
@@ -97,6 +97,7 @@ function sides(env: MigrationEnv, workspaceId: string) {
     drop: (table: string, ids: string[]) =>
       call<number>("mutation", "migration:drop", { table, ids }),
     arm: () => call<string[]>("mutation", "migration:arm", {}),
+    disarm: () => call<null>("mutation", "migration:disarm", {}),
     stub,
   };
 }
@@ -168,6 +169,8 @@ export async function copyWorkspace(env: MigrationEnv, workspaceId: string): Pro
 
 export type SwitchResult =
   | { ok: true; copy: CopyReport; ticks: string[] }
+  /** D1 said `ember` already: the switch only finished the DO's forwarding, and copied nothing over live data. */
+  | { ok: true; finished: true }
   | { ok: false; code: "not_found" | "mismatch"; copy?: CopyReport };
 
 /**
@@ -180,6 +183,15 @@ export async function switchWorkspace(
   workspaceId: string,
 ): Promise<SwitchResult> {
   const side = sides(env, workspaceId);
+  // Switched already (a switch whose forwarding failed, run again): the shard is live, so nothing is copied over it.
+  if ((await workspaceEngine(env.DB, workspaceId)) === "ember") {
+    if (!(await side.stub.forwardToEmber())) {
+      const moved = await side.stub.moveToEmber(workspaceId);
+      if (!moved.ok) return { ok: false, code: "not_found" };
+      await side.stub.forwardToEmber();
+    }
+    return { ok: true, finished: true };
+  }
   const moved = await side.stub.moveToEmber(workspaceId);
   if (!moved.ok) return { ok: false, code: "not_found" };
   // Frozen and forwarding nothing, so no write lands on Ember while the last copy runs (it would delete it).
@@ -200,8 +212,10 @@ export async function switchWorkspace(
     ticks = await side.arm();
     await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
   } catch (error) {
-    // Not switched, or not known to be: D1 back at `brigade` (the write may have landed), then the DO.
+    // Not switched, or not known to be: D1 back at `brigade` (the write may have landed), the shard's upkeep off
+    // (it may have been armed), then the DO.
     await setWorkspaceEngine(env.DB, workspaceId, "brigade", Date.now());
+    await side.disarm();
     await side.stub.moveBack();
     throw error;
   }
@@ -215,5 +229,12 @@ export async function switchWorkspace(
 /** Turns `workspaceId` back to its `WorkspaceDO` (step 4): D1 first, so nothing new reaches the shard, then the DO. */
 export async function backWorkspace(env: MigrationEnv, workspaceId: string): Promise<void> {
   await setWorkspaceEngine(env.DB, workspaceId, "brigade", Date.now());
+  // The shard stops acting (no escalation, page or push from it) before the DO starts again.
+  await sides(env, workspaceId).disarm();
   await env.WORKSPACE.getByName(workspaceId).moveBack();
+}
+
+/** Whether `workspaceId` is on Ember already: a copy then would overwrite live data, so it is refused. */
+export async function switched(env: MigrationEnv, workspaceId: string): Promise<boolean> {
+  return (await workspaceEngine(env.DB, workspaceId)) === "ember";
 }

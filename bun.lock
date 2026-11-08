@@ -95,7 +95,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@freecorps/brigade-push": "workspace:*",
-        "@freecorps/ember-push": "0.2.0",
+        "@freecorps/ember-push": "0.4.0",
       },
       "devDependencies": {
         "@cloudflare/vite-plugin": "^1.65.0",
@@ -720,7 +720,7 @@
 
     "@freecorps/brigade-web": ["@freecorps/brigade-web@workspace:apps/web"],
 
-    "@freecorps/ember-push": ["@freecorps/ember-push@0.2.0", "", { "dependencies": { "@freecorps/ember-server": "0.2.0", "@freecorps/ember-values": "0.2.0" } }, "sha512-OOr34dmXYpJqC5nQcyW8LMq8KtV/qgWx89TFndXeWn8s05hzEVt9+S+/YPM8GixnlBfCBwL/fGe1cAGWxaEs7w=="],
+    "@freecorps/ember-push": ["@freecorps/ember-push@0.4.0", "", { "dependencies": { "@freecorps/ember-server": "0.4.0", "@freecorps/ember-values": "0.4.0" } }, "sha512-BbYMcl9gOFJ1MYaFIujvcFJIsTEShz7+ork5SU1UaU45XqS5PjTrDGcKNloXH7GFAdIAVIHB36LwrKAV8j8ViA=="],
 
     "@freecorps/ember-runtime": ["@freecorps/ember-runtime@0.4.0", "", { "dependencies": { "@freecorps/ember-server": "0.4.0", "@freecorps/ember-values": "0.4.0" } }, "sha512-W9AL3rdQ44ybUdGggLIE9RYlLuVWQEl2eqz5YsynqyQkefaxG3nRq5mFsXed4LlqbwNijceyDzuzDq71SwPUhw=="],
 
@@ -2897,10 +2897,6 @@
     "@expo/package-manager/ora": ["ora@3.4.0", "", { "dependencies": { "chalk": "^2.4.2", "cli-cursor": "^2.1.0", "cli-spinners": "^2.0.0", "log-symbols": "^2.2.0", "strip-ansi": "^5.2.0", "wcwidth": "^1.0.1" } }, "sha512-eNwHudNbO1folBP3JsZ19v9azXWtQZjICdr3Q0TDPIaeBQ3mXLrh54wM+er0+hSp+dWKf+Z8KM58CYzEyIYxYg=="],
 
     "@expo/plist/xmlbuilder": ["xmlbuilder@15.1.1", "", {}, "sha512-yMqGBqtXyeN1e3TGYvgNgDVZ3j84W4cwkOXQswghol6APgZWaff9lnbvN7MHYJOiXsvGPXtjTYJEiC9J2wv9Eg=="],
-
-    "@freecorps/ember-push/@freecorps/ember-server": ["@freecorps/ember-server@0.2.0", "", { "dependencies": { "@freecorps/ember-values": "0.2.0" } }, "sha512-OOkxnH+gUIV3kRwLHu6O4jR42e1zy42yjkc/4k8jm+jRdW79bpiNNYhWL4aGiubuAjZjVCGVQCrHwMQdWcyjzg=="],
-
-    "@freecorps/ember-push/@freecorps/ember-values": ["@freecorps/ember-values@0.2.0", "", {}, "sha512-md38krXyW3LOUJFH0xX/fKlobutSpIPWGczK7ND7RLq5pfzw3ujqcSqyN/XoblkzeTl3JPOrXKd+dR13XHOsSQ=="],
 
     "@isaacs/cliui/string-width": ["string-width@5.1.2", "", { "dependencies": { "eastasianwidth": "^0.2.0", "emoji-regex": "^9.2.2", "strip-ansi": "^7.0.1" } }, "sha512-HnLOCR3vjcY8beoNLtcjZ5/nxn2afmME6lhrDrebokqMap+XbeW8n9TXpPDOqdGK5qcI3oT0GKTW6wC7EMiVqA=="],
 

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test } from "vite-plus/test";
 import { handle, type RelayEnv } from "../src/index.ts";
 import { fcmAccessToken } from "@freecorps/ember-push";
 import { APNS_TOKEN_TTL_MS } from "../src/apns.ts";
+import { parseServiceAccount } from "../src/fcm.ts";
 import { FALLBACK_MS, googleError, providerTokens } from "../src/provider-tokens.ts";
 
 // RFC 0016 "Push", step 1: the relay's provider and access tokens come from Ember's push transport, with the relay's
@@ -257,6 +258,34 @@ describe("FCM access token from Ember's transport", () => {
       "Bearer ya29.2",
       "Bearer ya29.2",
     ]);
+  });
+
+  test("sends refused with one token exchange once between them, and an old refusal reuses the replacement", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const exchanges: number[] = [];
+    const send = async (request: Request) => {
+      if (request.url !== TOKEN_URI) throw new Error("no FCM here");
+      exchanges.push(exchanges.length + 1);
+      const n = exchanges.length;
+      // The replacement's exchange is held until every refused send asks for a token.
+      if (n === 2) await held;
+      return Response.json({ access_token: `ya29.${n}`, expires_in: 3599 });
+    };
+    const account = parseServiceAccount(env.FCM_SERVICE_ACCOUNT);
+    const now = Date.now();
+    expect(await providerTokens.google(account, send, now)).toBe("ya29.1");
+    // Three sends saw FCM refuse ya29.1, and each asks for a token while the replacement is on its way.
+    await Promise.all([1, 2, 3].map(() => providerTokens.googleRefused("ya29.1")));
+    const tokens = Promise.all([1, 2, 3].map(() => providerTokens.google(account, send, now)));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    release();
+    expect(await tokens).toEqual(["ya29.2", "ya29.2", "ya29.2"]);
+    expect(exchanges).toHaveLength(2);
+    // A late refusal of ya29.1: the replacement is used as is, with no exchange.
+    await providerTokens.googleRefused("ya29.1");
+    expect(await providerTokens.google(account, send, now)).toBe("ya29.2");
+    expect(exchanges).toHaveLength(2);
   });
 
   test("a token FCM refused is never sent again, even when a later refusal names an older one", async () => {

@@ -121,8 +121,22 @@ async function* walk(page: (after: string) => Promise<Row[]>): AsyncGenerator<Ro
 }
 
 /** Copies `workspaceId`'s `WorkspaceDO` to its Ember shard and checks it, table by table. */
-export async function copyWorkspace(env: MigrationEnv, workspaceId: string): Promise<CopyReport> {
-  const side = sides(env, workspaceId);
+export async function copyWorkspace(
+  env: MigrationEnv,
+  workspaceId: string,
+  options: { standalone?: boolean } = {},
+): Promise<CopyReport> {
+  const raw = sides(env, workspaceId);
+  // A copy run on its own (not the switch's) stops the moment the workspace is switched, so it never writes over a
+  // live shard: before each write, D1 is asked again.
+  const fence = async () => {
+    if (options.standalone && (await switched(env, workspaceId))) throw new AlreadySwitched();
+  };
+  const side = {
+    ...raw,
+    put: async (table: string, rows: Row[]) => (await fence(), raw.put(table, rows)),
+    drop: async (table: string, ids: string[]) => (await fence(), raw.drop(table, ids)),
+  };
   let written = 0;
   let dropped = 0;
   const mismatched: TableCheck[] = [];
@@ -192,9 +206,12 @@ export async function switchWorkspace(
   const side = sides(env, workspaceId);
   // Switched already (a switch whose forwarding failed, run again): the shard is live, so nothing is copied over it.
   if ((await workspaceEngine(env.DB, workspaceId)) === "ember") {
+    // Its upkeep too: a switch that wrote D1 and then failed to arm left the shard with none (and arming again is
+    // harmless: each tick finds what is due).
+    await side.arm();
     if (!(await side.stub.forwardToEmber())) {
       const moved = await side.stub.moveToEmber(workspaceId);
-      if (!moved.ok) return { ok: false, code: "not_found" };
+      if (!moved.ok) return { ok: false, code: moved.code };
       await side.stub.forwardToEmber();
     }
     return { ok: true, finished: true };
@@ -270,6 +287,13 @@ export async function backWorkspace(env: MigrationEnv, workspaceId: string): Pro
     await sides(env, workspaceId).disarm();
   } finally {
     await env.WORKSPACE.getByName(workspaceId).moveBack();
+  }
+}
+
+/** A standalone copy found the workspace switched meanwhile, and stopped. */
+export class AlreadySwitched extends Error {
+  constructor() {
+    super("the workspace was switched to Ember during the copy");
   }
 }
 

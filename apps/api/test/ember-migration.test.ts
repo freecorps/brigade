@@ -6,6 +6,7 @@ import { newId } from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
 import { workspaceEngine, workspaceShard } from "../src/ember.ts";
 import { serveMigration } from "../src/ember-admin.ts";
+import { switchWorkspace } from "../src/ember-migration.ts";
 import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
@@ -158,5 +159,16 @@ describe("the migration's operator routes", () => {
     expect((await admin("POST", `/admin/ember/back/${workspaceId}`)).status).toBe(200);
     expect(await workspaceEngine(env.DB, workspaceId)).toBe("brigade");
     expect((await env.WORKSPACE.getByName(workspaceId).info()).tables).toBeGreaterThan(0);
+  });
+
+  test("two switches at once: one switches, the other is busy and touches nothing", async () => {
+    const { workspaceId } = await written();
+    const results = await Promise.all([
+      switchWorkspace(env, workspaceId),
+      switchWorkspace(env, workspaceId),
+    ]);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok)).toEqual([{ ok: false, code: "busy" }]);
+    expect(await workspaceEngine(env.DB, workspaceId)).toBe("ember");
   });
 });

@@ -8,7 +8,13 @@
 //   POST /admin/ember/back/:workspaceId       D1 says `brigade` again, and the DO holds the workspace as at the copy
 
 import { same } from "./alert-intake.ts";
-import { backWorkspace, copyWorkspace, switched, switchWorkspace } from "./ember-migration.ts";
+import {
+  AlreadySwitched,
+  backWorkspace,
+  copyWorkspace,
+  switched,
+  switchWorkspace,
+} from "./ember-migration.ts";
 import { WORKSPACE_ID } from "./workspace.ts";
 
 export const ADMIN_BASE = "/admin/ember";
@@ -62,7 +68,12 @@ export async function serveMigration(
     if (action === "copy") {
       // On Ember already: its shard is live, and a copy would overwrite what was written there since.
       if (await switched(env, workspaceId)) return json({ error: "already_switched" }, 409);
-      return json(await copyWorkspace(env, workspaceId));
+      try {
+        return json(await copyWorkspace(env, workspaceId, { standalone: true }));
+      } catch (error) {
+        if (error instanceof AlreadySwitched) return json({ error: "already_switched" }, 409);
+        throw error;
+      }
     }
     if (action === "switch") {
       const result = await switchWorkspace(env, workspaceId);

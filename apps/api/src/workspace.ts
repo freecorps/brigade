@@ -2739,20 +2739,19 @@ export class WorkspaceDO extends DurableObject<Env> {
       return { ok: false, code: "not_found" };
     // Frozen and not forwarding: a switch is copying it now (or stopped mid-way, which `moveBack` ends). One at a time.
     if (this.moved === workspaceId && !this.forwarding) return { ok: false, code: "busy" };
-    // An alarm run in progress (an escalation, a page) finishes first; none starts after `moved` is set below.
-    await this.settled();
-    if (this.moved !== undefined && this.moved !== workspaceId)
-      return { ok: false, code: "not_found" };
+    // Claimed before any await, so a second switch arriving meanwhile finds it `busy`. Frozen: nothing is forwarded
+    // until the switch finishes (`forwardToEmber`), and no new call or alarm run does any work.
     this.ctx.storage.sql.exec(
       "insert into moved_to_ember (workspace_id, at) values (?, ?) on conflict (workspace_id) do nothing",
       workspaceId,
       Date.now(),
     );
-    this.moved = workspaceId;
-    // Frozen: nothing is forwarded until the switch finishes (`forwardToEmber`).
     this.ctx.storage.sql.exec("delete from shard_meta where key = 'moved_forwarding'");
+    this.moved = workspaceId;
     this.forwarding = false;
-    // Calls let in before the freeze (a REST write waiting on D1) commit or fail before the copy reads this shard.
+    // What started before the freeze finishes before the copy reads this shard: an alarm run (an escalation, a page),
+    // and calls let in earlier (a REST write waiting on D1).
+    await this.settled();
     while (this.inflight.size > 0) await Promise.allSettled(this.inflight);
     for (const ws of this.ctx.getWebSockets()) close(ws, CLOSE_SERVICE_RESTART, "moved");
     await this.ctx.storage.setAlarm(Date.now());

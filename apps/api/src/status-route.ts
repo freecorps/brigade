@@ -1,6 +1,7 @@
 // The status page's HTTP routes (RFC 0012): `GET /status/:slug`, the public page, and its feeds, read from KV and never
 // from the shard; and `PUT /workspaces/:id/status-page`, which sets the page up as a member (src/status-page.ts).
 
+import { workspaceConfigureStatusPage } from "./ember-status.ts";
 import {
   COMPONENT_STATUSES,
   PUBLIC_STATUSES,
@@ -380,15 +381,12 @@ export async function configureStatusPage(
   if (body === undefined) return json({ error: "invalid_args" }, 400);
   let result: StatusConfigureResult | { ok: false; code: "not_a_member" } | TokenRefused;
   try {
-    result = await env.WORKSPACE.getByName(workspaceId).configureStatusPage(
-      workspaceId,
-      member.actor,
-      body,
-    );
+    const configure = await workspaceConfigureStatusPage(env, workspaceId);
+    result = await configure(workspaceId, member.actor, body);
   } catch (error) {
     console.error(
       JSON.stringify({
-        message: "WorkspaceDO.configureStatusPage failed",
+        message: "configuring the status page on its shard failed",
         workspaceId,
         error: String(error),
       }),

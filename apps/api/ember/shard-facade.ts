@@ -212,6 +212,19 @@ export class EmberShard {
     return row !== undefined;
   }
 
+  /** The status page's dirty version (`shard_meta` `status_dirty`, set by `run()`), as `Shard.statusDirty`. */
+  statusDirty(): number | undefined {
+    const [row] = this.ctx.sql.exec("select value from shard_meta where key = 'status_dirty'") as {
+      value: number;
+    }[];
+    return row?.value;
+  }
+
+  /** The snapshot pushed as of `version`: a change since set a newer one, which stays (`Shard.statusPushed`). */
+  statusPushed(version: number): void {
+    this.ctx.sql.exec("delete from shard_meta where key = 'status_dirty' and value <= ?", version);
+  }
+
   /**
    * An API token actor as this shard backs it (`WorkspaceDO.tokenActor`, RFC 0014), or undefined: its listed copy must
    * exist, be neither revoked nor expired and have the same creator; its role is the lower of what the Worker read in

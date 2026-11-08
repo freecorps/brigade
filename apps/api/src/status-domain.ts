@@ -14,6 +14,7 @@
 // never asked about (src/status-domain-edge.ts) and which may sit under the instance's own domain, since the operator
 // chose them. With neither, every route but `GET` answers `503 not_configured` and the dashboard hides the section.
 
+import { workspaceDomain, type WorkspaceDomain } from "./ember-status.ts";
 import {
   allows,
   isStatusHostname,
@@ -181,7 +182,7 @@ async function freeHostnames(
   const kept = await Promise.all(
     held.map(async ({ hostname, workspace_id: holder }) => {
       try {
-        const { domain } = await env.WORKSPACE.getByName(holder).statusDomainState(holder);
+        const { domain } = await (await workspaceDomain(env, holder)).statusDomainState(holder);
         return takeable(domain, hostname, now, canDelete) ? null : hostname;
       } catch (error) {
         log("WorkspaceDO.statusDomainState failed", { workspaceId: holder, error: String(error) });
@@ -277,7 +278,13 @@ export async function statusDomainRoute(
   if (!(await domainAllowed(env, workspaceId))) return refuse("rate_limited");
   const client = saas ? new SaasClient(saas, send) : undefined;
   const reach = send ?? ((request: Request) => fetch(request));
-  const stub = env.WORKSPACE.getByName(workspaceId);
+  let stub: WorkspaceDomain;
+  try {
+    stub = await workspaceDomain(env, workspaceId);
+  } catch (error) {
+    log("reading the workspace's engine failed", { workspaceId, error: String(error) });
+    return refuse("unavailable");
+  }
   const change = async (
     name: "add" | "check" | "remove",
     args: Record<string, unknown>,
@@ -289,7 +296,7 @@ export async function statusDomainRoute(
       return { ok: false, code: "unavailable" };
     }
   };
-  let state: Awaited<ReturnType<typeof stub.statusDomainState>>;
+  let state: StatusDomainView;
   try {
     state = await stub.statusDomainState(workspaceId);
   } catch (error) {
@@ -540,9 +547,10 @@ async function takeOver(
   holder: Holder,
   now: number,
 ): Promise<{ stamp: number } | "taken" | "busy" | "failed" | "cloudflare_failed"> {
-  const stub = env.WORKSPACE.getByName(holder.workspaceId);
+  let stub: WorkspaceDomain;
   let domain: StatusDomainRow | null;
   try {
+    stub = await workspaceDomain(env, holder.workspaceId);
     domain = (await stub.statusDomainState(holder.workspaceId)).domain;
   } catch (error) {
     log("WorkspaceDO.statusDomainState failed", {
@@ -633,7 +641,13 @@ const HOST_EVENTS = new Set([
 
 export const asksForStatusHost = (event: BrigadeEvent) => HOST_EVENTS.has(event.type);
 
-type HostEnv = { WORKSPACE: Env["WORKSPACE"]; DB?: D1Database; STATUS?: KVNamespace } & SaasEnv &
+type HostEnv = {
+  WORKSPACE: Env["WORKSPACE"];
+  DB?: D1Database;
+  STATUS?: KVNamespace;
+  /** A workspace on Ember (D1's `workspace_engine`): its domain state is on its shard. */
+  SHARD?: Env["SHARD"];
+} & SaasEnv &
   DedicatedEnv;
 
 /**
@@ -670,9 +684,9 @@ export async function notifyStatusHost(event: BrigadeEvent, env: HostEnv): Promi
 export async function syncStatusHost(event: BrigadeEvent, env: HostEnv): Promise<void> {
   const { DB: db, STATUS: kv } = env;
   if (!kv || !db) return;
-  const state = await env.WORKSPACE.getByName(event.workspaceId).statusDomainState(
-    event.workspaceId,
-  );
+  const state = await (
+    await workspaceDomain(env, event.workspaceId)
+  ).statusDomainState(event.workspaceId);
   const named = Reflect.get(Object(event.data), "hostname");
   const hostnames = new Set<string>();
   if (typeof named === "string" && isStatusHostname(named)) hostnames.add(named);

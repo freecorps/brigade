@@ -4,7 +4,7 @@
 // that moved a timer, without importing the paging functions.
 
 import type { MutationCtx } from "@freecorps/ember-server";
-import type { BrigadeTables, Store } from "@freecorps/brigade-schema";
+import { nextMaintenanceAt, type BrigadeTables, type Store } from "@freecorps/brigade-schema";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { PAGE_QUEUE_GRACE_MS } from "../src/paging.ts";
 
@@ -44,6 +44,9 @@ const JOBS = {
   local: "local:send",
   reroute: "alerts:reroute",
   monitors: "monitors:tick",
+  status: "status:push",
+  maintenance: "status:maintenance",
+  domain: "status:domainCheck",
 } as const;
 export type TickKey = keyof typeof JOBS;
 
@@ -100,6 +103,13 @@ export function armUpkeep(
   // Not for the monitors' own verdicts (`monitor.report`, `monitor.evaluate`), which run on every probe report.
   if (tables.has("monitors") && name !== "monitor.report" && name !== "monitor.evaluate") {
     tickAt(ctx, ctx.now, "monitors");
+  }
+  // The page's domain added, checked or removed: its next check is looked at (ember/status.ts `domainDue`).
+  if (tables.has("status_domain")) tickAt(ctx, ctx.now, "domain");
+  // A maintenance window scheduled, changed or moved on: the tick for the next start or end (ember/status.ts).
+  if (tables.has("status_maintenance")) {
+    const next = nextMaintenanceAt(store.scan("status_maintenance"));
+    if (next !== null) tickAt(ctx, next, "maintenance");
   }
 }
 

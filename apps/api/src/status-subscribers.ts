@@ -5,6 +5,7 @@
 // event that names the subscriber's id, never the address; the emails themselves go out from the queue
 // (src/notify-status.ts), never from these routes.
 
+import { workspaceStatus } from "./ember-status.ts";
 import {
   can,
   isId,
@@ -497,10 +498,13 @@ async function requestSubscription(
     if (!asked) return;
     let result: { ok: true } | { ok: false; code: string };
     try {
-      result = await env.WORKSPACE.getByName(owner.workspace_id).statusSubscription(
-        owner.workspace_id,
-        { action: "request", subscriberId: asked.id, send: asked.send },
-      );
+      result = await (
+        await workspaceStatus(env, owner.workspace_id)
+      ).statusSubscription(owner.workspace_id, {
+        action: "request",
+        subscriberId: asked.id,
+        send: asked.send,
+      });
     } catch (error) {
       result = { ok: false, code: String(error) };
     }
@@ -675,11 +679,9 @@ async function shardChange(
   change: SubscriberChange,
   actor?: Actor,
 ): Promise<void> {
-  const result = await env.WORKSPACE.getByName(workspaceId).statusSubscription(
-    workspaceId,
-    change,
-    actor,
-  );
+  const result = await (
+    await workspaceStatus(env, workspaceId)
+  ).statusSubscription(workspaceId, change, actor);
   if (!result.ok && result.code !== "not_found") {
     throw new Error(`the shard refused the change: ${result.code}`);
   }
@@ -705,10 +707,9 @@ export async function sweepSubscribers(env: Env, now: number): Promise<void> {
   for (const [workspaceId, rows] of byWorkspace) {
     const ids = rows.map((row) => row.id);
     try {
-      const result = await env.WORKSPACE.getByName(workspaceId).expireStatusSubscribers(
-        workspaceId,
-        ids,
-      );
+      const result = await (
+        await workspaceStatus(env, workspaceId)
+      ).expireStatusSubscribers(workspaceId, ids);
       if (!result.ok && result.code !== "not_found") {
         log("expiring status subscribers was refused", { workspaceId, code: result.code });
         continue;
@@ -847,7 +848,7 @@ export async function serveSubscribers(
         }>();
       // The names the keys stand for now, from the shard: a key whose component or group is gone is left out.
       const names: Record<string, string> = results.some((row) => row.follows !== null)
-        ? await env.WORKSPACE.getByName(workspaceId).statusFollowNames(workspaceId)
+        ? await (await workspaceStatus(env, workspaceId)).statusFollowNames(workspaceId)
         : {};
       const iso = (at: number | null) => (at === null ? "" : new Date(at).toISOString());
       const followed = (stored: string | null) => {

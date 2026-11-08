@@ -64,6 +64,73 @@ type Deps = {
   wake: (at: number) => void;
 };
 
+/**
+ * Claims `slug` for `workspaceId` in D1 at `now` (stamping it `created_at`, also when the workspace holds it already):
+ * `taken` when another workspace holds it, else the time it was claimed anew, or null when it was already this
+ * workspace's. Throws when D1 fails.
+ */
+export async function claimSlug(
+  db: D1Database,
+  workspaceId: string,
+  slug: string,
+  now: number,
+): Promise<{ taken: true } | { taken: false; claimed: number | null }> {
+  const [before, , owner] = await db.batch([
+    db.prepare("select workspace_id from status_slug where slug = ?").bind(slug),
+    db
+      .prepare(
+        `insert into status_slug (slug, workspace_id, created_at) values (?, ?, ?)
+         on conflict (slug) do update set created_at = excluded.created_at
+         where status_slug.workspace_id = excluded.workspace_id`,
+      )
+      .bind(slug, workspaceId, now),
+    db.prepare("select workspace_id from status_slug where slug = ?").bind(slug),
+  ]);
+  const holder = (owner?.results[0] as { workspace_id?: string } | undefined)?.workspace_id;
+  if (holder !== workspaceId) return { taken: true };
+  return { taken: false, claimed: (before?.results.length ?? 0) === 0 ? now : null };
+}
+
+/**
+ * Gives a slug `workspaceId` claimed at `claimed` back to D1: only a row stamped no later than that, so a release that
+ * lands late never undoes a claim made meanwhile. Never throws (logged).
+ */
+export async function releaseSlug(
+  db: D1Database,
+  workspaceId: string,
+  slug: string,
+  claimed: number,
+  log: (message: string, fields: Record<string, unknown>) => void,
+): Promise<void> {
+  try {
+    await db
+      .prepare("delete from status_slug where slug = ? and workspace_id = ? and created_at <= ?")
+      .bind(slug, workspaceId, claimed)
+      .run();
+  } catch (error) {
+    // Left with this workspace; nobody else can use it until an operator deletes the row. Logged for that.
+    log("releasing a status page slug failed", { slug, error });
+  }
+}
+
+/** What a push has to do outside the shard (on Ember, the action's KV and D1 calls): `StatusPublisher.planPush`. */
+export type StatusPushPlan = {
+  /** The dirty version this push covers (`statusPushed`), if the page changed. */
+  dirty?: number;
+  /** The page's snapshot to put (`put`), or its key to delete, when it is due. */
+  page?: { key: string; put?: string };
+  /** Slugs the page gave up: their snapshot to delete from KV, or their D1 row to release once the grace is over. */
+  retired: { id: string; at: number; op: "kv_delete" | "release" }[];
+};
+
+/** What the action did of a `StatusPushPlan`, in order: it stops at the first failure (`error`). */
+export type StatusPushDone = {
+  page: boolean;
+  cleared: string[];
+  released: string[];
+  error?: string;
+};
+
 const earliest = (a: number | null, b: number | null) =>
   a === null ? b : b === null ? a : Math.min(a, b);
 
@@ -104,25 +171,9 @@ export class StatusPublisher {
     const held = current?.slug === args.slug && current.claimed !== false;
     if (args.enabled && !held) {
       try {
-        const now = configuredAt;
-        const [before, , owner] = await this.deps.db.batch([
-          this.deps.db
-            .prepare("select workspace_id from status_slug where slug = ?")
-            .bind(args.slug),
-          this.deps.db
-            .prepare(
-              `insert into status_slug (slug, workspace_id, created_at) values (?, ?, ?)
-               on conflict (slug) do update set created_at = excluded.created_at
-               where status_slug.workspace_id = excluded.workspace_id`,
-            )
-            .bind(args.slug, workspaceId, now),
-          this.deps.db
-            .prepare("select workspace_id from status_slug where slug = ?")
-            .bind(args.slug),
-        ]);
-        const holder = (owner?.results[0] as { workspace_id?: string } | undefined)?.workspace_id;
-        if (holder !== workspaceId) return { ok: false, code: "slug_taken" };
-        if ((before?.results.length ?? 0) === 0) claimed = now;
+        const claim = await claimSlug(this.deps.db, workspaceId, args.slug, configuredAt);
+        if (claim.taken) return { ok: false, code: "slug_taken" };
+        claimed = claim.claimed;
       } catch (error) {
         this.deps.log("claiming a status page slug failed", { error });
         return { ok: false, code: "unavailable" };
@@ -164,18 +215,16 @@ export class StatusPublisher {
 
   /** Gives a slug this workspace claimed at `claimed` back to D1, unless the page uses it or still retires it. */
   private async release(workspaceId: string, slug: string, claimed: number): Promise<void> {
+    if (!this.releasable(slug)) return;
+    await releaseSlug(this.deps.db, workspaceId, slug, claimed, this.deps.log);
+  }
+
+  /** Whether a slug just claimed may go back to D1: the page does not use it, nor still retires it. */
+  releasable(slug: string): boolean {
     const { store } = this.deps.shard;
-    if (store.get("status_page", STATUS_PAGE_ID)?.slug === slug) return;
-    if (store.get("status_retired", slug)) return;
-    try {
-      await this.deps.db
-        .prepare("delete from status_slug where slug = ? and workspace_id = ? and created_at <= ?")
-        .bind(slug, workspaceId, claimed)
-        .run();
-    } catch (error) {
-      // Left with this workspace; nobody else can use it until an operator deletes the row. Logged for that.
-      this.deps.log("releasing a status page slug failed", { slug, error });
-    }
+    return (
+      store.get("status_page", STATUS_PAGE_ID)?.slug !== slug && !store.get("status_retired", slug)
+    );
   }
 
   /**
@@ -324,6 +373,83 @@ export class StatusPublisher {
       if (handle.abandoned) this.deps.log("an abandoned status page push failed", { error });
       else this.failed(now, error);
     }
+  }
+
+  /**
+   * `push`'s shard side, for a shard that cannot wait on KV inside a transaction (Ember): what is due now (null when
+   * nothing is, `nextAt`), with the page's snapshot built here. Retirements the page took back are dropped here.
+   */
+  planPush(workspaceId: string, now: number): StatusPushPlan | null {
+    const at = this.nextAt(now);
+    if (at === null || at > now) return null;
+    const { shard, kv } = this.deps;
+    const plan: StatusPushPlan = { retired: [] };
+    if (kv) {
+      const dirty = shard.statusDirty();
+      const repush = this.meta("status_repush") !== undefined;
+      const page = shard.store.get("status_page", STATUS_PAGE_ID);
+      const refresh = this.refreshAt();
+      const stale = refresh !== null && refresh <= now;
+      if (dirty !== undefined) plan.dirty = dirty;
+      if ((dirty !== undefined || repush || stale) && page) {
+        const snapshot = statusSnapshot(shard.store, now);
+        if (snapshot) {
+          plan.page = {
+            key: statusKey(page.slug),
+            put: JSON.stringify({ ...snapshot, workspaceId }),
+          };
+        } else if (page.claimed !== false) plan.page = { key: statusKey(page.slug) };
+      }
+    }
+    for (const retired of shard.store.scan("status_retired")) {
+      if (shard.store.get("status_page", STATUS_PAGE_ID)?.slug === retired.id) {
+        shard.store.delete("status_retired", retired.id);
+        continue;
+      }
+      if (kv && retired.cleared === undefined) {
+        plan.retired.push({ id: retired.id, at: retired.at, op: "kv_delete" });
+        continue;
+      }
+      if (kv && (retired.cleared ?? now) + STATUS_SLUG_GRACE_MS > now) continue;
+      plan.retired.push({ id: retired.id, at: retired.at, op: "release" });
+    }
+    return plan;
+  }
+
+  /**
+   * Records what was done of `plan` (`planPush`), as `push` records it: the page pushed (its dirty version and any
+   * re-push mark before `now` cleared), each retired slug's snapshot deleted (`cleared`) or released (its row gone,
+   * only that retirement), then the backoff cleared, or set when a step failed. `now` is when the push started (its
+   * plan), `settledAt` when it ended: the backoff runs from the end, so a slow call that failed never used it up, and a
+   * retired slug's grace from when its snapshot's delete landed.
+   */
+  recordPush(plan: StatusPushPlan, done: StatusPushDone, now: number, settledAt = now): void {
+    const { shard } = this.deps;
+    if (plan.page && done.page) this.setMeta("status_pushed_at", now);
+    // As `push`: a page that could not be written leaves its change (and any re-push mark) pending.
+    if (plan.page === undefined || done.page) {
+      if (plan.dirty !== undefined) shard.statusPushed(plan.dirty);
+      this.deps.sql.exec("delete from shard_meta where key = 'status_repush' and value < ?", now);
+    }
+    for (const retired of plan.retired) {
+      const row = shard.store.get("status_retired", retired.id);
+      if (row?.at !== retired.at) continue;
+      if (retired.op === "kv_delete" && done.cleared.includes(retired.id)) {
+        // From when the delete is known to have landed: the grace never starts before it.
+        shard.store.update("status_retired", retired.id, { cleared: settledAt });
+      } else if (retired.op === "release" && done.released.includes(retired.id)) {
+        shard.store.delete("status_retired", retired.id);
+      }
+    }
+    if (done.error === undefined) {
+      this.clearMeta("status_attempts");
+      this.clearMeta("status_retry_at");
+    } else this.failed(settledAt, new Error(done.error));
+  }
+
+  /** A push given up on (it outlasted its deadline): its write may land after a newer one, so the page is marked. */
+  markRepush(now: number): void {
+    this.setMeta("status_repush", now);
   }
 
   /**

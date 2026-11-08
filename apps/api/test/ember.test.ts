@@ -1388,3 +1388,30 @@ describe("heartbeats on an Ember workspace", () => {
     expect((await ping(newHeartbeatSecret(random))).status).toBe(404);
   });
 });
+
+describe("the status page on an Ember workspace", () => {
+  test("PUT /workspaces/:id/status-page claims the slug in D1, and the shard pushes its snapshot to KV", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const slug = `ember-${++people}-${Date.now().toString(36)}`;
+    const saved = await api(`/workspaces/${workspaceId}/status-page`, {
+      method: "PUT",
+      headers: { Cookie: cookie },
+      body: JSON.stringify({ slug, title: "Acme", locale: "en", enabled: true }),
+    });
+    expect(saved.status).toBe(200);
+    expect(
+      await env.DB.prepare("select workspace_id as ws from status_slug where slug = ?")
+        .bind(slug)
+        .first<{ ws: string }>(),
+    ).toEqual({ ws: workspaceId });
+    // The push runs as a scheduled job on the shard.
+    let snapshot: string | null = null;
+    for (let i = 0; i < 50 && snapshot === null; i++) {
+      snapshot = await env.STATUS!.get(`status:${slug}`);
+      if (snapshot === null) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(JSON.parse(snapshot!)).toMatchObject({ workspaceId });
+  });
+});

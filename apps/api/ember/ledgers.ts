@@ -5,6 +5,7 @@
 import { INVITATIONS_SCHEMA } from "../src/invitation-ledger.ts";
 import { MAILER_SCHEMA } from "../src/mailer.ts";
 import { MONITORS_SCHEMA } from "../src/monitors.ts";
+import { STATUS_MAIL_SCHEMA } from "../src/status-mail.ts";
 import { PAGING_SCHEMA } from "../src/paging.ts";
 import { RECEIPTS_SCHEMA } from "../src/receipts.ts";
 
@@ -28,6 +29,7 @@ const RESULTS_SCHEMA = `
   create index if not exists request_keys_at on request_keys (at);
   create table if not exists member_gone (user_id text primary key, until integer not null) without rowid;
   create table if not exists alert_reroute_failed (row_id text primary key, until integer not null) without rowid;
+  create table if not exists shard_meta (key text primary key, value) without rowid;
 `;
 
 /** One DDL text (`create … ; create …`) as single statements. */
@@ -48,6 +50,7 @@ export const LEDGER_DDL: string[] = [
   ...statements(RECEIPTS_SCHEMA),
   ...statements(INVITATIONS_SCHEMA),
   ...statements(MONITORS_SCHEMA),
+  ...statements(STATUS_MAIL_SCHEMA),
   TICKS_SCHEMA,
 ];
 export const LEDGER_TABLES: string[] = [

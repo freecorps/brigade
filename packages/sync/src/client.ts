@@ -185,9 +185,12 @@ export type SyncErrorCode = MutationErrorCode | "expired" | "too_many_pending" |
 
 export type SyncMutationError = { code: SyncErrorCode; message: string; issues?: Issue[] };
 
-/** The server's answer to a mutation; `ok: false` carries a typed error. */
+/**
+ * The server's answer to a mutation; `ok: false` carries a typed error. `version`: the shard's version the change
+ * landed at, from Brigade Sync (Ember's client does not report it).
+ */
 export type MutationOutcome =
-  | { ok: true; version: number }
+  | { ok: true; version?: number }
   | { ok: false; error: SyncMutationError };
 
 /** A query bound to a shard and args, shaped for `useSyncExternalStore`. */
@@ -200,6 +203,15 @@ export type QueryHandle<R> = {
   /** For server rendering and hydration: always the `loading` state, whatever the client holds. */
   getServerSnapshot: () => QueryState<R>;
 };
+
+/**
+ * What the React hooks and the apps use of a client: `SyncClient` (Brigade Sync, RFC 0004) or `EmberSyncClient`
+ * (a workspace on Ember, RFC 0016).
+ */
+export type SyncClientLike = Pick<
+  SyncClient,
+  "newId" | "query" | "mutate" | "connectionState" | "onConnectionChange" | "close"
+>;
 
 export type ConnectionState = "idle" | "connecting" | "open" | "waiting";
 

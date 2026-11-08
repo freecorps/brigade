@@ -17,17 +17,17 @@ import type {
   QueryArgsOf,
   QueryRowOf,
 } from "@freecorps/brigade-schema";
-import type { ConnectionState, MutationOutcome, QueryState, SyncClient } from "./client.ts";
+import type { ConnectionState, MutationOutcome, QueryState, SyncClientLike } from "./client.ts";
 
 type Queries = typeof queries;
 type Mutations = typeof mutations;
 
-type SyncContextValue = { client: SyncClient; shard: string };
+type SyncContextValue = { client: SyncClientLike; shard: string };
 
 const SyncContext = createContext<SyncContextValue | null>(null);
 
 export type SyncProviderProps = {
-  client: SyncClient;
+  client: SyncClientLike;
   /** The shard hooks read and write by default: the workspace id for `WorkspaceDO` (`/sync/<workspaceId>`). */
   shard: string;
   children?: ReactNode;
@@ -46,7 +46,7 @@ function useSync(): SyncContextValue {
 }
 
 /** The provider's client, for what the hooks do not cover (`client.newId("inc")` for a declare). */
-export function useSyncClient(): SyncClient {
+export function useSyncClient(): SyncClientLike {
   return useSync().client;
 }
 

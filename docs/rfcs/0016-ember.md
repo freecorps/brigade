@@ -259,9 +259,22 @@ Brigade's optimistic updates run the same `apply` on the client today; Ember's c
 updates to query results, and running mutations on the client is not in Ember yet (gap G5), so step 4 registers one
 optimistic update per mutation that runs `apply` over the cached rows.
 
+**Built (step 4).** `EmberSyncClient` (packages/sync/src/ember.ts, `@freecorps/brigade-sync/ember`) has the surface
+the hooks use (`query`, `mutate`, `newId`, the connection state), over `@freecorps/ember-client`: a named query is a
+subscription to `workspace:query`, a named mutation a call of `workspace:mutate`, with one Ember client per workspace
+(a token is for one shard). Its optimistic update is the same for every mutation: Brigade's `apply` over the rows the
+loaded queries hold, then each loaded query evaluated again over the result, with the actor and time of its first run
+on every re-run, which is what `SyncClient` does over its confirmed rows. No card changes. The dashboard asks
+`POST /api/ember-token/:workspace` before it opens a workspace: a token means Ember (and is the client's first one),
+anything else (409 on `WorkspaceDO`, 404 on an instance from before Ember, an error) means Brigade Sync, which the
+adapter serves for an Ember workspace too, so a failed probe never breaks the dashboard. A workspace turned back
+answers the next token with 409 and the page reloads onto Brigade Sync. It is picked per workspace, not by `/config`,
+because one instance can hold workspaces on both engines during a migration.
+
 **The store app talks to many instances** (RFC 0015), some self-hosted and not migrated. So the app keeps the Brigade
 Sync client and picks the protocol from the instance's `GET /config` (`sync: "ember"` once migrated), for as long as
-supported instances run the old engine; the dashboard is served by its own instance and switches with it.
+supported instances run the old engine. The dashboard is served by its own instance and picks the client per
+workspace ("Built (step 4)" below).
 
 **App versions that only speak Brigade Sync** stay installed on phones after a workspace moves, and they only know
 how to reconnect and replay Brigade frames. So `/sync/:workspace` of a migrated workspace is served by a **Brigade Sync
@@ -475,7 +488,8 @@ Kept as they are, on purpose:
   them to `sendToDevices` with `payload`/`seal` changes the paging path for no new behaviour.
 - **G3**: `ProbeDO` stays a plain Durable Object, with no change planned. Moving probes onto Ember gains nothing a
   probe needs.
-- **G5**: used by step 4 (the dashboard on Ember's client), not built yet.
+- **G5**: the dashboard's `EmberSyncClient` runs Brigade's own `apply` as one optimistic update for every mutation
+  (step 4, "Clients"), rather than Ember's `localOptimisticUpdates`, which is for mutations defined in Ember.
 
 The list below is each gap as it was asked for (2026-11-06), kept as the record. Its "Workaround" lines describe
 Brigade before Ember shipped the gap, and hold now only where the status above keeps them (G1, G3, G6, and G2's
@@ -523,7 +537,8 @@ Brigade before Ember shipped the gap, and hold now only where the status above k
 3. **The workspace shard on Ember behind `workspace.engine`**: tables, the Ember-backed `Store`, mutations and
    queries through `brigadeMutation`/`brigadeQuery`, events and pages as scheduler jobs with the page lease, the
    auth hook. Brigade's existing mutation and paging tests run against both engines.
-4. **Dashboard on Ember's React client**, switched by `/config`.
+4. **Dashboard on Ember's client** (built): `@freecorps/brigade-sync/ember`'s `EmberSyncClient` under the same hooks,
+   picked per workspace ("Clients").
 5. **App on Ember's React Native client** next to Brigade Sync, picked per instance.
 6. **Monitoring, status page and Slack** calling the Ember shard of a workspace whose `workspace.engine` is `ember`,
    `WorkspaceDO` otherwise; the watchdog unchanged.

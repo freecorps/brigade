@@ -79,7 +79,7 @@ async function written() {
   );
   expect(await result).toMatchObject({ ok: true });
   socket.close(1000, "done");
-  return { workspaceId, incident };
+  return { workspaceId, incident, cookie };
 }
 
 /** The rows of `table` on the workspace's Ember shard. */
@@ -159,6 +159,21 @@ describe("the migration's operator routes", () => {
     expect((await admin("POST", `/admin/ember/back/${workspaceId}`)).status).toBe(200);
     expect(await workspaceEngine(env.DB, workspaceId)).toBe("brigade");
     expect((await env.WORKSPACE.getByName(workspaceId).info()).tables).toBeGreaterThan(0);
+  });
+
+  test("GET /workspaces/:id answers from the Ember shard once switched", async () => {
+    const { workspaceId, cookie } = await written();
+    expect((await switchWorkspace(env, workspaceId)).ok).toBe(true);
+    const response = await api(`/workspaces/${workspaceId}`, { headers: { Cookie: cookie } });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      workspace: string;
+      tables: number;
+      databaseSize: number;
+    };
+    expect(body.workspace).toBe(workspaceId);
+    expect(body.tables).toBeGreaterThan(0);
+    expect(body.databaseSize).toBeGreaterThan(0);
   });
 
   test("two switches at once: one switches, the other is busy and touches nothing", async () => {

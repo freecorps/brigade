@@ -69,7 +69,14 @@ import {
   type RelaySetup,
 } from "./relay-instance.ts";
 import { BOOTSTRAP_PATH, bootstrapFirstUser } from "./bootstrap.ts";
-import { EMBER_BASE_PATH, issueEmberToken, serveEmber, workspaceEngine } from "./ember.ts";
+import {
+  EMBER_BASE_PATH,
+  issueEmberToken,
+  serveEmber,
+  workspaceEngine,
+  workspaceShard,
+} from "./ember.ts";
+import { BRIGADE_TABLES } from "../ember/schema.ts";
 import { openSyncOnEmber } from "./sync-adapter.ts";
 import { ADMIN_BASE, serveMigration } from "./ember-admin.ts";
 import { emberMembers } from "./ember-members.ts";
@@ -411,6 +418,28 @@ export async function workspaceInfo(
     return json({ error: "unavailable" }, 503);
   }
   try {
+    // On Ember (RFC 0016), a round trip through its shard: the runtime's status, with its SQLite size, and the
+    // Brigade tables it holds.
+    if (
+      (await within(workspaceEngine(env.DB, workspaceId), 5000, "the workspace's engine")) ===
+      "ember"
+    ) {
+      const name = workspaceShard(workspaceId);
+      const status = await (
+        env.SHARD.getByName(name) as unknown as {
+          status(shard: string): Promise<{ databaseSize: number }>;
+        }
+      ).status(name);
+      return json(
+        {
+          workspace: workspaceId,
+          tables: BRIGADE_TABLES.length,
+          databaseSize: status.databaseSize,
+        },
+        200,
+        { "Cache-Control": "private, no-store" },
+      );
+    }
     const info = await env.WORKSPACE.getByName(workspaceId).info();
     return json({ workspace: workspaceId, ...info }, 200, { "Cache-Control": "private, no-store" });
   } catch (error) {

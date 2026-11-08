@@ -3,7 +3,7 @@
 // each want one leave a single job. A module of its own, so `run()` (ember/workspace.ts) can arm it after a mutation
 // that moved a timer, without importing the paging functions.
 
-import type { MutationCtx } from "@freecorps/ember-server";
+import { internalMutationGeneric, type MutationCtx } from "@freecorps/ember-server";
 import { nextMaintenanceAt, type BrigadeTables, type Store } from "@freecorps/brigade-schema";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { PAGE_QUEUE_GRACE_MS } from "../src/paging.ts";
@@ -152,3 +152,31 @@ export function expectPages(ctx: MutationCtx, pages: readonly BrigadeEvent[]): v
     );
   }
 }
+
+/**
+ * The shard's ticks that were lost (#192): a tick's row is deleted in the tick's own transaction, so one still here
+ * past `TICK_LEASE_MS` is a job the scheduler gave up on (it failed `maxAttempts` times, storage failing for minutes)
+ * or never ran. Each is scheduled again now. Run by the Worker's Cron Trigger for every workspace on Ember
+ * (src/ember-ticks.ts), so the shard recovers without waiting for new activity, as `WorkspaceDO`'s alarm does (its
+ * fallback is set before its work). Answers the ticks scheduled again.
+ */
+export const sweep = internalMutationGeneric({
+  args: {},
+  handler: (ctx): string[] => {
+    const c = ctx as MutationCtx;
+    const lost = c.sql.exec(
+      "select key from ember_ticks where at < ? order by key",
+      c.now - TICK_LEASE_MS,
+    ) as { key: string }[];
+    const again: string[] = [];
+    for (const { key } of lost) {
+      if (!Object.hasOwn(JOBS, key)) continue;
+      tickAt(c, c.now, key as TickKey);
+      again.push(key);
+    }
+    if (again.length > 0) {
+      console.error(JSON.stringify({ message: "lost ticks scheduled again", ticks: again }));
+    }
+    return again;
+  },
+});

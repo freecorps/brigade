@@ -73,6 +73,7 @@ import { EMBER_BASE_PATH, issueEmberToken, serveEmber, workspaceEngine } from ".
 import { openSyncOnEmber } from "./sync-adapter.ts";
 import { emberMembers } from "./ember-members.ts";
 import { pageEngine } from "./ember-paging.ts";
+import { sweepEmberTicks, TICK_SWEEP_EVERY_MINUTES } from "./ember-ticks.ts";
 import { emberMutation, workspaceSessions } from "./ember-workspace.ts";
 import {
   provisionWorkspace,
@@ -353,6 +354,10 @@ export default {
     // Ended sessions a shard has yet to act on (src/session-end.ts), every run; and the rate-limit counters past
     // every window, the email ceiling's old days and ended QR sign-ins, once an hour. Never in the heartbeat's way.
     ctx?.waitUntil(sweepSessionEnds(env, Date.now()));
+    // Ticks an Ember shard's scheduler gave up on (#192, src/ember-ticks.ts), every few minutes. Never throws.
+    if (new Date(controller.scheduledTime).getUTCMinutes() % TICK_SWEEP_EVERY_MINUTES === 0) {
+      ctx?.waitUntil(sweepEmberTicks(env));
+    }
     if (new Date(controller.scheduledTime).getUTCMinutes() === RATE_LIMIT_PRUNE_MINUTE) {
       ctx?.waitUntil(
         pruneRateLimits(env.DB, Date.now()).catch((error: unknown) =>

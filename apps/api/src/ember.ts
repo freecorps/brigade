@@ -10,6 +10,7 @@ import { createEmberWorker, type EmberAuthHook } from "@freecorps/ember-runtime"
 import type { Identity } from "@freecorps/ember-server";
 import schema from "../ember/schema.ts";
 import * as alerts from "../ember/alerts.ts";
+import * as clients from "../ember/clients.ts";
 import * as devices from "../ember/devices.ts";
 import * as events from "../ember/events.ts";
 import * as dataExports from "../ember/exports.ts";
@@ -30,6 +31,7 @@ import { memberRole, resolveActor } from "./actor.ts";
 import { creatorNow, withinLimit } from "./api-tokens.ts";
 import { readBounded } from "./body.ts";
 import type { Auth } from "./auth.ts";
+import { admitToEmber } from "./ember-clients.ts";
 import { mintEmberToken, verifyEmberToken } from "./ember-token.ts";
 import { json } from "./member-route.ts";
 import { instanceMonitorCap, type MonitorEnv } from "./monitors.ts";
@@ -75,6 +77,10 @@ export async function setWorkspaceEngine(
 }
 
 /** The Ember shard of a workspace. */
+/** The earlier of two optional expiries. */
+export const capAt = (a: number | undefined, b: number | null | undefined): number | undefined =>
+  b == null ? a : a === undefined ? b : Math.min(a, b);
+
 export const workspaceShard = (workspaceId: string) => `workspace:${workspaceId}`;
 
 type EmberAuthEnv = { DB: D1Database; BETTER_AUTH_SECRET: string };
@@ -167,6 +173,7 @@ export const ember = createEmberWorker({
     integrations,
     exports: dataExports,
     postmortems,
+    clients,
   },
   basePath: EMBER_BASE_PATH,
   auth: brigadeEmberAuth,
@@ -269,17 +276,46 @@ export async function issueEmberToken(
   if (actor.kind !== "token" && resolved.sessionId === undefined) {
     return json({ error: "unauthenticated" }, 401);
   }
+  // The shard's own checks and upkeep, as a sync upgrade runs them on the DO (ember/clients.ts).
+  let admitted: Awaited<ReturnType<typeof admitToEmber>>;
+  try {
+    admitted = await admitToEmber(
+      env,
+      workspaceId,
+      {
+        actor,
+        ...(resolved.name !== undefined ? { name: resolved.name } : {}),
+        ...(resolved.resetAt !== undefined ? { resetAt: resolved.resetAt } : {}),
+      },
+      waitUntil,
+    );
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        message: "admitting a client to Ember failed",
+        workspaceId,
+        error: String(error),
+      }),
+    );
+    return json({ error: "unavailable" }, 503);
+  }
+  if (!admitted.ok) {
+    const status = { not_found: 404, not_a_member: 403, unauthenticated: 401, unavailable: 503 };
+    return json({ error: admitted.code }, status[admitted.code]);
+  }
   const minted = await mintEmberToken(
     env.BETTER_AUTH_SECRET,
     {
       sub: actor.id,
       ws: workspaceId,
-      role: actor.role,
+      // The role as the shard backs it: an API token's lowered to its creator's copy (`tokenActor`).
+      role: admitted.actor.role,
       ...(actor.kind === "token" ? { kind: "token" as const } : {}),
       ...(resolved.sessionId === undefined ? {} : { sid: resolved.sessionId }),
     },
     Date.now(),
-    resolved.sessionExpiresAt,
+    // An API token's Ember token ends with it, so no frame is served past its expiry.
+    capAt(resolved.sessionExpiresAt, admitted.tokenExpiresAt),
   );
   if (!minted) return json({ error: "unauthenticated" }, 401);
   return json(

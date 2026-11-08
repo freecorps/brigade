@@ -1452,7 +1452,7 @@ describe("webhooks on an Ember workspace", () => {
 });
 
 describe("the engine a Queue notifier's Slack and webhook calls go to", () => {
-  test("a stalled D1 read gives up within the page's lookup bound, never the delivery's budget", async () => {
+  test("a stalled D1 read gives up within the page's lookup bound, and with no engine known the message is retried", async () => {
     vi.useFakeTimers();
     try {
       const stalled = {
@@ -1463,10 +1463,10 @@ describe("the engine a Queue notifier's Slack and webhook calls go to", () => {
         `ws_stalled_${++people}`,
         { queue: true },
       );
-      let settled = false;
-      void picked.then(() => (settled = true));
+      // Nothing known for this workspace: it throws within the bound, so the message is retried, never guessed.
+      const outcome = expect(picked).rejects.toThrow(/could not be read/);
       await vi.advanceTimersByTimeAsync(ENGINE_LOOKUP_BUDGET_MS + 10);
-      expect(settled).toBe(true);
+      await outcome;
     } finally {
       vi.useRealTimers();
     }

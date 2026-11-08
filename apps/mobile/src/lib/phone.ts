@@ -14,7 +14,7 @@ import {
   type DeviceDeps,
   type RegisterAnswer,
 } from "@/lib/device";
-import { DEVICE_HEADER, SESSION_LIFETIME_S } from "@freecorps/brigade-schema";
+import { DEVICE_HEADER, SESSION_LIFETIME_S, type Actor } from "@freecorps/brigade-schema";
 import { phoneWorkspacesStore } from "@/lib/phone-workspaces";
 import {
   inTime,
@@ -175,6 +175,21 @@ export async function phoneDeviceId(origin?: string): Promise<string | undefined
 }
 
 /**
+ * Opens a client of its own for one change on a workspace, closed once it answers: Brigade Sync's here. The app passes
+ * one that asks which engine the workspace is on and opens Ember's client for a workspace on Ember (src/lib/
+ * ember-client.ts `openOneShot`), so a phone is registered and unregistered there without the Brigade Sync adapter.
+ */
+export type OneShotOpen = (args: {
+  server: Server;
+  workspaceId: string;
+  actor: () => Actor;
+  cookie: string;
+}) => Promise<WorkspaceSync>;
+
+const brigadeOneShot: OneShotOpen = async ({ cookie, ...args }) =>
+  createWorkspaceSync({ ...args, cookie: () => cookie });
+
+/**
  * A mutation on a workspace's shard at an instance the app does not show, over a socket of its own closed once it
  * answers (or refused, or 10 s passed): what registering with an instance from before `POST /devices/register` needs
  * when it is not the open one (src/components/session.tsx).
@@ -184,16 +199,17 @@ export function oneShotMutate(
   workspaceId: string,
   userId: string,
   cookie: () => Promise<string>,
+  open: OneShotOpen = brigadeOneShot,
 ): DeviceDeps["mutate"] {
   return async (name, args) => {
     const failed = { ok: false as const, error: { code: "unavailable", message: "Not reached" } };
     const value = await cookie().catch(() => "");
-    const sync = createWorkspaceSync({
+    const sync = await open({
       server,
       workspaceId,
       // Only for the optimistic run: every role may register and unregister its own devices.
       actor: () => memberActor(userId, undefined),
-      cookie: () => value,
+      cookie: value,
     });
     const refused = neverOpened(sync.client, sync.shard);
     try {
@@ -229,10 +245,10 @@ export const SESSION_LIFETIME_MS = SESSION_LIFETIME_S * 1000;
  * Finishing kept sign-outs against `server`, as the member who left: Better Auth's `/get-session` (without
  * refreshing the session, so asking does not keep it alive; it says when the session expires) and `/sign-out` with
  * their `Cookie` (and the app's
- * `expo-origin`, as `@better-auth/expo` sends it), and a sync client of their own for `device.unregister`, closed
- * when it answers.
+ * `expo-origin`, as `@better-auth/expo` sends it), and a sync client of their own for `device.unregister` (`open`),
+ * closed when it answers.
  */
-export function finishDeps(server: Server): FinishDeps {
+export function finishDeps(server: Server, open: OneShotOpen = brigadeOneShot): FinishDeps {
   const headers = (cookie: string) => ({ cookie, "expo-origin": "brigade://" });
   return {
     leftovers: keptSignOuts,
@@ -258,12 +274,12 @@ export function finishDeps(server: Server): FinishDeps {
       }
     },
     unregister: async (leftover) => {
-      const sync = createWorkspaceSync({
+      const sync = await open({
         server,
         workspaceId: leftover.workspaceId,
         // Only for the optimistic run: every role may unregister its own devices.
         actor: () => memberActor(leftover.userId, undefined),
-        cookie: () => leftover.cookie,
+        cookie: leftover.cookie,
       });
       // A socket that never opens (the upgrade refused, as for a removed member's 403, or the server unreachable)
       // ends the try at once instead of after the timeout. It stays pending and is tried again on the backoff:

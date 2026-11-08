@@ -4,7 +4,7 @@ import { workspaceSource } from "../../vite.workspace.ts";
 export default defineConfig({
   plugins: [workspaceSource()],
   pack: {
-    entry: ["src/index.ts", "src/protocol.ts", "src/react.ts"],
+    entry: ["src/index.ts", "src/protocol.ts", "src/react.ts", "src/ember.ts"],
     // Build from the runtime tsconfig (src only, no Node or DOM types); the package one also covers tests.
     tsconfig: "src/tsconfig.json",
     deps: {

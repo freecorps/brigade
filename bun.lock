@@ -234,6 +234,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@freecorps/brigade-schema": "workspace:*",
+        "@freecorps/ember-client": "0.4.0",
       },
       "devDependencies": {
         "@types/node": "^26.6.5",
@@ -719,6 +720,8 @@
     "@freecorps/brigade-ui": ["@freecorps/brigade-ui@workspace:packages/ui"],
 
     "@freecorps/brigade-web": ["@freecorps/brigade-web@workspace:apps/web"],
+
+    "@freecorps/ember-client": ["@freecorps/ember-client@0.4.0", "", { "dependencies": { "@freecorps/ember-values": "0.4.0" } }, "sha512-pcu/gbQ3w0Xf5exjE1ucuvZ/hnzghBRoaikISAuMaAdwpERygSEFFHQic+cPkhgD8yPP5m5SVJlNbpF2e8096Q=="],
 
     "@freecorps/ember-push": ["@freecorps/ember-push@0.4.0", "", { "dependencies": { "@freecorps/ember-server": "0.4.0", "@freecorps/ember-values": "0.4.0" } }, "sha512-BbYMcl9gOFJ1MYaFIujvcFJIsTEShz7+ork5SU1UaU45XqS5PjTrDGcKNloXH7GFAdIAVIHB36LwrKAV8j8ViA=="],
 

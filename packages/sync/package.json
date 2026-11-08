@@ -23,6 +23,10 @@
       "@freecorps/source": "./src/index.ts",
       "default": "./dist/index.mjs"
     },
+    "./ember": {
+      "@freecorps/source": "./src/ember.ts",
+      "default": "./dist/ember.mjs"
+    },
     "./protocol": {
       "@freecorps/source": "./src/protocol.ts",
       "default": "./dist/protocol.mjs"
@@ -36,6 +40,7 @@
   "publishConfig": {
     "exports": {
       ".": "./dist/index.mjs",
+      "./ember": "./dist/ember.mjs",
       "./protocol": "./dist/protocol.mjs",
       "./react": "./dist/react.mjs",
       "./package.json": "./package.json"
@@ -49,7 +54,8 @@
     "check": "vp check"
   },
   "dependencies": {
-    "@freecorps/brigade-schema": "workspace:*"
+    "@freecorps/brigade-schema": "workspace:*",
+    "@freecorps/ember-client": "0.4.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

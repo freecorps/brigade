@@ -7,7 +7,12 @@ import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, test } from "vite-plus/test";
 import { newId, type Actor, type IncidentStatus } from "@freecorps/brigade-schema";
-import { createSyncClient, type MutationOutcome, type SyncClient } from "../src/client.ts";
+import {
+  createSyncClient,
+  type MutationOutcome,
+  type SyncClient,
+  type SyncClientLike,
+} from "../src/client.ts";
 import {
   SyncProvider,
   useConnectionState,
@@ -171,7 +176,7 @@ test("a mutation the server rejects rolls back in the mounted list", async () =>
 test("useConnectionState follows a new shard option; useSyncClient returns the provider's client", () => {
   const { client, network } = setup();
   const actions: Actions = {};
-  let seen: SyncClient | undefined;
+  let seen: SyncClientLike | undefined;
   function Other({ shard }: { shard: string }) {
     seen = useSyncClient();
     return createElement("output", null, useConnectionState({ shard }));

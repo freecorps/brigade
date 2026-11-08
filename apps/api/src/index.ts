@@ -70,6 +70,7 @@ import {
 } from "./relay-instance.ts";
 import { BOOTSTRAP_PATH, bootstrapFirstUser } from "./bootstrap.ts";
 import { EMBER_BASE_PATH, issueEmberToken, serveEmber, workspaceEngine } from "./ember.ts";
+import { openSyncOnEmber } from "./sync-adapter.ts";
 import { emberMembers } from "./ember-members.ts";
 import { pageEngine } from "./ember-paging.ts";
 import { emberMutation, workspaceSessions } from "./ember-workspace.ts";
@@ -202,7 +203,7 @@ export default {
     // Routes that take an API token besides the session (RFC 0014) record its last use after answering.
     const waitUntil = (promise: Promise<unknown>) => ctx.waitUntil(promise);
     const sync = SYNC_PATH.exec(pathname)?.[1];
-    if (sync !== undefined) return openSync(request, env, auth, sync, waitUntil);
+    if (sync !== undefined) return openSync(request, env, ctx, auth, sync, waitUntil);
     // Ember (RFC 0016): the runtime under `/ember`, for workspaces already on it, and the token its clients send.
     if (pathname === EMBER_BASE_PATH || pathname.startsWith(`${EMBER_BASE_PATH}/`)) {
       return serveEmber(request, env, ctx);
@@ -1242,6 +1243,7 @@ export async function acknowledgeIncident(
 async function openSync(
   request: Request,
   env: Env,
+  ctx: ExecutionContext,
   auth: () => Auth,
   workspace: string,
   waitUntil?: (promise: Promise<unknown>) => void,
@@ -1253,6 +1255,14 @@ async function openSync(
   }
   const resolved = await resolveActor(request, env, auth, workspace, waitUntil);
   if (!resolved.ok) return resolved.response;
+  // A workspace on Ember (RFC 0016): the Worker holds the socket and speaks Ember to its shard (src/sync-adapter.ts).
+  let engine: Awaited<ReturnType<typeof workspaceEngine>>;
+  try {
+    engine = await within(workspaceEngine(env.DB, workspace), 5000, "the workspace's engine");
+  } catch (error) {
+    return failed("reading the workspace's engine for a sync upgrade failed", workspace, error);
+  }
+  if (engine === "ember") return openSyncOnEmber(request, env, ctx, workspace, resolved);
   // The shard is named by the workspace id alone; entity shards will be `${workspaceId}:${entityId}`.
   const headers = new Headers({
     Upgrade: "websocket",

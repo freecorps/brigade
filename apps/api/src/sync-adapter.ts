@@ -139,7 +139,8 @@ export async function openSyncOnEmber(
       {
         sub: actor.id,
         ws: workspaceId,
-        role: actor.role,
+        // The role as the shard backs it (an API token's lowered to its creator's copy).
+        role: admitted.actor.role,
         ...(actor.kind === "token" ? { kind: "token" as const } : {}),
         ...(sessionId === undefined ? {} : { sid: sessionId }),
       },
@@ -183,7 +184,7 @@ export async function openSyncOnEmber(
   upstream.accept();
   const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
   server.accept();
-  new Adapter(server, upstream, actor, first, mint, endsAt, workspaceId).start();
+  new Adapter(server, upstream, admitted.actor, first, mint, endsAt, workspaceId).start();
   return new Response(null, { status: 101, webSocket: client });
 }
 

@@ -319,6 +319,8 @@ export class WorkspaceDO extends DurableObject<Env> {
   private reminderAt: { at: number | null } | undefined;
   /** The workspace, once it moved to Ember (`moveToEmber`): this object then only forwards or refuses (`WHEN_MOVED`). */
   private moved: string | undefined;
+  /** The alarm run in progress, if any: a move waits for it, so no run straddles one (`settled`). */
+  private alarmRun: Promise<void> | undefined;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -2087,6 +2089,21 @@ export class WorkspaceDO extends DurableObject<Env> {
    * needs, or goes when none needs it.
    */
   override async alarm(): Promise<void> {
+    const run = this.runAlarm();
+    this.alarmRun = run;
+    try {
+      await run;
+    } finally {
+      if (this.alarmRun === run) this.alarmRun = undefined;
+    }
+  }
+
+  /** Waits for every alarm run in progress: the object delivers other calls across a run's awaits. */
+  private async settled(): Promise<void> {
+    while (this.alarmRun) await this.alarmRun.catch(() => undefined);
+  }
+
+  private async runAlarm(): Promise<void> {
     const now = Date.now();
     // Moved to Ember: its shard pages, ticks and pushes now. Only the events written here before the move still go
     // out (to the Queue, whose consumers find the workspace on Ember), then the alarm goes.
@@ -2700,6 +2717,10 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
     if (this.moved !== undefined && this.moved !== workspaceId)
       return { ok: false, code: "not_found" };
+    // An alarm run in progress (an escalation, a page) finishes first; none starts after `moved` is set below.
+    await this.settled();
+    if (this.moved !== undefined && this.moved !== workspaceId)
+      return { ok: false, code: "not_found" };
     this.ctx.storage.sql.exec(
       "insert into moved_to_ember (workspace_id, at) values (?, ?) on conflict (workspace_id) do nothing",
       workspaceId,
@@ -2713,6 +2734,8 @@ export class WorkspaceDO extends DurableObject<Env> {
 
   /** Back from Ember (step 4): this object holds the workspace again, with its rows as they were at the copy. */
   async moveBack(): Promise<void> {
+    // A moved run's drain finishes first, so its `deleteAlarm` never lands after the alarm set below.
+    await this.settled();
     this.ctx.storage.sql.exec("delete from moved_to_ember");
     this.moved = undefined;
     // The alarm finds whatever is due again (escalations, monitors, pushes) and sets the next.

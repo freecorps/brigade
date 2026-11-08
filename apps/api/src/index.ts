@@ -1212,7 +1212,7 @@ export async function acknowledgeIncident(
   try {
     // On Ember (RFC 0016) the shard's `paging:acknowledge`; D1 above already stood in for the DO's member tombstone.
     // The engine as a page reads it (`pageEngine`): bounded, and with D1 failing the one last known, or WorkspaceDO,
-    // so an ack is never lost to the lookup (its forwarding to the shard is a precondition of the switch, #191).
+    // so an ack is never lost to the lookup (a moved WorkspaceDO forwards it to the shard: src/workspace-moved.ts).
     result =
       (await pageEngine(env.DB, workspaceId)) === "ember"
         ? await emberMutation<AckResult>(env, workspaceId, "paging:acknowledge", {

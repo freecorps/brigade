@@ -8,9 +8,9 @@ import { sessionCookie } from "./session.ts";
 // page_urgent, page_replays, page_held, page_pending, receipt_key, receipt_rate, email_sends, email_keys, probe_pushes, member_repair,
 // invitation_sends, invitation_repair, slack_states, slack_commands, slack_messages, slack_events, slack_jobs,
 // slack_channels, slack_inbound, slack_claims, slack_lookups, slack_updates, slack_mirrored, webhook_events, webhook_sends,
-// webhook_emails, status_emails, status_email_days, status_confirm_days, status_subscriber_events and ended_session,
+// webhook_emails, status_emails, status_email_days, status_confirm_days, status_subscriber_events, ended_session and moved_to_ember,
 // created when the shard starts.
-const SYNC_TABLES = 41;
+const SYNC_TABLES = 42;
 
 const ORIGIN = "http://api.test";
 const api = (path: string, init?: RequestInit) => exports.default.fetch(`${ORIGIN}${path}`, init);

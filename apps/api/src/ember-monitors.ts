@@ -22,25 +22,32 @@ export async function workspaceMonitors(
   workspaceId: string,
 ): Promise<WorkspaceMonitors> {
   if (env.SHARD && (await pageEngine(env.DB, workspaceId)) === "ember") {
-    const shard = { SHARD: env.SHARD };
-    return {
-      report: (region, reports) =>
-        emberMutation<boolean[]>(shard, workspaceId, "monitors:report", {
-          workspaceId,
-          region,
-          reports,
-        }),
-      heartbeat: (monitorId, digest) =>
-        emberMutation<boolean>(shard, workspaceId, "monitors:heartbeat", {
-          workspaceId,
-          monitorId,
-          digest: [...new Uint8Array(digest)],
-        }),
-    };
+    return emberMonitors({ SHARD: env.SHARD }, workspaceId);
   }
   const stub = env.WORKSPACE.getByName(workspaceId);
   return {
     report: async (region, reports) => stub.report(region, reports),
     heartbeat: async (monitorId, digest) => stub.heartbeat(monitorId, digest),
+  };
+}
+
+/** The monitor calls on `workspaceId`'s Ember shard. */
+export function emberMonitors(
+  env: { SHARD: Env["SHARD"] },
+  workspaceId: string,
+): WorkspaceMonitors {
+  return {
+    report: (region, reports) =>
+      emberMutation<boolean[]>(env, workspaceId, "monitors:report", {
+        workspaceId,
+        region,
+        reports,
+      }),
+    heartbeat: (monitorId, digest) =>
+      emberMutation<boolean>(env, workspaceId, "monitors:heartbeat", {
+        workspaceId,
+        monitorId,
+        digest: [...new Uint8Array(digest)],
+      }),
   };
 }

@@ -379,7 +379,8 @@ export function renderOperatorStatusEmail(
   const text = (part: string) => email_operator_status({ part }, { locale });
   // Passing, but with this instance's own push key failing (src/watchdog.ts `direct_*_failing`): pages go through the
   // relay, which the email says rather than "back to normal".
-  const kind = facts.status === "ok" && facts.reasons.length > 0 ? "direct" : facts.status;
+  const direct = facts.reasons.some((reason) => reason.startsWith("direct_"));
+  const kind = facts.status === "ok" && direct ? "direct" : facts.status;
   const reasons =
     kind === "degraded" || kind === "direct"
       ? facts.reasons.flatMap((reason) => {

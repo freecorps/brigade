@@ -266,7 +266,9 @@ export class AlertIntake {
       digest,
       headers,
     );
-    if (!source || !(await signed(source, secret!, body, headers))) return { status: "not_found" };
+    if (!source || !secret || !(await signed(source, secret, body, headers))) {
+      return { status: "not_found" };
+    }
     if (!(await this.allowed(sourceId))) return { status: "busy" };
     const payload = readPayload(source, body, headers, this.options.log);
     if (payload === "ignored") return { status: "ignored" };

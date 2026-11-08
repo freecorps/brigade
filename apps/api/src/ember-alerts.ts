@@ -93,7 +93,7 @@ export function emberAlerts(
         digest,
         headers,
       );
-      if (!source || !(await signed(source, found!.secret!, body, headers))) {
+      if (!source || !found?.secret || !(await signed(source, found.secret, body, headers))) {
         return { status: "not_found" };
       }
       if (!(await allowed(sourceId))) return { status: "busy" };

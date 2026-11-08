@@ -15,7 +15,7 @@ import {
   type Actor,
 } from "@freecorps/brigade-schema";
 import { MEMBER_STALE_MS } from "../src/members.ts";
-import { fenceGen, reconciledDoc } from "./members.ts";
+import { EMBER_MEMBER_REPAIR_DELAY_MS, fenceGen, reconciledDoc } from "./members.ts";
 import { emberWorkspace } from "./shard-facade.ts";
 import { run, workspaceLimits } from "./workspace.ts";
 
@@ -82,7 +82,13 @@ export const admit = internalMutationGeneric({
         ACCOUNT_ACTOR,
       );
       shard.check();
-      if (!out.ok && out.error.code !== "conflict") return { ok: false, code: "unavailable" };
+      if (!out.ok && out.error.code !== "conflict") {
+        // As a phone's registration does (ember/devices.ts): the reconcile signs them out later.
+        c.scheduler.runAfter(EMBER_MEMBER_REPAIR_DELAY_MS, "members:repair", {
+          workspaceId: input.workspaceId,
+        });
+        return { ok: false, code: "unavailable" };
+      }
     }
     // Their copy in the member list, so roles can point at them and the dashboard can show their name.
     if (input.name !== undefined) {

@@ -7,6 +7,7 @@
 // on and off, delete, test, replay) is a mutation over sync. The dashboard sends an `Idempotency-Key` with each, so a
 // retried request is the same request (see `webhookRequest`).
 
+import { workspaceIntegrations } from "./ember-integrations.ts";
 import {
   isId,
   webhookHeaderHint,
@@ -25,7 +26,11 @@ import { derivedWebhookSecret, headerBinding, newWebhookSecret } from "./webhook
 import type { WebhookHeaderArg, WebhookRunName, WebhookRunResult } from "./webhooks.ts";
 import { ORGANIZATION_ID } from "./workspace.ts";
 
-export type WebhookRouteEnv = ApiTokenEnv & { WEBHOOK_SECRET_KEY?: string };
+export type WebhookRouteEnv = ApiTokenEnv & {
+  WEBHOOK_SECRET_KEY?: string;
+  /** A workspace on Ember (D1's `workspace_engine`): its webhook changes go to its shard. */
+  SHARD?: Env["SHARD"];
+};
 
 /** What a request asks: a new endpoint, a new secret for one, or its custom headers. */
 export type WebhookAction = "create" | "rotate" | "headers";
@@ -150,7 +155,9 @@ export async function webhookRequest(
         };
   let result: WebhookRunResult;
   try {
-    result = await env.WORKSPACE.getByName(workspaceId).webhookRun(
+    result = await (
+      await workspaceIntegrations(env, workspaceId)
+    ).webhookRun(
       workspaceId,
       actor,
       name,

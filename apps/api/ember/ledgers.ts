@@ -5,7 +5,9 @@
 import { INVITATIONS_SCHEMA } from "../src/invitation-ledger.ts";
 import { MAILER_SCHEMA } from "../src/mailer.ts";
 import { MONITORS_SCHEMA } from "../src/monitors.ts";
+import { SLACK_SCHEMA } from "../src/slack.ts";
 import { STATUS_MAIL_SCHEMA } from "../src/status-mail.ts";
+import { WEBHOOKS_SCHEMA } from "../src/webhooks.ts";
 import { PAGING_SCHEMA } from "../src/paging.ts";
 import { RECEIPTS_SCHEMA } from "../src/receipts.ts";
 
@@ -35,6 +37,8 @@ const RESULTS_SCHEMA = `
 /** One DDL text (`create … ; create …`) as single statements. */
 const statements = (ddl: string) =>
   ddl
+    // Comments out (Ember's private DDL is one bare statement each); the ledgers' DDL quotes no `--`.
+    .replace(/--[^\n]*/g, "")
     .split(";")
     .map((statement) => statement.trim())
     .filter((statement) => statement.length > 0);
@@ -51,6 +55,8 @@ export const LEDGER_DDL: string[] = [
   ...statements(INVITATIONS_SCHEMA),
   ...statements(MONITORS_SCHEMA),
   ...statements(STATUS_MAIL_SCHEMA),
+  ...statements(SLACK_SCHEMA),
+  ...statements(WEBHOOKS_SCHEMA),
   TICKS_SCHEMA,
 ];
 export const LEDGER_TABLES: string[] = [

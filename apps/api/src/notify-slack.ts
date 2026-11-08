@@ -5,6 +5,7 @@
 // runs next to push for the same event and never decides whether a page is retried: a page that went out is settled
 // in the page ledger, so a retry for Slack's sake pages nobody again.
 
+import { workspaceIntegrations } from "./ember-integrations.ts";
 import {
   archiveChannel,
   createIncidentChannel,
@@ -34,6 +35,8 @@ export const SLACK_MAX_JOBS = 8;
 
 export type SlackNotifyEnv = {
   WORKSPACE: Env["WORKSPACE"];
+  /** A workspace on Ember (D1's `workspace_engine`): its Slack and webhook calls go to its shard. */
+  SHARD?: Env["SHARD"];
   /** Members' verified emails, for inviting them to an incident's channel; without it nobody is invited. */
   DB?: Env["DB"];
   /** Without it, Slack is off: nothing is planned or sent. */
@@ -54,7 +57,7 @@ export async function notifySlack(
   now: () => number = Date.now,
 ): Promise<number | undefined> {
   if (!asksForSlack(event) || !isTokenKey(env.SLACK_TOKEN_KEY)) return undefined;
-  const shard = env.WORKSPACE.getByName(event.workspaceId);
+  const shard = await workspaceIntegrations(env, event.workspaceId);
   for (let step = 0; step < SLACK_MAX_JOBS; step++) {
     const plan = await shard.planSlack(event);
     if (!plan.send) return plan.reason === "held" ? secondsUntil(plan.until, now()) : undefined;

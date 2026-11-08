@@ -1415,3 +1415,36 @@ describe("the status page on an Ember workspace", () => {
     expect(JSON.parse(snapshot!)).toMatchObject({ workspaceId });
   });
 });
+
+describe("webhooks on an Ember workspace", () => {
+  test("POST /workspaces/:id/webhooks creates the endpoint on the Ember shard, with its signing secret", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const id = newId("whk", Date.now(), (n) => crypto.getRandomValues(new Uint8Array(n)));
+    const created = await api(`/workspaces/${workspaceId}/webhooks`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+      body: JSON.stringify({
+        id,
+        url: "https://hooks.example.com/brigade",
+        description: "Ops bot",
+        events: ["incident.declared"],
+      }),
+    });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({ id, secret: expect.any(String) });
+    // On the Ember shard, as a member sees it.
+    const shard = workspaceShard(workspaceId);
+    const stub = env.SHARD.getByName(shard) as unknown as {
+      query(s: string, fn: string, args: unknown, identity: unknown): Promise<Outcome>;
+    };
+    const listed = await stub.query(
+      shard,
+      "workspace:query",
+      { name: "webhook.all", args: {} },
+      { subject: userId, claims: { role: "owner", ws: workspaceId } },
+    );
+    expect(JSON.stringify(listed.value)).toContain(id);
+  });
+});

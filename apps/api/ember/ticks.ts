@@ -47,6 +47,8 @@ const JOBS = {
   status: "status:push",
   maintenance: "status:maintenance",
   domain: "status:domainCheck",
+  webhooks: "integrations:webhookRedrive",
+  slack: "integrations:slackArchive",
 } as const;
 export type TickKey = keyof typeof JOBS;
 

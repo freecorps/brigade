@@ -62,7 +62,8 @@ export function asksForWebhookEmail(event: BrigadeEvent): boolean {
   );
 }
 
-const SCHEMA = `
+/** The webhook desk's ledgers (ember/ledgers.ts too). */
+export const WEBHOOKS_SCHEMA = `
   create table if not exists webhook_events (
     event_id text primary key,
     event text not null,
@@ -158,7 +159,7 @@ type SendRow = { attempts: number; claimed_until: number; retry_at: number; done
 
 export class WebhookDesk {
   constructor(private readonly options: WebhookDeskOptions) {
-    options.storage.sql.exec(SCHEMA);
+    options.storage.sql.exec(WEBHOOKS_SCHEMA);
   }
 
   private get sql() {

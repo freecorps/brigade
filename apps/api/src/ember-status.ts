@@ -40,7 +40,14 @@ export async function workspaceConfigureStatusPage(
   env: StatusEnv,
   workspaceId: string,
 ): Promise<ConfigureStatusPage> {
-  if (env.SHARD && (await workspaceEngine(env.DB, workspaceId)) === "ember") {
+  if (
+    env.SHARD &&
+    (await within(
+      workspaceEngine(env.DB, workspaceId),
+      STATUS_ENGINE_BUDGET_MS,
+      "engine lookup",
+    )) === "ember"
+  ) {
     return emberConfigureStatusPage({ ...env, SHARD: env.SHARD });
   }
   const stub = env.WORKSPACE.getByName(workspaceId);
@@ -103,6 +110,9 @@ export function emberConfigureStatusPage(
     if (claimed !== null && result.releasable) {
       await releaseSlug(env.DB, workspaceId, args.slug, claimed, log);
     }
+    // Refused by the shard's checks run again in the save's own transaction.
+    if (result.code === "unauthenticated") return { ok: false, code: "unauthenticated" };
+    if (result.code === "not_a_member") return { ok: false, code: "not_a_member" };
     // Nothing changed: what the caller asked for is what the page already says.
     if (result.code === "conflict") return { ok: true };
     return { ok: false, code: result.code === "forbidden" ? "forbidden" : "invalid_args" };

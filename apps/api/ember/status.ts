@@ -16,6 +16,7 @@ import {
 import {
   ACCOUNT_ACTOR,
   nextMaintenanceAt,
+  serverMutations,
   statusFollowKey,
   STATUS_DOMAIN_ID,
   STATUS_PAGE_ID,
@@ -34,6 +35,7 @@ import {
   type StatusPushPlan,
 } from "../src/status-page.ts";
 import { emberWorkspace, type EmberShard } from "./shard-facade.ts";
+import { run, workspaceLimits } from "./workspace.ts";
 import { holdTicks, tickAt } from "./ticks.ts";
 
 const PLAN = makeFunctionReference<"mutation">("status:plan");
@@ -115,26 +117,32 @@ export const configure = internalMutationGeneric({
     if (shard.workspace() !== input.workspaceId) {
       return { ok: false, code: "not_found", releasable: true };
     }
+    const releasable = () => publisherOf(c, shard).releasable(input.args.slug);
+    // The shard's checks again, in this transaction: a token revoked or a member removed since `current` is refused.
+    const acting = shard.tokenActor(input.actor, c.now);
+    if (!acting) return { ok: false, code: "unauthenticated", releasable: releasable() };
+    if (shard.gone(acting.by ?? acting.id, c.now)) {
+      return { ok: false, code: "not_a_member", releasable: releasable() };
+    }
     const now = Math.max(
       c.now,
       input.now,
       (shard.store.get("status_page", STATUS_PAGE_ID)?.updatedAt ?? 0) + 1,
     );
-    const { result } = shard.mutate({
-      clientId: "api",
-      mutationId: `status:${now}:${Math.floor(c.random() * 2 ** 32)}`,
-      actor: input.actor,
-      name: "statusPage.configure",
-      args: input.args,
+    // At `now`, not the transaction's time: the page's save and the slug it retires keep that order.
+    const result = run(
+      c,
+      serverMutations,
+      "statusPage.configure",
+      input.args,
+      () => acting,
+      workspaceLimits(),
+      shard.store,
       now,
-      internal: true,
-    });
+    );
+    shard.check();
     if (result.ok) return { ok: true };
-    return {
-      ok: false,
-      code: result.error.code,
-      releasable: publisherOf(c, shard).releasable(input.args.slug),
-    };
+    return { ok: false, code: result.error.code, releasable: releasable() };
   },
 });
 
@@ -544,6 +552,8 @@ export const changeDomain = internalMutationGeneric({
     });
     if (!result.ok) return { ok: false, code: result.error.code };
     checkerOf(c, shard, true).reset();
+    // A check out in the background now speaks of the domain as it was: what it finds is dropped (its lease is gone).
+    c.sql.exec("delete from shard_meta where key = ?", CHECKING);
     shard.check();
     return { ok: true };
   },
@@ -575,6 +585,8 @@ export const releaseDomain = internalMutationGeneric({
     });
     if (!result.ok) return { ok: false, code: result.error.code };
     checkerOf(c, shard, true).reset();
+    // A check out in the background now speaks of the domain as it was: what it finds is dropped (its lease is gone).
+    c.sql.exec("delete from shard_meta where key = ?", CHECKING);
     shard.check();
     return { ok: true };
   },

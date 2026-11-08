@@ -138,20 +138,21 @@ export class DomainChecker {
    * Throws when the shard refused the check (the caller backs off).
    */
   settle(row: StatusDomainRow, probed: DomainProbe, now: number): void {
-    const seen = this.interpret(row, probed);
-    if (typeof seen === "string") {
-      this.failed(now, seen);
-      return;
-    }
     // Removed, or removed and added again, while Cloudflare or the edge answered: what it said is about another
-    // domain. A dedicated one has no Cloudflare id to tell them apart, so its hostname and when it was added are
-    // compared too, here and by the mutation (`addedAt`).
+    // domain, and must not count for (or against) the one there now, its misses and backoff included. A dedicated one
+    // has no Cloudflare id to tell them apart, so its hostname and when it was added are compared too, here and by the
+    // mutation (`addedAt`).
     const latest = this.deps.shard.store.get("status_domain", STATUS_DOMAIN_ID);
     if (
       latest?.cloudflareId !== row.cloudflareId ||
       latest.hostname !== row.hostname ||
       latest.createdAt !== row.createdAt
     ) {
+      return;
+    }
+    const seen = this.interpret(row, probed);
+    if (typeof seen === "string") {
+      this.failed(now, seen);
       return;
     }
     this.deps.check({

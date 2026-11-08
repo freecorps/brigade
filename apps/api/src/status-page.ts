@@ -420,7 +420,8 @@ export class StatusPublisher {
    * Records what was done of `plan` (`planPush`), as `push` records it: the page pushed (its dirty version and any
    * re-push mark before `now` cleared), each retired slug's snapshot deleted (`cleared`) or released (its row gone,
    * only that retirement), then the backoff cleared, or set when a step failed. `now` is when the push started (its
-   * plan), `settledAt` when it ended: the backoff runs from the end, so a slow call that failed never used it up.
+   * plan), `settledAt` when it ended: the backoff runs from the end, so a slow call that failed never used it up, and a
+   * retired slug's grace from when its snapshot's delete landed.
    */
   recordPush(plan: StatusPushPlan, done: StatusPushDone, now: number, settledAt = now): void {
     const { shard } = this.deps;
@@ -434,7 +435,8 @@ export class StatusPublisher {
       const row = shard.store.get("status_retired", retired.id);
       if (row?.at !== retired.at) continue;
       if (retired.op === "kv_delete" && done.cleared.includes(retired.id)) {
-        shard.store.update("status_retired", retired.id, { cleared: now });
+        // From when the delete is known to have landed: the grace never starts before it.
+        shard.store.update("status_retired", retired.id, { cleared: settledAt });
       } else if (retired.op === "release" && done.released.includes(retired.id)) {
         shard.store.delete("status_retired", retired.id);
       }

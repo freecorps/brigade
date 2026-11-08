@@ -147,6 +147,37 @@ describe("the status page on Ember", () => {
     expect(s.call("status:plan", { kv: true }).value).not.toBe(null);
   });
 
+  test("two saves in one clock tick keep their order: the slug given up is retired after the first save", () => {
+    const s = shard();
+    s.call("status:configure", { workspaceId: WS, actor: owner, args: page, now: T });
+    const first = s.table("status_page")[0]!.updatedAt as number;
+    s.call("status:configure", {
+      workspaceId: WS,
+      actor: owner,
+      args: { ...page, slug: "acme-two" },
+      now: T,
+    });
+    const [retired] = s.table("status_retired");
+    expect(retired).toMatchObject({ id: "acme" });
+    expect(retired!.at).toBeGreaterThan(first);
+  });
+
+  test("a save checks the member again: one removed since the Worker's check is refused", () => {
+    const s = shard();
+    const bia = { kind: "user", id: "usr_bia", role: "admin" } as const;
+    const server = (name: string, args: unknown, actor: unknown) =>
+      s.call("workspace:serverMutate", { name, args, actor }).value;
+    expect(server("member.sync", { id: "usr_bia", name: "Bia", role: "admin" }, bia)).toEqual({
+      ok: true,
+    });
+    expect(
+      server("member.remove", { id: "usr_bia", role: "admin", reason: "removed" }, owner),
+    ).toEqual({ ok: true });
+    expect(
+      s.call("status:configure", { workspaceId: WS, actor: bia, args: page, now: T }).value,
+    ).toMatchObject({ ok: false, code: "not_a_member", releasable: true });
+  });
+
   test("a refused page answers its code, and says whether a slug just claimed may go back", () => {
     const s = shard();
     const refused = s.call("status:configure", {
@@ -284,6 +315,26 @@ describe("the status page's domain on Ember", () => {
     };
     expect(first).not.toBe(null);
     expect(s.call("status:domainDue", { config: false }).value).toBe(null);
+    // A check by hand meanwhile: the one out in the background no longer holds the lease.
+    expect(
+      s.call("status:changeDomain", {
+        workspaceId: WS,
+        actor: owner,
+        name: "check",
+        args: {
+          hostname: "status.example.com",
+          cloudflareId: null,
+          addedAt: (
+            s.call("status:domainState", { workspaceId: WS }).value as {
+              domain: { createdAt: number };
+            }
+          ).domain.createdAt,
+          state: "pending",
+          records: [],
+          error: "not_attached",
+        },
+      }).value,
+    ).toEqual({ ok: true });
     s.tick(DOMAIN_CHECK_LEASE_MS + 1);
     const second = s.call("status:domainDue", { config: false }).value as { started: number };
     expect(second.started).toBeGreaterThan(first.started);

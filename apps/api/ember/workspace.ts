@@ -146,6 +146,8 @@ export function run(
   limits?: { monitors?: number },
   /** A store the caller reads through too (ember/shard-facade.ts), so its reads see this mutation's writes. */
   shared?: EmberStore<BrigadeTables>,
+  /** The mutation's time, when it must be later than the transaction's (a status page save ordered after the last). */
+  at?: number,
 ): MutateResult {
   const base = shared ?? createEmberStore<BrigadeTables>(ctx.db as never, TABLE_SET);
   // The tables this mutation writes: a committed one that moved an escalation timer or a reminder arms the tick.
@@ -183,7 +185,7 @@ export function run(
     name,
     args,
     store,
-    { actor: who, now: ctx.now, server: true, ...(limits ? { limits } : {}) },
+    { actor: who, now: Math.max(ctx.now, at ?? 0), server: true, ...(limits ? { limits } : {}) },
     {
       commit: (events: DomainEvent[]) => {
         committing = true;

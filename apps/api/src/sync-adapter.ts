@@ -36,6 +36,10 @@ const CLOSE_SERVICE_RESTART = 1012;
 
 /** A token is minted again this long before it expires. */
 export const ADAPTER_REFRESH_AHEAD_MS = 30 * 1000;
+/** No refresh sooner than this after the last one, whatever the token's lifetime. */
+const MIN_REFRESH_MS = 5 * 1000;
+/** The longest a timer waits (2^31 - 1 ms). */
+const MAX_TIMER_MS = 2 ** 31 - 1;
 
 type Resolved = Extract<ActorResult, { ok: true }>;
 type AdapterEnv = Env;
@@ -195,20 +199,29 @@ class Adapter {
     this.upstream.addEventListener("error", () =>
       this.close(CLOSE_SERVICE_RESTART, "shard socket error"),
     );
-    if (this.sessionExpiresAt !== undefined) {
-      this.expiry = setTimeout(
-        () => this.close(CLOSE_SERVICE_RESTART, "session expired"),
-        Math.max(0, this.sessionExpiresAt - Date.now()),
-      );
-    }
+    this.armExpiry();
     this.arm();
+  }
+
+  /** Closes the socket at the session's expiry, in steps no longer than a timer can wait. */
+  private armExpiry(): void {
+    if (this.sessionExpiresAt === undefined || this.closed) return;
+    const left = this.sessionExpiresAt - Date.now();
+    if (left <= 0) return this.close(CLOSE_SERVICE_RESTART, "session expired");
+    this.expiry = setTimeout(() => this.armExpiry(), Math.min(left, MAX_TIMER_MS));
   }
 
   /** Mints the next token ahead of this one's expiry. */
   private arm(): void {
     clearTimeout(this.refresh);
+    // A token capped at the session's expiry is the last one: the socket closes then (`armExpiry`).
+    if (this.sessionExpiresAt !== undefined && this.token.expiresAt >= this.sessionExpiresAt)
+      return;
     const at = this.token.expiresAt - ADAPTER_REFRESH_AHEAD_MS;
-    this.refresh = setTimeout(() => void this.renew(), Math.max(0, at - Date.now()));
+    this.refresh = setTimeout(
+      () => void this.renew(),
+      Math.min(MAX_TIMER_MS, Math.max(MIN_REFRESH_MS, at - Date.now())),
+    );
   }
 
   /** A fresh token after D1's checks, sent to Ember; the socket closes when they no longer pass. */

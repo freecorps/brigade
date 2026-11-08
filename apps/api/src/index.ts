@@ -1262,7 +1262,14 @@ async function openSync(
     try {
       engine = await within(workspaceEngine(env.DB, workspace), 5000, "the workspace's engine");
     } catch (error) {
-      return failed("reading the workspace's engine for a sync upgrade failed", workspace, error);
+      console.error(
+        JSON.stringify({
+          message: "reading the workspace's engine for a sync upgrade failed",
+          workspace,
+          error: String(error),
+        }),
+      );
+      return json({ error: "unavailable" }, 503);
     }
     if (engine === "ember") return openSyncOnEmber(request, env, ctx, workspace, resolved);
   }

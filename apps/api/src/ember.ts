@@ -25,6 +25,7 @@ import * as paging from "../ember/paging.ts";
 import * as postmortems from "../ember/postmortems.ts";
 import * as sessions from "../ember/sessions.ts";
 import * as status from "../ember/status.ts";
+import * as ticks from "../ember/ticks.ts";
 import * as workspace from "../ember/workspace.ts";
 import type { Role } from "@freecorps/brigade-schema";
 import { memberRole, resolveActor } from "./actor.ts";
@@ -174,6 +175,7 @@ export const ember = createEmberWorker({
     exports: dataExports,
     postmortems,
     clients,
+    ticks,
   },
   basePath: EMBER_BASE_PATH,
   auth: brigadeEmberAuth,

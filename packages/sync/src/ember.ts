@@ -331,8 +331,12 @@ export class EmberSyncClient implements SyncClientLike {
     const close = () => {
       if (this.#closed || this.#uses.has(workspaceId)) return;
       const client = this.#clients.get(workspaceId);
-      // A mutation restored or still unconfirmed keeps the client.
-      if (!client || client.connectionState().pendingMutations > 0) return;
+      if (!client) return;
+      // A mutation still unconfirmed keeps the client; tried again once it may have drained.
+      if (client.connectionState().pendingMutations > 0) {
+        if (globals.setTimeout) globals.setTimeout(close, IDLE_CLOSE_MS);
+        return;
+      }
       this.#clients.delete(workspaceId);
       client.close();
       this.#connectionChanged(workspaceId);

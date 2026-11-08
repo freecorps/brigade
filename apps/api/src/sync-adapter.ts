@@ -26,7 +26,7 @@ import {
 } from "@freecorps/brigade-sync/protocol";
 import type { Actor } from "@freecorps/brigade-schema";
 import type { ActorResult } from "./actor.ts";
-import { ember, verifyIdentity, workspaceShard } from "./ember.ts";
+import { capAt, ember, verifyIdentity, workspaceShard } from "./ember.ts";
 import { admitToEmber } from "./ember-clients.ts";
 import { mintEmberToken } from "./ember-token.ts";
 
@@ -123,6 +123,8 @@ export async function openSyncOnEmber(
     );
   }
   const shard = workspaceShard(workspaceId);
+  // The socket ends with its session, or with its API token, as its Ember token does (`issueEmberToken`).
+  const endsAt = capAt(sessionExpiresAt, admitted.tokenExpiresAt);
   const mint = async (): Promise<{ token: string; expiresAt: number } | null> => {
     const minted = await mintEmberToken(
       env.BETTER_AUTH_SECRET,
@@ -134,7 +136,7 @@ export async function openSyncOnEmber(
         ...(sessionId === undefined ? {} : { sid: sessionId }),
       },
       Date.now(),
-      sessionExpiresAt,
+      endsAt,
     );
     if (!minted) return null;
     // The auth hook's own D1 checks (the session still there, the member still backing the actor): what every
@@ -164,7 +166,7 @@ export async function openSyncOnEmber(
   upstream.accept();
   const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
   server.accept();
-  new Adapter(server, upstream, actor, first, mint, sessionExpiresAt, workspaceId).start();
+  new Adapter(server, upstream, actor, first, mint, endsAt, workspaceId).start();
   return new Response(null, { status: 101, webSocket: client });
 }
 

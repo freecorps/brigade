@@ -4,7 +4,7 @@
 // - **copy**: every table of the workspace's `WorkspaceDO` (`exportPage`, in id order) is written to its Ember shard
 //   (`migration:put`, idempotent by row id), then both sides are walked again in id order: a row the shard holds and
 //   the DO does not is deleted (`migration:drop`), one that differs is written again, and each table's count and
-//   SHA-256 (of `id \t data \n`, in id order) is compared. It can run again, and overwrites the last one.
+//   SHA-256 (chained over `id \t data \n` a page of rows at a time, in id order) is compared. It can run again, and overwrites the last one.
 // - **switch**: the DO is frozen first (`moveToEmber`: it refuses every call, which is tried again), copied once more
 //   from those frozen rows, its upkeep ticks armed on the shard (`migration:arm`), then D1's `workspace_engine` says
 //   `ember`, and only then the DO forwards what still reaches it (`forwardToEmber`). No write is lost, and none made
@@ -59,22 +59,29 @@ const encoder = new TextEncoder();
 
 /** SHA-256 of rows as fed in order (`id \t data \n`), incrementally over chunks. */
 class Digest {
-  private parts: Uint8Array[] = [];
+  /** The chain so far: SHA-256 of the last state and the next `COPY_PAGE` rows, so memory stays one chunk. */
+  private state: Uint8Array = new Uint8Array(32);
+  private chunk: Uint8Array[] = [];
   rows = 0;
-  add(row: Row) {
-    this.parts.push(encoder.encode(`${row.id}\t${row.data}\n`));
+  async add(row: Row): Promise<void> {
+    this.chunk.push(encoder.encode(`${row.id}\t${row.data}\n`));
     this.rows++;
+    if (this.chunk.length >= COPY_PAGE) await this.fold();
   }
-  async hex(): Promise<string> {
-    const size = this.parts.reduce((n, part) => n + part.length, 0);
-    const all = new Uint8Array(size);
+  private async fold(): Promise<void> {
+    const parts = [this.state, ...this.chunk];
+    const all = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
     let at = 0;
-    for (const part of this.parts) {
+    for (const part of parts) {
       all.set(part, at);
       at += part.length;
     }
-    const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", all));
-    return [...hash].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    this.state = new Uint8Array(await crypto.subtle.digest("SHA-256", all));
+    this.chunk = [];
+  }
+  async hex(): Promise<string> {
+    if (this.chunk.length > 0) await this.fold();
+    return [...this.state].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   }
 }
 
@@ -153,9 +160,9 @@ export async function copyWorkspace(env: MigrationEnv, workspaceId: string): Pro
     }
     // 3. Count and hash, each side on its own.
     const mine = new Digest();
-    for await (const row of walk((after) => side.doPage(table, after))) mine.add(row);
+    for await (const row of walk((after) => side.doPage(table, after))) await mine.add(row);
     const yours = new Digest();
-    for await (const row of walk((after) => side.emberPage(table, after))) yours.add(row);
+    for await (const row of walk((after) => side.emberPage(table, after))) await yours.add(row);
     const check: TableCheck = {
       table,
       rows: mine.rows,
@@ -171,7 +178,7 @@ export type SwitchResult =
   | { ok: true; copy: CopyReport; ticks: string[] }
   /** D1 said `ember` already: the switch only finished the DO's forwarding, and copied nothing over live data. */
   | { ok: true; finished: true }
-  | { ok: false; code: "not_found" | "mismatch"; copy?: CopyReport };
+  | { ok: false; code: "not_found" | "busy" | "mismatch"; copy?: CopyReport };
 
 /**
  * Switches `workspaceId` to Ember: freezes its `WorkspaceDO`, copies it once more, arms the shard's ticks, writes
@@ -193,7 +200,8 @@ export async function switchWorkspace(
     return { ok: true, finished: true };
   }
   const moved = await side.stub.moveToEmber(workspaceId);
-  if (!moved.ok) return { ok: false, code: "not_found" };
+  // `busy`: another switch is copying it (or one stopped mid-way: turning it back ends it).
+  if (!moved.ok) return { ok: false, code: moved.code };
   // Frozen and forwarding nothing, so no write lands on Ember while the last copy runs (it would delete it).
   let copy: CopyReport;
   try {
@@ -209,8 +217,10 @@ export async function switchWorkspace(
   }
   let ticks: string[];
   try {
-    ticks = await side.arm();
+    // D1 first, then the ticks: the shard's upkeep never runs (an escalation never fires there) before it owns the
+    // workspace, so a switch that fails here leaves nothing that acted on Ember.
     await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    ticks = await side.arm();
   } catch (error) {
     // Not switched, or not known to be: D1 back at `brigade` (the write may have landed), the shard's upkeep off
     // (it may have been armed), then the DO.

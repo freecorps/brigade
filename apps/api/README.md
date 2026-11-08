@@ -953,8 +953,9 @@ operator routes (src/ember-admin.ts) exist only while the `MIGRATION_TOKEN` secr
 `Authorization: Bearer`, every `/admin/ember/*` path is a 404.
 
 ```sh
-printf %s "$(openssl rand -hex 32)" | wrangler secret put MIGRATION_TOKEN --env dev
-H="Authorization: Bearer <the token>"
+TOKEN="$(openssl rand -hex 32)"
+printf %s "$TOKEN" | wrangler secret put MIGRATION_TOKEN --env dev
+H="Authorization: Bearer $TOKEN"
 curl -sH "$H" "$API/admin/ember/workspaces"                  # every workspace and its engine, 500 at a time (?after=)
 curl -sXPOST -H "$H" "$API/admin/ember/copy/<workspace>"     # copy and check; can run again
 curl -sXPOST -H "$H" "$API/admin/ember/switch/<workspace>"   # freeze the DO, copy again, arm the ticks, then `ember`
@@ -963,7 +964,9 @@ curl -sXPOST -H "$H" "$API/admin/ember/back/<workspace>"     # `brigade` again, 
 
 A copy answers what it wrote and deleted and `mismatched`, the tables whose count or hash differ (none when it
 succeeded). While a switch runs the DO refuses every call (the Queue and the callers try again); a switch whose copy
-fails or does not check out answers 409 or 503 and leaves D1 at `brigade` with the DO holding the workspace again. Once every workspace is switched, set
+fails or does not check out answers 409 or 503 and leaves D1 at `brigade` with the DO holding the workspace again. A
+second switch while one runs answers 409 `busy` (as does one after a switch that stopped mid-way: turn it back, then
+switch again); a switch on a workspace already on Ember only finishes it, and a copy of one answers 409. Once every workspace is switched, set
 `NEW_WORKSPACE_ENGINE=ember` and delete the secret (`wrangler secret delete MIGRATION_TOKEN`).
 
 ## Generated types

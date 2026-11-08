@@ -373,8 +373,9 @@ were built for a deployment people depend on.
    through internal mutations in batches (`migration:put`, ember/migration.ts), idempotent by row id, so the copy can
    run again and overwrite the last one; rows the shard holds and the DO does not are deleted. It checks counts and a hash per table
    on both sides. The switch (`POST /admin/ember/switch/:workspace`) freezes the DO first (step 3) and copies once more from its frozen rows, so no write made after a copy is lost.
-   The copy ends by arming the shard's upkeep ticks (`paging:tick` at the earliest escalation timer, replay or held
-   push; `paging:remind` once), since rows written by the copy are not a mutation that arms them (ember/ticks.ts).
+   The copy arms nothing: the switch arms the shard's upkeep ticks (`migration:arm`: every tick once, each finding
+   what is due) after D1 says `ember`, since rows written by the copy are not a mutation that arms them
+   (ember/ticks.ts), and so no tick runs on Ember before it owns the workspace.
 3. **Switch.** D1's `workspace_engine` turns to `ember` for every copied workspace, and each `WorkspaceDO` is told
    (`moveToEmber`): it then runs nothing of its own (its alarm only drains the outbox written before), closes its
    sockets so the apps reconnect through the Brigade Sync adapter ("Clients"), refuses every call while the switch copies it once more, and once D1 says `ember` (`forwardToEmber`) forwards what can still reach it (a

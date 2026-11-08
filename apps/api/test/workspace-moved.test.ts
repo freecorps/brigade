@@ -113,6 +113,8 @@ describe("a WorkspaceDO moved to Ember", () => {
       (error: unknown) => String(error),
     );
     expect(frozen).toMatch(/try again/);
+    // One switch at a time: a second move of a frozen object is refused.
+    expect(await stub.moveToEmber(workspaceId)).toEqual({ ok: false, code: "busy" });
     expect(await stub.forwardToEmber()).toBe(true);
 
     // The ack runs on Ember, where the incident is.

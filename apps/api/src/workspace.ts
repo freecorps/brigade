@@ -325,6 +325,8 @@ export class WorkspaceDO extends DurableObject<Env> {
    * so the switch's last copy never races a write made on Ember meanwhile; every call is refused and tried again.
    */
   private forwarding = false;
+  /** Calls in progress (each awaits something): a move waits for them, so no write lands after the freeze. */
+  private readonly inflight = new Set<Promise<unknown>>();
   /** The alarm run in progress, if any: a move waits for it, so no run straddles one (`settled`). */
   private alarmRun: Promise<void> | undefined;
 
@@ -2728,11 +2730,15 @@ export class WorkspaceDO extends DurableObject<Env> {
    * finished (`forwardToEmber`, `WHEN_MOVED`). Its sockets close (`1012`), so the apps reconnect through the
    * Worker to the Brigade Sync adapter. `not_found` for a shard that serves another workspace, or none.
    */
-  async moveToEmber(workspaceId: string): Promise<{ ok: true } | { ok: false; code: "not_found" }> {
+  async moveToEmber(
+    workspaceId: string,
+  ): Promise<{ ok: true } | { ok: false; code: "not_found" | "busy" }> {
     // Only the workspace this object holds, and only one: a shard that serves none, or another, has nothing to move.
     if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
     if (this.moved !== undefined && this.moved !== workspaceId)
       return { ok: false, code: "not_found" };
+    // Frozen and not forwarding: a switch is copying it now (or stopped mid-way, which `moveBack` ends). One at a time.
+    if (this.moved === workspaceId && !this.forwarding) return { ok: false, code: "busy" };
     // An alarm run in progress (an escalation, a page) finishes first; none starts after `moved` is set below.
     await this.settled();
     if (this.moved !== undefined && this.moved !== workspaceId)
@@ -2746,6 +2752,8 @@ export class WorkspaceDO extends DurableObject<Env> {
     // Frozen: nothing is forwarded until the switch finishes (`forwardToEmber`).
     this.ctx.storage.sql.exec("delete from shard_meta where key = 'moved_forwarding'");
     this.forwarding = false;
+    // Calls let in before the freeze (a REST write waiting on D1) commit or fail before the copy reads this shard.
+    while (this.inflight.size > 0) await Promise.allSettled(this.inflight);
     for (const ws of this.ctx.getWebSockets()) close(ws, CLOSE_SERVICE_RESTART, "moved");
     await this.ctx.storage.setAlarm(Date.now());
     return { ok: true };
@@ -3225,10 +3233,30 @@ for (const [name, when] of Object.entries(WHEN_MOVED)) {
     configurable: true,
     writable: true,
     value: function (this: WorkspaceDO, ...args: unknown[]) {
-      const self = this as unknown as { moved: string | undefined; forwarding: boolean; env: Env };
-      if (self.moved === undefined) return method.apply(this, args);
+      const self = this as unknown as {
+        moved: string | undefined;
+        forwarding: boolean;
+        inflight: Set<Promise<unknown>>;
+        env: Env;
+      };
+      if (self.moved === undefined) {
+        const out = method.apply(this, args);
+        if (out instanceof Promise) {
+          self.inflight.add(out);
+          out.then(
+            () => self.inflight.delete(out),
+            () => self.inflight.delete(out),
+          );
+        }
+        return out;
+      }
       if (when === "refuse") throw new Error(`${name}: the workspace moved to Ember`);
-      if (!self.forwarding) throw new Error(`${name}: the workspace is moving to Ember; try again`);
+      if (!self.forwarding) {
+        // Retryable, as a Durable Object's own transient errors are: the route answers 503 (src/index.ts `failed`).
+        throw Object.assign(new Error(`${name}: the workspace is moving to Ember; try again`), {
+          retryable: true,
+        });
+      }
       const workspaceId = self.moved;
       return import("./workspace-moved.ts").then(({ forward }) =>
         forward(self.env, workspaceId, name as never, args),

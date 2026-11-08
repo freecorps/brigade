@@ -1660,7 +1660,9 @@ export async function workspaceExists(
 }
 
 function failed(message: string, workspace: string, error: unknown): Response {
-  const retryable = flag(error, "retryable");
+  // A workspace moving to Ember (RFC 0016, src/workspace.ts `WHEN_MOVED`) is tried again, whether or not the RPC
+  // kept the error's `retryable` flag.
+  const retryable = flag(error, "retryable") || String(error).includes("moving to Ember");
   const overloaded = flag(error, "overloaded");
   console.error(
     JSON.stringify({ message, workspace, retryable, overloaded, error: String(error) }),

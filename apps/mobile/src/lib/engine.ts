@@ -47,7 +47,10 @@ async function deadline<T>(work: (signal?: AbortSignal) => Promise<T>, ms: numbe
     }, ms);
   });
   try {
-    return await Promise.race([work(abort?.signal), late]);
+    const running = work(abort?.signal);
+    // Lost to the deadline, its rejection (the abort) is nobody's: not left unhandled.
+    running.catch(() => {});
+    return await Promise.race([running, late]);
   } finally {
     clearTimeout(timer);
   }

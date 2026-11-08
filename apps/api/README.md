@@ -962,8 +962,8 @@ curl -sXPOST -H "$H" "$API/admin/ember/back/<workspace>"     # `brigade` again, 
 ```
 
 A copy answers what it wrote and deleted and `mismatched`, the tables whose count or hash differ (none when it
-succeeded). A switch whose copy does not check out answers 409 and leaves D1 at `brigade`, with the DO frozen and
-forwarding pages to the shard: copy again, or turn it back. Once every workspace is switched, set
+succeeded). While a switch runs the DO refuses every call (the Queue and the callers try again); a switch whose copy
+fails or does not check out answers 409 or 503 and leaves D1 at `brigade` with the DO holding the workspace again. Once every workspace is switched, set
 `NEW_WORKSPACE_ENGINE=ember` and delete the secret (`wrangler secret delete MIGRATION_TOKEN`).
 
 ## Generated types

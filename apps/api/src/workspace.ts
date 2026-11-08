@@ -320,6 +320,11 @@ export class WorkspaceDO extends DurableObject<Env> {
   private reminderAt: { at: number | null } | undefined;
   /** The workspace, once it moved to Ember (`moveToEmber`): this object then only forwards or refuses (`WHEN_MOVED`). */
   private moved: string | undefined;
+  /**
+   * Once moved, whether the switch finished (`forwardToEmber`): until then a moved object forwards nothing either,
+   * so the switch's last copy never races a write made on Ember meanwhile; every call is refused and tried again.
+   */
+  private forwarding = false;
   /** The alarm run in progress, if any: a move waits for it, so no run straddles one (`settled`). */
   private alarmRun: Promise<void> | undefined;
 
@@ -341,6 +346,10 @@ export class WorkspaceDO extends DurableObject<Env> {
       ctx.storage.sql
         .exec<{ workspace_id: string }>("select workspace_id from moved_to_ember limit 1")
         .toArray()[0]?.workspace_id ?? undefined;
+    this.forwarding =
+      this.moved !== undefined &&
+      ctx.storage.sql.exec("select 1 from shard_meta where key = 'moved_forwarding'").toArray()
+        .length > 0;
     // Runs on every wake from hibernation: only `create … if not exists`.
     this.shard = new Shard(ctx.storage, {
       shard: "workspace",
@@ -2546,7 +2555,10 @@ export class WorkspaceDO extends DurableObject<Env> {
   /** Accepts a sync socket the Worker forwarded (`GET /sync/:workspaceId`). */
   override async fetch(request: Request): Promise<Response> {
     // Moved to Ember: the client tries again and the Worker sends it to the Brigade Sync adapter.
-    if (this.moved !== undefined) return Response.json({ error: "unavailable" }, { status: 503 });
+    if (this.moved !== undefined) {
+      this.log("sync upgrade on a moved shard", { switched: this.forwarding });
+      return Response.json({ error: "unavailable" }, { status: 503 });
+    }
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return Response.json(
         { error: "upgrade_required" },
@@ -2711,8 +2723,9 @@ export class WorkspaceDO extends DurableObject<Env> {
 
   /**
    * The switch to Ember for this workspace (RFC 0016 "Data migration", step 3), after its copy: from now on this
-   * object runs nothing of its own (no alarm work but draining the outbox, no sockets, no writes) and forwards what
-   * still reaches it to the Ember shard (`WHEN_MOVED`). Its sockets close (`1012`), so the apps reconnect through the
+   * object runs nothing of its own (no alarm work but draining the outbox, no sockets, no writes), refuses every call
+   * while the switch copies it once more, and forwards what still reaches it to the Ember shard once the switch
+   * finished (`forwardToEmber`, `WHEN_MOVED`). Its sockets close (`1012`), so the apps reconnect through the
    * Worker to the Brigade Sync adapter. `not_found` for a shard that serves another workspace, or none.
    */
   async moveToEmber(workspaceId: string): Promise<{ ok: true } | { ok: false; code: "not_found" }> {
@@ -2730,6 +2743,9 @@ export class WorkspaceDO extends DurableObject<Env> {
       Date.now(),
     );
     this.moved = workspaceId;
+    // Frozen: nothing is forwarded until the switch finishes (`forwardToEmber`).
+    this.ctx.storage.sql.exec("delete from shard_meta where key = 'moved_forwarding'");
+    this.forwarding = false;
     for (const ws of this.ctx.getWebSockets()) close(ws, CLOSE_SERVICE_RESTART, "moved");
     await this.ctx.storage.setAlarm(Date.now());
     return { ok: true };
@@ -2752,12 +2768,27 @@ export class WorkspaceDO extends DurableObject<Env> {
       .toArray();
   }
 
+  /**
+   * The switch finished (its copy checked out, D1 says `ember`): what still reaches this moved object is forwarded to
+   * the Ember shard from now on (`WHEN_MOVED`). Answers false when it is not moved.
+   */
+  forwardToEmber(): boolean {
+    if (this.moved === undefined) return false;
+    this.ctx.storage.sql.exec(
+      "insert into shard_meta (key, value) values ('moved_forwarding', 1) on conflict (key) do nothing",
+    );
+    this.forwarding = true;
+    return true;
+  }
+
   /** Back from Ember (step 4): this object holds the workspace again, with its rows as they were at the copy. */
   async moveBack(): Promise<void> {
     // A moved run's drain finishes first, so its `deleteAlarm` never lands after the alarm set below.
     await this.settled();
     this.ctx.storage.sql.exec("delete from moved_to_ember");
+    this.ctx.storage.sql.exec("delete from shard_meta where key = 'moved_forwarding'");
     this.moved = undefined;
+    this.forwarding = false;
     // The alarm finds whatever is due again (escalations, monitors, pushes) and sets the next.
     await this.ctx.storage.setAlarm(Date.now());
   }
@@ -3106,6 +3137,7 @@ export const WHEN_MOVED: Record<
   // A delivery receipt is routed by its token's key id, not the engine: one this object minted still comes here.
   receipt: "own",
   exportPage: "own",
+  forwardToEmber: "own",
   fetch: "own",
   alarm: "own",
   webSocketMessage: "own",
@@ -3193,9 +3225,10 @@ for (const [name, when] of Object.entries(WHEN_MOVED)) {
     configurable: true,
     writable: true,
     value: function (this: WorkspaceDO, ...args: unknown[]) {
-      const self = this as unknown as { moved: string | undefined; env: Env };
+      const self = this as unknown as { moved: string | undefined; forwarding: boolean; env: Env };
       if (self.moved === undefined) return method.apply(this, args);
       if (when === "refuse") throw new Error(`${name}: the workspace moved to Ember`);
+      if (!self.forwarding) throw new Error(`${name}: the workspace is moving to Ember; try again`);
       const workspaceId = self.moved;
       return import("./workspace-moved.ts").then(({ forward }) =>
         forward(self.env, workspaceId, name as never, args),

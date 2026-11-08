@@ -377,7 +377,7 @@ were built for a deployment people depend on.
    push; `paging:remind` once), since rows written by the copy are not a mutation that arms them (ember/ticks.ts).
 3. **Switch.** D1's `workspace_engine` turns to `ember` for every copied workspace, and each `WorkspaceDO` is told
    (`moveToEmber`): it then runs nothing of its own (its alarm only drains the outbox written before), closes its
-   sockets so the apps reconnect through the Brigade Sync adapter ("Clients"), forwards what can still reach it (a
+   sockets so the apps reconnect through the Brigade Sync adapter ("Clients"), refuses every call while the switch copies it once more, and once D1 says `ember` (`forwardToEmber`) forwards what can still reach it (a
    page, an ack, an alert, a probe, Slack and webhook calls routed by an engine cached or last known while D1 was
    out) to the Ember shard, and refuses the rest (`WHEN_MOVED`, src/workspace.ts; src/workspace-moved.ts).
 4. **Back.** Until the old engine is deleted, writing `brigade` again (and `moveBack`) turns a workspace back to its `WorkspaceDO`,

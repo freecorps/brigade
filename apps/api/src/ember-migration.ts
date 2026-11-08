@@ -5,9 +5,10 @@
 //   (`migration:put`, idempotent by row id), then both sides are walked again in id order: a row the shard holds and
 //   the DO does not is deleted (`migration:drop`), one that differs is written again, and each table's count and
 //   SHA-256 (of `id \t data \n`, in id order) is compared. It can run again, and overwrites the last one.
-// - **switch**: the DO is frozen first (`moveToEmber`: it forwards or refuses from then on, so nothing writes to it),
-//   copied once more from those frozen rows, its upkeep ticks armed on the shard (`migration:arm`), and only then D1's
-//   `workspace_engine` says `ember`. No write is lost; a page that comes in meanwhile is forwarded to the shard.
+// - **switch**: the DO is frozen first (`moveToEmber`: it refuses every call, which is tried again), copied once more
+//   from those frozen rows, its upkeep ticks armed on the shard (`migration:arm`), then D1's `workspace_engine` says
+//   `ember`, and only then the DO forwards what still reaches it (`forwardToEmber`). No write is lost, and none made
+//   on Ember races the last copy. A copy that fails or does not check out turns the DO back (`moveBack`).
 // - **back**: D1 says `brigade` again and the DO holds the workspace as it was (`moveBack`); what was written on Ember
 //   since is lost (accepted, RFC 0016).
 
@@ -170,9 +171,9 @@ export type SwitchResult =
   | { ok: false; code: "not_found" | "mismatch"; copy?: CopyReport };
 
 /**
- * Switches `workspaceId` to Ember: freezes its `WorkspaceDO`, copies it once more, arms the shard's ticks, then
- * writes `ember` to D1. A copy that does not check out leaves D1 at `brigade` and the DO frozen (forwarding pages to
- * the shard): the operator copies again, or turns it back (`backWorkspace`).
+ * Switches `workspaceId` to Ember: freezes its `WorkspaceDO`, copies it once more, arms the shard's ticks, writes
+ * `ember` to D1, then has the DO forward. A copy that fails or does not check out leaves D1 at `brigade` and the DO
+ * holding the workspace again.
  */
 export async function switchWorkspace(
   env: MigrationEnv,
@@ -181,10 +182,23 @@ export async function switchWorkspace(
   const side = sides(env, workspaceId);
   const moved = await side.stub.moveToEmber(workspaceId);
   if (!moved.ok) return { ok: false, code: "not_found" };
-  const copy = await copyWorkspace(env, workspaceId);
-  if (copy.mismatched.length > 0) return { ok: false, code: "mismatch", copy };
+  // Frozen and forwarding nothing, so no write lands on Ember while the last copy runs (it would delete it).
+  let copy: CopyReport;
+  try {
+    copy = await copyWorkspace(env, workspaceId);
+  } catch (error) {
+    await side.stub.moveBack();
+    throw error;
+  }
+  if (copy.mismatched.length > 0) {
+    // Not switched: the DO holds the workspace again, as if nothing happened.
+    await side.stub.moveBack();
+    return { ok: false, code: "mismatch", copy };
+  }
   const ticks = await side.arm();
   await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+  // Only now: what still reaches the DO (an engine cached as `brigade`) goes to the shard.
+  await side.stub.forwardToEmber();
   return { ok: true, copy, ticks };
 }
 

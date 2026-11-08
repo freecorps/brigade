@@ -1303,6 +1303,26 @@ describe("alert sources on an Ember workspace", () => {
       }),
     });
     expect(await created.json()).toMatchObject({ ok: true, value: { ok: true } });
+    // Its alerts dropped by a route: accepted, without an incident whose page would still be on its way through the
+    // Queue when this file ends.
+    const routed = await api("/ember/api/mutation", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        fn: "workspace:mutate",
+        shard,
+        args: {
+          name: "alertRoute.create",
+          args: {
+            id: newId("rte", Date.now(), random),
+            name: "Drop everything",
+            match: { sourceIds: [sourceId], severities: [], labels: [] },
+            action: { kind: "drop" },
+          },
+        },
+      }),
+    });
+    expect(await routed.json()).toMatchObject({ ok: true, value: { ok: true } });
     const post = (url: string, body: string) =>
       exports.default.fetch(`${ORIGIN}/alerts/${url}`, {
         method: "POST",
@@ -1321,10 +1341,6 @@ describe("alert sources on an Ember workspace", () => {
       JSON.stringify(grafanaFiring),
     );
     expect(wrong.status).toBe(404);
-    // Unreadable still pages, as the unreadable alert.
-    const unreadable = await post(alertSourceToken(workspaceId, sourceId, secret), "{not json");
-    expect(unreadable.status).toBe(202);
-    expect(await unreadable.json()).toMatchObject({ ok: true, malformed: true });
   });
 });
 

@@ -7,6 +7,7 @@
 import type { Actor } from "@freecorps/brigade-schema";
 import { within } from "./deadline.ts";
 import { workspaceEngine } from "./ember.ts";
+import { pageEngine } from "./ember-paging.ts";
 import { emberMutation } from "./ember-workspace.ts";
 import type { BrigadeEvent } from "./outbox.ts";
 import {
@@ -82,20 +83,28 @@ export type WorkspaceIntegrations = {
 
 type IntegrationsEnv = Pick<Env, "WORKSPACE"> & { DB?: Env["DB"]; SHARD?: Env["SHARD"] };
 
-/** `workspaceId`'s Slack and webhook calls, on `WorkspaceDO` or on Ember as D1 says. */
+/**
+ * `workspaceId`'s Slack and webhook calls, on `WorkspaceDO` or on Ember as D1 says. `queue`: for the Queue consumer's
+ * notifiers, whose side work has a budget of its own (`WEBHOOK_BUDGET_MS`) and is not retried past it: the engine is
+ * read as a page's is (`pageEngine`: cached, bounded far below that budget, falling back to the last known), so a slow
+ * D1 never eats the delivery's time. A route reads it fresh, within `INTEGRATIONS_ENGINE_BUDGET_MS`.
+ */
 export async function workspaceIntegrations(
   env: IntegrationsEnv,
   workspaceId: string,
+  options: { queue?: boolean } = {},
 ): Promise<WorkspaceIntegrations> {
   const { DB, SHARD } = env;
   if (
     DB &&
     SHARD &&
-    (await within(
-      workspaceEngine(DB, workspaceId),
-      INTEGRATIONS_ENGINE_BUDGET_MS,
-      "engine lookup",
-    )) === "ember"
+    (options.queue
+      ? await pageEngine(DB, workspaceId)
+      : await within(
+          workspaceEngine(DB, workspaceId),
+          INTEGRATIONS_ENGINE_BUDGET_MS,
+          "engine lookup",
+        )) === "ember"
   ) {
     return emberIntegrations({ SHARD }, workspaceId);
   }

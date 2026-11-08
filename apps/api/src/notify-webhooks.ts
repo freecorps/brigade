@@ -65,7 +65,7 @@ export async function notifyWebhooks(
 ): Promise<void> {
   if (!asksForWebhooks(event) || !isTokenKey(env.WEBHOOK_SECRET_KEY)) return;
   const key = env.WEBHOOK_SECRET_KEY;
-  const shard = await workspaceIntegrations(env, event.workspaceId);
+  const shard = await workspaceIntegrations(env, event.workspaceId, { queue: true });
   const plan = await shard.planWebhooks(event);
   const { body, event: original } = plan;
   if (body === null || original === null) return;
@@ -248,7 +248,7 @@ export async function notifyWebhookDisabled(
   sender: EmailSender | undefined,
 ): Promise<number | undefined> {
   if (!sender) return undefined;
-  const shard = await workspaceIntegrations(env, event.workspaceId);
+  const shard = await workspaceIntegrations(env, event.workspaceId, { queue: true });
   const plan = await shard.planWebhookEmail(event);
   if (!plan.send) {
     return plan.reason === "held"

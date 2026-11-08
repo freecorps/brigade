@@ -57,7 +57,7 @@ export async function notifySlack(
   now: () => number = Date.now,
 ): Promise<number | undefined> {
   if (!asksForSlack(event) || !isTokenKey(env.SLACK_TOKEN_KEY)) return undefined;
-  const shard = await workspaceIntegrations(env, event.workspaceId);
+  const shard = await workspaceIntegrations(env, event.workspaceId, { queue: true });
   for (let step = 0; step < SLACK_MAX_JOBS; step++) {
     const plan = await shard.planSlack(event);
     if (!plan.send) return plan.reason === "held" ? secondsUntil(plan.until, now()) : undefined;

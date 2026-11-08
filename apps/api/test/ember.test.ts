@@ -22,6 +22,7 @@ import { EMBER_TOKEN_TTL_S, mintEmberToken, verifyEmberToken } from "../src/embe
 import {
   emberPager,
   ENGINE_CACHE_MS,
+  ENGINE_LOOKUP_BUDGET_MS,
   freshMembers,
   pageEngine,
   workspacePager,
@@ -30,6 +31,7 @@ import { deleteMembership, writeRole } from "../src/members.ts";
 import { sendOverdue } from "../ember/local.ts";
 import { provisionWorkspace, workspaceInvitations } from "../src/ember-invitations.ts";
 import { INVITE_ENGINE_BUDGET_MS, notifyInvitation } from "../src/notify-invite.ts";
+import { workspaceIntegrations } from "../src/ember-integrations.ts";
 import { getFunctionName } from "@freecorps/ember-server";
 import { generateRecipient, toBase64url } from "@freecorps/brigade-push";
 import type { BrigadeEvent } from "../src/outbox.ts";
@@ -1446,5 +1448,27 @@ describe("webhooks on an Ember workspace", () => {
       { subject: userId, claims: { role: "owner", ws: workspaceId } },
     );
     expect(JSON.stringify(listed.value)).toContain(id);
+  });
+});
+
+describe("the engine a Queue notifier's Slack and webhook calls go to", () => {
+  test("a stalled D1 read gives up within the page's lookup bound, never the delivery's budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const stalled = {
+        prepare: () => ({ bind: () => ({ first: () => new Promise(() => {}) }) }),
+      } as unknown as D1Database;
+      const picked = workspaceIntegrations(
+        { WORKSPACE: env.WORKSPACE, SHARD: env.SHARD, DB: stalled },
+        `ws_stalled_${++people}`,
+        { queue: true },
+      );
+      let settled = false;
+      void picked.then(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(ENGINE_LOOKUP_BUDGET_MS + 10);
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

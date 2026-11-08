@@ -45,6 +45,8 @@ export function fakeRegistry() {
     failingAlarms: false as boolean | string,
     /** Methods that throw as an unreachable object would, while the others answer. */
     failingMethods: new Set<string>(),
+    /** Awaited before each call (by method name), so a test can hold one call until another has run. */
+    before: undefined as ((name: string) => Promise<void>) | undefined,
     /** How many times each method was called, on any object. */
     calls: new Map<string, number>(),
     storage(name: string): Map<string, unknown> {
@@ -64,6 +66,7 @@ export function fakeRegistry() {
       const rpc = <K extends keyof RegistryStub>(name: K) =>
         (async (...args: unknown[]) => {
           await Promise.resolve();
+          await registry.before?.(name);
           if (registry.failing || registry.failingMethods.has(name)) {
             throw new Error("Durable Object unreachable");
           }

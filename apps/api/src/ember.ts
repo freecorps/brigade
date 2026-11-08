@@ -10,6 +10,7 @@ import { createEmberWorker, type EmberAuthHook } from "@freecorps/ember-runtime"
 import type { Identity } from "@freecorps/ember-server";
 import schema from "../ember/schema.ts";
 import * as alerts from "../ember/alerts.ts";
+import * as clients from "../ember/clients.ts";
 import * as devices from "../ember/devices.ts";
 import * as events from "../ember/events.ts";
 import * as dataExports from "../ember/exports.ts";
@@ -30,6 +31,7 @@ import { memberRole, resolveActor } from "./actor.ts";
 import { creatorNow, withinLimit } from "./api-tokens.ts";
 import { readBounded } from "./body.ts";
 import type { Auth } from "./auth.ts";
+import { admitToEmber } from "./ember-clients.ts";
 import { mintEmberToken, verifyEmberToken } from "./ember-token.ts";
 import { json } from "./member-route.ts";
 import { instanceMonitorCap, type MonitorEnv } from "./monitors.ts";
@@ -167,6 +169,7 @@ export const ember = createEmberWorker({
     integrations,
     exports: dataExports,
     postmortems,
+    clients,
   },
   basePath: EMBER_BASE_PATH,
   auth: brigadeEmberAuth,
@@ -268,6 +271,33 @@ export async function issueEmberToken(
   // and it is not a member D1 backs, so it gets no token rather than one every call would refuse.
   if (actor.kind !== "token" && resolved.sessionId === undefined) {
     return json({ error: "unauthenticated" }, 401);
+  }
+  // The shard's own checks and upkeep, as a sync upgrade runs them on the DO (ember/clients.ts).
+  let admitted: Awaited<ReturnType<typeof admitToEmber>>;
+  try {
+    admitted = await admitToEmber(
+      env,
+      workspaceId,
+      {
+        actor,
+        ...(resolved.name !== undefined ? { name: resolved.name } : {}),
+        ...(resolved.resetAt !== undefined ? { resetAt: resolved.resetAt } : {}),
+      },
+      waitUntil,
+    );
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        message: "admitting a client to Ember failed",
+        workspaceId,
+        error: String(error),
+      }),
+    );
+    return json({ error: "unavailable" }, 503);
+  }
+  if (!admitted.ok) {
+    const status = { not_found: 404, not_a_member: 403, unauthenticated: 401, unavailable: 503 };
+    return json({ error: admitted.code }, status[admitted.code]);
   }
   const minted = await mintEmberToken(
     env.BETTER_AUTH_SECRET,

@@ -67,7 +67,7 @@ type FenceDb = {
  * How many member changes this shard applied: a repair reads it before D1 and hands it back with its snapshot, and
  * `reconcile` refuses the snapshot if a change came in between (the Durable Object's member lock, as a fence).
  */
-function fence(db: unknown): FenceDoc | null {
+export function fence(db: unknown): FenceDoc | null {
   return (db as FenceDb)
     .query("member_fence")
     .withIndex("by_key", (q) => q.eq("key", "members"))
@@ -87,7 +87,7 @@ export function bumpFence(db: unknown): void {
 }
 
 /** When the copy last agreed with D1 (`member_fence` row `reconciled`, its `n` the time): the DO's `reconciled`. */
-function reconciledDoc(db: unknown): FenceDoc | null {
+export function reconciledDoc(db: unknown): FenceDoc | null {
   return (db as FenceDb)
     .query("member_fence")
     .withIndex("by_key", (q) => q.eq("key", "reconciled"))

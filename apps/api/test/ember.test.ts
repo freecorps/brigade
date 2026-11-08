@@ -629,7 +629,8 @@ describe("pages for an Ember workspace", () => {
         internal: boolean,
       ): Promise<Outcome>;
     };
-    expect((await stub.query(shard, "members:reconciledAt", {}, null, true)).value).toBeNull();
+    // The token's admission may have reconciled already (`clients:admit`, its repair a job); either way the page
+    // leaves the list checked against D1.
 
     const event: BrigadeEvent = {
       id: newId("evt", Date.now(), random),

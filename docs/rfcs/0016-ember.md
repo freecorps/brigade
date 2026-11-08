@@ -386,7 +386,7 @@ were built for a deployment people depend on.
 5. **Delete.** Once every environment has run on Ember for some days, a PR removes `WorkspaceDO`'s engine, the Queue
    consumer's page path and the old sync code, and a later migration drops their storage.
 
-`dev` goes first, then `staging`, then production. The owner approved running the copy against staging and
+`dev` goes first, then `staging`, then production. Run on 2026-11-08: `dev` (3 workspaces) and production (1 workspace) switched, every copy checked with no mismatch and no table near the read cap; there is no `staging` Worker on the account. `NEW_WORKSPACE_ENGINE` is `ember` on both. Step 5 (deleting `WorkspaceDO`) waits some days on Ember. The owner approved running the copy against staging and
 production data for this migration.
 
 ### Parity: what `WorkspaceDO` does, on Ember

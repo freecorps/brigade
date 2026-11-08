@@ -67,6 +67,9 @@ const globals = globalThis as unknown as {
 /** How long a query outlives its last listener, as `SyncClient`'s `lingerMs`. */
 const LINGER_MS = 1000;
 
+/** How long a workspace's client stays after nothing uses it, before it is closed and dropped. */
+export const IDLE_CLOSE_MS = 30_000;
+
 export type EmberSyncClientOptions = {
   /**
    * Where Ember is served: its sockets are `<url>/ws`, e.g. `https://brigade.example.com/api/ember`. A function is
@@ -140,12 +143,18 @@ export class EmberSyncClient implements SyncClientLike {
   readonly #options: EmberSyncClientOptions;
   readonly #randomBytes: RandomBytes;
   readonly #now: () => number;
-  /** One Ember client per workspace: a token is for one workspace's shard. */
+  /**
+   * One Ember client per workspace: a token is for one workspace's shard. A workspace nothing uses (no query
+   * listened to, no mutation waiting) is closed and dropped `IDLE_CLOSE_MS` later, so a workspace left behind keeps no
+   * socket and asks for no token.
+   */
   readonly #clients = new Map<string, EmberClient>();
+  /** Listened queries and mutations in flight, per workspace. */
+  readonly #uses = new Map<string, number>();
   /** The context of each pending mutation's first optimistic run, reused on every re-run. */
   readonly #contexts = new WeakMap<PendingMutationRecord, MutationContext>();
-  /** `onConnectionChange` listeners waiting for their workspace's client to exist. */
-  readonly #waiting = new Map<string, Set<() => void>>();
+  /** `onConnectionChange` listeners per workspace, whichever of its clients is current. */
+  readonly #connection = new Map<string, Set<() => void>>();
   #closed = false;
 
   constructor(options: EmberSyncClientOptions) {
@@ -170,6 +179,10 @@ export class EmberSyncClient implements SyncClientLike {
     args: QueryArgsOf<Queries[N]>,
   ): QueryHandle<QueryRowOf<Queries[N]>> {
     type R = QueryRowOf<Queries[N]>;
+    type Watch = {
+      subscribe(listener: () => void): () => void;
+      getSnapshot(): QuerySnapshot<QueryResult<R>>;
+    };
     const key = `${shard}\n${name}\n${JSON.stringify(args) ?? ""}`;
     if (this.#closed) {
       const closed: QueryState<R> = {
@@ -185,29 +198,41 @@ export class EmberSyncClient implements SyncClientLike {
         getServerSnapshot: () => LOADING,
       };
     }
-    const watch = this.#client(shard).watchQuery<never>(WORKSPACE_QUERY, { name, args } as never, {
-      shard: emberShard(shard),
-    }) as unknown as {
-      subscribe(listener: () => void): () => void;
-      getSnapshot(): QuerySnapshot<QueryResult<R>>;
+    // Bound to the workspace's current client: one dropped while idle is replaced when the handle is used again.
+    let bound: { client: EmberClient; watch: Watch } | undefined;
+    const watch = (): Watch => {
+      const client = this.#client(shard);
+      if (bound?.client !== client) {
+        const w = client.watchQuery<never>(WORKSPACE_QUERY, { name, args } as never, {
+          shard: emberShard(shard),
+        }) as unknown as Watch;
+        bound = { client, watch: w };
+      }
+      return bound.watch;
     };
     let last: QuerySnapshot<QueryResult<R>> | undefined;
     let state: QueryState<R> = LOADING;
     return {
       key,
       subscribe: (listener) => {
-        const off = watch.subscribe(listener);
+        const off = watch().subscribe(listener);
+        this.#use(shard, 1);
         let done = false;
+        const stop = () => {
+          off();
+          this.#use(shard, -1);
+        };
         // Kept a little after the last listener, so a remount (Strict Mode, a quick navigation) keeps the rows.
         return () => {
           if (done) return;
           done = true;
-          if (globals.setTimeout) globals.setTimeout(off, LINGER_MS);
-          else off();
+          if (globals.setTimeout) globals.setTimeout(stop, LINGER_MS);
+          else stop();
         };
       },
       getSnapshot: () => {
-        const snapshot = watch.getSnapshot();
+        if (this.#closed) return state;
+        const snapshot = watch().getSnapshot();
         if (snapshot !== last) {
           last = snapshot;
           state = stateOf(snapshot);
@@ -226,6 +251,7 @@ export class EmberSyncClient implements SyncClientLike {
   ): Promise<MutationOutcome> {
     if (this.#closed)
       return { ok: false, error: { code: "closed", message: "The sync client is closed" } };
+    this.#use(shard, 1);
     try {
       const result = (await this.#client(shard).mutation(
         WORKSPACE_MUTATE,
@@ -235,6 +261,8 @@ export class EmberSyncClient implements SyncClientLike {
       return result.ok ? { ok: true } : { ok: false, error: result.error };
     } catch (error) {
       return failureOf(error);
+    } finally {
+      this.#use(shard, -1);
     }
   }
 
@@ -246,40 +274,26 @@ export class EmberSyncClient implements SyncClientLike {
   /** Calls `listener` whenever `connectionState(shard)` changes. Listening does not open a socket. */
   onConnectionChange(shard: string, listener: () => void): () => void {
     let last = this.connectionState(shard);
-    let off: (() => void) | undefined;
     const check = () => {
       const next = this.connectionState(shard);
       if (next === last) return;
       last = next;
       listener();
     };
-    // The workspace's client may not exist yet: listen once it does.
-    const attach = () => {
-      const client = this.#clients.get(shard);
-      if (client && !off) off = client.onConnectionStateChange(check);
-      return client !== undefined;
+    let listeners = this.#connection.get(shard);
+    if (!listeners) this.#connection.set(shard, (listeners = new Set()));
+    listeners.add(check);
+    return () => {
+      listeners.delete(check);
     };
-    if (!attach()) {
-      const pending = this.#waiting.get(shard) ?? new Set<() => void>();
-      const ready = () => {
-        attach();
-        check();
-      };
-      pending.add(ready);
-      this.#waiting.set(shard, pending);
-      return () => {
-        pending.delete(ready);
-        off?.();
-      };
-    }
-    return () => off?.();
   }
 
   close(): void {
     this.#closed = true;
     for (const client of this.#clients.values()) client.close();
     this.#clients.clear();
-    this.#waiting.clear();
+    this.#uses.clear();
+    this.#connection.clear();
   }
 
   #client(workspaceId: string): EmberClient {
@@ -296,10 +310,33 @@ export class EmberSyncClient implements SyncClientLike {
       onError: (error) => this.#warn("Ember client error", error),
     });
     this.#clients.set(workspaceId, client);
-    const waiting = this.#waiting.get(workspaceId);
-    this.#waiting.delete(workspaceId);
-    for (const ready of waiting ?? []) ready();
+    client.onConnectionStateChange(() => this.#connectionChanged(workspaceId));
     return client;
+  }
+
+  #connectionChanged(workspaceId: string): void {
+    for (const check of this.#connection.get(workspaceId) ?? []) check();
+  }
+
+  /** Counts a use of `workspaceId`'s client; the last one ending schedules its close. */
+  #use(workspaceId: string, delta: 1 | -1): void {
+    const uses = (this.#uses.get(workspaceId) ?? 0) + delta;
+    if (uses > 0) {
+      this.#uses.set(workspaceId, uses);
+      return;
+    }
+    this.#uses.delete(workspaceId);
+    const close = () => {
+      if (this.#closed || this.#uses.has(workspaceId)) return;
+      const client = this.#clients.get(workspaceId);
+      // A mutation restored or still unconfirmed keeps the client.
+      if (!client || client.connectionState().pendingMutations > 0) return;
+      this.#clients.delete(workspaceId);
+      client.close();
+      this.#connectionChanged(workspaceId);
+    };
+    if (globals.setTimeout) globals.setTimeout(close, IDLE_CLOSE_MS);
+    else close();
   }
 
   /**

@@ -13,7 +13,12 @@ import {
   type BrigadeTables,
   type Row,
 } from "@freecorps/brigade-schema";
-import { createEmberSyncClient, emberShard, type EmberSyncClient } from "../src/ember.ts";
+import {
+  createEmberSyncClient,
+  emberShard,
+  IDLE_CLOSE_MS,
+  type EmberSyncClient,
+} from "../src/ember.ts";
 import type { FakeDb } from "@freecorps/ember-client/testing";
 
 const WORKSPACE = "org_acme";
@@ -130,6 +135,36 @@ describe("EmberSyncClient", () => {
     await vi.waitFor(() => expect(handle.getSnapshot().status).toBe("error"));
     expect(handle.getSnapshot().error?.code).toBe("unknown_query");
     off();
+    sync.close();
+  });
+
+  test("a workspace nothing uses is closed, and its queries open it again when used", async () => {
+    const fake = server();
+    const sync = client(fake);
+    const states: string[] = [];
+    sync.onConnectionChange(WORKSPACE, () => states.push(sync.connectionState(WORKSPACE)));
+    const { handle, off } = watch(sync, "incidents.active");
+    await vi.waitFor(() => expect(handle.getSnapshot().status).toBe("ready"));
+    expect(fake.sockets.size).toBe(1);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      off();
+      vi.advanceTimersByTime(1000 + IDLE_CLOSE_MS + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+    // Left behind (another workspace opened): no socket, no token asked for, and the state says so.
+    expect(sync.connectionState(WORKSPACE)).toBe("idle");
+    expect(states.at(-1)).toBe("idle");
+    await vi.waitFor(() =>
+      expect([...fake.sockets].filter((s) => s.readyState === 1)).toHaveLength(0),
+    );
+    // The same handle, used again, opens a new client.
+    const again = handle.subscribe(() => {});
+    await vi.waitFor(() => expect(handle.getSnapshot().status).toBe("ready"));
+    expect(sync.connectionState(WORKSPACE)).toBe("open");
+    expect(states.at(-1)).toBe("open");
+    again();
     sync.close();
   });
 

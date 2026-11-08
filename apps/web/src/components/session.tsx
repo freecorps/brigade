@@ -20,7 +20,12 @@ import { Button } from "@/components/ui/button";
 import { Field, FormError } from "@/components/ui/field";
 import { authClient, checkWorkspaceName, createWorkspace, openWorkspace } from "@/lib/auth";
 import { usePageTitle } from "@/lib/page-title";
-import { probeWorkspaceEngine, setSyncActor, type WorkspaceEngine } from "@/lib/sync";
+import {
+  probeWorkspaceEngine,
+  setOpenWorkspace,
+  setSyncActor,
+  type WorkspaceEngine,
+} from "@/lib/sync";
 import { emberClient, syncClient } from "@/sync-client";
 
 /**
@@ -130,6 +135,7 @@ function ActiveWorkspace({ userId, children }: { userId: string; children: React
   // Brigade gives every member one of its roles; anything else reads nothing, like the shard would answer.
   const role = isRole(member.data.role) ? member.data.role : "viewer";
   setSyncActor({ kind: "user", id: userId, role });
+  setOpenWorkspace(workspace.data.id);
   return (
     <SyncProvider client={engine === "ember" ? emberClient : syncClient} shard={workspace.data.id}>
       {/* Keyed: a switch starts every card over, so no state of one workspace shows in another. */}

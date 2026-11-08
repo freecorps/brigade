@@ -83,6 +83,13 @@ export type WorkspaceEngine = "ember" | "brigade";
 
 type Minted = { token: string; expiresAt: number };
 
+/** The workspace the dashboard shows (components/session): only its turn back reloads the page. */
+let openWorkspace: string | undefined;
+
+export function setOpenWorkspace(workspaceId: string): void {
+  openWorkspace = workspaceId;
+}
+
 /** Tokens a probe already minted, handed to the Ember client's first connect instead of minting another. */
 const primed = new Map<string, Minted>();
 
@@ -123,8 +130,9 @@ async function emberToken(workspaceId: string): Promise<string | null> {
   });
   if (response.status === 401) return null;
   if (response.status === 409) {
-    // Turned back (RFC 0016 `back`): the page starts over on Brigade Sync.
-    window.location.reload();
+    // Turned back (RFC 0016 `back`): the page starts over on Brigade Sync, if it shows that workspace. A workspace
+    // left behind only loses its token; its client closes once nothing uses it.
+    if (workspaceId === openWorkspace) window.location.reload();
     return null;
   }
   if (!response.ok) throw new Error(`Ember token: ${response.status}`);

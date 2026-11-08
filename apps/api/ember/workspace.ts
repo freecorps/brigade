@@ -210,7 +210,7 @@ export function run(
   // The events go out after this transaction commits (ember/events.ts).
   if (seq.seq !== undefined) scheduleDrain(ctx);
   if (outcome.ok) {
-    armUpkeep(ctx, base, written);
+    armUpkeep(ctx, base, written, name);
     expectPages(ctx, pages);
     tombstones(ctx, name, args);
   }

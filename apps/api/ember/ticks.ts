@@ -38,7 +38,13 @@ export function holdTicks(ctx: MutationCtx): number {
  * (follow-up reminders), apart so a large follow-up history never weighs on a page's transaction (Ember's per-
  * transaction read limit), and a reminder that fails never rolls back a level that fired.
  */
-const JOBS = { paging: TICK, reminders: "paging:remind", local: "local:send" } as const;
+const JOBS = {
+  paging: TICK,
+  reminders: "paging:remind",
+  local: "local:send",
+  reroute: "alerts:reroute",
+  monitors: "monitors:tick",
+} as const;
 export type TickKey = keyof typeof JOBS;
 
 /**
@@ -70,6 +76,7 @@ export function armUpkeep(
   ctx: MutationCtx,
   store: Store<BrigadeTables>,
   tables: ReadonlySet<string>,
+  name?: unknown,
 ): void {
   if (tables.has("escalation_timers")) {
     const due = store.scan("escalation_timers").map((timer) => timer.at);
@@ -85,6 +92,14 @@ export function armUpkeep(
     (tables.has("members") && planned())
   ) {
     tickAt(ctx, ctx.now, "reminders");
+  }
+  // The routes changed: what they kept quiet is routed again now (RFC 0005 "Alert sources"), as the DO's
+  // `rerouteAlerts` does, in its own transaction (ember/alerts.ts).
+  if (tables.has("alert_routes")) tickAt(ctx, ctx.now, "reroute");
+  // A monitor changed: the tick pushes it to its probes (and watches its heartbeats) right away, as the DO's alarm.
+  // Not for the monitors' own verdicts (`monitor.report`, `monitor.evaluate`), which run on every probe report.
+  if (tables.has("monitors") && name !== "monitor.report" && name !== "monitor.evaluate") {
+    tickAt(ctx, ctx.now, "monitors");
   }
 }
 

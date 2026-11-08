@@ -5,6 +5,7 @@ import { describe, expect, test } from "vite-plus/test";
 import schema from "../schema.ts";
 import * as sessions from "../sessions.ts";
 import * as events from "../events.ts";
+import * as monitors from "../monitors.ts";
 import { local } from "./stubs.ts";
 import * as workspace from "../workspace.ts";
 
@@ -28,7 +29,7 @@ function shard(members: { id: string; name: string }[] = [{ id: ANA, name: "Ana"
   const engine = createEngine({
     schema,
     driver: createNodeSqliteDriver(),
-    functions: { workspace, local, events, sessions, test: { rows } },
+    functions: { workspace, local, events, sessions, monitors, test: { rows } },
     now: () => clock,
   });
   engine.migrate();

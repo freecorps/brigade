@@ -214,13 +214,16 @@ export async function switchWorkspace(
   } catch (error) {
     // Not switched, or not known to be: D1 back at `brigade` (the write may have landed), the shard's upkeep off
     // (it may have been armed), then the DO.
-    try {
-      await setWorkspaceEngine(env.DB, workspaceId, "brigade", Date.now());
-      await side.disarm();
-    } finally {
-      // Whatever failed above, the DO holds the workspace again rather than stay frozen.
-      await side.stub.moveBack();
-    }
+    // Each step on its own, so one that fails never skips the next: whatever happens, the DO holds the workspace
+    // again rather than stay frozen. A step that failed is logged; the original error is the one reported.
+    await undo(workspaceId, [
+      [
+        "resetting the engine to brigade",
+        () => setWorkspaceEngine(env.DB, workspaceId, "brigade", Date.now()),
+      ],
+      ["disarming the shard", () => side.disarm()],
+      ["turning the DO back", () => side.stub.moveBack()],
+    ]);
     throw error;
   }
   // Only now: what still reaches the DO (an engine cached as `brigade`) goes to the shard. Should this fail, D1 says
@@ -228,6 +231,23 @@ export async function switchWorkspace(
   // finish (moving a moved DO again is allowed, and the copy is idempotent).
   await side.stub.forwardToEmber();
   return { ok: true, copy, ticks };
+}
+
+/** Runs each of `steps` whatever the others did; a failure is logged. */
+async function undo(workspaceId: string, steps: [string, () => Promise<unknown>][]): Promise<void> {
+  for (const [what, step] of steps) {
+    try {
+      await step();
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          message: `${what} after a failed switch failed`,
+          workspace: workspaceId,
+          error: String(error),
+        }),
+      );
+    }
+  }
 }
 
 /** Turns `workspaceId` back to its `WorkspaceDO` (step 4): D1 first, so nothing new reaches the shard, then the DO. */

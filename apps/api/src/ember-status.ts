@@ -10,6 +10,7 @@ import { claimSlug, releaseSlug, type StatusConfigureResult } from "./status-pag
 import type { SubscriberChange } from "../ember/status.ts";
 import { within } from "./deadline.ts";
 import type { BrigadeEvent } from "./outbox.ts";
+import type { StatusDomainView } from "./status-domain.ts";
 import type { StatusEmailPlan, StatusEmailReport } from "./status-mail.ts";
 import type { TokenRefused } from "./workspace.ts";
 
@@ -174,3 +175,55 @@ export async function workspaceStatus(
 
 /** How long the engine lookup of a status page call may take (see `workspaceStatus`). */
 export const STATUS_ENGINE_BUDGET_MS = 5000;
+
+/** The page's domain calls, with `WorkspaceDO`'s signatures. */
+export type WorkspaceDomain = {
+  changeStatusDomain(
+    workspaceId: string,
+    actor: Actor,
+    name: "add" | "check" | "remove",
+    args: Record<string, unknown>,
+  ): Promise<{ ok: true } | { ok: false; code: string } | TokenRefused>;
+  statusDomainState(workspaceId: string): Promise<StatusDomainView>;
+  releaseStatusDomain(
+    workspaceId: string,
+    hostname: string,
+    cloudflareId: string | null,
+    before: number,
+  ): Promise<{ ok: true } | { ok: false; code: string }>;
+};
+
+/** `workspaceId`'s domain calls, on `WorkspaceDO` or on its Ember shard (ember/status.ts), engine lookup bounded. */
+export async function workspaceDomain(
+  env: Pick<Env, "WORKSPACE"> & { DB?: Env["DB"]; SHARD?: Env["SHARD"] },
+  workspaceId: string,
+): Promise<WorkspaceDomain> {
+  const { DB, SHARD } = env;
+  if (
+    DB &&
+    SHARD &&
+    (await within(workspaceEngine(DB, workspaceId), STATUS_ENGINE_BUDGET_MS, "engine lookup")) ===
+      "ember"
+  ) {
+    const shard = { SHARD };
+    return {
+      changeStatusDomain: (id, actor, name, args) =>
+        emberMutation(shard, id, "status:changeDomain", { workspaceId: id, actor, name, args }),
+      statusDomainState: (id) =>
+        emberMutation(shard, id, "status:domainState", { workspaceId: id }),
+      releaseStatusDomain: (id, hostname, cloudflareId, before) =>
+        emberMutation(shard, id, "status:releaseDomain", {
+          workspaceId: id,
+          hostname,
+          cloudflareId,
+          before,
+        }),
+    };
+  }
+  const stub = env.WORKSPACE.getByName(workspaceId);
+  return {
+    changeStatusDomain: async (...args) => stub.changeStatusDomain(...args),
+    statusDomainState: async (id) => stub.statusDomainState(id),
+    releaseStatusDomain: async (...args) => stub.releaseStatusDomain(...args),
+  };
+}

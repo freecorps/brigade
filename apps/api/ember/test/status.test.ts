@@ -185,3 +185,64 @@ describe("status page subscriptions and emails on Ember", () => {
     expect(s.call("status:followNames", { workspaceId: "ws_other" }).value).toEqual({});
   });
 });
+
+describe("the status page's domain on Ember", () => {
+  test("a dedicated domain added is checked by the tick: the edge answering makes it active", () => {
+    const s = shard();
+    s.call("status:configure", { workspaceId: WS, actor: owner, args: page, now: T });
+    expect(s.call("status:domainState", { workspaceId: WS }).value).toMatchObject({
+      domain: null,
+      page: { slug: "acme", public: true },
+    });
+    const added = s.call("status:changeDomain", {
+      workspaceId: WS,
+      actor: owner,
+      name: "add",
+      args: {
+        hostname: "status.example.com",
+        cloudflareId: null,
+        state: "pending",
+        records: [],
+        error: "not_attached",
+      },
+    });
+    expect(added.value).toEqual({ ok: true });
+    expect(added.scheduled.map((job) => job.fn)).toContain("status:domainCheck");
+    // Not due yet (just checked when added); a minute on it is.
+    expect(s.call("status:domainDue", { config: false }).value).toBe(null);
+    s.tick(2 * 60 * 1000);
+    const due = s.call("status:domainDue", { config: false }).value as {
+      row: { hostname: string };
+    };
+    expect(due.row.hostname).toBe("status.example.com");
+    s.call("status:domainSettle", {
+      config: false,
+      row: due.row,
+      probed: { kind: "edge", answers: true },
+    });
+    expect(
+      (s.call("status:domainState", { workspaceId: WS }).value as { domain: { state: string } })
+        .domain.state,
+    ).toBe("active");
+  });
+
+  test("another workspace's shard, and an unknown change, are refused", () => {
+    const s = shard();
+    expect(
+      s.call("status:changeDomain", {
+        workspaceId: "ws_other",
+        actor: owner,
+        name: "add",
+        args: {},
+      }).value,
+    ).toEqual({ ok: false, code: "not_found" });
+    expect(
+      s.call("status:changeDomain", { workspaceId: WS, actor: owner, name: "drop", args: {} })
+        .value,
+    ).toEqual({ ok: false, code: "invalid_args" });
+    expect(s.call("status:domainState", { workspaceId: "ws_other" }).value).toEqual({
+      domain: null,
+      page: null,
+    });
+  });
+});

@@ -46,6 +46,7 @@ const JOBS = {
   monitors: "monitors:tick",
   status: "status:push",
   maintenance: "status:maintenance",
+  domain: "status:domainCheck",
 } as const;
 export type TickKey = keyof typeof JOBS;
 
@@ -103,6 +104,8 @@ export function armUpkeep(
   if (tables.has("monitors") && name !== "monitor.report" && name !== "monitor.evaluate") {
     tickAt(ctx, ctx.now, "monitors");
   }
+  // The page's domain added, checked or removed: its next check is looked at (ember/status.ts `domainDue`).
+  if (tables.has("status_domain")) tickAt(ctx, ctx.now, "domain");
   // A maintenance window scheduled, changed or moved on: the tick for the next start or end (ember/status.ts).
   if (tables.has("status_maintenance")) {
     const next = nextMaintenanceAt(store.scan("status_maintenance"));

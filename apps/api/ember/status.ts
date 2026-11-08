@@ -17,10 +17,20 @@ import {
   ACCOUNT_ACTOR,
   nextMaintenanceAt,
   statusFollowKey,
+  STATUS_DOMAIN_ID,
   STATUS_PAGE_ID,
   type Actor,
+  type StatusDomainRow,
 } from "@freecorps/brigade-schema";
+import { saasConfig, type SaasConfig, type SaasEnv } from "../src/status-domain-cf.ts";
+import {
+  DOMAIN_RECHECK_MIN_MS,
+  DomainChecker,
+  probeDomain,
+  type DomainProbe,
+} from "../src/status-domain-check.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
+import type { StatusDomainView } from "../src/status-domain.ts";
 import { StatusMailer, type StatusEmailPlan, type StatusEmailReport } from "../src/status-mail.ts";
 import { DeadlineError, within } from "../src/deadline.ts";
 import { StatusPublisher, type StatusPushDone, type StatusPushPlan } from "../src/status-page.ts";
@@ -438,5 +448,197 @@ export const recordEmail = internalMutationGeneric({
     const out = mailerOf(c, shard).record(input.key, input.report, c.now);
     shard.check();
     return out;
+  },
+});
+
+/** A `DomainChecker` over this mutation's shard facade; `config` says whether the Worker has Cloudflare for SaaS. */
+function checkerOf(ctx: MutationCtx, shard: EmberShard, config: boolean): DomainChecker {
+  const { storage } = emberWorkspace(ctx);
+  return new DomainChecker({
+    shard: shard as never,
+    sql: storage.sql,
+    config: () => (config ? ({} as SaasConfig) : undefined),
+    limiter: () => undefined,
+    check: (args) => {
+      const { result } = shard.mutate({
+        clientId: "status-domain",
+        mutationId: `check:${ctx.now}:${Math.floor(ctx.random() * 2 ** 32)}`,
+        actor: ACCOUNT_ACTOR,
+        name: "statusDomain.check",
+        args,
+        now: ctx.now,
+        internal: true,
+      });
+      if (!result.ok) throw new Error(`statusDomain.check refused: ${result.error.code}`);
+    },
+    log,
+  });
+}
+
+/** The page's domain and where it sends visitors (`WorkspaceDO.statusDomainState`). */
+export const domainState = internalMutationGeneric({
+  args: { workspaceId: v.string() },
+  handler: (ctx, input: { workspaceId: string }): StatusDomainView => {
+    const { shard } = emberWorkspace(ctx as MutationCtx);
+    if (shard.workspace() !== input.workspaceId) return { domain: null, page: null };
+    const page = shard.store.get("status_page", STATUS_PAGE_ID);
+    return {
+      domain: shard.store.get("status_domain", STATUS_DOMAIN_ID) ?? null,
+      page: page ? { slug: page.slug, public: page.enabled && page.claimed !== false } : null,
+    };
+  },
+});
+
+/**
+ * A change to the page's own domain as the member (`WorkspaceDO.changeStatusDomain`), once the route checked the role
+ * in D1 and Cloudflare (or the edge) answered. It starts the domain's checks afresh.
+ */
+export const changeDomain = internalMutationGeneric({
+  args: { workspaceId: v.string(), actor: v.any(), name: v.string(), args: v.any() },
+  handler: (
+    ctx,
+    input: { workspaceId: string; actor: Actor; name: string; args: Record<string, unknown> },
+  ): { ok: true } | { ok: false; code: string } => {
+    const c = ctx as MutationCtx;
+    const { shard } = emberWorkspace(c);
+    if (shard.workspace() !== input.workspaceId) return { ok: false, code: "not_found" };
+    if (!["add", "check", "remove"].includes(input.name))
+      return { ok: false, code: "invalid_args" };
+    const acting = shard.tokenActor(input.actor, c.now);
+    if (!acting) return { ok: false, code: "unauthenticated" };
+    if (shard.gone(acting.by ?? acting.id, c.now)) return { ok: false, code: "not_a_member" };
+    const { result } = shard.mutate({
+      clientId: "status-domain",
+      mutationId: `${input.name}:${c.now}:${Math.floor(c.random() * 2 ** 32)}`,
+      actor: acting,
+      name: `statusDomain.${input.name}`,
+      args: input.args,
+      now: c.now,
+      internal: true,
+    });
+    if (!result.ok) return { ok: false, code: result.error.code };
+    checkerOf(c, shard, true).reset();
+    shard.check();
+    return { ok: true };
+  },
+});
+
+/** Gives up the page's domain to another workspace's takeover (`WorkspaceDO.releaseStatusDomain`). */
+export const releaseDomain = internalMutationGeneric({
+  args: {
+    workspaceId: v.string(),
+    hostname: v.string(),
+    cloudflareId: v.union(v.string(), v.null()),
+    before: v.number(),
+  },
+  handler: (
+    ctx,
+    input: { workspaceId: string; hostname: string; cloudflareId: string | null; before: number },
+  ): { ok: true } | { ok: false; code: string } => {
+    const c = ctx as MutationCtx;
+    const { shard } = emberWorkspace(c);
+    if (shard.workspace() !== input.workspaceId) return { ok: false, code: "not_found" };
+    const { result } = shard.mutate({
+      clientId: "status-domain",
+      mutationId: `release:${c.now}:${Math.floor(c.random() * 2 ** 32)}`,
+      actor: ACCOUNT_ACTOR,
+      name: "statusDomain.release",
+      args: { hostname: input.hostname, cloudflareId: input.cloudflareId, before: input.before },
+      now: c.now,
+      internal: true,
+    });
+    if (!result.ok) return { ok: false, code: result.error.code };
+    checkerOf(c, shard, true).reset();
+    shard.check();
+    return { ok: true };
+  },
+});
+
+/** Arms the domain tick for its next check (`DomainChecker.nextAt`), if there is one. */
+function armDomain(c: MutationCtx, checker: DomainChecker): void {
+  const at = checker.nextAt(c.now);
+  if (at !== null) tickAt(c, at, "domain");
+}
+
+/**
+ * The domain, when it is due its check now (`DomainChecker.due`), with a fallback tick should the action die before
+ * `domainSettle`; else null, with the tick armed for when it is due.
+ */
+export const domainDue = internalMutationGeneric({
+  args: { config: v.boolean() },
+  handler: (
+    ctx,
+    input: { config: boolean },
+  ): { workspaceId: string; row: StatusDomainRow } | null => {
+    const c = ctx as MutationCtx;
+    holdTicks(c);
+    const { shard } = emberWorkspace(c);
+    const workspaceId = shard.workspace();
+    if (workspaceId === undefined) return null;
+    c.sql.exec("delete from ember_ticks where key = 'domain'");
+    const checker = checkerOf(c, shard, input.config);
+    const row = checker.due(c.now);
+    if (row) tickAt(c, c.now + DOMAIN_RECHECK_MIN_MS, "domain");
+    else armDomain(c, checker);
+    return row ? { workspaceId, row } : null;
+  },
+});
+
+/** What the domain's check found (`DomainChecker.settle`; a refused check backs off), then the next one armed. */
+export const domainSettle = internalMutationGeneric({
+  args: { config: v.boolean(), row: v.any(), probed: v.any() },
+  handler: (ctx, input: { config: boolean; row: StatusDomainRow; probed: DomainProbe }): null => {
+    const c = ctx as MutationCtx;
+    holdTicks(c);
+    const { shard } = emberWorkspace(c);
+    if (shard.workspace() === undefined) return null;
+    const checker = checkerOf(c, shard, input.config);
+    try {
+      checker.settle(input.row, input.probed, c.now);
+    } catch (error) {
+      // A refused check (the facade rethrows a storage failure, which fails this whole mutation instead).
+      shard.check();
+      checker.failedAttempt(c.now, String(error));
+    }
+    armDomain(c, checker);
+    shard.check();
+    return null;
+  },
+});
+
+const DOMAIN_DUE = makeFunctionReference<"mutation">("status:domainDue");
+const DOMAIN_SETTLE = makeFunctionReference<"mutation">("status:domainSettle");
+
+type DomainEnv = SaasEnv & { STATUS_DOMAIN_LIMIT?: RateLimit };
+
+/**
+ * The domain's own check (the DO's `DomainChecker.run`): due, the workspace's `STATUS_DOMAIN_LIMIT` (failing open),
+ * Cloudflare or the edge asked, then what it found recorded.
+ */
+export const domainCheck = internalActionGeneric({
+  args: {},
+  handler: async (ctx): Promise<{ checked: boolean }> => {
+    const c = ctx as unknown as {
+      env: DomainEnv;
+      runMutation(ref: unknown, args: unknown): Promise<unknown>;
+    };
+    const config = saasConfig(c.env);
+    const due = (await c.runMutation(DOMAIN_DUE, { config: config !== undefined })) as {
+      workspaceId: string;
+      row: StatusDomainRow;
+    } | null;
+    if (!due) return { checked: false };
+    let allowed = true;
+    try {
+      const limiter = c.env.STATUS_DOMAIN_LIMIT;
+      if (limiter) allowed = (await limiter.limit({ key: due.workspaceId })).success;
+    } catch (error) {
+      log("the status domain limit failed", { error: String(error) });
+    }
+    const probed: DomainProbe = allowed
+      ? await probeDomain(due.row, config, (request) => fetch(request))
+      : { kind: "failed", why: "rate limited" };
+    await c.runMutation(DOMAIN_SETTLE, { config: config !== undefined, row: due.row, probed });
+    return { checked: probed.kind !== "failed" };
   },
 });

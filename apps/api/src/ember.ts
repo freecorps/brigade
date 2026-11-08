@@ -308,7 +308,8 @@ export async function issueEmberToken(
     {
       sub: actor.id,
       ws: workspaceId,
-      role: actor.role,
+      // The role as the shard backs it: an API token's lowered to its creator's copy (`tokenActor`).
+      role: admitted.actor.role,
       ...(actor.kind === "token" ? { kind: "token" as const } : {}),
       ...(resolved.sessionId === undefined ? {} : { sid: resolved.sessionId }),
     },

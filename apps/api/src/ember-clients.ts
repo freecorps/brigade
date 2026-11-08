@@ -60,7 +60,7 @@ export async function admitToEmber(
     // Removed again since that read: no proof either way now.
     if (!result.ok && result.code === "gone") return { ok: false, code: "unavailable" };
   }
-  if (result.ok && who.name !== undefined) {
+  if (result.ok) {
     const catching = emberSessions(env)
       .catchUpSessionEnds(workspaceId)
       .catch((error: unknown) =>

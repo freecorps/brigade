@@ -103,7 +103,7 @@ export const admit = internalMutationGeneric({
     }
     // The DO reconciles the member list with D1 on every upgrade; here at most once per `MEMBER_STALE_MS`.
     const reconciled = reconciledDoc(c.db)?.n ?? null;
-    if (input.name !== undefined && (reconciled === null || c.now - reconciled > MEMBER_STALE_MS)) {
+    if (reconciled === null || c.now - reconciled > MEMBER_STALE_MS) {
       // One repair for a burst of admissions, not one each.
       const [asked] = c.sql.exec("select value from shard_meta where key = ?", ADMIT_REPAIR) as {
         value: number;

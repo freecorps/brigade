@@ -214,9 +214,13 @@ export async function switchWorkspace(
   } catch (error) {
     // Not switched, or not known to be: D1 back at `brigade` (the write may have landed), the shard's upkeep off
     // (it may have been armed), then the DO.
-    await setWorkspaceEngine(env.DB, workspaceId, "brigade", Date.now());
-    await side.disarm();
-    await side.stub.moveBack();
+    try {
+      await setWorkspaceEngine(env.DB, workspaceId, "brigade", Date.now());
+      await side.disarm();
+    } finally {
+      // Whatever failed above, the DO holds the workspace again rather than stay frozen.
+      await side.stub.moveBack();
+    }
     throw error;
   }
   // Only now: what still reaches the DO (an engine cached as `brigade`) goes to the shard. Should this fail, D1 says
@@ -229,9 +233,14 @@ export async function switchWorkspace(
 /** Turns `workspaceId` back to its `WorkspaceDO` (step 4): D1 first, so nothing new reaches the shard, then the DO. */
 export async function backWorkspace(env: MigrationEnv, workspaceId: string): Promise<void> {
   await setWorkspaceEngine(env.DB, workspaceId, "brigade", Date.now());
-  // The shard stops acting (no escalation, page or push from it) before the DO starts again.
-  await sides(env, workspaceId).disarm();
-  await env.WORKSPACE.getByName(workspaceId).moveBack();
+  // The shard stops acting (no escalation, page or push from it) before the DO starts again; should that fail, the
+  // DO starts all the same (D1 says `brigade` already, so nothing new reaches the shard) and the error is reported,
+  // so the operator turns it back again to disarm the shard.
+  try {
+    await sides(env, workspaceId).disarm();
+  } finally {
+    await env.WORKSPACE.getByName(workspaceId).moveBack();
+  }
 }
 
 /** Whether `workspaceId` is on Ember already: a copy then would overwrite live data, so it is refused. */

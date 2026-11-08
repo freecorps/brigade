@@ -141,8 +141,9 @@ export class ProviderTokens {
     let failure: GoogleAuthError;
     try {
       let token = await fcmAccessToken(ember);
-      // At most twice: a token a forced exchange gave cannot have been refused already.
-      if (this.#refusedGoogle.includes(token)) token = await fcmAccessToken(ember, true);
+      // At most twice: a token a forced exchange gave cannot have been refused already. Forced with the refused token,
+      // so sends that saw it refused exchange once between them, and one another send already replaced is used as is.
+      if (this.#refusedGoogle.includes(token)) token = await fcmAccessToken(ember, token);
       return token;
     } catch (error) {
       failure = googleError(error);

@@ -315,8 +315,8 @@ Shard without one.
   and refuses an upgrade carrying a session it was told ended. Adapter sockets have no token to refresh, so the
   adapter gives each one the same 5-minute bound itself: it checks the socket's session and member in D1 again every
   5 minutes and before every mutation it runs, and closes the socket (`1012`, as RFC 0004 does) when the session
-  ended or the member is gone. Once G8 exists the session-end close above reaches adapter sockets at once by the same
-  `sid` and user id; until then the bound is those 5 minutes. An adapter socket still open closes at the session's
+  ended or the member is gone. With G8 (in) the session-end close above reaches adapter sockets at once by the same
+  `sid` and user id; the 5 minutes are the bound only when that close fails. An adapter socket still open closes at the session's
   expiry. No socket, adapter or Ember, outlives its session by more than 5 minutes, or at all once G8 is in.
 - **Sensitive mutations** (removing a member, changing a role, acknowledging from a notification) also check the
   session in D1 at the moment they run, as today.
@@ -456,6 +456,26 @@ the API Worker:
 ## Ember gaps
 
 What Brigade needs that Ember does not have, each worked around here and proposed for Ember, clean-room:
+
+**Status (2026-11-08).** Ember shipped G1–G8 in 0.3.0 (and app-private SQL tables, G9, in 0.4.0). Brigade uses:
+
+- **G4**: the runtime is mounted with `basePath` (src/ember.ts); nothing rewrites the path.
+- **G7**: the relay is on `@freecorps/ember-push` 0.4.0 and forces an exchange with the token FCM refused, so
+  concurrent sends exchange once. It keeps `retries: 0` and its own deadline, which tell a token endpoint out of reach
+  from a refused key for its fallback.
+- **G8**: session end, password resets, member changes and revoked API tokens call `revokeSockets` (src/ember-workspace.ts,
+  src/ember-members.ts, src/ember-rest.ts). Adapter sockets ride an Ember socket, so they close with it at once.
+- **G2**: the shard's action jobs run under Ember's lease. Brigade keeps `page_pending` too: it also covers pages
+  through Brigade's own `brigade-events` Queue, and its lease is part of the paging rules.
+
+Kept as they are, on purpose:
+
+- **G1, G6**: Brigade's payload, envelope and delivery rules (critical sounds, CallKit, the handle fallback, a token of
+  another Firebase project never dropped) are its own and are proven on devices. They stay on the token layer. Moving
+  them to `sendToDevices` with `payload`/`seal` changes the paging path for no new behaviour.
+- **G3**: `ProbeDO` stays a plain Durable Object, with no change planned. Moving probes onto Ember gains nothing a
+  probe needs.
+- **G5**: used by step 4 (the dashboard on Ember's client), not built yet.
 
 - **G1 — App-owned payloads in the direct transport.** `sendApns`/`sendFcm`/`sendToDevices` always build the payload
   and the envelope. Proposed: `AddressedPushMessage.payload?: { apns?: Record<string, unknown>; fcmData?:

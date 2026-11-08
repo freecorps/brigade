@@ -315,7 +315,7 @@ Shard without one.
   and refuses an upgrade carrying a session it was told ended. Adapter sockets have no token to refresh, so the
   adapter gives each one the same 5-minute bound itself: it checks the socket's session and member in D1 again every
   5 minutes and before every mutation it runs, and closes the socket (`1012`, as RFC 0004 does) when the session
-  ended or the member is gone. With G8 (in) the session-end close above reaches adapter sockets at once by the same
+  ended or the member is gone. With G8 in place, the session-end close above reaches adapter sockets at once by the same
   `sid` and user id; the 5 minutes are the bound only when that close fails. An adapter socket still open closes at the session's
   expiry. No socket, adapter or Ember, outlives its session by more than 5 minutes, or at all once G8 is in.
 - **Sensitive mutations** (removing a member, changing a role, acknowledging from a notification) also check the

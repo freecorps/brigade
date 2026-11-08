@@ -5,7 +5,11 @@ import { exports } from "cloudflare:workers";
 import { env } from "cloudflare:workers";
 import { describe, expect, test, vi } from "vite-plus/test";
 import { newId, type Actor } from "@freecorps/brigade-schema";
-import { createEmberSyncClient } from "@freecorps/brigade-sync/ember";
+import {
+  createEmberSyncClient,
+  type PendingMutationRecord,
+  type PendingStorage,
+} from "@freecorps/brigade-sync/ember";
 import { switchWorkspace } from "../src/ember-migration.ts";
 import { sessionCookie } from "./session.ts";
 
@@ -139,5 +143,66 @@ describe("the dashboard on Ember", () => {
     expect(incidents.getSnapshot().rows).toMatchObject([{ id, title: "Checkout down" }]);
     off();
     sync.close();
+  });
+
+  test("the app: a token for its session alone, and a change kept from before a restart is sent once", async () => {
+    const { workspaceId, cookie, actor } = await onEmber();
+    // A native fetch: no `Origin`, the session in the `Cookie` header (apps/mobile src/lib/engine.ts).
+    const token = async (id: string) => {
+      const response = await exports.default.fetch(`${ORIGIN}/ember-token/${id}`, {
+        method: "POST",
+        headers: { Cookie: cookie, "cf-connecting-ip": clientIp() },
+      });
+      expect(response.status).toBe(200);
+      return ((await response.json()) as { token: string }).token;
+    };
+    const kept: PendingMutationRecord[] = [];
+    const storage: PendingStorage = {
+      getClientId: () => "cli_phone",
+      setClientId: () => {},
+      load: () => [...kept],
+      put: (record) => {
+        kept.push(record);
+      },
+      // Killed before the answer was heard: still kept.
+      remove: () => {},
+    };
+    const options = {
+      url: `${ORIGIN}/ember`,
+      token,
+      actor,
+      WebSocket: WorkerSocket,
+      connectivity: null,
+      onWarning: () => {},
+      clientId: "cli_phone",
+      storage: () => storage,
+    };
+    const first = createEmberSyncClient(options);
+    const id = newId("inc", Date.now(), (n) => crypto.getRandomValues(new Uint8Array(n)));
+    expect(
+      await first.mutate(workspaceId, "incident.declare", { id, title: "From the phone" }),
+    ).toEqual({
+      ok: true,
+    });
+    first.close();
+    expect(kept).toHaveLength(1);
+
+    const outcomes: unknown[] = [];
+    const again = createEmberSyncClient({
+      ...options,
+      onRestoredOutcome: (_workspace, _record, outcome) => outcomes.push(outcome),
+    });
+    const incidents = again.query(workspaceId, "incidents.active", {});
+    const off = incidents.subscribe(() => {});
+    // The shard answers the re-sent change from its record of it (client id and mid) instead of declaring it twice.
+    await vi.waitFor(() => expect(outcomes).toEqual([{ ok: true }]), { timeout: 10_000 });
+    await vi.waitFor(() => expect(incidents.getSnapshot().pending).toBe(false), {
+      timeout: 10_000,
+    });
+    expect(incidents.getSnapshot().rows).toMatchObject([
+      { id, title: "From the phone", number: 1 },
+    ]);
+    off();
+    again.close();
   });
 });

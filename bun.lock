@@ -49,6 +49,7 @@
         "@freecorps/brigade-schema": "workspace:*",
         "@freecorps/brigade-sync": "workspace:*",
         "@freecorps/brigade-ui": "workspace:*",
+        "@freecorps/ember-react-native": "0.4.0",
         "better-auth": "1.7.13",
         "expo": "~58.0.22",
         "expo-camera": "~58.0.14",
@@ -724,6 +725,10 @@
     "@freecorps/ember-client": ["@freecorps/ember-client@0.4.0", "", { "dependencies": { "@freecorps/ember-values": "0.4.0" } }, "sha512-pcu/gbQ3w0Xf5exjE1ucuvZ/hnzghBRoaikISAuMaAdwpERygSEFFHQic+cPkhgD8yPP5m5SVJlNbpF2e8096Q=="],
 
     "@freecorps/ember-push": ["@freecorps/ember-push@0.4.0", "", { "dependencies": { "@freecorps/ember-server": "0.4.0", "@freecorps/ember-values": "0.4.0" } }, "sha512-BbYMcl9gOFJ1MYaFIujvcFJIsTEShz7+ork5SU1UaU45XqS5PjTrDGcKNloXH7GFAdIAVIHB36LwrKAV8j8ViA=="],
+
+    "@freecorps/ember-react": ["@freecorps/ember-react@0.4.0", "", { "dependencies": { "@freecorps/ember-client": "0.4.0" }, "peerDependencies": { "react": ">=18" } }, "sha512-N/aB1gAP9y2mP2gGmG3jBtyZx+MHnhKXluISnDUQVP5Ou3IJHpLT+yrZSU6FrPM+TcwrxGBR54LLSaDbKqGwxA=="],
+
+    "@freecorps/ember-react-native": ["@freecorps/ember-react-native@0.4.0", "", { "dependencies": { "@freecorps/ember-client": "0.4.0", "@freecorps/ember-react": "0.4.0" }, "peerDependencies": { "@react-native-async-storage/async-storage": ">=1.21", "@react-native-community/netinfo": ">=11", "expo-constants": "*", "expo-device": "*", "expo-notifications": "*", "expo-secure-store": "*", "react": ">=18", "react-native": "*" }, "optionalPeers": ["@react-native-async-storage/async-storage", "@react-native-community/netinfo", "expo-constants", "expo-device", "expo-notifications", "expo-secure-store", "react-native"] }, "sha512-0gIa4Vbzk0sT77ZFEHtiqVBw4qIJ9dShv5r2VTA8IbgzU5FSwELl15SkrPO4M0JpKOunFSN5kIej5FmMs9Y93w=="],
 
     "@freecorps/ember-runtime": ["@freecorps/ember-runtime@0.4.0", "", { "dependencies": { "@freecorps/ember-server": "0.4.0", "@freecorps/ember-values": "0.4.0" } }, "sha512-W9AL3rdQ44ybUdGggLIE9RYlLuVWQEl2eqz5YsynqyQkefaxG3nRq5mFsXed4LlqbwNijceyDzuzDq71SwPUhw=="],
 

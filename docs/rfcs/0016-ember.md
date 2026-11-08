@@ -272,9 +272,27 @@ answers the next token with 409 and the page reloads onto Brigade Sync. It is pi
 because one instance can hold workspaces on both engines during a migration.
 
 **The store app talks to many instances** (RFC 0015), some self-hosted and not migrated. So the app keeps the Brigade
-Sync client and picks the protocol from the instance's `GET /config` (`sync: "ember"` once migrated), for as long as
-supported instances run the old engine. The dashboard is served by its own instance and picks the client per
-workspace ("Built (step 4)" below).
+Sync client for as long as supported instances run the old engine, and picks the client per workspace as the
+dashboard does, not from `/config`: an instance holds workspaces on both engines while it migrates.
+
+**Built (step 5).** The app (apps/mobile src/lib/engine.ts, src/lib/ember-client.ts) asks
+`POST /api/ember-token/:workspace` with the session in the `Cookie` header before it opens a workspace. A token means
+Ember's client, 409 or 404 (an instance from before Ember) Brigade Sync, and both are remembered per member and
+workspace. With no answer (offline, a 5xx, 5 s without one), the engine last known is used, else Brigade Sync, so the
+app opens offline on the client that holds its changes. It is the same `EmberSyncClient`, with
+`@freecorps/ember-react-native`'s connectivity over `expo-network` and `AppState`; its sockets stay open in the
+background, as Brigade Sync's do, because a call's "press 1" ack is sent from there. Unconfirmed changes stay in the
+member's queue file (src/lib/ember-queue.ts) as Ember's `PendingStorage`, with the queue's client id. Its `load` waits
+until the member's role is known, so restored changes are applied as that role, as with Brigade Sync. Changes Brigade
+Sync kept are taken over with their mutation ids as Ember mids, the ids the adapter sends them with, so a change
+Ember ran, through either client, is answered and not run again. A change that ran on `WorkspaceDO` before the switch
+and whose answer was lost can still run once more on Ember, whichever client sends it: the switch copies rows, not
+the DO's mutation results. A repeated declare is refused (`conflict`), and a repeated update adds a second timeline
+entry. A workspace turned
+back answers the next token with 409: the app closes Ember's client and opens the workspace again on Brigade Sync,
+which sends what Ember's client kept, with the same ids. Only the open workspace moves. The one-shot clients that
+register or unregister the phone in another workspace stay on Brigade Sync, which the adapter serves, until step 8
+removes it.
 
 **App versions that only speak Brigade Sync** stay installed on phones after a workspace moves, and they only know
 how to reconnect and replay Brigade frames. So `/sync/:workspace` of a migrated workspace is served by a **Brigade Sync
@@ -539,7 +557,7 @@ Brigade before Ember shipped the gap, and hold now only where the status above k
    auth hook. Brigade's existing mutation and paging tests run against both engines.
 4. **Dashboard on Ember's client** (built): `@freecorps/brigade-sync/ember`'s `EmberSyncClient` under the same hooks,
    picked per workspace ("Clients").
-5. **App on Ember's React Native client** next to Brigade Sync, picked per instance.
+5. **App on Ember's React Native client** (built) next to Brigade Sync, picked per workspace ("Clients").
 6. **Monitoring, status page and Slack** calling the Ember shard of a workspace whose `workspace.engine` is `ember`,
    `WorkspaceDO` otherwise; the watchdog unchanged.
 7. **Migration route, one copy of every workspace and the switch** ("Data migration") on `dev`, then staging and

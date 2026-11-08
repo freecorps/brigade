@@ -20,6 +20,8 @@ import {
   type EmberSyncClient,
 } from "../src/ember.ts";
 import type { FakeDb } from "@freecorps/ember-client/testing";
+import type { PendingMutationRecord, PendingStorage } from "@freecorps/ember-client";
+import type { MutationOutcome } from "../src/client.ts";
 
 const WORKSPACE = "org_acme";
 const ana: Actor = { kind: "user", id: "usr_ana", role: "responder" };
@@ -70,8 +72,12 @@ function server() {
   });
 }
 
-function client(fake: FakeEmberServer): EmberSyncClient {
+function client(
+  fake: FakeEmberServer,
+  extra: Partial<Parameters<typeof createEmberSyncClient>[0]> = {},
+): EmberSyncClient {
   return createEmberSyncClient({
+    ...extra,
     url: "https://brigade.test/api/ember",
     token: (workspaceId) => (workspaceId === WORKSPACE ? `user:${ana.id}` : null),
     actor: ana,
@@ -194,5 +200,73 @@ describe("EmberSyncClient", () => {
       error: { code: "closed" },
     });
     expect(emberShard(WORKSPACE)).toBe("workspace:org_acme");
+  });
+
+  test("a change kept from before a restart shows again, is sent with its id and runs once", async () => {
+    const fake = server();
+    // The phone's kept queue: what the client stored, and its id, survive the client.
+    const kept: PendingMutationRecord[] = [];
+    let clientId: string | null = null;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const storage = (wait: boolean): PendingStorage => ({
+      getClientId: () => clientId,
+      setClientId: (id) => {
+        clientId = id;
+      },
+      load: async () => {
+        if (wait) await gate;
+        return [...kept];
+      },
+      put: (record) => {
+        kept.push(record);
+      },
+      // Killed before it heard the answer: nothing is removed.
+      remove: () => {},
+    });
+    const first = client(fake, { storage: () => storage(false) });
+    const a = watch(first, "incidents.active");
+    await vi.waitFor(() => expect(a.handle.getSnapshot().status).toBe("ready"));
+    const id = newId("inc", Date.now(), randomBytes);
+    expect(await first.mutate(WORKSPACE, "incident.declare", { id, title: "Kept" })).toEqual({
+      ok: true,
+    });
+    first.close();
+    expect(kept).toHaveLength(1);
+
+    // Launched again: nothing loads until `load` gives the stored change back (the app waits for the member's role).
+    const outcomes: MutationOutcome[] = [];
+    const again = client(fake, {
+      storage: () => storage(true),
+      onRestoredOutcome: (workspaceId, record, outcome) => {
+        expect(workspaceId).toBe(WORKSPACE);
+        expect(record.mid).toBe(kept[0]!.mid);
+        outcomes.push(outcome);
+      },
+    });
+    const b = watch(again, "incidents.active");
+    expect(b.handle.getSnapshot().status).toBe("loading");
+    release();
+    await vi.waitFor(() => expect(outcomes).toEqual([{ ok: true }]));
+    await vi.waitFor(() => expect(b.handle.getSnapshot()).toMatchObject({ pending: false }));
+    // Answered from the shard's record of it (same client id and mid): run again, the declare of an id that exists
+    // would have been refused.
+    expect(b.handle.getSnapshot().rows).toMatchObject([{ id, title: "Kept", number: 1 }]);
+    again.close();
+  });
+
+  test("an answer of the shard that is not an outcome is not taken as done", async () => {
+    const fake = new FakeEmberServer({
+      queries: {},
+      mutations: { "workspace:mutate": () => null },
+    });
+    const sync = client(fake);
+    expect(
+      await sync.mutate(WORKSPACE, "incident.declare", {
+        id: newId("inc", Date.now(), randomBytes),
+        title: "x",
+      }),
+    ).toMatchObject({ ok: false, error: { code: "internal" } });
+    sync.close();
   });
 });

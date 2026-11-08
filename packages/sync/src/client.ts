@@ -369,7 +369,7 @@ export function backoffDelay(attempt: number, random: number, backoff: Backoff =
 // ------------------------------------------------------------------------------------------------- client
 
 /** How far in the future a restored change may say it was made and still be sent (a corrected clock). */
-const RESTORE_CLOCK_SLACK_MS = 5 * 60 * 1000;
+export const RESTORE_CLOCK_SLACK_MS = 5 * 60 * 1000;
 
 export class SyncClient<
   Q extends QueryRegistry = typeof brigadeQueries,

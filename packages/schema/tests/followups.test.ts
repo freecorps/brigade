@@ -8,6 +8,9 @@ import {
   BUILTIN_LAYOUT,
   buildExport,
   exportChunks,
+  exportEntries,
+  exportOpening,
+  EXPORT_CLOSING,
   EXPORTS_PER_HOUR,
   EXPORT_WINDOW_MS,
   createMemoryStore,
@@ -683,6 +686,23 @@ describe("exports", () => {
       incidents: unknown[];
     };
     expect(empty.incidents).toEqual([]);
+  });
+
+  test("an opening, the entries in batches and the closing join into the same file too", () => {
+    const store = shard();
+    run(store, "incident.declare", { id: INC2, title: "Search slow" });
+    run(store, "followUp.create", followUp());
+    const scope = { kind: "range", from: "2026-10-26", to: "2026-10-26" } as const;
+    const opened = exportOpening(store, scope, T);
+    if (!opened.ok) throw new Error("Expected an opening");
+    expect(opened.incidentIds).toHaveLength(2);
+    const entries = [
+      ...exportEntries(store, opened.incidentIds.slice(0, 1)),
+      ...exportEntries(store, opened.incidentIds.slice(1)),
+    ];
+    const text = `${opened.opening}${entries.join(",")}${EXPORT_CLOSING}`;
+    expect(text).toBe(JSON.stringify((buildExport(store, scope, T) as { file: unknown }).file));
+    expect(exportEntries(store, ["inc_missing"])).toEqual([]);
   });
 
   test(`at most ${EXPORTS_PER_HOUR} exports an hour per workspace, server only`, () => {

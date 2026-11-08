@@ -589,7 +589,10 @@ describe("the snapshot", () => {
     const next = await runInDurableObject(t.stub, (instance: WorkspaceDO) =>
       publisher(instance).nextAt(retired!.cleared! + 1),
     );
-    expect(next).toBe(retired!.cleared! + STATUS_SLUG_GRACE_MS);
+    // The grace's end, or the page's daily rebuild (the first UTC midnight after that push) when it comes first: a run
+    // a few minutes before midnight would otherwise fail.
+    const midnight = (Math.floor(retired!.cleared! / STATUS_REFRESH_MS) + 1) * STATUS_REFRESH_MS;
+    expect(next).toBe(Math.min(retired!.cleared! + STATUS_SLUG_GRACE_MS, midnight));
     await t.push(STATUS_SLUG_GRACE_MS);
     expect(await owners(first)).toEqual([]);
     expect(await owners(second)).toEqual([t.id]);

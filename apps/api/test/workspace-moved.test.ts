@@ -104,6 +104,19 @@ describe("a WorkspaceDO moved to Ember", () => {
 
     // A receipt the DO minted is refused once moved, as any other token it does not back.
     expect(await stub.receipt("k1.not-a-real-token")).toBe("invalid");
+
+    // Frozen while the switch copies: even a call it forwards is refused, to be tried again.
+    const frozen = await Promise.resolve(
+      stub.acknowledge(workspaceId, actor, incident, "tap-1"),
+    ).then(
+      () => null,
+      (error: unknown) => String(error),
+    );
+    expect(frozen).toMatch(/try again/);
+    // One switch at a time: a second move of a frozen object is refused.
+    expect(await stub.moveToEmber(workspaceId)).toEqual({ ok: false, code: "busy" });
+    expect(await stub.forwardToEmber()).toBe(true);
+
     // The ack runs on Ember, where the incident is.
     expect(await stub.acknowledge(workspaceId, actor, incident, "tap-1")).toEqual({ ok: true });
     // Another workspace's ack is refused, as the DO refuses it.

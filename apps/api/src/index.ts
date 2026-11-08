@@ -71,6 +71,7 @@ import {
 import { BOOTSTRAP_PATH, bootstrapFirstUser } from "./bootstrap.ts";
 import { EMBER_BASE_PATH, issueEmberToken, serveEmber, workspaceEngine } from "./ember.ts";
 import { openSyncOnEmber } from "./sync-adapter.ts";
+import { ADMIN_BASE, serveMigration } from "./ember-admin.ts";
 import { emberMembers } from "./ember-members.ts";
 import { pageEngine } from "./ember-paging.ts";
 import { sweepEmberTicks, TICK_SWEEP_EVERY_MINUTES } from "./ember-ticks.ts";
@@ -209,6 +210,8 @@ export default {
     if (pathname === EMBER_BASE_PATH || pathname.startsWith(`${EMBER_BASE_PATH}/`)) {
       return serveEmber(request, env, ctx);
     }
+    // The migration's operator routes (RFC 0016 "Data migration"): a 404 unless MIGRATION_TOKEN is set and sent.
+    if (pathname.startsWith(`${ADMIN_BASE}/`)) return serveMigration(request, env, pathname);
     const emberToken = EMBER_TOKEN_PATH.exec(pathname)?.[1];
     if (emberToken !== undefined) return issueEmberToken(request, env, auth, emberToken, waitUntil);
     if (pathname === "/workspaces") return createWorkspace(request, auth);
@@ -1657,7 +1660,9 @@ export async function workspaceExists(
 }
 
 function failed(message: string, workspace: string, error: unknown): Response {
-  const retryable = flag(error, "retryable");
+  // A workspace moving to Ember (RFC 0016, src/workspace.ts `WHEN_MOVED`) is tried again, whether or not the RPC
+  // kept the error's `retryable` flag.
+  const retryable = flag(error, "retryable") || String(error).includes("moving to Ember");
   const overloaded = flag(error, "overloaded");
   console.error(
     JSON.stringify({ message, workspace, retryable, overloaded, error: String(error) }),

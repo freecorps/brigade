@@ -38,7 +38,7 @@ export function holdTicks(ctx: MutationCtx): number {
  * (follow-up reminders), apart so a large follow-up history never weighs on a page's transaction (Ember's per-
  * transaction read limit), and a reminder that fails never rolls back a level that fired.
  */
-const JOBS = {
+export const JOBS = {
   paging: TICK,
   reminders: "paging:remind",
   local: "local:send",
@@ -56,7 +56,13 @@ export type TickKey = keyof typeof JOBS;
  * Schedules tick `key` at `at` unless one is already due by then (`ember_ticks` holds the earliest one scheduled),
  * so the many calls that each want one leave a single job.
  */
+/** Whether this shard was turned back to its `WorkspaceDO` (`migration:disarm`): it then schedules no upkeep. */
+export function retired(ctx: MutationCtx): boolean {
+  return (ctx.sql.exec("select 1 from shard_meta where key = 'retired'") as unknown[]).length > 0;
+}
+
 export function tickAt(ctx: MutationCtx, at: number, key: TickKey = "paging"): void {
+  if (retired(ctx)) return;
   at = Math.max(at, floors.get(ctx) ?? 0);
   const [row] = ctx.sql.exec("select at from ember_ticks where key = ?", key) as { at: number }[];
   // An overdue tick is still queued (the scheduler runs late, never skips): keep it. One overdue past the lease is

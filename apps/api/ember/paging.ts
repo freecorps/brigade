@@ -34,7 +34,7 @@ import type { BrigadeEvent } from "../src/outbox.ts";
 import { EMBER_MEMBER_REPAIR_DELAY_MS } from "./members.ts";
 import { Escalations } from "../src/escalation.ts";
 import { emberWorkspace, type EmberShard } from "./shard-facade.ts";
-import { holdTicks, tickAt, type TickKey } from "./ticks.ts";
+import { holdTicks, tickAt, type TickKey, retired } from "./ticks.ts";
 
 export { TICK_LEASE_MS, TICK_RETRY_MS } from "./ticks.ts";
 
@@ -165,6 +165,8 @@ export const tick = internalMutationGeneric({
     if (workspace === undefined) return { fired: 0, released: 0, replayed: 0 };
     // This tick is the one scheduled: the next is whatever is due after it.
     c.sql.exec("delete from ember_ticks where key = 'paging'");
+    // Turned back to its WorkspaceDO (`migration:disarm`): this shard keeps no upkeep.
+    if (retired(c)) return { fired: 0, released: 0, replayed: 0 };
     // A level that throws is logged and left due (its timer): the rest of the tick still runs, as on the DO.
     let fired = 0;
     try {
@@ -195,6 +197,8 @@ export const remind = internalMutationGeneric({
     const { shard } = emberWorkspace(c);
     if (shard.workspace() === undefined) return { reminded: 0 };
     c.sql.exec("delete from ember_ticks where key = 'reminders'");
+    // Turned back to its WorkspaceDO (`migration:disarm`): this shard keeps no upkeep.
+    if (retired(c)) return { reminded: 0 };
     let reminded = 0;
     const next = nextReminderAt(shard.store, c.now);
     if (next !== null && next <= c.now) {
@@ -330,6 +334,8 @@ export const overdue = internalMutationGeneric({
     const { pager: p, workspace, check } = pager(c, "local");
     if (workspace === undefined) return [];
     c.sql.exec("delete from ember_ticks where key = 'local'");
+    // Turned back to its WorkspaceDO (`migration:disarm`): this shard keeps no upkeep.
+    if (retired(c)) return [];
     const leased = p.overdue(c.now);
     const next = p.pendingAt();
     if (next !== null) tickAt(c, next, "local");

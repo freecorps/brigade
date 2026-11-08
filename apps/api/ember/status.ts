@@ -36,7 +36,7 @@ import {
 } from "../src/status-page.ts";
 import { emberWorkspace, type EmberShard } from "./shard-facade.ts";
 import { run, workspaceLimits } from "./workspace.ts";
-import { holdTicks, tickAt } from "./ticks.ts";
+import { holdTicks, tickAt, retired } from "./ticks.ts";
 
 const PLAN = makeFunctionReference<"mutation">("status:plan");
 const RECORD = makeFunctionReference<"mutation">("status:record");
@@ -182,6 +182,8 @@ export const plan = internalMutationGeneric({
     const workspaceId = shard.workspace();
     if (workspaceId === undefined) return null;
     c.sql.exec("delete from ember_ticks where key = 'status'");
+    // Turned back to its WorkspaceDO (`migration:disarm`): this shard keeps no upkeep.
+    if (retired(c)) return null;
     const out = meta(c, PUSHING);
     if (out !== undefined && c.now - out < STATUS_PUSH_ABANDON_MS) {
       // Its record arms the next push; this tick stands in should it never come.
@@ -299,6 +301,8 @@ export const maintenance = internalMutationGeneric({
     const { shard } = emberWorkspace(c);
     if (shard.workspace() === undefined) return { advanced: 0 };
     c.sql.exec("delete from ember_ticks where key = 'maintenance'");
+    // Turned back to its WorkspaceDO (`migration:disarm`): this shard keeps no upkeep.
+    if (retired(c)) return { advanced: 0 };
     let advanced = 0;
     for (const row of shard.store.scan("status_maintenance")) {
       const at =
@@ -620,6 +624,8 @@ export const domainDue = internalMutationGeneric({
     const workspaceId = shard.workspace();
     if (workspaceId === undefined) return null;
     c.sql.exec("delete from ember_ticks where key = 'domain'");
+    // Turned back to its WorkspaceDO (`migration:disarm`): this shard keeps no upkeep.
+    if (retired(c)) return null;
     const out = meta(c, CHECKING);
     if (out !== undefined && c.now - out < DOMAIN_CHECK_LEASE_MS) {
       tickAt(c, out + DOMAIN_CHECK_LEASE_MS, "domain");

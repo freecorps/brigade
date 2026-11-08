@@ -368,15 +368,17 @@ were built for a deployment people depend on.
    (migrations/0017) says which one holds each workspace, `brigade` when it has no row. Nothing reaches an Ember shard
    until its workspace says `ember`: the API mints no Ember token for it and `/ember` answers 404 for its shard
    (src/ember.ts).
-2. **Copy.** An operator route asks every `WorkspaceDO` for its rows, counters, members, devices and pending
-   escalation timers, and writes them to the workspace's Ember shard through internal mutations in batches,
-   idempotent by row id, so the copy can run again and overwrite the last one. It checks counts and a hash per table
-   on both sides. Writes made to `WorkspaceDO` after a workspace's copy are lost at the switch: accepted.
-   The copy ends by arming the shard's upkeep ticks (`paging:tick` at the earliest escalation timer, replay or held
-   push; `paging:remind` once), since rows written by the copy are not a mutation that arms them (ember/ticks.ts).
+2. **Copy.** An operator route (`POST /admin/ember/copy/:workspace`, src/ember-admin.ts, behind `MIGRATION_TOKEN`)
+   reads every table of the `WorkspaceDO` in id order (`exportPage`) and writes it to the workspace's Ember shard
+   through internal mutations in batches (`migration:put`, ember/migration.ts), idempotent by row id, so the copy can
+   run again and overwrite the last one; rows the shard holds and the DO does not are deleted. It checks counts and a hash per table
+   on both sides. The switch (`POST /admin/ember/switch/:workspace`) freezes the DO first (step 3) and copies once more from its frozen rows, so no write made after a copy is lost.
+   The copy arms nothing: the switch arms the shard's upkeep ticks (`migration:arm`: every tick once, each finding
+   what is due) after D1 says `ember`, since rows written by the copy are not a mutation that arms them
+   (ember/ticks.ts), and so no tick runs on Ember before it owns the workspace.
 3. **Switch.** D1's `workspace_engine` turns to `ember` for every copied workspace, and each `WorkspaceDO` is told
    (`moveToEmber`): it then runs nothing of its own (its alarm only drains the outbox written before), closes its
-   sockets so the apps reconnect through the Brigade Sync adapter ("Clients"), forwards what can still reach it (a
+   sockets so the apps reconnect through the Brigade Sync adapter ("Clients"), refuses every call while the switch copies it once more, and once D1 says `ember` (`forwardToEmber`) forwards what can still reach it (a
    page, an ack, an alert, a probe, Slack and webhook calls routed by an engine cached or last known while D1 was
    out) to the Ember shard, and refuses the rest (`WHEN_MOVED`, src/workspace.ts; src/workspace-moved.ts).
 4. **Back.** Until the old engine is deleted, writing `brigade` again (and `moveBack`) turns a workspace back to its `WorkspaceDO`,

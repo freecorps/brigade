@@ -124,7 +124,7 @@ async function connect(workspaceId: string, cookie: string) {
 }
 
 describe("/sync on an Ember workspace", () => {
-  test("hello, subscribe, mutate: a snapshot, the mutation's patch, then its result", async () => {
+  test("hello, subscribe, mutate: a snapshot, the mutation's result, then its patch", async () => {
     const { cookie, workspaceId } = await emberOwner();
     const a = await connect(workspaceId, cookie);
     a.send({ type: "hello", protocol: PROTOCOL_VERSION, clientId: `adapter-${people}` });
@@ -142,17 +142,14 @@ describe("/sync on an Ember workspace", () => {
       name: "incident.declare",
       args: { id, title: "Checkout down", severity: "sev2" },
     });
+    // As RFC 0004 orders it: the mutation's result, then the patch for its version.
+    const result = await a.next();
+    expect(result).toMatchObject({ type: "mutationResult", mutationId: "m-1", ok: true });
     const patch = await a.next();
-    expect(patch).toMatchObject({ type: "patch", epoch: snapshot.epoch });
+    expect(patch).toMatchObject({ type: "patch", epoch: snapshot.epoch, version: result.version });
     expect((patch.subs as Record<string, { upserts: { id: string }[] }>).active!.upserts).toEqual([
       expect.objectContaining({ id }),
     ]);
-    expect(await a.next()).toEqual({
-      type: "mutationResult",
-      mutationId: "m-1",
-      ok: true,
-      version: patch.version,
-    });
 
     // A refusal comes back as the mutation's result, and an unknown query as the subscription's error.
     a.send({ type: "mutate", mutationId: "m-2", name: "incident.declare", args: {} });

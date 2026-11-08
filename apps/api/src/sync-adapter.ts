@@ -8,8 +8,8 @@
 //   (Ember de-duplicates it by client id and mid, as the DO did); `ping` is answered here.
 // - Ember's `snap` is a `snapshot`, its `patch` a `patch` holding each subscription's changes (rows that entered or
 //   changed, ids that left, against the rows sent last), its `mres` a `mutationResult`. Ember's version and epoch are
-//   the shard's, so they are Brigade's too; Ember sends a mutation's patch (`mids`) before its result, which is the
-//   order RFC 0004 promises. A resume always gets a `snapshot` (the protocol allows it).
+//   the shard's, so they are Brigade's too. Ember sends a mutation's patch (`mids`) before its result; RFC 0004
+//   promises the result first, so such a patch (and any after it) waits here for its mutations' results. A resume always gets a `snapshot` (the protocol allows it).
 // - The token lasts at most 5 minutes; it is minted again before it expires (or when Ember says it did), and each
 //   time the session and the member are checked in D1 again (`verifyIdentity`, the auth hook's own checks). One that
 //   no longer passes closes the socket (`1012`): no adapter socket outlives its session or membership by more than
@@ -52,6 +52,8 @@ type EmberFrame =
   | { t: "mres"; mid: string; ok: false; error: { code: string; message: string } }
   | { t: "err"; code: string; message: string; qid?: string }
   | { t: "authExpired" };
+
+const unavailable = () => Response.json({ error: "unavailable" }, { status: 503 });
 
 const log = (message: string, fields: Record<string, unknown>) =>
   console.error(JSON.stringify({ message, ...fields }));
@@ -103,16 +105,22 @@ export async function openSyncOnEmber(
   if (actor.kind !== "token" && sessionId === undefined) {
     return Response.json({ error: "unauthenticated" }, { status: 401 });
   }
-  const admitted = await admitToEmber(
-    env,
-    workspaceId,
-    {
-      actor,
-      ...(resolved.name !== undefined ? { name: resolved.name } : {}),
-      ...(resolved.resetAt !== undefined ? { resetAt: resolved.resetAt } : {}),
-    },
-    ctx.waitUntil.bind(ctx),
-  );
+  let admitted: Awaited<ReturnType<typeof admitToEmber>>;
+  try {
+    admitted = await admitToEmber(
+      env,
+      workspaceId,
+      {
+        actor,
+        ...(resolved.name !== undefined ? { name: resolved.name } : {}),
+        ...(resolved.resetAt !== undefined ? { resetAt: resolved.resetAt } : {}),
+      },
+      ctx.waitUntil.bind(ctx),
+    );
+  } catch (error) {
+    log("admitting an adapter socket failed", { workspace: workspaceId, error: String(error) });
+    return unavailable();
+  }
   if (!admitted.ok) {
     const status = { not_found: 500, not_a_member: 403, unauthenticated: 401, unavailable: 503 };
     return Response.json(
@@ -144,24 +152,33 @@ export async function openSyncOnEmber(
     if (!(await verifyIdentity(env, minted.token))) return null;
     return minted;
   };
-  const first = await mint();
-  if (!first) return Response.json({ error: "unauthenticated" }, { status: 401 });
-
-  const url = new URL(request.url);
-  const upstreamResponse = await ember.fetch(
-    new Request(`${url.origin}/ember/ws?shard=${encodeURIComponent(shard)}`, {
-      headers: { Upgrade: "websocket" },
-    }),
-    env as never,
-    ctx,
-  );
+  let first: { token: string; expiresAt: number } | null;
+  let upstreamResponse: Response;
+  try {
+    first = await mint();
+    if (!first) return Response.json({ error: "unauthenticated" }, { status: 401 });
+    const url = new URL(request.url);
+    upstreamResponse = await ember.fetch(
+      new Request(`${url.origin}/ember/ws?shard=${encodeURIComponent(shard)}`, {
+        headers: { Upgrade: "websocket" },
+      }),
+      env as never,
+      ctx,
+    );
+  } catch (error) {
+    log("opening the adapter's Ember socket failed", {
+      workspace: workspaceId,
+      error: String(error),
+    });
+    return unavailable();
+  }
   const upstream = upstreamResponse.webSocket;
   if (!upstream) {
     log("the Ember shard refused the adapter's socket", {
       workspace: workspaceId,
       status: upstreamResponse.status,
     });
-    return Response.json({ error: "unavailable" }, { status: 503 });
+    return unavailable();
   }
   upstream.accept();
   const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
@@ -178,6 +195,16 @@ class Adapter {
   private refresh: ReturnType<typeof setTimeout> | undefined;
   private expiry: ReturnType<typeof setTimeout> | undefined;
   private closed = false;
+  /**
+   * Patches waiting for the results of the mutations they carry (`mids`), in Ember's order. `ok`: one of them was
+   * done, so the patch goes out even with no changes (the mutating socket always gets its version, as from the DO).
+   */
+  private readonly held: {
+    frame: ServerMessage;
+    waiting: Set<string>;
+    ok: boolean;
+    empty: boolean;
+  }[] = [];
 
   constructor(
     private readonly client: WebSocket,
@@ -363,30 +390,20 @@ class Adapter {
         }
         // As the DO's broadcast: the socket a mutation came from always gets its version, so the client can drop
         // what it applied optimistically; others only when something they hold changed.
-        if (Object.keys(subs).length === 0 && frame.mids.length === 0) return;
-        return this.send({ type: "patch", epoch: this.epoch, version: frame.version, subs });
+        const empty = Object.keys(subs).length === 0;
+        if (empty && frame.mids.length === 0) return;
+        this.held.push({
+          frame: { type: "patch", epoch: this.epoch, version: frame.version, subs },
+          waiting: new Set(frame.mids.map(String)),
+          ok: false,
+          empty,
+        });
+        return this.flush();
       }
       case "mres": {
         const mutationId = String(frame.mid);
-        if (!frame.ok) {
-          return this.send({
-            type: "mutationResult",
-            mutationId,
-            ok: false,
-            error: { code: frame.error.code as never, message: frame.error.message },
-          });
-        }
-        // `workspace:mutate` answers Brigade's own result: refused for what it holds, or done at `version`.
-        const value = frame.value as { ok: boolean; error?: { code: string; message: string } };
-        if (value?.ok === false && value.error) {
-          return this.send({
-            type: "mutationResult",
-            mutationId,
-            ok: false,
-            error: value.error as never,
-          });
-        }
-        return this.send({ type: "mutationResult", mutationId, ok: true, version: frame.version });
+        this.result(frame);
+        return this.settle(mutationId, frame.ok && (frame.value as { ok?: boolean })?.ok !== false);
       }
       case "err":
         if (frame.qid !== undefined) {
@@ -405,6 +422,48 @@ class Adapter {
       case "authExpired":
         void this.renew();
         return;
+    }
+  }
+
+  /** A mutation's result, as Brigade's `mutationResult`. */
+  private result(frame: Extract<EmberFrame, { t: "mres" }>): void {
+    const mutationId = String(frame.mid);
+    if (!frame.ok) {
+      return this.send({
+        type: "mutationResult",
+        mutationId,
+        ok: false,
+        error: { code: frame.error.code as never, message: frame.error.message },
+      });
+    }
+    // `workspace:mutate` answers Brigade's own result: refused for what it holds, or done at `version`.
+    const value = frame.value as { ok: boolean; error?: { code: string; message: string } };
+    if (value?.ok === false && value.error) {
+      return this.send({
+        type: "mutationResult",
+        mutationId,
+        ok: false,
+        error: value.error as never,
+      });
+    }
+    return this.send({ type: "mutationResult", mutationId, ok: true, version: frame.version });
+  }
+
+  /** `mutationId`'s result went out: the patches that waited only for it follow. */
+  private settle(mutationId: string, ok: boolean): void {
+    for (const patch of this.held) {
+      if (patch.waiting.delete(mutationId) && ok) patch.ok = true;
+    }
+    this.flush();
+  }
+
+  /** Sends the held patches whose mutations all have their results, in order. */
+  private flush(): void {
+    while (this.held.length > 0 && this.held[0]!.waiting.size === 0) {
+      const patch = this.held.shift()!;
+      // Only refused mutations and no changes: nothing for the client (the DO sends no patch for a refusal).
+      if (patch.empty && !patch.ok) continue;
+      this.send(patch.frame);
     }
   }
 

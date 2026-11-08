@@ -23,25 +23,21 @@ import {
   type StatusDomainRow,
 } from "@freecorps/brigade-schema";
 import { saasConfig, type SaasConfig, type SaasEnv } from "../src/status-domain-cf.ts";
-import {
-  DOMAIN_RECHECK_MIN_MS,
-  DomainChecker,
-  probeDomain,
-  type DomainProbe,
-} from "../src/status-domain-check.ts";
+import { DomainChecker, probeDomain, type DomainProbe } from "../src/status-domain-check.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import type { StatusDomainView } from "../src/status-domain.ts";
 import { StatusMailer, type StatusEmailPlan, type StatusEmailReport } from "../src/status-mail.ts";
-import { DeadlineError, within } from "../src/deadline.ts";
-import { StatusPublisher, type StatusPushDone, type StatusPushPlan } from "../src/status-page.ts";
+import {
+  STATUS_PUSH_ABANDON_MS,
+  StatusPublisher,
+  type StatusPushDone,
+  type StatusPushPlan,
+} from "../src/status-page.ts";
 import { emberWorkspace, type EmberShard } from "./shard-facade.ts";
 import { holdTicks, tickAt } from "./ticks.ts";
 
 const PLAN = makeFunctionReference<"mutation">("status:plan");
 const RECORD = makeFunctionReference<"mutation">("status:record");
-
-/** How long one KV or D1 call of a push may take before the push is given up on (and its page marked to go again). */
-export const STATUS_CALL_MS = 30 * 1000;
 
 const log = (message: string, fields: Record<string, unknown>) =>
   console.error(JSON.stringify({ message, ...fields }));
@@ -142,50 +138,88 @@ export const configure = internalMutationGeneric({
   },
 });
 
-/** What the push is to do now (`StatusPublisher.planPush`), or null, with the next push armed for when it is due. */
+/** The push under way (`shard_meta` `status_pushing`, its start): the DO's `pushing`, kept across mutations. */
+const PUSHING = "status_pushing";
+
+function meta(c: MutationCtx, key: string): number | undefined {
+  const [row] = c.sql.exec("select value from shard_meta where key = ?", key) as {
+    value: number;
+  }[];
+  return row?.value;
+}
+
+function setMeta(c: MutationCtx, key: string, value: number): void {
+  c.sql.exec(
+    "insert into shard_meta (key, value) values (?, ?) on conflict (key) do update set value = excluded.value",
+    key,
+    value,
+  );
+}
+
+/**
+ * What the push is to do now (`StatusPublisher.planPush`), or null, with the next push armed for when it is due. As
+ * the DO's `publish`, a push never starts beside one still out: it waits for that one to be recorded, or for
+ * `STATUS_PUSH_ABANDON_MS`, past which the earlier one is abandoned (its record, if it ever comes, marks the page to go
+ * again). The push started here holds the lease (`started`) until it is recorded.
+ */
 export const plan = internalMutationGeneric({
   args: { kv: v.boolean() },
   handler: (
     ctx,
     input: { kv: boolean },
-  ): { workspaceId: string; plan: StatusPushPlan; now: number } | null => {
+  ): { workspaceId: string; plan: StatusPushPlan; started: number } | null => {
     const c = ctx as MutationCtx;
     holdTicks(c);
     const { shard } = emberWorkspace(c);
     const workspaceId = shard.workspace();
     if (workspaceId === undefined) return null;
     c.sql.exec("delete from ember_ticks where key = 'status'");
+    const out = meta(c, PUSHING);
+    if (out !== undefined && c.now - out < STATUS_PUSH_ABANDON_MS) {
+      // Its record arms the next push; this tick stands in should it never come.
+      tickAt(c, out + STATUS_PUSH_ABANDON_MS, "status");
+      return null;
+    }
+    if (out !== undefined) log("abandoning a stuck status page push", { startedAt: out });
     const publisher = publisherOf(c, shard, input.kv);
     const due = publisher.planPush(workspaceId, c.now);
     if (due === null) {
+      c.sql.exec("delete from shard_meta where key = ?", PUSHING);
       const at = publisher.nextAt(c.now);
       if (at !== null) tickAt(c, at, "status");
+      shard.check();
+      return null;
     }
-    // A fallback while a push is under way: an action that dies before `record` never ends the chain (its page stays
-    // dirty, so the fallback's plan pushes it again).
-    else tickAt(c, c.now + STATUS_CALL_MS * 4, "status");
+    setMeta(c, PUSHING, c.now);
+    // A fallback: an action that dies before `record` never ends the chain (the lease runs out, the page stays dirty).
+    tickAt(c, c.now + STATUS_PUSH_ABANDON_MS, "status");
     shard.check();
-    return due === null ? null : { workspaceId, plan: due, now: c.now };
+    return { workspaceId, plan: due, started: c.now };
   },
 });
 
 /**
- * What the push did (`StatusPublisher.recordPush`; `late`: a call outlasted `STATUS_CALL_MS` and may land after a
- * newer push, so the page goes again), then the next push armed.
+ * What the push started at `started` did (`StatusPublisher.recordPush`), then the next push armed. A push abandoned
+ * meanwhile (its lease taken by a newer one) records nothing: its write may have landed after the newer push's, so
+ * the page is marked to go again (`status_repush`), as the DO's abandoned push marks it when it settles.
  */
 export const record = internalMutationGeneric({
-  args: { kv: v.boolean(), plan: v.any(), done: v.any(), now: v.number(), late: v.boolean() },
+  args: { kv: v.boolean(), plan: v.any(), done: v.any(), started: v.number() },
   handler: (
     ctx,
-    input: { kv: boolean; plan: StatusPushPlan; done: StatusPushDone; now: number; late: boolean },
+    input: { kv: boolean; plan: StatusPushPlan; done: StatusPushDone; started: number },
   ): null => {
     const c = ctx as MutationCtx;
     holdTicks(c);
     const { shard } = emberWorkspace(c);
     if (shard.workspace() === undefined) return null;
     const publisher = publisherOf(c, shard, input.kv);
-    publisher.recordPush(input.plan, input.done, input.now);
-    if (input.late) publisher.markRepush(c.now);
+    if (meta(c, PUSHING) !== input.started) {
+      if (input.done.page || input.done.cleared.length > 0) publisher.markRepush(c.now);
+    } else {
+      c.sql.exec("delete from shard_meta where key = ?", PUSHING);
+      publisher.recordPush(input.plan, input.done, input.started, c.now);
+    }
     const at = publisher.nextAt(c.now);
     if (at !== null) tickAt(c, at, "status");
     shard.check();
@@ -199,7 +233,8 @@ type ActionCtx = { env: PushEnv; runMutation(ref: unknown, args: unknown): Promi
 /**
  * The snapshot push (the DO's `StatusPublisher.publish`): the page's snapshot put (or deleted) in KV, each retired
  * slug's snapshot deleted, and the slugs past their grace released in D1, in order, stopping at the first failure,
- * then recorded. A call that outlasts `STATUS_CALL_MS` counts as failed, and the page is pushed again after it.
+ * then recorded. As on the DO the calls have no deadline of their own: the lease (`plan`) keeps a second push from
+ * starting beside a slow one until it is abandoned.
  */
 export const push = internalActionGeneric({
   args: {},
@@ -209,49 +244,40 @@ export const push = internalActionGeneric({
     const due = (await c.runMutation(PLAN, { kv: kv !== undefined })) as {
       workspaceId: string;
       plan: StatusPushPlan;
-      now: number;
+      started: number;
     } | null;
     if (!due) return { pushed: false };
     const done: StatusPushDone = { page: false, cleared: [], released: [] };
-    let late = false;
-    const call = async <T>(p: Promise<T>, what: string): Promise<T> => {
-      try {
-        return await within(p, STATUS_CALL_MS, what);
-      } catch (error) {
-        if (error instanceof DeadlineError) late = true;
-        throw error;
-      }
-    };
     try {
       const { page, retired } = due.plan;
       if (page && kv) {
-        await (page.put !== undefined
-          ? call(kv.put(page.key, page.put), "status snapshot put")
-          : call(kv.delete(page.key), "status snapshot delete"));
+        await (page.put !== undefined ? kv.put(page.key, page.put) : kv.delete(page.key));
         done.page = true;
       }
       for (const one of retired) {
         if (one.op === "kv_delete") {
           if (!kv) continue;
-          await call(kv.delete(`status:${one.id}`), "retired status snapshot delete");
+          await kv.delete(`status:${one.id}`);
           done.cleared.push(one.id);
         } else {
           // Only a row stamped before it was given up: one stamped later is a claim made since.
-          await call(
-            c.env.DB.prepare(
-              "delete from status_slug where slug = ? and workspace_id = ? and created_at < ?",
-            )
-              .bind(one.id, due.workspaceId, one.at)
-              .run(),
-            "status slug release",
-          );
+          await c.env.DB.prepare(
+            "delete from status_slug where slug = ? and workspace_id = ? and created_at < ?",
+          )
+            .bind(one.id, due.workspaceId, one.at)
+            .run();
           done.released.push(one.id);
         }
       }
     } catch (error) {
       done.error = String(error);
     }
-    await c.runMutation(RECORD, { kv: kv !== undefined, plan: due.plan, done, now: due.now, late });
+    await c.runMutation(RECORD, {
+      kv: kv !== undefined,
+      plan: due.plan,
+      done,
+      started: due.started,
+    });
     return { pushed: done.page };
   },
 });
@@ -560,39 +586,69 @@ function armDomain(c: MutationCtx, checker: DomainChecker): void {
   if (at !== null) tickAt(c, at, "domain");
 }
 
+/** The domain check under way (`shard_meta` `domain_checking`, its start): the DO's `running`, across mutations. */
+const CHECKING = "domain_checking";
+/** How long a domain check holds its lease: Cloudflare's or the edge's call is bounded far below this (`CF_CALL_MS`). */
+export const DOMAIN_CHECK_LEASE_MS = 2 * 60 * 1000;
+
 /**
- * The domain, when it is due its check now (`DomainChecker.due`), with a fallback tick should the action die before
- * `domainSettle`; else null, with the tick armed for when it is due.
+ * The domain, when it is due its check now (`DomainChecker.due`) and no other check is out (its lease, as the DO's
+ * `running`), with a fallback tick should the action die before `domainSettle`; else null, with the tick armed for when
+ * it is due.
  */
 export const domainDue = internalMutationGeneric({
   args: { config: v.boolean() },
   handler: (
     ctx,
     input: { config: boolean },
-  ): { workspaceId: string; row: StatusDomainRow } | null => {
+  ): { workspaceId: string; row: StatusDomainRow; started: number } | null => {
     const c = ctx as MutationCtx;
     holdTicks(c);
     const { shard } = emberWorkspace(c);
     const workspaceId = shard.workspace();
     if (workspaceId === undefined) return null;
     c.sql.exec("delete from ember_ticks where key = 'domain'");
+    const out = meta(c, CHECKING);
+    if (out !== undefined && c.now - out < DOMAIN_CHECK_LEASE_MS) {
+      tickAt(c, out + DOMAIN_CHECK_LEASE_MS, "domain");
+      return null;
+    }
     const checker = checkerOf(c, shard, input.config);
     const row = checker.due(c.now);
-    if (row) tickAt(c, c.now + DOMAIN_RECHECK_MIN_MS, "domain");
-    else armDomain(c, checker);
-    return row ? { workspaceId, row } : null;
+    if (!row) {
+      c.sql.exec("delete from shard_meta where key = ?", CHECKING);
+      armDomain(c, checker);
+      return null;
+    }
+    setMeta(c, CHECKING, c.now);
+    tickAt(c, c.now + DOMAIN_CHECK_LEASE_MS, "domain");
+    return { workspaceId, row, started: c.now };
   },
 });
 
-/** What the domain's check found (`DomainChecker.settle`; a refused check backs off), then the next one armed. */
+/**
+ * What the domain's check started at `started` found (`DomainChecker.settle`; a refused check backs off), then the
+ * next one armed. A check whose lease ran out (a newer one took it) records nothing: what it found may be older.
+ */
 export const domainSettle = internalMutationGeneric({
-  args: { config: v.boolean(), row: v.any(), probed: v.any() },
-  handler: (ctx, input: { config: boolean; row: StatusDomainRow; probed: DomainProbe }): null => {
+  args: { config: v.boolean(), row: v.any(), probed: v.any(), started: v.number() },
+  handler: (
+    ctx,
+    input: { config: boolean; row: StatusDomainRow; probed: DomainProbe; started: number },
+  ): null => {
     const c = ctx as MutationCtx;
     holdTicks(c);
     const { shard } = emberWorkspace(c);
     if (shard.workspace() === undefined) return null;
     const checker = checkerOf(c, shard, input.config);
+    if (meta(c, CHECKING) !== input.started) {
+      log("a status domain check outlived its lease; dropping what it found", {
+        startedAt: input.started,
+      });
+      armDomain(c, checker);
+      return null;
+    }
+    c.sql.exec("delete from shard_meta where key = ?", CHECKING);
     try {
       checker.settle(input.row, input.probed, c.now);
     } catch (error) {
@@ -626,6 +682,7 @@ export const domainCheck = internalActionGeneric({
     const due = (await c.runMutation(DOMAIN_DUE, { config: config !== undefined })) as {
       workspaceId: string;
       row: StatusDomainRow;
+      started: number;
     } | null;
     if (!due) return { checked: false };
     let allowed = true;
@@ -638,7 +695,12 @@ export const domainCheck = internalActionGeneric({
     const probed: DomainProbe = allowed
       ? await probeDomain(due.row, config, (request) => fetch(request))
       : { kind: "failed", why: "rate limited" };
-    await c.runMutation(DOMAIN_SETTLE, { config: config !== undefined, row: due.row, probed });
+    await c.runMutation(DOMAIN_SETTLE, {
+      config: config !== undefined,
+      row: due.row,
+      probed,
+      started: due.started,
+    });
     return { checked: probed.kind !== "failed" };
   },
 });

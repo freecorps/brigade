@@ -6,6 +6,8 @@ import schema from "../schema.ts";
 import * as events from "../events.ts";
 import * as monitors from "../monitors.ts";
 import * as status from "../status.ts";
+import { DOMAIN_CHECK_LEASE_MS } from "../status.ts";
+import { STATUS_PUSH_ABANDON_MS } from "../../src/status-page.ts";
 import { local } from "./stubs.ts";
 import * as workspace from "../workspace.ts";
 
@@ -53,7 +55,7 @@ const page = { slug: "acme", title: "Acme", locale: "en", enabled: true };
 
 type Plan = {
   workspaceId: string;
-  now: number;
+  started: number;
   plan: { dirty?: number; page?: { key: string; put?: string }; retired: unknown[] };
 };
 
@@ -88,8 +90,7 @@ describe("the status page on Ember", () => {
       kv: true,
       plan: due.plan,
       done: { page: true, cleared: [], released: [] },
-      now: due.now,
-      late: false,
+      started: due.started,
     });
     expect(recorded.value).toBe(null);
     // Pushed: nothing is due until its daily rebuild.
@@ -104,13 +105,46 @@ describe("the status page on Ember", () => {
       kv: true,
       plan: due.plan,
       done: { page: false, cleared: [], released: [], error: "KV is down" },
-      now: due.now,
-      late: false,
+      started: due.started,
     });
     // Within the backoff: not due yet.
     expect(s.call("status:plan", { kv: true }).value).toBe(null);
     s.tick(10 * 60 * 1000);
     expect((s.call("status:plan", { kv: true }).value as Plan).plan.dirty).toBe(due.plan.dirty);
+  });
+
+  test("a push never starts beside one still out; an abandoned one's record marks the page to go again", () => {
+    const s = shard();
+    s.call("status:configure", { workspaceId: WS, actor: owner, args: page, now: T });
+    const first = s.call("status:plan", { kv: true }).value as Plan;
+    // Another change while it is out: no second push beside it.
+    s.call("status:configure", {
+      workspaceId: WS,
+      actor: owner,
+      args: { ...page, title: "Acme Inc" },
+      now: T,
+    });
+    expect(s.call("status:plan", { kv: true }).value).toBe(null);
+    // Past the abandon time: a newer push takes over.
+    s.tick(STATUS_PUSH_ABANDON_MS + 1);
+    const second = s.call("status:plan", { kv: true }).value as Plan;
+    expect(second.started).toBeGreaterThan(first.started);
+    s.call("status:record", {
+      kv: true,
+      plan: second.plan,
+      done: { page: true, cleared: [], released: [] },
+      started: second.started,
+    });
+    expect(s.call("status:plan", { kv: true }).value).toBe(null);
+    // The abandoned one settles late: its write may have landed after the newer one, so the page goes again.
+    s.call("status:record", {
+      kv: true,
+      plan: first.plan,
+      done: { page: true, cleared: [], released: [] },
+      started: first.started,
+    });
+    s.tick(2000);
+    expect(s.call("status:plan", { kv: true }).value).not.toBe(null);
   });
 
   test("a refused page answers its code, and says whether a slug just claimed may go back", () => {
@@ -213,17 +247,57 @@ describe("the status page's domain on Ember", () => {
     s.tick(2 * 60 * 1000);
     const due = s.call("status:domainDue", { config: false }).value as {
       row: { hostname: string };
+      started: number;
     };
     expect(due.row.hostname).toBe("status.example.com");
     s.call("status:domainSettle", {
       config: false,
       row: due.row,
       probed: { kind: "edge", answers: true },
+      started: due.started,
     });
     expect(
       (s.call("status:domainState", { workspaceId: WS }).value as { domain: { state: string } })
         .domain.state,
     ).toBe("active");
+  });
+
+  test("a domain check never starts beside one still out, and a check that outlived its lease records nothing", () => {
+    const s = shard();
+    s.call("status:configure", { workspaceId: WS, actor: owner, args: page, now: T });
+    s.call("status:changeDomain", {
+      workspaceId: WS,
+      actor: owner,
+      name: "add",
+      args: {
+        hostname: "status.example.com",
+        cloudflareId: null,
+        state: "pending",
+        records: [],
+        error: "not_attached",
+      },
+    });
+    s.tick(2 * 60 * 1000);
+    const first = s.call("status:domainDue", { config: false }).value as {
+      row: unknown;
+      started: number;
+    };
+    expect(first).not.toBe(null);
+    expect(s.call("status:domainDue", { config: false }).value).toBe(null);
+    s.tick(DOMAIN_CHECK_LEASE_MS + 1);
+    const second = s.call("status:domainDue", { config: false }).value as { started: number };
+    expect(second.started).toBeGreaterThan(first.started);
+    // The first settles late: dropped.
+    s.call("status:domainSettle", {
+      config: false,
+      row: first.row,
+      probed: { kind: "edge", answers: true },
+      started: first.started,
+    });
+    expect(
+      (s.call("status:domainState", { workspaceId: WS }).value as { domain: { state: string } })
+        .domain.state,
+    ).toBe("pending");
   });
 
   test("another workspace's shard, and an unknown change, are refused", () => {

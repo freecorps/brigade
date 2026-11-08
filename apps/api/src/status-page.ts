@@ -419,9 +419,10 @@ export class StatusPublisher {
   /**
    * Records what was done of `plan` (`planPush`), as `push` records it: the page pushed (its dirty version and any
    * re-push mark before `now` cleared), each retired slug's snapshot deleted (`cleared`) or released (its row gone,
-   * only that retirement), then the backoff cleared, or set when a step failed.
+   * only that retirement), then the backoff cleared, or set when a step failed. `now` is when the push started (its
+   * plan), `settledAt` when it ended: the backoff runs from the end, so a slow call that failed never used it up.
    */
-  recordPush(plan: StatusPushPlan, done: StatusPushDone, now: number): void {
+  recordPush(plan: StatusPushPlan, done: StatusPushDone, now: number, settledAt = now): void {
     const { shard } = this.deps;
     if (plan.page && done.page) this.setMeta("status_pushed_at", now);
     // As `push`: a page that could not be written leaves its change (and any re-push mark) pending.
@@ -441,7 +442,7 @@ export class StatusPublisher {
     if (done.error === undefined) {
       this.clearMeta("status_attempts");
       this.clearMeta("status_retry_at");
-    } else this.failed(now, new Error(done.error));
+    } else this.failed(settledAt, new Error(done.error));
   }
 
   /** A push given up on (it outlasted its deadline): its write may land after a newer one, so the page is marked. */

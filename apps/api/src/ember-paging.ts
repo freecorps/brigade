@@ -78,12 +78,14 @@ const engines = new Map<string, { engine: WorkspaceEngine; at: number }>();
  * The engine holding `workspaceId`, for a page: D1's `workspace_engine`, kept `ENGINE_CACHE_MS` per isolate. A page
  * never fails on D1 (it did not read D1 before Ember): when D1 fails or takes longer than `ENGINE_LOOKUP_BUDGET_MS`,
  * the engine last known goes, or else `WorkspaceDO`, which hands a workspace on Ember to its shard once switched
- * (a switch needs that forwarding first: `setWorkspaceEngine`).
+ * (a switch needs that forwarding first: `setWorkspaceEngine`). With `orElse: "throw"`, a lookup with no engine known
+ * throws instead, for a caller whose work is retried (a Queue message) and which must not guess `WorkspaceDO`.
  */
 export async function pageEngine(
   db: D1Database,
   workspaceId: string,
   now = Date.now(),
+  orElse: "brigade" | "throw" = "brigade",
 ): Promise<WorkspaceEngine> {
   const known = engines.get(workspaceId);
   if (known && now - known.at < ENGINE_CACHE_MS) return known.engine;
@@ -102,7 +104,9 @@ export async function pageEngine(
     known: known?.engine ?? null,
     error: out === "late" ? "late" : String(out.error),
   });
-  return known?.engine ?? "brigade";
+  if (known) return known.engine;
+  if (orElse === "throw") throw new Error(`the engine of ${workspaceId} could not be read`);
+  return "brigade";
 }
 
 /**

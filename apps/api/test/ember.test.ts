@@ -22,6 +22,7 @@ import { EMBER_TOKEN_TTL_S, mintEmberToken, verifyEmberToken } from "../src/embe
 import {
   emberPager,
   ENGINE_CACHE_MS,
+  ENGINE_LOOKUP_BUDGET_MS,
   freshMembers,
   pageEngine,
   workspacePager,
@@ -30,6 +31,7 @@ import { deleteMembership, writeRole } from "../src/members.ts";
 import { sendOverdue } from "../ember/local.ts";
 import { provisionWorkspace, workspaceInvitations } from "../src/ember-invitations.ts";
 import { INVITE_ENGINE_BUDGET_MS, notifyInvitation } from "../src/notify-invite.ts";
+import { workspaceIntegrations } from "../src/ember-integrations.ts";
 import { getFunctionName } from "@freecorps/ember-server";
 import { generateRecipient, toBase64url } from "@freecorps/brigade-push";
 import type { BrigadeEvent } from "../src/outbox.ts";
@@ -1413,5 +1415,60 @@ describe("the status page on an Ember workspace", () => {
       if (snapshot === null) await new Promise((resolve) => setTimeout(resolve, 100));
     }
     expect(JSON.parse(snapshot!)).toMatchObject({ workspaceId });
+  });
+});
+
+describe("webhooks on an Ember workspace", () => {
+  test("POST /workspaces/:id/webhooks creates the endpoint on the Ember shard, with its signing secret", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const id = newId("whk", Date.now(), (n) => crypto.getRandomValues(new Uint8Array(n)));
+    const created = await api(`/workspaces/${workspaceId}/webhooks`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+      body: JSON.stringify({
+        id,
+        url: "https://hooks.example.com/brigade",
+        description: "Ops bot",
+        events: ["incident.declared"],
+      }),
+    });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({ id, secret: expect.any(String) });
+    // On the Ember shard, as a member sees it.
+    const shard = workspaceShard(workspaceId);
+    const stub = env.SHARD.getByName(shard) as unknown as {
+      query(s: string, fn: string, args: unknown, identity: unknown): Promise<Outcome>;
+    };
+    const listed = await stub.query(
+      shard,
+      "workspace:query",
+      { name: "webhook.all", args: {} },
+      { subject: userId, claims: { role: "owner", ws: workspaceId } },
+    );
+    expect(JSON.stringify(listed.value)).toContain(id);
+  });
+});
+
+describe("the engine a Queue notifier's Slack and webhook calls go to", () => {
+  test("a stalled D1 read gives up within the page's lookup bound, and with no engine known the message is retried", async () => {
+    vi.useFakeTimers();
+    try {
+      const stalled = {
+        prepare: () => ({ bind: () => ({ first: () => new Promise(() => {}) }) }),
+      } as unknown as D1Database;
+      const picked = workspaceIntegrations(
+        { WORKSPACE: env.WORKSPACE, SHARD: env.SHARD, DB: stalled },
+        `ws_stalled_${++people}`,
+        { queue: true },
+      );
+      // Nothing known for this workspace: it throws within the bound, so the message is retried, never guessed.
+      const outcome = expect(picked).rejects.toThrow(/could not be read/);
+      await vi.advanceTimersByTimeAsync(ENGINE_LOOKUP_BUDGET_MS + 10);
+      await outcome;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -5,6 +5,7 @@
 // answers through each request's `response_url`, which needs no token.
 // `beginSlackInstall` is the dashboard's `POST /workspaces/:id/slack/install`, which starts an install.
 
+import { workspaceIntegrations } from "./ember-integrations.ts";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type {
   SlackActRefusal,
@@ -43,7 +44,11 @@ import { isTokenKey, openToken, sealToken, tokenBinding } from "./slack-token.ts
 import { ORGANIZATION_ID } from "./workspace.ts";
 
 /** The API's bindings as Slack needs them; `SLACK_TOKEN_KEY` is optional: without it Slack is off. */
-export type SlackBridgeEnv = Pick<Env, "DB" | "WORKSPACE"> & { SLACK_TOKEN_KEY?: string };
+export type SlackBridgeEnv = Pick<Env, "DB" | "WORKSPACE"> & {
+  SLACK_TOKEN_KEY?: string;
+  /** A workspace on Ember (D1's `workspace_engine`): its Slack calls go to its shard. */
+  SHARD?: Env["SHARD"];
+};
 
 /** The cookie the Slack Worker checks the OAuth callback's state against (integrations/slack src/oauth.ts). */
 export const SLACK_STATE_COOKIE = "brigade_slack_oauth";
@@ -98,7 +103,7 @@ export async function slackConnection(
   }
   const workspaceId = await teamWorkspace(env.DB, teamId);
   if (!workspaceId) return { ok: false, code: "not_connected" };
-  const context = await env.WORKSPACE.getByName(workspaceId).slackContext(teamId);
+  const context = await (await workspaceIntegrations(env, workspaceId)).slackContext(teamId);
   if (!context) return { ok: false, code: "not_connected" };
   try {
     const token = await openToken(
@@ -221,13 +226,9 @@ export async function slackAct(
     } else {
       shardAction = action;
     }
-    const outcome = await env.WORKSPACE.getByName(workspaceId).slackAct(
-      workspaceId,
-      request.teamId,
-      actor,
-      shardAction,
-      request.key,
-    );
+    const outcome = await (
+      await workspaceIntegrations(env, workspaceId)
+    ).slackAct(workspaceId, request.teamId, actor, shardAction, request.key);
     return { ...outcome, locale, workspaceName };
   } catch (error) {
     log("slack action failed", { error: String(error) });
@@ -324,7 +325,7 @@ export async function openSlackDeclare(
     const locale = userLocale(member.locale) ?? slackSide;
     if (!isRole(member.role)) return refuse("unmapped", locale, workspaceName);
     if (!can(member.role, "incident:declare")) return refuse("forbidden", locale, workspaceName);
-    const catalog = await env.WORKSPACE.getByName(workspaceId).slackCatalog();
+    const catalog = await (await workspaceIntegrations(env, workspaceId)).slackCatalog();
     const opened = await callSlack(
       "views.open",
       {
@@ -369,11 +370,9 @@ export async function slackRevoked(
   if (bots !== null && bots.length === 0) return;
   const workspaceId = await teamWorkspace(env.DB, revocation.teamId);
   if (!workspaceId) return;
-  const changed = await env.WORKSPACE.getByName(workspaceId).slackRevoked(
-    revocation.teamId,
-    reason,
-    bots,
-  );
+  const changed = await (
+    await workspaceIntegrations(env, workspaceId)
+  ).slackRevoked(revocation.teamId, reason, bots);
   if (changed) log("slack access revoked by Slack", { workspace: workspaceId, reason });
 }
 
@@ -406,7 +405,7 @@ export async function listSlackChannels(
     if (!role) return Response.json({ error: "not_a_member" }, { status: 403 });
     if (!can(role, "workspace:manage"))
       return Response.json({ error: "forbidden" }, { status: 403 });
-    const teamId = await env.WORKSPACE.getByName(workspaceId).slackTeam();
+    const teamId = await (await workspaceIntegrations(env, workspaceId)).slackTeam();
     const connection = teamId ? await slackConnection(env, teamId) : null;
     if (!connection?.ok || connection.workspaceId !== workspaceId) {
       return Response.json({ error: "not_connected" }, { status: 409, headers: noStore });
@@ -481,7 +480,7 @@ async function connectInstall(
     return { ok: false, code: "failed" };
   }
   try {
-    const shard = env.WORKSPACE.getByName(workspaceId);
+    const shard = await workspaceIntegrations(env, workspaceId);
     const userId = await shard.slackTakeState(workspaceId, nonce);
     if (!userId) return { ok: false, code: "invalid_state" };
     const role = await memberRole(env.DB, workspaceId, userId);
@@ -567,10 +566,9 @@ export async function beginSlackInstall(
   }
   let nonce: string | null;
   try {
-    nonce = await env.WORKSPACE.getByName(workspaceId).slackBeginInstall(
-      workspaceId,
-      session.user.id,
-    );
+    nonce = await (
+      await workspaceIntegrations(env, workspaceId)
+    ).slackBeginInstall(workspaceId, session.user.id);
   } catch (error) {
     log("slack install could not start", { workspace: workspaceId, error: String(error) });
     return Response.json({ error: "unavailable" }, { status: 503 });
@@ -612,7 +610,7 @@ async function claimTeam(
 ): Promise<boolean> {
   const current = await teamWorkspace(env.DB, teamId);
   if (current && current !== workspaceId) {
-    const holder = await env.WORKSPACE.getByName(current).slackTeam();
+    const holder = await (await workspaceIntegrations(env, current)).slackTeam();
     if (holder === teamId) return false;
   }
   const { meta } = await env.DB.prepare(
@@ -637,7 +635,7 @@ async function mayRevoke(env: SlackBridgeEnv, install: SlackInstall): Promise<bo
   try {
     const workspaceId = await teamWorkspace(env.DB, install.teamId);
     if (!workspaceId) return true;
-    const held = await env.WORKSPACE.getByName(workspaceId).slackContext(install.teamId);
+    const held = await (await workspaceIntegrations(env, workspaceId)).slackContext(install.teamId);
     if (!held) return true;
     if (!isTokenKey(env.SLACK_TOKEN_KEY)) return false;
     const token = await openToken(

@@ -6,6 +6,7 @@
 // and never decides whether a page is retried; its own retries come back through the shard's alarm and the outbox
 // (`webhook.redeliver`). Also here: the email that tells the owners Brigade turned an endpoint off.
 
+import { workspaceIntegrations } from "./ember-integrations.ts";
 import { resolveLocale } from "@freecorps/brigade-i18n";
 import { v, WEBHOOK_SNIPPET_MAX, webhookTargetProblem } from "@freecorps/brigade-schema";
 import { readPrefix } from "./check.ts";
@@ -37,6 +38,10 @@ export const WEBHOOK_USER_AGENT = "Brigade-Webhooks/1 (+https://github.com/freec
 
 export type WebhookNotifyEnv = {
   WORKSPACE: Env["WORKSPACE"];
+  /** Where a workspace's engine is read (`workspace_engine`). */
+  DB?: Env["DB"];
+  /** A workspace on Ember (D1's `workspace_engine`): its Slack and webhook calls go to its shard. */
+  SHARD?: Env["SHARD"];
   /** 32 random bytes, base64url, that seal signing secrets at rest. Without it webhooks are off. */
   WEBHOOK_SECRET_KEY?: string;
 };
@@ -60,7 +65,7 @@ export async function notifyWebhooks(
 ): Promise<void> {
   if (!asksForWebhooks(event) || !isTokenKey(env.WEBHOOK_SECRET_KEY)) return;
   const key = env.WEBHOOK_SECRET_KEY;
-  const shard = env.WORKSPACE.getByName(event.workspaceId);
+  const shard = await workspaceIntegrations(env, event.workspaceId, { queue: true });
   const plan = await shard.planWebhooks(event);
   const { body, event: original } = plan;
   if (body === null || original === null) return;
@@ -222,6 +227,8 @@ export function snippet(text: string): string | null {
 
 export type WebhookEmailEnv = {
   WORKSPACE: Env["WORKSPACE"];
+  /** A workspace on Ember (D1's `workspace_engine`): its Slack and webhook calls go to its shard. */
+  SHARD?: Env["SHARD"];
   DB?: D1Database;
   DASHBOARD_URL?: string;
 };
@@ -241,7 +248,7 @@ export async function notifyWebhookDisabled(
   sender: EmailSender | undefined,
 ): Promise<number | undefined> {
   if (!sender) return undefined;
-  const shard = env.WORKSPACE.getByName(event.workspaceId);
+  const shard = await workspaceIntegrations(env, event.workspaceId, { queue: true });
   const plan = await shard.planWebhookEmail(event);
   if (!plan.send) {
     return plan.reason === "held"

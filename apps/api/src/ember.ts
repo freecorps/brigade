@@ -12,6 +12,7 @@ import schema from "../ember/schema.ts";
 import * as alerts from "../ember/alerts.ts";
 import * as devices from "../ember/devices.ts";
 import * as events from "../ember/events.ts";
+import * as integrations from "../ember/integrations.ts";
 import * as local from "../ember/local.ts";
 import * as invitations from "../ember/invitations.ts";
 import * as mailer from "../ember/mailer.ts";
@@ -161,6 +162,7 @@ export const ember = createEmberWorker({
     alerts,
     monitors,
     status,
+    integrations,
   },
   basePath: EMBER_BASE_PATH,
   auth: brigadeEmberAuth,

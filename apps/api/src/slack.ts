@@ -99,7 +99,8 @@ export function asksForSlack(event: BrigadeEvent): boolean {
   return INCIDENT_EVENTS.has(event.type) && event.subject?.startsWith("inc_") === true;
 }
 
-const SCHEMA = `
+/** The Slack desk's ledgers (ember/ledgers.ts too). */
+export const SLACK_SCHEMA = `
   create table if not exists slack_states (
     hash text primary key,
     user_id text not null,
@@ -284,7 +285,7 @@ export type SlackDeskOptions = {
 
 export class SlackDesk {
   constructor(private readonly options: SlackDeskOptions) {
-    options.storage.sql.exec(SCHEMA);
+    options.storage.sql.exec(SLACK_SCHEMA);
   }
 
   private get sql() {
@@ -296,22 +297,34 @@ export class SlackDesk {
    * SHA-256, for `SLACK_STATE_MS`. Null when the workspace already has `SLACK_MAX_PENDING_STATES` pending.
    */
   async beginInstall(userId: string, now: number): Promise<string | null> {
+    const nonce = toBase64url(this.options.randomBytes(32));
+    return this.keepState(userId, await slackStateHash(nonce), now) ? nonce : null;
+  }
+
+  /**
+   * `beginInstall`'s storage, with the state's hash computed by the caller (on Ember the Worker, since a mutation runs
+   * no crypto): false when the workspace already has `SLACK_MAX_PENDING_STATES` pending.
+   */
+  keepState(userId: string, hash: string, now: number): boolean {
     this.sql.exec("delete from slack_states where expires_at <= ?", now);
     const pending = this.sql.exec<{ n: number }>("select count(*) as n from slack_states").one().n;
-    if (pending >= SLACK_MAX_PENDING_STATES) return null;
-    const nonce = toBase64url(this.options.randomBytes(32));
+    if (pending >= SLACK_MAX_PENDING_STATES) return false;
     this.sql.exec(
       "insert into slack_states (hash, user_id, expires_at) values (?, ?, ?)",
-      await sha256(nonce),
+      hash,
       userId,
       now + SLACK_STATE_MS,
     );
-    return nonce;
+    return true;
   }
 
   /** The member who started the install `nonce` names, once: the state is deleted whatever happens next. */
   async takeState(nonce: string, now: number): Promise<string | null> {
-    const hash = await sha256(nonce);
+    return this.takeStateHash(await slackStateHash(nonce), now);
+  }
+
+  /** `takeState` by the state's hash. */
+  takeStateHash(hash: string, now: number): string | null {
     const [row] = this.sql
       .exec<{ user_id: string; expires_at: number }>(
         "select user_id, expires_at from slack_states where hash = ?",
@@ -1667,14 +1680,15 @@ function refusedBy(code: MutationErrorCode): SlackActOutcome & { ok: false } {
   }
 }
 
-async function sha256(text: string): Promise<string> {
+/** The SHA-256 a Slack install state is kept under (`slack_states`), as lower-case hex. */
+export async function slackStateHash(text: string): Promise<string> {
   const digest = new Uint8Array(
     await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
   );
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function toBase64url(bytes: Uint8Array): string {
+export function toBase64url(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");

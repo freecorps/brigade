@@ -169,7 +169,8 @@ describe("EmberSyncClient", () => {
   });
 
   test("connection changes are told per workspace, and a closed client refuses", async () => {
-    const sync = client(server());
+    const fake = server();
+    const sync = client(fake);
     const seen: string[] = [];
     // Listening before anything opened the workspace's client.
     const off = sync.onConnectionChange(WORKSPACE, () =>
@@ -181,6 +182,11 @@ describe("EmberSyncClient", () => {
     expect(seen).toContain("open");
     off();
     sync.close();
+    // A handle from before the close opens no client again.
+    const sockets = fake.history.length;
+    handle.subscribe(() => {})();
+    expect(sync.connectionState(WORKSPACE)).toBe("idle");
+    expect(fake.history.length).toBe(sockets);
     expect(
       await sync.mutate(WORKSPACE, "incident.declare", { id: "x", title: "y" } as never),
     ).toMatchObject({

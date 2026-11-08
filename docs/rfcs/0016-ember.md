@@ -477,6 +477,10 @@ Kept as they are, on purpose:
   probe needs.
 - **G5**: used by step 4 (the dashboard on Ember's client), not built yet.
 
+The list below is each gap as it was asked for (2026-11-06), kept as the record. Its "Workaround" lines describe
+Brigade before Ember shipped the gap, and hold now only where the status above keeps them (G1, G3, G6, and G2's
+`page_pending`).
+
 - **G1 — App-owned payloads in the direct transport.** `sendApns`/`sendFcm`/`sendToDevices` always build the payload
   and the envelope. Proposed: `AddressedPushMessage.payload?: { apns?: Record<string, unknown>; fcmData?:
   Record<string, string> }` sent as given (Ember still sets headers, priority, expiration, collapse id, the provider

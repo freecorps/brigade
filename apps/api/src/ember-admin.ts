@@ -4,7 +4,8 @@
 //
 //   GET  /admin/ember/workspaces?after=<id>   every workspace in D1 with its engine, 500 at a time, in id order
 //   POST /admin/ember/copy/:workspaceId       copy and check (can run again)
-//   POST /admin/ember/switch/:workspaceId     freeze the DO, copy again, arm the ticks, then D1 says `ember`
+//   POST /admin/ember/switch/:workspaceId     freeze the DO, copy again, arm the ticks, then D1 says `ember`; refused
+//                                             (409 `too_large`) past `READ_CAP_GUARD` rows in a table, unless ?force=1
 //   POST /admin/ember/back/:workspaceId       D1 says `brigade` again, and the DO holds the workspace as at the copy
 
 import { same } from "./alert-intake.ts";
@@ -76,7 +77,8 @@ export async function serveMigration(
       }
     }
     if (action === "switch") {
-      const result = await switchWorkspace(env, workspaceId);
+      const force = new URL(request.url).searchParams.get("force") === "1";
+      const result = await switchWorkspace(env, workspaceId, { force });
       log("workspace switch to Ember", { workspace: workspaceId, ok: result.ok });
       return json(result, result.ok ? 200 : result.code === "not_found" ? 404 : 409);
     }

@@ -171,4 +171,19 @@ describe("the migration's operator routes", () => {
     expect(results.filter((r) => !r.ok)).toEqual([{ ok: false, code: "busy" }]);
     expect(await workspaceEngine(env.DB, workspaceId)).toBe("ember");
   });
+
+  test("a table near the read cap holds the switch back, unless forced", async () => {
+    const { workspaceId } = await written();
+    const held = await switchWorkspace(env, workspaceId, { guard: 0 });
+    expect(held).toMatchObject({ ok: false, code: "too_large" });
+    expect(held.copy?.large).toContain("incidents");
+    expect(held.copy?.rows.incidents).toBe(1);
+    // Not switched: D1 and the DO as they were.
+    expect(await workspaceEngine(env.DB, workspaceId)).toBe("brigade");
+    expect((await env.WORKSPACE.getByName(workspaceId).info()).tables).toBeGreaterThan(0);
+    expect(await switchWorkspace(env, workspaceId, { guard: 0, force: true })).toMatchObject({
+      ok: true,
+    });
+    expect(await workspaceEngine(env.DB, workspaceId)).toBe("ember");
+  });
 });

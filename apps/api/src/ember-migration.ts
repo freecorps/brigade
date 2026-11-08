@@ -53,7 +53,18 @@ export type CopyReport = {
   /** The tables whose count or hash differ after the copy (none when it succeeded). */
   mismatched: TableCheck[];
   tables: number;
+  /** Each table's row count, for the tables that have rows. */
+  rows: Record<string, number>;
+  /**
+   * The tables past `READ_CAP_GUARD` rows: near Ember's per-transaction read cap (16,384 rows, #204), which some shard
+   * paths that scan a whole table (export, postmortem drafts, the status snapshot, reminders) would reach. A switch
+   * refuses a workspace with any unless forced.
+   */
+  large: string[];
 };
+
+/** Half of Ember's per-transaction read cap (16,384 rows): a table past it is reported, and holds a switch back. */
+export const READ_CAP_GUARD = 8192;
 
 const encoder = new TextEncoder();
 
@@ -124,7 +135,7 @@ async function* walk(page: (after: string) => Promise<Row[]>): AsyncGenerator<Ro
 export async function copyWorkspace(
   env: MigrationEnv,
   workspaceId: string,
-  options: { standalone?: boolean } = {},
+  options: { standalone?: boolean; guard?: number } = {},
 ): Promise<CopyReport> {
   const raw = sides(env, workspaceId);
   // A copy run on its own (not the switch's) stops the moment the workspace is switched, so it never writes over a
@@ -140,6 +151,8 @@ export async function copyWorkspace(
   let written = 0;
   let dropped = 0;
   const mismatched: TableCheck[] = [];
+  const rows: Record<string, number> = {};
+  const large: string[] = [];
   for (const table of BRIGADE_TABLES) {
     // 1. Every row the DO holds, written as it is.
     for (let after = ""; ;) {
@@ -184,15 +197,17 @@ export async function copyWorkspace(
       ember: { rows: yours.rows, hash: await yours.hex() },
     };
     if (check.rows !== check.ember.rows || check.hash !== check.ember.hash) mismatched.push(check);
+    if (check.rows > 0) rows[table] = check.rows;
+    if (check.rows > (options.guard ?? READ_CAP_GUARD)) large.push(table);
   }
-  return { written, dropped, mismatched, tables: BRIGADE_TABLES.length };
+  return { written, dropped, mismatched, tables: BRIGADE_TABLES.length, rows, large };
 }
 
 export type SwitchResult =
   | { ok: true; copy: CopyReport; ticks: string[] }
   /** D1 said `ember` already: the switch only finished the DO's forwarding, and copied nothing over live data. */
   | { ok: true; finished: true }
-  | { ok: false; code: "not_found" | "busy" | "mismatch"; copy?: CopyReport };
+  | { ok: false; code: "not_found" | "busy" | "mismatch" | "too_large"; copy?: CopyReport };
 
 /**
  * Switches `workspaceId` to Ember: freezes its `WorkspaceDO`, copies it once more, arms the shard's ticks, writes
@@ -202,6 +217,7 @@ export type SwitchResult =
 export async function switchWorkspace(
   env: MigrationEnv,
   workspaceId: string,
+  options: { force?: boolean; guard?: number } = {},
 ): Promise<SwitchResult> {
   const side = sides(env, workspaceId);
   // Switched already (a switch whose forwarding failed, run again): the shard is live, so nothing is copied over it.
@@ -222,7 +238,7 @@ export async function switchWorkspace(
   // Frozen and forwarding nothing, so no write lands on Ember while the last copy runs (it would delete it).
   let copy: CopyReport;
   try {
-    copy = await copyWorkspace(env, workspaceId);
+    copy = await copyWorkspace(env, workspaceId, { guard: options.guard });
   } catch (error) {
     await side.stub.moveBack();
     throw error;
@@ -231,6 +247,11 @@ export async function switchWorkspace(
     // Not switched: the DO holds the workspace again, as if nothing happened.
     await side.stub.moveBack();
     return { ok: false, code: "mismatch", copy };
+  }
+  if (copy.large.length > 0 && !options.force) {
+    // Near the read cap (#204): not switched unless the operator says so, having looked at those tables' paths.
+    await side.stub.moveBack();
+    return { ok: false, code: "too_large", copy };
   }
   let ticks: string[];
   try {

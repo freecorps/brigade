@@ -20,6 +20,7 @@ import * as invitations from "../ember/invitations.ts";
 import * as mailer from "../ember/mailer.ts";
 import * as rest from "../ember/rest.ts";
 import * as members from "../ember/members.ts";
+import * as migration from "../ember/migration.ts";
 import * as monitors from "../ember/monitors.ts";
 import * as paging from "../ember/paging.ts";
 import * as postmortems from "../ember/postmortems.ts";
@@ -176,6 +177,7 @@ export const ember = createEmberWorker({
     postmortems,
     clients,
     ticks,
+    migration,
   },
   basePath: EMBER_BASE_PATH,
   auth: brigadeEmberAuth,

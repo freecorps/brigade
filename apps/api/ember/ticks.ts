@@ -38,7 +38,7 @@ export function holdTicks(ctx: MutationCtx): number {
  * (follow-up reminders), apart so a large follow-up history never weighs on a page's transaction (Ember's per-
  * transaction read limit), and a reminder that fails never rolls back a level that fired.
  */
-const JOBS = {
+export const JOBS = {
   paging: TICK,
   reminders: "paging:remind",
   local: "local:send",

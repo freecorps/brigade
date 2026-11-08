@@ -33,6 +33,7 @@ import {
   type Role,
   type WorkspaceLocale,
   workspaceLocale,
+  TABLES,
 } from "@freecorps/brigade-schema";
 import {
   encode,
@@ -2734,6 +2735,23 @@ export class WorkspaceDO extends DurableObject<Env> {
     return { ok: true };
   }
 
+  /**
+   * The copy's read of this shard (RFC 0016 "Data migration", step 2; src/ember-migration.ts): the rows of `table` with
+   * an id after `after` (from the first with `""`), in id order, at most `limit`, as stored. Also once moved: the
+   * switch copies again from the frozen rows.
+   */
+  exportPage(table: string, after: string, limit: number): { id: string; data: string }[] {
+    if (!(table in TABLES)) throw new Error(`Unknown table ${table}`);
+    return this.ctx.storage.sql
+      .exec<{ id: string; data: string }>(
+        "select id, data from store_rows where tbl = ? and id > ? order by id limit ?",
+        table,
+        after,
+        Math.min(Math.max(1, limit), 500),
+      )
+      .toArray();
+  }
+
   /** Back from Ember (step 4): this object holds the workspace again, with its rows as they were at the copy. */
   async moveBack(): Promise<void> {
     // A moved run's drain finishes first, so its `deleteAlarm` never lands after the alarm set below.
@@ -3087,6 +3105,7 @@ export const WHEN_MOVED: Record<
   moveBack: "own",
   // A delivery receipt is routed by its token's key id, not the engine: one this object minted still comes here.
   receipt: "own",
+  exportPage: "own",
   fetch: "own",
   alarm: "own",
   webSocketMessage: "own",

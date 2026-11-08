@@ -368,10 +368,11 @@ were built for a deployment people depend on.
    (migrations/0017) says which one holds each workspace, `brigade` when it has no row. Nothing reaches an Ember shard
    until its workspace says `ember`: the API mints no Ember token for it and `/ember` answers 404 for its shard
    (src/ember.ts).
-2. **Copy.** An operator route asks every `WorkspaceDO` for its rows, counters, members, devices and pending
-   escalation timers, and writes them to the workspace's Ember shard through internal mutations in batches,
-   idempotent by row id, so the copy can run again and overwrite the last one. It checks counts and a hash per table
-   on both sides. Writes made to `WorkspaceDO` after a workspace's copy are lost at the switch: accepted.
+2. **Copy.** An operator route (`POST /admin/ember/copy/:workspace`, src/ember-admin.ts, behind `MIGRATION_TOKEN`)
+   reads every table of the `WorkspaceDO` in id order (`exportPage`) and writes it to the workspace's Ember shard
+   through internal mutations in batches (`migration:put`, ember/migration.ts), idempotent by row id, so the copy can
+   run again and overwrite the last one; rows the shard holds and the DO does not are deleted. It checks counts and a hash per table
+   on both sides. The switch (`POST /admin/ember/switch/:workspace`) freezes the DO first (step 3) and copies once more from its frozen rows, so no write made after a copy is lost.
    The copy ends by arming the shard's upkeep ticks (`paging:tick` at the earliest escalation timer, replay or held
    push; `paging:remind` once), since rows written by the copy are not a mutation that arms them (ember/ticks.ts).
 3. **Switch.** D1's `workspace_engine` turns to `ember` for every copied workspace, and each `WorkspaceDO` is told

@@ -488,7 +488,8 @@ Kept as they are, on purpose:
   them to `sendToDevices` with `payload`/`seal` changes the paging path for no new behaviour.
 - **G3**: `ProbeDO` stays a plain Durable Object, with no change planned. Moving probes onto Ember gains nothing a
   probe needs.
-- **G5**: used by step 4 (the dashboard on Ember's client), not built yet.
+- **G5**: the dashboard's `EmberSyncClient` runs Brigade's own `apply` as one optimistic update for every mutation
+  (step 4, "Clients"), rather than Ember's `localOptimisticUpdates`, which is for mutations defined in Ember.
 
 The list below is each gap as it was asked for (2026-11-06), kept as the record. Its "Workaround" lines describe
 Brigade before Ember shipped the gap, and hold now only where the status above keeps them (G1, G3, G6, and G2's

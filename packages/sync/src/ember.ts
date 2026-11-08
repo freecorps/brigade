@@ -68,8 +68,11 @@ const globals = globalThis as unknown as {
 const LINGER_MS = 1000;
 
 export type EmberSyncClientOptions = {
-  /** Where Ember is served: its sockets are `<url>/ws`, e.g. `https://brigade.example.com/api/ember`. */
-  url: string;
+  /**
+   * Where Ember is served: its sockets are `<url>/ws`, e.g. `https://brigade.example.com/api/ember`. A function is
+   * read when a workspace's client is first needed (a page's location, which a module loaded outside a page lacks).
+   */
+  url: string | (() => string);
   /**
    * A token for `workspaceId`'s shard (`POST /ember-token/:workspace`), or null when signed out. Called when a
    * socket opens and again before the token expires.
@@ -284,7 +287,7 @@ export class EmberSyncClient implements SyncClientLike {
     if (client) return client;
     const o = this.#options;
     client = new EmberClient({
-      url: o.url,
+      url: typeof o.url === "function" ? o.url() : o.url,
       auth: () => o.token(workspaceId),
       defaultShard: emberShard(workspaceId),
       ...(o.clientId === undefined ? {} : { clientId: o.clientId }),

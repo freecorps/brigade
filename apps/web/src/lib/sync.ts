@@ -136,7 +136,7 @@ async function emberToken(workspaceId: string): Promise<string | null> {
 /** The dashboard's client for workspaces on Ember, on the same origin (`/api/ember/ws`). */
 export function createBrowserEmberClient(): EmberSyncClient {
   return createEmberSyncClient({
-    url: `${window.location.origin}/api/ember`,
+    url: () => `${window.location.origin}/api/ember`,
     token: emberToken,
     actor: syncActor,
     clientId: browserClientId(),

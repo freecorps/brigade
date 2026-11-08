@@ -18,8 +18,12 @@ import { emberWorkspace } from "./shard-facade.ts";
 
 const ws = { workspaceId: v.string() };
 
-/** How many incidents' entries one `entries` call reads: well within a transaction's reads. */
-export const EXPORT_ENTRIES_BATCH = 20;
+/**
+ * How many incidents' entries one `entries` call reads. One: each entry reads the incident's whole timeline and the
+ * follow-ups, and an Ember transaction reads a bounded number of rows, so one incident a call keeps a long one from
+ * taking others down with it.
+ */
+export const EXPORT_ENTRIES_BATCH = 1;
 
 /** The export's checks, its slot of the hourly limit, the file's opening and the incidents' ids. */
 export const start = internalMutationGeneric({

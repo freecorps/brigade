@@ -215,9 +215,11 @@ export async function requestDraftRoute(
   if (!isId("inc", incidentId)) return json({ error: "not_found" }, 404);
   const ai = env.AI;
   if (!ai) return json({ error: "ai_unavailable" }, 503);
-  const shard = await workspacePostmortems(env, workspaceId);
+  let shard: Awaited<ReturnType<typeof workspacePostmortems>>;
   let result: DraftRequestResult;
   try {
+    // The engine lookup too: one that stalls or fails answers `unavailable`, as the shard's own failure does.
+    shard = await workspacePostmortems(env, workspaceId);
     result = await shard.requestPostmortemDraft(workspaceId, member.actor, incidentId);
   } catch (error) {
     console.error(

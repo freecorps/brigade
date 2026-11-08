@@ -325,3 +325,42 @@ export const recentExports = defineQuery({
   filter: () => true,
   sort: (a, b) => b.createdAt - a.createdAt || (a.id < b.id ? 1 : -1),
 });
+
+/**
+ * `exportChunks` for a caller that reads the store in several transactions (an Ember shard, whose transactions each
+ * read a bounded number of rows): the file's opening (the head, up to its incidents array) and the incidents' ids, in
+ * order. Each incident's entry comes from `exportEntries`; the file is the opening, the entries joined by commas, then
+ * `EXPORT_CLOSING`.
+ */
+export function exportOpening(
+  store: MutationStore,
+  scope: ExportScope,
+  now: number,
+):
+  | { ok: true; opening: string; incidentIds: string[] }
+  | { ok: false; code: "not_found" | "limit_reached" } {
+  const incidents = exportIncidents(store, scope);
+  if (!incidents) return { ok: false, code: "not_found" };
+  if (incidents.length > MAX_EXPORT_INCIDENTS) return { ok: false, code: "limit_reached" };
+  const head = JSON.stringify(exportHead(store, scope, now));
+  return {
+    ok: true,
+    opening: `${head.slice(0, -1)},"incidents":[`,
+    incidentIds: incidents.map((incident) => incident.id),
+  };
+}
+
+/** What closes a file `exportOpening` opened. */
+export const EXPORT_CLOSING = "]}";
+
+/**
+ * The entries of `incidentIds` as they are now, as JSON text each (`exportChunks`' per-incident chunk without its
+ * comma). An incident deleted since the opening is left out.
+ */
+export function exportEntries(store: MutationStore, incidentIds: readonly string[]): string[] {
+  const followUps = store.scan("follow_ups");
+  return incidentIds.flatMap((id) => {
+    const incident = store.get("incidents", id);
+    return incident ? [JSON.stringify(exportEntry(store, incident, followUps))] : [];
+  });
+}

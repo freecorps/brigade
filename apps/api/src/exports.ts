@@ -7,6 +7,7 @@
 // expired one and deletes it, the cron's hourly sweep deletes the rest (`sweepExports`), and the bucket's lifecycle
 // rule is the backstop (apps/api/README.md "Exports"). Without the binding every route answers 503.
 
+import { workspaceExports } from "./ember-exports.ts";
 import {
   allows,
   EXPORT_TTL_MS,
@@ -63,12 +64,13 @@ export async function createExport(
   const body = await readJson(request);
   const scope = exportScope((body as { scope?: unknown } | undefined)?.scope, "scope");
   if (!scope.ok) return json({ error: "invalid_args", issues: scope.issues }, 400);
-  const shard = env.WORKSPACE.getByName(workspaceId);
+  let shard: Awaited<ReturnType<typeof workspaceExports>>;
   let built: BuiltExport;
   try {
+    shard = await workspaceExports(env, workspaceId);
     built = await shard.buildExport(workspaceId, member.actor, scope.value);
   } catch (error) {
-    return failed("WorkspaceDO.buildExport failed", workspaceId, error);
+    return failed("building the export on its shard failed", workspaceId, error);
   }
   if (!built.ok) {
     if (built.code === "unauthenticated") return unauthenticated();

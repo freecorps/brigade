@@ -1472,3 +1472,45 @@ describe("the engine a Queue notifier's Slack and webhook calls go to", () => {
     }
   });
 });
+
+describe("exports on an Ember workspace", () => {
+  test("POST /workspaces/:id/exports builds the file from the Ember shard, a batch of incidents at a time", async () => {
+    const { userId, cookie, workspaceId } = await owner();
+    await provision(workspaceId, userId);
+    await setWorkspaceEngine(env.DB, workspaceId, "ember", Date.now());
+    const minted = await api(`/ember-token/${workspaceId}`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    const { token, shard } = (await minted.json()) as { token: string; shard: string };
+    const random = (n: number) => crypto.getRandomValues(new Uint8Array(n));
+    const incident = newId("inc", Date.now(), random);
+    const declared = await api("/ember/api/mutation", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        fn: "workspace:mutate",
+        shard,
+        args: {
+          name: "incident.declare",
+          args: { id: incident, title: "Checkout is down", severity: "sev3" },
+        },
+      }),
+    });
+    expect(await declared.json()).toMatchObject({ ok: true, value: { ok: true } });
+    const created = await api(`/workspaces/${workspaceId}/exports`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+      body: JSON.stringify({ scope: { kind: "incident", incidentId: incident } }),
+    });
+    expect(created.status).toBe(201);
+    const { id, incidents } = (await created.json()) as { id: string; incidents: number };
+    expect(incidents).toBe(1);
+    const file = await api(`/workspaces/${workspaceId}/exports/${id}`, {
+      headers: { Cookie: cookie },
+    });
+    expect(file.status).toBe(200);
+    const body = (await file.json()) as { incidents: { incident: { id: string } }[] };
+    expect(body.incidents.map((entry) => entry.incident.id)).toEqual([incident]);
+  });
+});

@@ -12,6 +12,7 @@ import schema from "../ember/schema.ts";
 import * as alerts from "../ember/alerts.ts";
 import * as devices from "../ember/devices.ts";
 import * as events from "../ember/events.ts";
+import * as dataExports from "../ember/exports.ts";
 import * as integrations from "../ember/integrations.ts";
 import * as local from "../ember/local.ts";
 import * as invitations from "../ember/invitations.ts";
@@ -20,6 +21,7 @@ import * as rest from "../ember/rest.ts";
 import * as members from "../ember/members.ts";
 import * as monitors from "../ember/monitors.ts";
 import * as paging from "../ember/paging.ts";
+import * as postmortems from "../ember/postmortems.ts";
 import * as sessions from "../ember/sessions.ts";
 import * as status from "../ember/status.ts";
 import * as workspace from "../ember/workspace.ts";
@@ -163,6 +165,8 @@ export const ember = createEmberWorker({
     monitors,
     status,
     integrations,
+    exports: dataExports,
+    postmortems,
   },
   basePath: EMBER_BASE_PATH,
   auth: brigadeEmberAuth,

@@ -254,4 +254,19 @@ describe("EmberSyncClient", () => {
     expect(b.handle.getSnapshot().rows).toMatchObject([{ id, title: "Kept", number: 1 }]);
     again.close();
   });
+
+  test("an answer of the shard that is not an outcome is not taken as done", async () => {
+    const fake = new FakeEmberServer({
+      queries: {},
+      mutations: { "workspace:mutate": () => null },
+    });
+    const sync = client(fake);
+    expect(
+      await sync.mutate(WORKSPACE, "incident.declare", {
+        id: newId("inc", Date.now(), randomBytes),
+        title: "x",
+      }),
+    ).toMatchObject({ ok: false, error: { code: "internal" } });
+    sync.close();
+  });
 });

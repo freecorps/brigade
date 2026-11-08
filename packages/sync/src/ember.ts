@@ -139,8 +139,12 @@ function stateOf<R>(snapshot: QuerySnapshot<QueryResult<R>>): QueryState<R> {
 /** What `workspace:mutate` answered → Brigade's outcome: the shard's own refusal is a value, not an error. */
 function outcomeOf(value: unknown): MutationOutcome {
   const result = value as { ok: true } | { ok: false; error: SyncMutationError } | null;
-  if (result?.ok === false) return { ok: false, error: result.error };
-  return { ok: true };
+  if (result?.ok === true) return { ok: true };
+  if (result?.ok === false && typeof result.error?.code === "string") {
+    return { ok: false, error: result.error };
+  }
+  // Anything else (a shard of another version, a bug) is not taken as done: the change did not show as made.
+  return { ok: false, error: { code: "internal", message: "The shard's answer was not one" } };
 }
 
 /** An Ember error on a mutation → Brigade's codes. The client retries what the network loses, so this is rare. */

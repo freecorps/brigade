@@ -1,20 +1,12 @@
 import {
-  createSyncClient,
   MAX_PENDING_MUTATIONS,
   MUTATION_RETENTION_MS,
   type SavedMutation,
-  type SyncSocket,
 } from "@freecorps/brigade-sync";
 import { WORKSPACE_MUTATE, type PendingMutationRecord } from "@freecorps/brigade-sync/ember";
 import { expect, test } from "vite-plus/test";
 import { emberQueue } from "./ember-queue";
-import {
-  openQueue,
-  parseQueueFile,
-  queueFileName,
-  restoreQueue,
-  type PendingFiles,
-} from "./pending";
+import { openQueue, parseQueueFile, queueFileName, type PendingFiles } from "./pending";
 
 const ANA = "usr_ana";
 const WORKSPACE = "org_test";
@@ -150,35 +142,6 @@ test("device registrations are not kept, as with Brigade Sync", async () => {
   expect(saved()).toEqual({});
   await kept.storage.put(ember("incident.ack", "a-1"));
   expect((saved()[SHARD] as PendingMutationRecord[]).map((record) => record.mid)).toEqual(["a-1"]);
-});
-
-test("a workspace turned back to Brigade Sync sends what Ember's client kept, with the same ids", async () => {
-  const { api, saved } = memoryFiles();
-  const before = await openQueue(api, { userId: ANA, workspaceId: WORKSPACE }, newClientId, clock);
-  await before.keep(SHARD, [ember("incident.postUpdate", "m-1", T0 - 5)]);
-
-  const queue = await openQueue(api, { userId: ANA, workspaceId: WORKSPACE }, newClientId, clock);
-  const sent: unknown[] = [];
-  const client = createSyncClient({
-    url: () => "wss://brigade.test/api/sync",
-    actor: { kind: "user", id: ANA, role: "responder" },
-    clientId: queue.clientId,
-    pendingStorage: queue.storage,
-    now: clock,
-    transport: () =>
-      ({
-        readyState: 0,
-        send: (frame: string) => sent.push(JSON.parse(frame)),
-        close: () => {},
-      }) as unknown as SyncSocket,
-  });
-  const restored = restoreQueue(client, WORKSPACE, queue);
-  expect(restored.list.map((change) => [change.mutationId, change.name])).toEqual([
-    ["m-1", "incident.postUpdate"],
-  ]);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(Object.keys(saved())).toEqual([WORKSPACE]);
-  client.close();
 });
 
 test("past the limit of unconfirmed changes, the rest are refused as Brigade Sync's restore does", async () => {

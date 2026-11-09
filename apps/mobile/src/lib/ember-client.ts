@@ -1,6 +1,5 @@
-// The workspace's sync client for a workspace on Ember (RFC 0016 step 5): Ember's client under the same hooks as
-// Brigade Sync's (`@freecorps/brigade-sync/ember`), its tokens from `POST /api/ember-token/:workspace` (src/lib/
-// engine.ts), its unconfirmed changes in the member's queue (src/lib/ember-queue.ts). The open workspace uses it, and so
+// The workspace's sync client (RFC 0016 step 5): Ember's client under the app's hooks
+// (`@freecorps/brigade-sync/ember`), its tokens from `POST /api/ember-token/:workspace` (src/lib/ember-token.ts), its unconfirmed changes in the member's queue (src/lib/ember-queue.ts). The open workspace uses it, and so
 // do the one-shot clients that register or unregister a phone elsewhere (`openOneShot`, src/lib/phone.ts).
 import type { Actor } from "@freecorps/brigade-schema";
 import { createEmberSyncClient } from "@freecorps/brigade-sync/ember";
@@ -9,11 +8,11 @@ import { getRandomBytes } from "expo-crypto";
 import { addNetworkStateListener, getNetworkStateAsync, type NetworkState } from "expo-network";
 import { AppState } from "react-native";
 import { emberQueue } from "@/lib/ember-queue";
-import { emberTokens, probeEngine, type Minted } from "@/lib/engine";
+import { emberTokens, primeToken, type Minted } from "@/lib/ember-token";
 import { restoredChanges, type MemberQueue } from "@/lib/pending";
 import type { OneShotOpen } from "@/lib/phone";
 import type { Server } from "@/lib/sync";
-import { createWorkspaceSync, type WorkspaceSync } from "@/lib/sync-client";
+import type { WorkspaceSync } from "@/lib/sync-client";
 
 export function createEmberWorkspaceSync({
   server,
@@ -22,7 +21,6 @@ export function createEmberWorkspaceSync({
   cookie,
   queue,
   primed,
-  onTurnedBack,
 }: {
   server: Server;
   workspaceId: string;
@@ -30,7 +28,6 @@ export function createEmberWorkspaceSync({
   cookie: () => string;
   queue?: MemberQueue;
   primed?: Minted;
-  onTurnedBack: () => void;
 }): WorkspaceSync {
   const kept = queue ? emberQueue(queue, workspaceId) : undefined;
   const client = createEmberSyncClient({
@@ -40,7 +37,6 @@ export function createEmberWorkspaceSync({
       cookie,
       fetch: (url, init) => fetch(url, init),
       ...(primed ? { primed } : {}),
-      onTurnedBack,
     }),
     actor,
     // The token goes in Ember's `hello`, so React Native's own WebSocket needs no headers.
@@ -59,7 +55,6 @@ export function createEmberWorkspaceSync({
   const sync: WorkspaceSync = {
     client,
     shard: workspaceId,
-    engine: "ember",
     queue,
     restored: restoredChanges([]),
     restore: () => {
@@ -73,26 +68,20 @@ export function createEmberWorkspaceSync({
 }
 
 /**
- * A client of its own for one change (src/lib/phone.ts `OneShotOpen`): Ember's for a workspace the server says is on
- * Ember, with the token it answered, Brigade Sync's otherwise. Nothing is remembered: an answer that does not say (offline,
- * a 5xx) opens Brigade Sync, which the adapter serves for a workspace on Ember too. Refused (401, 403) also opens Brigade
- * Sync, whose socket is refused at once (src/lib/sync.ts `neverOpened`), so the try ends without waiting.
+ * A client of its own for one change (src/lib/phone.ts `OneShotOpen`), primed with a first token when the server
+ * answers one. Refused (401, 403), its client gets no token and never opens (src/lib/sync.ts `neverOpened`), so the try
+ * ends without waiting. Nothing is remembered.
  */
 export const openOneShot: OneShotOpen = async ({ server, workspaceId, actor, cookie }) => {
-  const probe = await probeEngine(server.emberToken(workspaceId), cookie, (url, init) =>
+  const primed = await primeToken(server.emberToken(workspaceId), cookie, (url, init) =>
     fetch(url, init),
   );
-  if (probe.engine !== "ember") {
-    return createWorkspaceSync({ server, workspaceId, actor, cookie: () => cookie });
-  }
   return createEmberWorkspaceSync({
     server,
     workspaceId,
     actor,
     cookie: () => cookie,
-    primed: probe.minted,
-    // Turned back between the probe and the change: its token requests fail, and the try ends on its timeout.
-    onTurnedBack: () => {},
+    ...(primed ? { primed } : {}),
   });
 };
 

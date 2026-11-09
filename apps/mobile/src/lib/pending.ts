@@ -5,14 +5,11 @@
 import {
   MUTATION_RETENTION_MS,
   type MutationOutcome,
-  type SyncClient,
   type PendingStorage,
   type RestoredMutation,
 } from "@freecorps/brigade-sync";
 import type { NoticeTarget } from "@freecorps/brigade-i18n/incident";
 import { INCIDENT_STATUSES, isRoleId, SEVERITIES } from "@freecorps/brigade-schema";
-import { emberShard } from "@freecorps/brigade-sync/ember";
-import { savedFromEmber } from "@/lib/queue-entries";
 
 /** Files by name, in one directory of the app's own. */
 export type PendingFiles = {
@@ -275,30 +272,6 @@ export function restoredChanges(list: readonly RestoredMutation[]): RestoredChan
           return outcome;
         }),
   };
-}
-
-/**
- * Puts the member's saved changes for `shard` back into their client. Run it once the member's role is known: each
- * change is applied as the actor is now, and one a viewer may not make drops out of the view.
- */
-export function restoreQueue(
-  client: Pick<SyncClient, "restore">,
-  shard: string,
-  queue: MemberQueue,
-): RestoredChanges {
-  queue.restoring(shard);
-  // Kept by Ember's client, for a workspace since turned back to Brigade Sync: sent again by this one, with their ids.
-  const ember = emberShard(shard);
-  const fromEmber = (queue.saved[ember] ?? []).flatMap((entry) => {
-    const saved = savedFromEmber(entry);
-    return saved ? [saved] : [];
-  });
-  const restored = client.restore(shard, [...(queue.saved[shard] ?? []), ...fromEmber]);
-  if (queue.saved[ember]) {
-    queue.restoring(ember);
-    void queue.keep(ember, []);
-  }
-  return restoredChanges(restored);
 }
 
 /** What a restored change was, as the incident screens track it: its busy key and the notice it would leave. */

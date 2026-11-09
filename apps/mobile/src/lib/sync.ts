@@ -35,10 +35,9 @@ export type Server = {
   forgotPassword: string;
   /** `GET` here says who may sign up on the instance (apps/api src/sign-up.ts, RFC 0002 "Sign-up modes"). */
   config: string;
-  sync: (workspaceId: string) => string;
-  /** Ember's client for a workspace on Ember (RFC 0016 step 5): its socket is `<ember>/ws`. */
+  /** Ember's client (RFC 0016 step 5): its socket is `<ember>/ws`. */
   ember: string;
-  /** `POST` here mints an Ember token for the workspace, or says it is not on Ember (src/lib/engine.ts). */
+  /** `POST` here mints an Ember token for the workspace (src/lib/ember-token.ts). */
   emberToken: (workspaceId: string) => string;
   /** `POST` here creates a workspace (the dashboard's `/api/workspaces`, apps/api `createWorkspace`). */
   workspaces: string;
@@ -48,7 +47,7 @@ export type Server = {
 };
 
 /**
- * The Brigade this build talks to by default: the dashboard's origin, which serves `/api/auth` and `/api/sync`
+ * The Brigade this build talks to by default: the dashboard's origin, which serves `/api/auth` and `/api/ember`
  * (apps/web/worker). `override` (EXPO_PUBLIC_BRIGADE_URL) is that origin, such as `https://brigade.example.com`;
  * without it, development builds (`dev`, the app's `__DEV__`) use the dev server on the Metro host. A release build
  * never does, even with a `hostUri`: with no override it has no server, and sign-in says so. Every other instance is
@@ -68,12 +67,10 @@ export function buildOrigin({ override, hostUri, dev }: BuildServer): string | u
 
 /** Every URL the app uses at the instance whose dashboard is at `origin` (as `URL.origin` writes it). */
 export function serverAt(origin: string): Server {
-  const socket = origin.replace(/^http/, "ws");
   return {
     auth: `${origin}/api/auth`,
     forgotPassword: `${origin}/forgot-password`,
     config: `${origin}/api/config`,
-    sync: (workspaceId) => `${socket}/api/sync/${encodeURIComponent(workspaceId)}`,
     ember: `${origin}/api/ember`,
     emberToken: (workspaceId) => `${origin}/api/ember-token/${encodeURIComponent(workspaceId)}`,
     workspaces: `${origin}/api/workspaces`,

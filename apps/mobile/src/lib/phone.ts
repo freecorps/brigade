@@ -24,7 +24,7 @@ import {
   type FinishDeps,
 } from "@/lib/sign-out";
 import { memberActor, neverOpened, type Server } from "@/lib/sync";
-import { createWorkspaceSync, type WorkspaceSync } from "@/lib/sync-client";
+import type { WorkspaceSync } from "@/lib/sync-client";
 import { knownTokens, permissionAsks } from "@/lib/paging";
 import { BrigadeCall } from "../../modules/brigade-call";
 import { BrigadePush } from "../../modules/brigade-push";
@@ -175,9 +175,8 @@ export async function phoneDeviceId(origin?: string): Promise<string | undefined
 }
 
 /**
- * Opens a client of its own for one change on a workspace, closed once it answers: Brigade Sync's here. The app passes
- * one that asks which engine the workspace is on and opens Ember's client for a workspace on Ember (src/lib/
- * ember-client.ts `openOneShot`), so a phone is registered and unregistered there without the Brigade Sync adapter.
+ * Opens a client of its own for one change on a workspace, closed once it answers: the app's is Ember's (src/lib/
+ * ember-client.ts `openOneShot`), passed in so this file stays free of the native client.
  */
 export type OneShotOpen = (args: {
   server: Server;
@@ -185,9 +184,6 @@ export type OneShotOpen = (args: {
   actor: () => Actor;
   cookie: string;
 }) => Promise<WorkspaceSync>;
-
-const brigadeOneShot: OneShotOpen = async ({ cookie, ...args }) =>
-  createWorkspaceSync({ ...args, cookie: () => cookie });
 
 /**
  * A mutation on a workspace's shard at an instance the app does not show, over a socket of its own closed once it
@@ -199,7 +195,7 @@ export function oneShotMutate(
   workspaceId: string,
   userId: string,
   cookie: () => Promise<string>,
-  open: OneShotOpen = brigadeOneShot,
+  open: OneShotOpen,
 ): DeviceDeps["mutate"] {
   return async (name, args) => {
     const failed = { ok: false as const, error: { code: "unavailable", message: "Not reached" } };
@@ -248,7 +244,7 @@ export const SESSION_LIFETIME_MS = SESSION_LIFETIME_S * 1000;
  * `expo-origin`, as `@better-auth/expo` sends it), and a sync client of their own for `device.unregister` (`open`),
  * closed when it answers.
  */
-export function finishDeps(server: Server, open: OneShotOpen = brigadeOneShot): FinishDeps {
+export function finishDeps(server: Server, open: OneShotOpen): FinishDeps {
   const headers = (cookie: string) => ({ cookie, "expo-origin": "brigade://" });
   return {
     leftovers: keptSignOuts,

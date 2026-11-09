@@ -649,3 +649,6 @@ the old path removed only at the end. Order and details: RFC 0016 "Order of work
       not an update. Once every installation runs it, `MIN_APP_VERSION` goes to `0.2.0` and the protocol goes. That
       means the owners' phones and any other device they signed in on; the owners confirm this, because the API
       records no app version per device.
+    - 2026-11-09, owner: their phone runs `0.2.0`, and the other owner was told to update. `MIN_APP_VERSION` is `0.2.0`, and the app and the
+      dashboard open every workspace on Ember's client, with no engine probe, no turn back and no Brigade Sync client.
+      Left: the API's `/sync` route and adapter, with `WorkspaceDO`'s engine (#216).

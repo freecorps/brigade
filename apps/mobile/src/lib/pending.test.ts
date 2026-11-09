@@ -1,6 +1,4 @@
-import { newId, type Actor } from "@freecorps/brigade-schema";
 import {
-  createSyncClient,
   MUTATION_RETENTION_MS,
   type RestoredMutation,
   type SavedMutation,
@@ -13,7 +11,6 @@ import {
   queueFileName,
   restoredChanges,
   restoredTarget,
-  restoreQueue,
   savedText,
   serialFiles,
   type PendingFiles,
@@ -216,51 +213,6 @@ test("a restored change names its incident and what it changed, as the screens t
   expect(restoredTarget({ name: "incident.postUpdate", args: null })).toBeNull();
 });
 
-test("with the sync client: an update queued offline is back after a restart, with the same ids", async () => {
-  const { api } = memoryFiles();
-  const files = serialFiles(api);
-  const actor: Actor = { kind: "user", id: ANA, role: "responder" };
-  const timers = { setTimeout: () => 0, clearTimeout: () => {} };
-  let n = 0;
-  const randomBytes = (length: number) => new Uint8Array(length).fill(++n);
-  const offline = () => {
-    throw new Error("offline");
-  };
-  const launch = async () => {
-    const queue = await openQueue(
-      files,
-      { userId: ANA, workspaceId: WORKSPACE },
-      newClientId,
-      clock,
-    );
-    const client = createSyncClient({
-      url: (shard) => `wss://sync.test/${shard}`,
-      actor,
-      transport: offline,
-      timers,
-      now: () => T0,
-      random: () => 0.5,
-      randomBytes,
-      clientId: queue.clientId,
-      pendingStorage: queue.storage,
-      onWarning: () => {},
-    });
-    return { queue, client, restored: restoreQueue(client, WORKSPACE, queue).list };
-  };
-
-  const first = await launch();
-  const incident = newId("inc", T0, randomBytes);
-  void first.client.mutate(WORKSPACE, "incident.postUpdate", { id: incident, body: "Rolled back" });
-  first.client.close();
-
-  const second = await launch();
-  expect(second.client.clientId).toBe(first.client.clientId);
-  expect(second.restored).toMatchObject([
-    { name: "incident.postUpdate", args: { id: incident, body: "Rolled back" }, createdAt: T0 },
-  ]);
-  second.client.close();
-});
-
 test("a burst of saves of one file costs a write or two, and the last one wins", async () => {
   const memory = memoryFiles();
   let writes = 0;
@@ -373,54 +325,4 @@ test("a refused restored change nobody claimed is told to the screen that asked 
   expect(await left.claimLeft(unlisted, () => false)).toMatchObject({ ok: true });
   // Then its screen, opened later, still tells it.
   expect(await left.claim(unlisted)).toEqual(refused);
-});
-
-test("restored changes wait for the member's role: a save before then keeps them, and they apply as it", async () => {
-  const { api, files } = memoryFiles();
-  const name = queueFileName(ANA, WORKSPACE);
-  const incident = newId("inc", T0, () => new Uint8Array(10).fill(3));
-  const declare: SavedMutation = {
-    mutationId: newId("mut", T0, () => new Uint8Array(10).fill(4)),
-    name: "incident.declare",
-    args: { id: incident, title: "Checkout down", severity: "sev2" },
-    createdAt: T0,
-  };
-  const first = await openQueue(api, { userId: ANA, workspaceId: WORKSPACE }, newClientId, clock);
-  await first.storage.save(WORKSPACE, [declare]);
-
-  // Launch: the role the client reads is still the viewer a missing one reads as.
-  let role: Actor["role"] = "viewer";
-  const queue = await openQueue(api, { userId: ANA, workspaceId: WORKSPACE }, newClientId, clock);
-  const client = createSyncClient({
-    url: (shard) => `wss://sync.test/${shard}`,
-    actor: () => ({ kind: "user", id: ANA, role }),
-    transport: () => {
-      throw new Error("offline");
-    },
-    timers: { setTimeout: () => 0, clearTimeout: () => {} },
-    now: clock,
-    random: () => 0.5,
-    randomBytes: () => new Uint8Array(10).fill(5),
-    clientId: queue.clientId,
-    pendingStorage: queue.storage,
-    onWarning: () => {},
-  });
-  const active = client.query(WORKSPACE, "incidents.active", {});
-  active.subscribe(() => {});
-  // The paging cycle registers the phone before the role is known: the queue on disk is not replaced.
-  await queue.storage.save(WORKSPACE, [mutation("device.register", 9)]);
-  expect(parseQueueFile(files.get(name) ?? null, ANA, WORKSPACE)?.shards[WORKSPACE]).toEqual([
-    declare,
-  ]);
-
-  role = "responder";
-  const restored = restoreQueue(client, WORKSPACE, queue);
-  expect(restored.list).toMatchObject([{ mutationId: declare.mutationId }]);
-  // Applied as a responder, so it shows; as a viewer it would have dropped out of the view.
-  expect(active.getSnapshot().rows).toMatchObject([{ id: incident, title: "Checkout down" }]);
-  await Promise.resolve();
-  expect(parseQueueFile(files.get(name) ?? null, ANA, WORKSPACE)?.shards[WORKSPACE]).toMatchObject([
-    { mutationId: declare.mutationId },
-  ]);
-  client.close();
 });

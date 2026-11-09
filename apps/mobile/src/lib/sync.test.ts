@@ -28,13 +28,13 @@ test("development builds sign in and sync through the dashboard's dev server on 
   const server = brigadeServer({ hostUri: "localhost:8081", dev: true });
   expect(server?.auth).toBe("http://localhost:5173/api/auth");
   expect(server?.forgotPassword).toBe("http://localhost:5173/forgot-password");
-  expect(server?.sync("ws_1")).toBe("ws://localhost:5173/api/sync/ws_1");
+  expect(server?.ember).toBe("http://localhost:5173/api/ember");
   expect(server?.workspaces).toBe("http://localhost:5173/api/workspaces");
   expect(server?.ack("ws_1", "inc_1")).toBe(
     "http://localhost:5173/api/workspaces/ws_1/incidents/inc_1/ack",
   );
-  expect(brigadeServer({ hostUri: "10.0.2.2:8081", dev: true })?.sync("a b")).toBe(
-    "ws://10.0.2.2:5173/api/sync/a%20b",
+  expect(brigadeServer({ hostUri: "10.0.2.2:8081", dev: true })?.emberToken("a b")).toBe(
+    "http://10.0.2.2:5173/api/ember-token/a%20b",
   );
 });
 
@@ -48,7 +48,7 @@ test("release builds never fall back to the Metro host", () => {
   expect(server?.ack("ws_1", "a/b")).toBe(
     "https://brigade.example.com/api/workspaces/ws_1/incidents/a%2Fb/ack",
   );
-  expect(server?.sync("ws_1")).toBe("wss://brigade.example.com/api/sync/ws_1");
+  expect(server?.ember).toBe("https://brigade.example.com/api/ember");
 });
 
 test("an override wins, as an origin only; a malformed one, or none without a Metro host, is no server", () => {

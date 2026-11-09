@@ -19,7 +19,7 @@ import {
   titleRefused,
   type NoticeTarget,
 } from "../src/lib/incidents";
-import { CLIENT_ID_STORAGE_KEY, syncUrl, tabClientId } from "../src/lib/sync";
+import { CLIENT_ID_STORAGE_KEY, tabClientId } from "../src/lib/sync";
 import { memoryStorage, throwingStorage } from "./storage";
 
 afterEach(() => setLocale("en"));
@@ -166,15 +166,6 @@ test("a declare is checked with the mutation's own validator before it is sent",
   for (const title of ["", "   ", "​​", "‮‭"]) {
     expect(checkDeclare(ID, title, "sev3")).toEqual({ ok: false });
   }
-});
-
-test("the socket URL follows the page's origin and scheme", () => {
-  expect(syncUrl({ protocol: "http:", host: "localhost:5173" }, "demo")).toBe(
-    "ws://localhost:5173/api/sync/demo",
-  );
-  expect(syncUrl({ protocol: "https:", host: "brigade.example" }, "demo")).toBe(
-    "wss://brigade.example/api/sync/demo",
-  );
 });
 
 test("the client id is kept per tab and replaced when invalid or unreadable", () => {

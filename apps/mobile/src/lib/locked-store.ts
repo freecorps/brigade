@@ -29,7 +29,7 @@ export function lockedReadable<S extends KeyStore>(store: S, accessible: number)
   };
 }
 
-/** How many chunks `@better-auth/expo` may split a value into (`<key>.0`, `<key>.1`, …); more is never written. */
+/** How many chunks `@better-auth/expo` may split a value into; more is never written. */
 const MAX_CHUNKS = 64;
 
 /**
@@ -42,25 +42,45 @@ export function sessionKeys(storagePrefix: string): string[] {
 }
 
 /**
- * Writes `keys` again through `store` (a `lockedReadable` one), with each chunk `@better-auth/expo` split them into,
+ * Every item `key` may be stored in: itself (a value, or the marker of a chunked one) and the chunks `@better-auth/expo`
+ * writes for a long value, `<key>.<n>` and, in its two alternating slots, `<key>.0.<n>` and `<key>.1.<n>`.
+ */
+function chunkPrefixes(key: string): string[] {
+  return [key, `${key}.0`, `${key}.1`];
+}
+
+/**
+ * Writes `keys` again through `store` (a `lockedReadable` one), with every chunk `@better-auth/expo` split them into,
  * so items kept before this build become readable on the lock screen too. Run at launch, when the phone is unlocked;
- * an item that cannot be read or written is left as it was, and the next launch tries again.
+ * an item that cannot be read or written is left as it was, and the next launch tries again. An item is written back
+ * only when a second read just before still finds the same value, so a session the auth client saved meanwhile is not
+ * put back to what it was (the window left is between that read and the write).
  */
 export async function keepReadable(store: KeyStore, keys: readonly string[]): Promise<void> {
+  const rewrite = async (item: string): Promise<"missing" | "kept"> => {
+    let value: string | null;
+    try {
+      value = await store.getItemAsync(item);
+    } catch {
+      return "kept";
+    }
+    // A chunk cleared by `@better-auth/expo` is written empty: like a missing one, it ends the run.
+    if (value === null || value === "") return "missing";
+    try {
+      if ((await store.getItemAsync(item)) !== value) return "kept";
+      await store.setItemAsync(item, value);
+    } catch {
+      // Left as it was: the next launch tries again.
+    }
+    return "kept";
+  };
   for (const key of keys) {
-    for (const each of [key, ...Array.from({ length: MAX_CHUNKS }, (_, i) => `${key}.${i}`)]) {
-      let value: string | null;
-      try {
-        value = await store.getItemAsync(each);
-      } catch {
-        continue;
-      }
+    await rewrite(key);
+    for (const prefix of chunkPrefixes(key)) {
       // Chunks run from 0 with no gap: the first missing one ends the value.
-      if (value === null) {
-        if (each === key) continue;
-        break;
+      for (let index = 0; index < MAX_CHUNKS; index++) {
+        if ((await rewrite(`${prefix}.${index}`)) === "missing") break;
       }
-      await store.setItemAsync(each, value).catch(() => {});
     }
   }
 }

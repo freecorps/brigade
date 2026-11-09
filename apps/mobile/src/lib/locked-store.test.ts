@@ -39,16 +39,22 @@ test("the session keys as @better-auth/expo names them", () => {
   expect(sessionKeys("brigade:abc")).toEqual(["brigade_abc_cookie", "brigade_abc_session_data"]);
 });
 
-test("items kept before are written again with every chunk, and nothing past the last one", async () => {
+test("items kept before are written again with every chunk, in each slot, and nothing past the last one", async () => {
   const { store, writes, items } = memory({
     instances: "[]",
     brigade_cookie: "c",
     "brigade_session_data.0": "s0",
     "brigade_session_data.1": "s1",
+    // A chunked value in slot 1, and a chunk `@better-auth/expo` cleared (empty).
+    brigade_abc_cookie: "marker",
+    "brigade_abc_cookie.1.0": "a0",
+    "brigade_abc_cookie.1.1": "a1",
+    "brigade_abc_cookie.1.2": "",
   });
   await keepReadable(lockedReadable(store, AFTER_FIRST_UNLOCK), [
     "instances",
     ...sessionKeys("brigade"),
+    ...sessionKeys("brigade:abc"),
     "missing",
   ]);
   expect(writes.map(([key]) => key)).toEqual([
@@ -56,8 +62,25 @@ test("items kept before are written again with every chunk, and nothing past the
     "brigade_cookie",
     "brigade_session_data.0",
     "brigade_session_data.1",
+    "brigade_abc_cookie",
+    "brigade_abc_cookie.1.0",
+    "brigade_abc_cookie.1.1",
   ]);
   expect(Object.fromEntries(items)).toMatchObject({ brigade_cookie: "c" });
+});
+
+test("an item the auth client changed between the two reads is not put back", async () => {
+  const { store, writes } = memory({ brigade_cookie: "old" });
+  let reads = 0;
+  await keepReadable(
+    {
+      ...store,
+      getItemAsync: async (key) =>
+        key === "brigade_cookie" ? (++reads === 1 ? "old" : "new") : null,
+    },
+    ["brigade_cookie"],
+  );
+  expect(writes).toEqual([]);
 });
 
 test("an item that cannot be read (a locked phone) is left for the next launch", async () => {

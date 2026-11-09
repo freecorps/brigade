@@ -260,7 +260,10 @@ export function Session({ children }: { children: (ready: boolean) => ReactNode 
   const list = useSyncExternalStore(instances.subscribe, instances.current);
   useEffect(() => {
     // Then the sessions kept before this build become readable on the lock screen, for a call's "press 1".
-    void instances.load().then(() => keepSessionsReadable());
+    void instances
+      .load()
+      .then(() => keepSessionsReadable())
+      .catch(() => {});
   }, []);
   const active = activeInstance(list);
   const clients = active ? clientsFor(active) : undefined;

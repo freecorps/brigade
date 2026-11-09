@@ -126,6 +126,12 @@ test("an answered call acknowledges over HTTPS, the shown workspace too; over th
   ).toEqual({ kind: "http", instance: shown, workspace: "ws_one" });
   // A call that names no instance, or an older instance's without a workspace: the open one, as before.
   expect(callAckRoute({}, instances, shown, "ws_one")).toEqual({ kind: "sync" });
+  // One that names no instance but a workspace: that workspace, at the shown instance.
+  expect(callAckRoute({ workspace: "ws_two" }, instances, shown, "ws_one")).toEqual({
+    kind: "http",
+    instance: shown,
+    workspace: "ws_two",
+  });
   expect(callAckRoute({ origin: shown.origin }, instances, shown, "ws_one")).toEqual({
     kind: "sync",
   });

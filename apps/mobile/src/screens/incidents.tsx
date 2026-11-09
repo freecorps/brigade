@@ -1,4 +1,4 @@
-import { Column, FieldGroup, RNHostView, Row, Text } from "@expo/ui";
+import { Column, FieldGroup, Row, Text } from "@expo/ui";
 import { ListItem } from "@/components/list-item";
 import { m } from "@freecorps/brigade-i18n";
 import {
@@ -33,7 +33,7 @@ import { usePagingNotice } from "@/components/account";
 import { useChoiceSheet } from "@/components/choice-sheet";
 import { EmptyRow } from "@/components/empty-row";
 import type { Glyph } from "@/components/glyphs";
-import { StatePanel, useNow } from "@/components/incident-parts";
+import { StateLines, useNow } from "@/components/incident-parts";
 import { useListEnd } from "@/components/list-end";
 import { ListStatus } from "@/components/list-status";
 import { SeverityPill, StatusPill } from "@/components/pill";
@@ -254,13 +254,7 @@ function IncidentList({ onReload }: { onReload: () => void }) {
                   with it and never sits under the tab bar. */}
               <Column spacing={spacing[1]} alignment="start">
                 <ListStatus view={view} summary={summary} />
-                {view === "live" || view === "connecting" ? null : (
-                  <RNHostView matchContents>
-                    <View>
-                      <StatePanel view={view} errorCode={error?.code} onReload={onReload} />
-                    </View>
-                  </RNHostView>
-                )}
+                <StateLines view={view} errorCode={error?.code} />
               </Column>
             </FieldGroup.SectionHeader>
             {rows.map((row) =>
@@ -324,6 +318,13 @@ function IncidentList({ onReload }: { onReload: () => void }) {
               />
             ) : null}
           </FieldGroup.Section>
+          {view === "refused" ? (
+            <FieldGroup.Section>
+              <ListItem onPress={onReload}>
+                <RowText color={colors.primary}>{m.reload()}</RowText>
+              </ListItem>
+            </FieldGroup.Section>
+          ) : null}
           {/* The history, under the open ones: resolved and declined incidents (src/screens/past-incidents.tsx). */}
           <FieldGroup.Section>
             <ListItem

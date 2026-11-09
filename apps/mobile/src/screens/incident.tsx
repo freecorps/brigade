@@ -1,4 +1,4 @@
-import { Column, FieldGroup, RNHostView, Text } from "@expo/ui";
+import { Column, FieldGroup, Text } from "@expo/ui";
 import { ListItem } from "@/components/list-item";
 import { m } from "@freecorps/brigade-i18n";
 import {
@@ -54,7 +54,7 @@ import { detailsSection, useIncidentDetails } from "@/components/incident-detail
 import { Avatar } from "@/components/avatar";
 import { FooterText } from "@/components/footer-text";
 import type { Glyph } from "@/components/glyphs";
-import { StatePanel, useNow } from "@/components/incident-parts";
+import { StateLines, useNow } from "@/components/incident-parts";
 import { useListEnd } from "@/components/list-end";
 import { ListStatus } from "@/components/list-status";
 import { RowIcon } from "@/components/row-icon";
@@ -112,9 +112,8 @@ function ByNumber({ number, onReload }: { number: number; onReload: () => void }
       <Incident
         row={row}
         view={view}
-        state={
-          <StatePanel view={view} errorCode={error?.code} onReload={onReload} subject="incident" />
-        }
+        state={<StateLines view={view} errorCode={error?.code} subject="incident" />}
+        onReload={onReload}
       />
     );
   }
@@ -177,7 +176,18 @@ function Problem({
 /** Busy keys: `status`, `severity`, `update`, `role/<role>`. */
 type Busy = ReadonlyMap<string, number>;
 
-function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; state: ReactNode }) {
+function Incident({
+  row,
+  view,
+  state,
+  onReload,
+}: {
+  row: IncidentRow;
+  view: SyncView;
+  state: ReactNode;
+  /** Asks again after the shard refused the incident (`refused`). */
+  onReload: () => void;
+}) {
   const colors = useTheme();
   const { locale, timeZone } = useLocale();
   const member = useMember();
@@ -536,15 +546,18 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
       <Stack.Screen options={{ title: number }} />
       <NativeHost style={{ flex: 1 }}>
         <FieldGroup>
+          {view === "refused" ? (
+            <FieldGroup.Section>
+              <ListItem onPress={onReload}>
+                <Text textStyle={{ color: colors.primary }}>{m.reload()}</Text>
+              </ListItem>
+            </FieldGroup.Section>
+          ) : null}
           <FieldGroup.Section>
             <FieldGroup.SectionHeader>
               <Column spacing={spacing[1]} alignment="start">
                 <ListStatus view={view} summary={undefined} />
-                {view === "live" || view === "connecting" ? null : (
-                  <RNHostView matchContents>
-                    <View>{state}</View>
-                  </RNHostView>
-                )}
+                {state}
               </Column>
             </FieldGroup.SectionHeader>
             <ListItem

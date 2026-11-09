@@ -50,7 +50,7 @@ function SignInView({ view }: { view: ReturnType<typeof useSessionView> }) {
       />
     );
   }
-  if (view.kind === "signed-out") return <SignInForm />;
+  if (view.kind === "signed-out") return <SignInStart />;
   return (
     <NativeForm
       brand={m.auth_sign_in_title()}
@@ -91,6 +91,34 @@ function useOtherInstances(): { label: string; note?: string; onPress: () => voi
       onPress: () => router.push("/add-instance"),
     },
   ];
+}
+
+/**
+ * Signed out: on a phone that has only the build's own instance, a first screen that leads with the dashboard's QR code
+ * (the fastest sign-in, and the one that picks the right instance by itself), then a password at the build's own
+ * instance or another instance's address. Once the member picked the password, or added another instance, the form.
+ */
+function SignInStart() {
+  const list = useInstanceList();
+  const instance = useActiveInstance();
+  const [password, setPassword] = useState(false);
+  const onlyDefault = list.instances.length === 1 && list.active === DEFAULT_INSTANCE;
+  if (password || !onlyDefault || !instance) return <SignInForm />;
+  return (
+    <NativeForm
+      brand={m.auth_sign_in_title()}
+      intro={sayInstances("welcome_intro")}
+      fields={[]}
+      submit={{ label: sayInstances("scan"), busy: false, onPress: () => router.push("/scan") }}
+      links={[
+        {
+          label: sayInstances("password_at", hostOf(instance.instance.origin)),
+          onPress: () => setPassword(true),
+        },
+        { label: sayInstances("another"), onPress: () => router.push("/add-instance") },
+      ]}
+    />
+  );
 }
 
 function SignInForm() {
@@ -201,6 +229,12 @@ function SignInForm() {
               },
             ]
           : []),
+        // The QR code stays one tap away from the password.
+        {
+          label: sayInstances("scan"),
+          note: sayInstances("scan_hint"),
+          onPress: () => router.push("/scan"),
+        },
         ...(signUpMode === "open" || signUpMode === "invite"
           ? [
               {

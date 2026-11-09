@@ -68,6 +68,30 @@ test("incidents.active puts the most severe first, whatever their age", () => {
   ]);
 });
 
+test("incidents.past lists resolved and declined incidents declared since a time, newest first", () => {
+  const all = runQuery(queries, "incidents.past", { since: 0 }, seeded(), "viewer");
+  const over = [RESOLVED, DECLINED].sort(
+    (a, b) => b.declaredAt - a.declaredAt || (a.id < b.id ? 1 : -1),
+  );
+  expect(all.ok && ids(all.rows)).toEqual(over.map((row) => row.id));
+  // Only those declared at or after `since`.
+  const newest = over[0]!;
+  const recent = runQuery(
+    queries,
+    "incidents.past",
+    { since: newest.declaredAt },
+    seeded(),
+    "viewer",
+  );
+  expect(recent.ok && ids(recent.rows)).toEqual(
+    over.filter((row) => row.declaredAt >= newest.declaredAt).map((row) => row.id),
+  );
+  expect(runQuery(queries, "incidents.past", {}, seeded(), "viewer")).toMatchObject({
+    ok: false,
+    error: { code: "invalid_args" },
+  });
+});
+
 test("incident.byId returns the incident whatever its status", () => {
   const store = seeded();
   for (const incident of [OLD, RESOLVED, DECLINED]) {

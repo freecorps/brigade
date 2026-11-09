@@ -19,6 +19,8 @@ export type Mobile_InstancesInputs = {
 * | "checking" | "Checking…" |
 * | "scan" | "Scan a QR code" |
 * | "scan_hint" | "On the dashboard, open Use the app." |
+* | "welcome_intro" | "Sign in with the QR code on your team's Brigade dashboard: open Use the app there and scan it. Or sign in with your email and password." |
+* | "password_at" | "Sign in with a password at {host}" |
 * | "invalid" | "Enter the address of a Brigade dashboard, like brigade.example.com." |
 * | "insecure" | "Brigade only connects over HTTPS. Check that the address starts with https://." |
 * | "not_brigade" | "This address is not a Brigade instance." |

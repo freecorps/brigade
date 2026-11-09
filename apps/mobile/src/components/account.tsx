@@ -16,7 +16,7 @@ import type { Glyph } from "@/components/glyphs";
 import { ListItem } from "@/components/list-item";
 import { RowIcon } from "@/components/row-icon";
 import { useSwitcher } from "@/components/instances";
-import { openInstance, useMember } from "@/components/session";
+import { openInstance, useMember, useOnline } from "@/components/session";
 import { otherTrouble } from "@/lib/switcher";
 import { useLocale } from "@/hooks/use-locale";
 import { useTheme } from "@/hooks/use-theme";
@@ -80,6 +80,7 @@ function pagingTrouble(
 export function usePagingNotice(): ReactNode {
   const member = useMember();
   const { retryPaging } = member;
+  const online = useOnline();
   const colors = useTheme();
   const system = useSystemColors();
   const [retrying, setRetrying] = useState(false);
@@ -87,9 +88,12 @@ export function usePagingNotice(): ReactNode {
   // workspace, and tapping it opens them there, where Try again is.
   const { groups } = useSwitcher();
   const elsewhere = otherTrouble(groups);
-  const trouble =
+  const found =
     pagingTrouble(member) ??
     (elsewhere?.detail ? { paging: elsewhere.detail, name: elsewhere.label } : undefined);
+  // Offline, a registration that could not be sent says nothing about paging: the server still has the phone it
+  // registered last time, and the list already says the app is offline. It is tried again once back online.
+  const trouble = !online && found?.paging === "failed" ? undefined : found;
   const other = pagingTrouble(member) === undefined ? elsewhere : undefined;
   const title =
     trouble === undefined

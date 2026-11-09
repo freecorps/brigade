@@ -20,6 +20,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "checking" | "Checking…" |
 * | "scan" | "Scan a QR code" |
 * | "scan_hint" | "On the dashboard, open Use the app." |
+* | "welcome_intro" | "Sign in with the QR code on your team's Brigade dashboard: open Use the app there and scan it. Or sign in with your email and password." |
+* | "password_at" | "Sign in with a password at {host}" |
 * | "invalid" | "Enter the address of a Brigade dashboard, like brigade.example.com." |
 * | "insecure" | "Brigade only connects over HTTPS. Check that the address starts with https://." |
 * | "not_brigade" | "This address is not a Brigade instance." |
@@ -113,6 +115,8 @@ export const mobile_instances = /** @type {((inputs: Mobile_InstancesInputs, opt
 		if (i?.part === "checking") return /** @type {LocalizedString} */ (`Verificando…`);
 		if (i?.part === "scan") return /** @type {LocalizedString} */ (`Ler um QR code`);
 		if (i?.part === "scan_hint") return /** @type {LocalizedString} */ (`No painel, abra Use o app.`);
+		if (i?.part === "welcome_intro") return /** @type {LocalizedString} */ (`Entre com o QR code do painel do Brigade da sua equipe: abra Use o app lá e leia o código. Ou entre com seu e-mail e senha.`);
+		if (i?.part === "password_at") return /** @type {LocalizedString} */ (`Entrar com senha em ${i?.host}`);
 		if (i?.part === "invalid") return /** @type {LocalizedString} */ (`Digite o endereço de um painel do Brigade, como brigade.example.com.`);
 		if (i?.part === "insecure") return /** @type {LocalizedString} */ (`O Brigade só se conecta por HTTPS. Confira se o endereço começa com https://.`);
 		if (i?.part === "not_brigade") return /** @type {LocalizedString} */ (`Este endereço não é uma instância do Brigade.`);
@@ -200,6 +204,8 @@ export const mobile_instances = /** @type {((inputs: Mobile_InstancesInputs, opt
 		if (i?.part === "checking") return /** @type {LocalizedString} */ (`Checking…`);
 		if (i?.part === "scan") return /** @type {LocalizedString} */ (`Scan a QR code`);
 		if (i?.part === "scan_hint") return /** @type {LocalizedString} */ (`On the dashboard, open Use the app.`);
+		if (i?.part === "welcome_intro") return /** @type {LocalizedString} */ (`Sign in with the QR code on your team's Brigade dashboard: open Use the app there and scan it. Or sign in with your email and password.`);
+		if (i?.part === "password_at") return /** @type {LocalizedString} */ (`Sign in with a password at ${i?.host}`);
 		if (i?.part === "invalid") return /** @type {LocalizedString} */ (`Enter the address of a Brigade dashboard, like brigade.example.com.`);
 		if (i?.part === "insecure") return /** @type {LocalizedString} */ (`Brigade only connects over HTTPS. Check that the address starts with https://.`);
 		if (i?.part === "not_brigade") return /** @type {LocalizedString} */ (`This address is not a Brigade instance.`);

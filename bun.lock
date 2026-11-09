@@ -22,8 +22,8 @@
         "@freecorps/brigade-status-edge": "workspace:*",
         "@freecorps/brigade-sync": "workspace:*",
         "@freecorps/brigade-ui": "workspace:*",
-        "@freecorps/ember-runtime": "0.4.0",
-        "@freecorps/ember-server": "0.4.0",
+        "@freecorps/ember-runtime": "0.5.0",
+        "@freecorps/ember-server": "0.5.0",
         "better-auth": "1.7.13",
       },
       "devDependencies": {
@@ -49,7 +49,7 @@
         "@freecorps/brigade-schema": "workspace:*",
         "@freecorps/brigade-sync": "workspace:*",
         "@freecorps/brigade-ui": "workspace:*",
-        "@freecorps/ember-react-native": "0.4.0",
+        "@freecorps/ember-react-native": "0.5.0",
         "better-auth": "1.7.13",
         "expo": "~58.0.22",
         "expo-camera": "~58.0.14",
@@ -96,7 +96,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@freecorps/brigade-push": "workspace:*",
-        "@freecorps/ember-push": "0.4.0",
+        "@freecorps/ember-push": "0.5.0",
       },
       "devDependencies": {
         "@cloudflare/vite-plugin": "^1.65.0",
@@ -214,7 +214,7 @@
       "name": "@freecorps/brigade-schema",
       "version": "0.0.0",
       "devDependencies": {
-        "@freecorps/ember-server": "0.4.0",
+        "@freecorps/ember-server": "0.5.0",
         "@types/node": "^26.6.5",
         "typescript": "^7.0.2",
         "vite-plus": "catalog:",
@@ -235,7 +235,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@freecorps/brigade-schema": "workspace:*",
-        "@freecorps/ember-client": "0.4.0",
+        "@freecorps/ember-client": "0.5.0",
       },
       "devDependencies": {
         "@types/node": "^26.6.5",
@@ -722,19 +722,19 @@
 
     "@freecorps/brigade-web": ["@freecorps/brigade-web@workspace:apps/web"],
 
-    "@freecorps/ember-client": ["@freecorps/ember-client@0.4.0", "", { "dependencies": { "@freecorps/ember-values": "0.4.0" } }, "sha512-pcu/gbQ3w0Xf5exjE1ucuvZ/hnzghBRoaikISAuMaAdwpERygSEFFHQic+cPkhgD8yPP5m5SVJlNbpF2e8096Q=="],
+    "@freecorps/ember-client": ["@freecorps/ember-client@0.5.0", "", { "dependencies": { "@freecorps/ember-values": "0.5.0" } }, "sha512-WoCZ0Qcsg3XBLOyGHsUDhXPlUf+qocTQpZPq+sG5sHKxkJC0Gj/AjiOJoIBTx63G9RzyhAVx9STHrgX0z+mYRA=="],
 
-    "@freecorps/ember-push": ["@freecorps/ember-push@0.4.0", "", { "dependencies": { "@freecorps/ember-server": "0.4.0", "@freecorps/ember-values": "0.4.0" } }, "sha512-BbYMcl9gOFJ1MYaFIujvcFJIsTEShz7+ork5SU1UaU45XqS5PjTrDGcKNloXH7GFAdIAVIHB36LwrKAV8j8ViA=="],
+    "@freecorps/ember-push": ["@freecorps/ember-push@0.5.0", "", { "dependencies": { "@freecorps/ember-server": "0.5.0", "@freecorps/ember-values": "0.5.0" } }, "sha512-G1/BFuUdK56w5MBF7e4ZoL3iGJp9xKaA8oqX9Eaht1e7hIcucBewuVkzhWrk0YKcyIFb39qOZcPtMmPmFaDOhQ=="],
 
-    "@freecorps/ember-react": ["@freecorps/ember-react@0.4.0", "", { "dependencies": { "@freecorps/ember-client": "0.4.0" }, "peerDependencies": { "react": ">=18" } }, "sha512-N/aB1gAP9y2mP2gGmG3jBtyZx+MHnhKXluISnDUQVP5Ou3IJHpLT+yrZSU6FrPM+TcwrxGBR54LLSaDbKqGwxA=="],
+    "@freecorps/ember-react": ["@freecorps/ember-react@0.5.0", "", { "dependencies": { "@freecorps/ember-client": "0.5.0" }, "peerDependencies": { "react": ">=18" } }, "sha512-gn9fw/AQzeWXxsyxXK7B7s4ZCod3OT7EdTwsSWwp8X/7WiaECdkXx3qiUNrftxWXZ9fxcip0E+3VpBFA1G2iIg=="],
 
-    "@freecorps/ember-react-native": ["@freecorps/ember-react-native@0.4.0", "", { "dependencies": { "@freecorps/ember-client": "0.4.0", "@freecorps/ember-react": "0.4.0" }, "peerDependencies": { "@react-native-async-storage/async-storage": ">=1.21", "@react-native-community/netinfo": ">=11", "expo-constants": "*", "expo-device": "*", "expo-notifications": "*", "expo-secure-store": "*", "react": ">=18", "react-native": "*" }, "optionalPeers": ["@react-native-async-storage/async-storage", "@react-native-community/netinfo", "expo-constants", "expo-device", "expo-notifications", "expo-secure-store", "react-native"] }, "sha512-0gIa4Vbzk0sT77ZFEHtiqVBw4qIJ9dShv5r2VTA8IbgzU5FSwELl15SkrPO4M0JpKOunFSN5kIej5FmMs9Y93w=="],
+    "@freecorps/ember-react-native": ["@freecorps/ember-react-native@0.5.0", "", { "dependencies": { "@freecorps/ember-client": "0.5.0", "@freecorps/ember-react": "0.5.0" }, "peerDependencies": { "@react-native-async-storage/async-storage": ">=1.21", "@react-native-community/netinfo": ">=11", "expo-constants": "*", "expo-device": "*", "expo-notifications": "*", "expo-secure-store": "*", "react": ">=18", "react-native": "*" }, "optionalPeers": ["@react-native-async-storage/async-storage", "@react-native-community/netinfo", "expo-constants", "expo-device", "expo-notifications", "expo-secure-store", "react-native"] }, "sha512-to0Rtk/kOKM1b+KjppjfHnYT8BHNtGl+jEQ9xujn/xtn19wStv9DYk7KRSkB1erBxtveBO+s8vxstosJQw6RMA=="],
 
-    "@freecorps/ember-runtime": ["@freecorps/ember-runtime@0.4.0", "", { "dependencies": { "@freecorps/ember-server": "0.4.0", "@freecorps/ember-values": "0.4.0" } }, "sha512-W9AL3rdQ44ybUdGggLIE9RYlLuVWQEl2eqz5YsynqyQkefaxG3nRq5mFsXed4LlqbwNijceyDzuzDq71SwPUhw=="],
+    "@freecorps/ember-runtime": ["@freecorps/ember-runtime@0.5.0", "", { "dependencies": { "@freecorps/ember-server": "0.5.0", "@freecorps/ember-values": "0.5.0" } }, "sha512-H2ykMN1ukRy6A8ICKf35N/3STaw7Pg7kiyck7X8T7lkwvSRWIKbQx+56rHnLplywiEKvGHtwht5pajYk5l/H6g=="],
 
-    "@freecorps/ember-server": ["@freecorps/ember-server@0.4.0", "", { "dependencies": { "@freecorps/ember-values": "0.4.0" } }, "sha512-H8rUJnU9I6aQBs/q6NX/Vj4u8vaBlU6mVGCC9P13UfchaCnfKX+aSbBNpMwnYfODlXmdaW4nppncLK8SatVS3g=="],
+    "@freecorps/ember-server": ["@freecorps/ember-server@0.5.0", "", { "dependencies": { "@freecorps/ember-values": "0.5.0" } }, "sha512-AnG7pHnWarmaxowawgDdM6GuJbNN/Ljn++93QkBXmGjpL4/y4dcoNG6mYFM76yaIk0sdiEYIoAVOjzroirOXjw=="],
 
-    "@freecorps/ember-values": ["@freecorps/ember-values@0.4.0", "", {}, "sha512-uajt+bEPOXaUUP5QEvgwBObBTAbqxbVlIaPB4jYFx1Fmv6ie5MY3+TfDTivo/3NH7S7aCqplkv+Yjcafynorew=="],
+    "@freecorps/ember-values": ["@freecorps/ember-values@0.5.0", "", {}, "sha512-rALSULrSXyN/gkfGN/X8fp1uM70Bycuk96shAb+QZr5RvD/HtM1U52ay1sso51iC1hy6oujXFFohqdjLFKu1OQ=="],
 
     "@hono/node-server": ["@hono/node-server@2.1.5", "", { "peerDependencies": { "hono": "^4 || ^5.0.0-0" } }, "sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q=="],
 

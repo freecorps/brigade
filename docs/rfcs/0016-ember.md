@@ -496,13 +496,21 @@ What Brigade needs that Ember does not have, each worked around here and propose
 **Status (2026-11-08).** Ember shipped G1–G8 in 0.3.0 (and app-private SQL tables, G9, in 0.4.0). Brigade uses:
 
 - **G4**: the runtime is mounted with `basePath` (src/ember.ts); nothing rewrites the path.
-- **G7**: the relay is on `@freecorps/ember-push` 0.4.0 and forces an exchange with the token FCM refused, so
+- **G7**: the relay is on `@freecorps/ember-push` 0.5.0 and forces an exchange with the token FCM refused, so
   concurrent sends exchange once. It keeps `retries: 0` and its own deadline, which tell a token endpoint out of reach
   from a refused key for its fallback.
 - **G8**: session end, password resets, member changes and revoked API tokens call `revokeSockets` (src/ember-workspace.ts,
   src/ember-members.ts, src/ember-rest.ts). Adapter sockets ride an Ember socket, so they close with it at once.
 - **G2**: the shard's action jobs run under Ember's lease. Brigade keeps `page_pending` too: it also covers pages
   through Brigade's own `brigade-events` Queue, and its lease is part of the paging rules.
+
+**Ember 0.5.0 (2026-11-09): no rollback of the API past it.** 0.5.0 converts every shard table to compact storage on
+the shard's first boot (the rowid is the creation time; the `_id` and creation-time SQLite indexes are gone; rows
+from before keep their ids through a partial index). An API Worker built on Ember 0.4 cannot run on a converted
+shard: its creation-order queries name an index that no longer exists, so they fail, and a document it inserts is
+not findable by id once 0.5 is back. So after this deploy, fix forward. If the code must go back anyway, the shards
+go back with it (Durable Object point-in-time restore to before the deploy), and every write since is lost.
+Converted: `dev` 2026-11-09 (3 workspaces, reads of old ids and writes checked), production on the merge of #225.
 
 Kept as they are, on purpose:
 

@@ -626,7 +626,8 @@ the old path removed only at the end. Order and details: RFC 0016 "Order of work
   - Done: the `direct` route with the relay as the fallback per device (`apps/api/src/direct-push.ts`), off until
     configured.
   - Done: the secrets on `brigade-api-dev` and the real-device check, 2026-11-06 (RFC 0016 "Result, step 2").
-  - Left: the watchdog proving the instance's own key; the secrets on staging and production (Q34).
+  - Done: the watchdog proving the instance's own key, and the secrets on production, 2026-11-08 (Q34); there is no
+    staging Worker.
 - [x] The workspace shard on Ember behind `workspace.engine`, with the page lease and the D1 auth hook
 - [x] Dashboard on Ember's React client, picked per workspace
 - [x] App on Ember's React Native client next to Brigade Sync, picked per workspace

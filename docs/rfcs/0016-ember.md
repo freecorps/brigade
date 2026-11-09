@@ -144,13 +144,16 @@ names), and taken for a device with a raw token; Android goes direct only with `
   without the service account, and an instance without all four secrets, page through the relay as before; an
   instance without a relay retries. Not covered yet: calls and the handle fallback through the direct route. The relay's suites
   run the same `sendBody`.
-- **Not yet.** The watchdog's beat (RFC 0007 "Watching the watcher") still proves the relay's providers, not the
-  instance's own key; a broken direct key costs nothing (pages fall back) but is only seen in the logs (`direct send
-  failed, paging the device through the relay`). Proving it in the beat comes with turning direct sends on in
-  production (Q34).
-- **Owner action.** The API Worker's secrets cannot be read from the relay's (Worker secrets are write-only), so
-  turning it on needs the owner to set the four secrets (and `FCM_SERVICE_ACCOUNT`) on `brigade-api-dev` from their own
-  copy of the files (section "Real-device check"). Until then the route is off and pages go through the relay as today.
+- **The watchdog** (built). Each beat (RFC 0007 "Watching the watcher") also proves the instance's own key when direct
+  sends are on (`directHealth`, the relay's deep check run with the API's secrets): APNs takes the provider token on a
+  device that cannot exist, and Google gives the service account a token. A failure (a refused key at once, a slow
+  answer from the third beat in a row) is listed as `direct_apns_failing` / `direct_fcm_failing` in
+  `GET /health/paging` and emailed to the operators, but never degrades the status or stops the dead-man ping: pages
+  still go out, through the relay. Production has had the secrets since 2026-11-08 (Q34).
+- **Secrets.** The API Worker's secrets cannot be read from the relay's (Worker secrets are write-only), so they are
+  set from the owner's copy of the files: on `brigade-api-dev` for the real-device check (section "Real-device check"),
+  and on production (`brigade-api`) on 2026-11-08, from the production relay's own copy. An instance without them
+  pages through the relay as before.
 
 ### The push component, later
 
@@ -569,5 +572,5 @@ Brigade before Ember shipped the gap, and hold now only where the status above k
    removed separately, and only once `minApp` is past every app release without the Ember client **and** no supported
    self-hosted instance runs the old engine; until then the app keeps both clients.
 
-Open questions: Q33 (when, if ever, auth moves to Ember's `Auth`), Q34 (whether the hosted instance stops using the
-relay once direct sends are proven).
+Open question: Q33 (when, if ever, auth moves to Ember's `Auth`). Q34 is decided: direct first for raw-token phones,
+the relay as their fallback and as the route for handle-registered phones.

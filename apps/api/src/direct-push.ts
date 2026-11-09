@@ -3,7 +3,8 @@
 // own Worker, through the same code the relay runs (apps/relay src/send.ts: the same payloads and envelopes, Ember's
 // push transport for the tokens), so the phones see no difference. The relay stays the fallback, per device.
 
-import { sendBody } from "@freecorps/brigade-relay/send";
+import { providerHealth, sendBody, type ProviderEnv } from "@freecorps/brigade-relay/send";
+import type { BeatCheck } from "./watchdog.ts";
 
 /** The API Worker's secrets for direct sends: the relay's names. All four APNs ones, or no direct sends. */
 export type DirectPushEnv = {
@@ -72,15 +73,7 @@ export function directPost(
   fallback: ((body: Record<string, unknown>) => Promise<Response>) | undefined,
   log: (message: string, fields: Record<string, unknown>) => void,
 ): (body: Record<string, unknown>) => Promise<Response> {
-  const provider = {
-    // Only for a device without one, which never goes direct (above): never used.
-    APNS_ENVIRONMENT: "production",
-    APNS_TOPIC: env.APNS_TOPIC ?? "",
-    APNS_KEY: env.APNS_KEY ?? "",
-    APNS_KEY_ID: env.APNS_KEY_ID ?? "",
-    APNS_TEAM_ID: env.APNS_TEAM_ID ?? "",
-    ...(env.FCM_SERVICE_ACCOUNT ? { FCM_SERVICE_ACCOUNT: env.FCM_SERVICE_ACCOUNT } : {}),
-  };
+  const provider = providerEnv(env);
   const own = async (status: number, answer: Record<string, unknown>) =>
     Response.json(answer, { status, headers: { [SENT_BY_HEADER]: "direct" } });
   return async (body) => {
@@ -112,6 +105,56 @@ export function directPost(
     });
     return fallback(body);
   };
+}
+
+/**
+ * This instance's own key and account as the relay's code takes them (`sendBody`, `providerHealth`). The environment
+ * is only used for a device without one, which never goes direct (`directPost`), and by `directHealth`, which asks the
+ * production host: one key signs for both hosts.
+ */
+function providerEnv(env: DirectPushEnv): ProviderEnv {
+  return {
+    APNS_ENVIRONMENT: "production",
+    APNS_TOPIC: env.APNS_TOPIC ?? "",
+    APNS_KEY: env.APNS_KEY ?? "",
+    APNS_KEY_ID: env.APNS_KEY_ID ?? "",
+    APNS_TEAM_ID: env.APNS_TEAM_ID ?? "",
+    ...(env.FCM_SERVICE_ACCOUNT ? { FCM_SERVICE_ACCOUNT: env.FCM_SERVICE_ACCOUNT } : {}),
+  };
+}
+
+/**
+ * The heartbeat's check of this instance's own key and account (RFC 0007 "Watching the watcher", Q34): the relay's
+ * deep health (apps/relay src/deep-health.ts) run here with the API's secrets, so a revoked or mistyped key is found
+ * within a minute, not when a page first falls back through the relay. APNs takes the provider token on a device that
+ * cannot exist; FCM gives an access token (`not_configured` without `FCM_SERVICE_ACCOUNT`). Undefined when direct sends
+ * are off. Never throws: a check that did not finish is `transient`.
+ */
+export async function directHealth(
+  env: DirectPushEnv,
+  send: Fetch,
+): Promise<{ apns: BeatCheck; fcm: BeatCheck } | undefined> {
+  if (!directConfigured(env)) return undefined;
+  try {
+    const health = await providerHealth(providerEnv(env), send);
+    const check = (found: (typeof health)["apns"]): BeatCheck =>
+      found.status === "error" ? (found.transient ? "transient" : "error") : found.status;
+    const result = { apns: check(health.apns), fcm: check(health.fcm) };
+    if (result.apns !== "ok" || (result.fcm !== "ok" && result.fcm !== "not_configured")) {
+      logCheck("direct push check failed", {
+        apns: health.apns.status === "error" ? health.apns.reason : health.apns.status,
+        fcm: health.fcm.status === "error" ? health.fcm.reason : health.fcm.status,
+      });
+    }
+    return result;
+  } catch (error) {
+    logCheck("direct push check failed", { error: String(error) });
+    return { apns: "transient", fcm: "transient" };
+  }
+}
+
+function logCheck(message: string, fields: Record<string, unknown>): void {
+  console.error(JSON.stringify({ message, notifier: "direct", ...fields }));
 }
 
 /** `promise`, or a rejection once `ms` passed. */

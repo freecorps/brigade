@@ -29,6 +29,7 @@ import {
   SYSTEM_WORKSPACE,
   TRANSIENT_FAILURES_TO_DEGRADE,
   WATCHDOG_NAME,
+  type BeatCheck,
   type BeatChecks,
   type WatchdogDO,
 } from "../src/watchdog.ts";
@@ -243,6 +244,22 @@ describe("pagingStatus", () => {
     for (const quiet of ["ok", "not_configured", "unknown", null] as const) {
       expect(
         pagingStatus({ ...times, relay: "ok", apns: quiet, fcm: quiet, d1: quiet }, NOW),
+      ).toEqual({ status: "ok", reasons: [] });
+    }
+  });
+
+  test("the instance's own push key failing is listed but never degrades: the relay pages meanwhile", () => {
+    const times = { firstBeatAt: NOW, lastBeatAt: NOW, provedBeatAt: NOW, lastProvedAt: NOW };
+    expect(
+      pagingStatus({ ...times, relay: "ok", directApns: "error", directFcm: "error" }, NOW),
+    ).toEqual({ status: "ok", reasons: ["direct_apns_failing", "direct_fcm_failing"] });
+    expect(pagingStatus({ ...times, relay: "ok", d1: "error", directApns: "error" }, NOW)).toEqual({
+      status: "degraded",
+      reasons: ["d1_failing", "direct_apns_failing"],
+    });
+    for (const quiet of ["ok", "not_configured", "unknown", null] as const) {
+      expect(
+        pagingStatus({ ...times, relay: "ok", directApns: quiet, directFcm: quiet }, NOW),
       ).toEqual({ status: "ok", reasons: [] });
     }
   });
@@ -665,6 +682,65 @@ describe("the heartbeat, end to end", () => {
     const result = await deliver(changes, notifyEnv(), relay().send, mail);
     expect(result.explicitAcks).toHaveLength(3);
     expect(sent).toHaveLength(3);
+  });
+
+  test("the instance's own push key failing keeps pinging and emails the operators that the relay pages meanwhile", async () => {
+    const { sent, mail } = mailbox();
+    const { stub, flushed, proveAt } = await emailingWatchdog(mail);
+    /** Just after the proof at `minute`: `health` reads the clock otherwise. */
+    const at = (minute: number) => NOW + minute * MINUTE + 2000;
+    const direct = (apns: BeatCheck, fcm: BeatCheck = "ok"): BeatChecks => ({
+      apns: "ok",
+      fcm: "ok",
+      d1: "ok",
+      directApns: apns,
+      directFcm: fcm,
+    });
+    await proveAt(0, direct("ok"));
+    await flushed();
+    await pinged(stub, true);
+    expect(sent.map((one) => one.subject)).toEqual([
+      "Brigade's paging self-check is back to normal",
+    ]);
+    // Apple refuses the instance's own key: still ok, still pinging, and the operators hear of it once.
+    await proveAt(1, direct("error"));
+    await flushed();
+    expect(await stub.health(at(1))).toMatchObject({
+      status: "ok",
+      reasons: ["direct_apns_failing"],
+    });
+    await vi.waitFor(() => expect(pings()).toHaveLength(2));
+    expect(sent.map((one) => one.subject).at(-1)).toBe(
+      "Brigade's own push key is failing: pages go through the relay",
+    );
+    expect(sent.at(-1)!.text).toContain("Apple's push service refused this instance's own key");
+    await proveAt(2, direct("error"));
+    await flushed();
+    expect(sent).toHaveLength(2);
+    // A slow answer counts only on the third in a row, as the relay's checks do.
+    await proveAt(3, direct("ok", "transient"));
+    await proveAt(4, direct("ok", "transient"));
+    expect(await stub.health(at(4))).toMatchObject({ status: "ok", reasons: [] });
+    await proveAt(5, direct("ok", "transient"));
+    expect(await stub.health(at(5))).toMatchObject({
+      status: "ok",
+      reasons: ["direct_fcm_failing"],
+    });
+    // Still unknown (no relay answer yet), a failing own key is listed too.
+    const { renderOperatorStatusEmail } = await import("../src/email-templates.ts");
+    const unknown = renderOperatorStatusEmail(
+      { status: "unknown", reasons: ["direct_fcm_failing"] },
+      { email: "ops@example.com" },
+      "en",
+    );
+    expect(unknown.text).toContain("Google refused this instance's own Firebase service account");
+    // Direct sends turned off: nothing of them is kept.
+    await proveAt(6, { apns: "ok", fcm: "ok", d1: "ok" });
+    await flushed();
+    expect(await stub.health(at(6))).toMatchObject({ status: "ok", reasons: [] });
+    expect(sent.map((one) => one.subject).at(-1)).toBe(
+      "Brigade's paging self-check is back to normal",
+    );
   });
 
   test("an email that failed is tried again on the next beats, then given up", async () => {

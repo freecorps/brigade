@@ -13,6 +13,8 @@ export type Email_Operator_StatusInputs = {
 * | "intro_degraded" | "The paging self-check of this Brigade instance found a problem. Pages may be late or may not go out until it's fixed:" |
 * | "intro_ok" | "The paging self-check of this Brigade instance is passing again: a heartbeat went through the event queue and the push relay." |
 * | "intro_unknown" | "The paging self-check of this Brigade instance has no result yet." |
+* | "subject_direct" | "Brigade's own push key is failing: pages go through the relay" |
+* | "intro_direct" | "The paging self-check of this Brigade instance found a problem with the instance's own push credentials. Pages still go out, through the push relay:" |
 * | "how" | "The Worker's logs have the details (search for \"paging pipeline\"). GET /health/paging shows the state as members see it." |
 * | "footer" | "You get this email because your address is in OPERATOR_EMAILS for this Brigade instance." |
 * | * | "Brigade's paging self-check changed" |

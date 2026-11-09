@@ -411,7 +411,9 @@ results (a new monitor is up on its first success).
      `handles`. Only when `RELAY_SEND_TOKEN` is set too does the send token's cheap check (`POST /send`, no body) run
      beside it, for the raw-token phones still paged through `/send` (RFC 0015 section 9); both count. A relay without
      `/v1` (`404`) is `relay_handles_unavailable`, with the send token's old deep check for the providers. Beside it the
-     consumer makes **one cheap D1 read** (`select 1`, 3 s). It reports all of it back to the watchdog (`proved`).
+     consumer makes **one cheap D1 read** (`select 1`, 3 s), and, when the instance sends pages itself (RFC 0016 step
+     2, Q34), runs the same deep check with its own APNs key and Firebase account (`directApns`, `directFcm`). It
+     reports all of it back to the watchdog (`proved`).
   4. The watchdog pings `DEAD_MAN_URL` (one `GET`, 5 s timeout) only when that beat is newer than any proved before,
      came back within 2 minutes, the relay took the token, and none of the deeper checks failed: a revoked APNs key,
      an FCM account Google refuses, or a D1 that does not answer stops the pings, so the operators hear of it (a
@@ -422,6 +424,9 @@ results (a new monitor is up on its first success).
      per check in the watchdog's storage): before that the beat still pings and the status does not change, so one
      slow answer does not page the operators. A check that passes starts its count again, so a provider failing two beats in three never degrades (accepted:
      the pages themselves are retried, and a lasting outage fails three in a row). Anything else is silence.
+     The instance's own key is the exception: it fails the same way (`direct_apns_failing`, `direct_fcm_failing`,
+     with the same count for a transient failure) but never stops the ping or makes the status `degraded`, since a
+     page it cannot send goes through the relay; the change is emailed to the operators all the same.
      The ping runs in the object's `waitUntil`, so a check that hangs never holds up the consumer and the pages in its
      batch.
 

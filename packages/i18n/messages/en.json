@@ -191,6 +191,8 @@
   "paging_reason_apns_failing": "Apple's push service refused the relay's key, or isn't answering, so iPhones can't be paged.",
   "paging_reason_fcm_failing": "Firebase Cloud Messaging gave the relay no access token.",
   "paging_reason_d1_failing": "The database (D1) didn't answer a simple read.",
+  "paging_reason_direct_apns_failing": "Apple's push service refused this instance's own key, or isn't answering. iPhones are paged through the push relay meanwhile.",
+  "paging_reason_direct_fcm_failing": "Google refused this instance's own Firebase service account, or isn't answering. Android phones are paged through the push relay meanwhile.",
   "paging_last_ok": "Last self-check that got through: {time}",
   "mobile_overview_description": "The severity and status legend, drawn from the shared tokens and catalog.",
   "dates_title": "Dates and times",
@@ -2839,6 +2841,8 @@
         "part=intro_degraded": "The paging self-check of this Brigade instance found a problem. Pages may be late or may not go out until it's fixed:",
         "part=intro_ok": "The paging self-check of this Brigade instance is passing again: a heartbeat went through the event queue and the push relay.",
         "part=intro_unknown": "The paging self-check of this Brigade instance has no result yet.",
+        "part=subject_direct": "Brigade's own push key is failing: pages go through the relay",
+        "part=intro_direct": "The paging self-check of this Brigade instance found a problem with the instance's own push credentials. Pages still go out, through the push relay:",
         "part=how": "The Worker's logs have the details (search for \"paging pipeline\"). GET /health/paging shows the state as members see it.",
         "part=footer": "You get this email because your address is in OPERATOR_EMAILS for this Brigade instance.",
         "part=*": "Brigade's paging self-check changed"

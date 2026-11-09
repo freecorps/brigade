@@ -299,6 +299,17 @@ offline) ask the same way and open Ember's client for a workspace on Ember; with
 which the adapter serves. So an app with this build never needs the adapter for a workspace on Ember once it is
 online.
 
+**Ember only (step 5, 2026-11-09).** Every workspace on Brigade's own instances is on Ember, and no supported instance
+runs the old engine (the owner: only Freecorps runs Brigade). The app's `0.2.0` build is the first with Ember's client,
+and `/config`'s `minApp` is now `0.2.0`. So the app and the dashboard no longer pick a client: both open every
+workspace on Ember's, with no probe, no remembered engine and no turn back. The app asks `POST /api/ember-token/:workspace`
+once as a workspace opens, for the client's first token only (apps/mobile src/lib/ember-token.ts `primeToken`: none
+on any failure, and then the client asks on connect); the client asks again per connect and refresh, a refused session
+or membership (401, 403) being no token and anything else an error it retries. The dashboard asks only per connect and
+refresh (apps/web src/lib/sync.ts `emberToken`). The one-shot clients are Ember's too. A queue Brigade Sync kept on a
+phone that updated is still taken over by Ember's client with its ids (src/lib/queue-entries.ts). The Brigade Sync
+clients are gone from both; the adapter below stays on the API until `WorkspaceDO`'s engine goes (#216).
+
 **App versions that only speak Brigade Sync** stay installed on phones after a workspace moves, and they only know
 how to reconnect and replay Brigade frames. So `/sync/:workspace` of a migrated workspace is served by a **Brigade Sync
 adapter** on the Ember shard: it answers `hello`, `mutate` and the subscription frames of RFC 0004 by running the same

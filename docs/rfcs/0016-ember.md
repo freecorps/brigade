@@ -309,6 +309,9 @@ Both sides run the same `apply` and the same queries, so the adapter translates 
 
 ## Auth
 
+> Superseded by RFC 0017 (Q33 decided 2026-11-09) once its cutover runs: identity moves to Ember's `Auth` object,
+> workspaces stay in D1. What follows is how it works until then.
+
 **Decision: Better Auth stays on D1 for now**, and Ember's `ctx.auth` trusts it. Moving to Ember's `Auth` Durable
 Object is possible later (Ember runs Better Auth too) but not part of this migration, because:
 

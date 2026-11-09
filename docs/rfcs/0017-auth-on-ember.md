@@ -1,6 +1,6 @@
 # RFC 0017 — Auth on Ember's `Auth` object (Q33)
 
-- Status: Draft
+- Status: Accepted (design); built in the order below
 - Decision (owner, 2026-11-09): move auth to Ember's `Auth` Durable Object. Signing everyone out once is accepted:
   the only users are the two owners, told beforehand.
 
@@ -52,7 +52,9 @@ plugin is unused by the shards for now.
 (`useActiveOrganization` 5 uses, `organization.setActive` 5, `useListOrganizations` 2, `useActiveMember` 2) are
 replaced by Brigade routes over D1: `GET /api/workspaces` (the caller's memberships with role) and the workspace the
 client picked, kept by the client (the app already keeps `knownWorkspace`; the dashboard keeps it in the URL and local
-storage). Creating a workspace (`auth.api.createOrganization`, 2 uses) is a D1 write in `createWorkspace`.
+storage). The hooks are used 9 times and `organization.setActive` 8 (dashboard: `src/lib/auth.ts` twice,
+`members-card.tsx`; app: `session.tsx`, `account.tsx`, `new-workspace.tsx`, `sign-up.tsx` and `use-page-taps.ts`, which
+switches to the paged workspace when a page is tapped). Creating a workspace (`auth.api.createOrganization`, 2 uses) is a D1 write in `createWorkspace`.
 
 **Brigade's rules move as options.** `auth.config.ts` holds what `createAuth` builds today: the `before` and `after`
 hooks, `databaseHooks`, `emailAndPassword` (reset email, `revokeSessionsOnPasswordReset`), `requireEmailVerification`,
@@ -85,13 +87,24 @@ Each is an Ember change with its own tests, released before Brigade uses it.
 3. Clients: the workspace picker without the organization plugin, on both engines. An EAS update for the app (no
    native change).
 4. Cutover, `dev` then production: import `user` and `account` from D1, set `AUTH_ENGINE=ember`, everyone signs in.
-   Turning back is `AUTH_ENGINE=d1`; what changed in the object since (a new password, a new account) is lost then,
-   so the D1 tables stay untouched until step 5.
+   Sessions are not imported (that is the sign-out), and neither is `verification`: a password-reset or verification
+   link sent before the cutover stops working, and its owner asks for another one (the owners are told). The
+   `rateLimit` counts start over.
+   Turning back is `AUTH_ENGINE=d1`. D1 is not left as it was: the `user` copy (the same table Better Auth on D1
+   reads) keeps every profile change made on the object, and `session_end` keeps the rows the object's hook wrote,
+   which only matter for sessions that are gone either way. What D1 does not get back is the object's own state: a
+   password changed there (D1's `account` still has the old hash), an account created there (a `user` row in the copy
+   with no `account` row, so its owner resets the password), its sessions (everyone signs in again) and its
+   verification links. D1's `account`, `session` and `verification` stay untouched until step 5.
 5. After a keep window: remove the D1 path and the organization plugin's leftovers, drop D1's `session`, `account` and
    `verification`.
 
 ## Not changed
 
 Workspaces, members, invitations, API tokens (RFC 0014: `api_token` stays in D1 and resolves its user from the copy),
-`session_end`, the shard token and the paging path. A page never waits on the `Auth` object: the shards check the
-token they were given, and the watchdog and probes do not use auth.
+`session_end`, the shard token and the paging path. Sending a page never waits on the `Auth` object: the outbox, the
+push transport, the watchdog and the probes use no session, and a socket already open keeps the token it was given
+until it refreshes. What does need it is what needs a session today, now read from the object instead of D1:
+minting a token (opening or refreshing an app or dashboard socket, so the call screen's "press 1" ack over the
+socket), the HTTP ack route a notification action calls, and signing in. So the object is on the acknowledge path as
+D1 is today; the ack from a notification keeps its device-key path (RFC 0006), which needs no session.

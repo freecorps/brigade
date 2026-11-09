@@ -123,16 +123,10 @@ The Custom Domain is attached to `brigade-relay`, and the contact code is sent f
 
 ## Q33 — Whether auth moves to Ember's `Auth` object (RFC 0016 "Auth")
 
-Owner: Heitor. Decided for the migration: Better Auth stays on D1 and Ember's `ctx.auth` trusts a short-lived token
-minted from the D1 session, checked against D1 (session not ended, member still there) when a socket opens and on
-every token refresh, and closed by the session-end hook (RFC 0016 "Auth"). Open: whether to move users and sessions to Ember's `Auth` Durable Object once the engine
-has moved. For: one auth stack maintained in Ember, sign-in served next to the shards. Against: every custom rule in
-RFC 0002 "Auth" re-tested on a new store, a live session migration (or every phone signed out, and with it its
-pages), and D1's `member` table is needed anyway for cross-workspace reads. Proposal: decide after step 8 of RFC 0016,
-with a spike that migrates sessions on `dev` without signing anyone out.
-
-**Decided (owner, 2026-11-09):** auth moves to Ember's `Auth` object, with everyone signing in again once (the only
-users are the two owners). Workspaces, members and invitations stay in D1. Design and order of work: RFC 0017.
+Owner: Heitor. **Decided (2026-11-09):** auth moves to Ember's `Auth` object, with everyone signing in again once (the
+only users are the two owners). Workspaces, members and invitations stay in D1. Design and order of work: RFC 0017.
+Until its cutover (step 4), Better Auth stays on D1 and Ember's `ctx.auth` trusts the token the API mints from the D1
+session (RFC 0016 "Auth").
 
 # Decided
 

@@ -622,6 +622,33 @@ export const activeIncidents = defineQuery({
   sort: mostSevereFirst,
 });
 
+/**
+ * Incidents that are over (resolved or declined) and were declared at or after `since` (epoch ms), newest first: the
+ * history the dashboard and the app list under the open ones. `since` keeps a long history from coming back whole;
+ * a client asks further back as the member scrolls ("Show older"). A reopened incident leaves it, as it is active again.
+ */
+export const pastIncidents = defineQuery({
+  name: "incidents.past",
+  args: v.object({ since: v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER }) }),
+  permission: "incident:read",
+  table: "incidents",
+  filter: (row, args) => !isActive(row.status) && row.declaredAt >= args.since,
+  sort: newestFirst,
+});
+
+/** How far back a history list starts (`incidents.past`), and how much further each "Show older" goes, in days. */
+export const PAST_DAYS = 30;
+export const OLDER_DAYS = 90;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * `incidents.past`'s `since` for the last `days` days: from the start of `now`'s day (UTC), so it stays the same all
+ * day and a list asking with it does not subscribe again on every render.
+ */
+export function pastSince(days: number, now: number): number {
+  return Math.max(0, Math.floor(now / DAY_MS) * DAY_MS - days * DAY_MS);
+}
+
 export const incidentById = defineQuery({
   name: "incident.byId",
   args: v.object({ id: incidentId }),

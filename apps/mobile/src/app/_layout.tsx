@@ -103,6 +103,7 @@ export default function RootLayout() {
                   }}
                 />
                 <Stack.Screen name="incidents/by-id/[id]" options={{ title: "" }} />
+                <Stack.Screen name="incidents/past" options={{ title: m.incidents_past_title() }} />
                 <Stack.Screen name="push" options={{ title: m.push_title() }} />
                 <Stack.Screen name="call-test" options={{ title: m.call_test_title() }} />
                 <Stack.Screen

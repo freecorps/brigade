@@ -1,5 +1,6 @@
 // Pieces the incident list and the incident screen share: badges that open a choice, refusal notices, the
 // connection line and what to say when sync is stale or missing.
+import { Text as UIText } from "@expo/ui";
 import { queryErrorReason } from "@freecorps/brigade-i18n/incident";
 import { m } from "@freecorps/brigade-i18n";
 import { incidentStatusLabels, severityLabels } from "@freecorps/brigade-i18n/labels";
@@ -249,6 +250,43 @@ export function StatePanel({
         </>
       )}
     </View>
+  );
+}
+
+/**
+ * Why a list or an incident may be out of date, as native text for a section's header (under `ListStatus`): it wraps
+ * to the list's width, which React Native text hosted there does not. Reloading a refused list is its own row
+ * (`StateReload`). Null while live or connecting.
+ */
+export function StateLines({
+  view,
+  errorCode,
+  subject = "list",
+}: {
+  view: SyncView;
+  errorCode: string | undefined;
+  subject?: "list" | "incident";
+}) {
+  const colors = useTheme();
+  const caption = { color: colors.mutedForeground, fontSize: fontSize.sm.size };
+  if (view === "reconnecting") {
+    return (
+      <UIText textStyle={caption}>
+        {subject === "incident"
+          ? m.mobile_session({ part: "incident_stale_hint" })
+          : m.sync_reconnecting_hint()}
+      </UIText>
+    );
+  }
+  if (view === "refused") {
+    return <UIText>{m.sync_refused_hint({ reason: queryErrorReason(errorCode) })}</UIText>;
+  }
+  if (view !== "unavailable") return null;
+  return (
+    <>
+      <UIText>{__DEV__ ? m.sync_unavailable_hint() : m.mobile_sync_offline_hint()}</UIText>
+      <UIText textStyle={caption}>{m.mobile_sync_retrying()}</UIText>
+    </>
   );
 }
 

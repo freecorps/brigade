@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Page } from "@/components/app-shell";
 import { IncidentsCard } from "@/components/incidents-card";
+import { PastIncidentsCard } from "@/components/past-incidents-card";
 import { usePreferences } from "@/components/preferences";
 import { RequireWorkspace } from "@/components/session";
 import { sectionLabel } from "@/lib/navigation";
 import { usePageTitle } from "@/lib/page-title";
 
-/** The workspace's open incidents, with declare: `/incidents`. */
+/** The workspace's open incidents, with declare, and the ones that are over: `/incidents`. */
 export const Route = createFileRoute("/incidents/")({
   component: SectionRoute,
   staticData: { section: "incidents" },
@@ -27,6 +28,7 @@ function Section() {
   return (
     <Page>
       <IncidentsCard />
+      <PastIncidentsCard />
     </Page>
   );
 }

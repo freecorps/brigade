@@ -521,7 +521,7 @@ function NoticeItem({
  * Below the list: why it is stale or missing. A failure gets an alert glyph and the refused notices' destructive
  * surface, so it never reads like the calm "All clear"; only the passing reconnect hint stays quiet.
  */
-function StatePanel({
+export function StatePanel({
   view,
   errorCode,
   sent,
@@ -603,7 +603,7 @@ const PILLS: Record<
  * fixed height, so the dot and the icons give the line the same height. Phones get the short word where there is
  * one, so it fits beside the title at 320px.
  */
-function ConnectionPill({ view }: { view: SyncView }) {
+export function ConnectionPill({ view }: { view: SyncView }) {
   const { icon: Icon, text, short, tone, spin } = PILLS[view];
   return (
     <p

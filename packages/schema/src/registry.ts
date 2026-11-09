@@ -3,6 +3,7 @@
 import {
   acknowledgeIncident,
   activeIncidents,
+  pastIncidents,
   assignIncidentRole,
   declareIncident,
   deleteIncidentUpdate,
@@ -149,6 +150,7 @@ export const mutations = defineRegistry([
 
 export const queries = defineRegistry([
   activeIncidents,
+  pastIncidents,
   incidentById,
   incidentByNumber,
   incidentTimeline,

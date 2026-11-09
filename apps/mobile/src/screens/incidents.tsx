@@ -33,11 +33,12 @@ import { usePagingNotice } from "@/components/account";
 import { useChoiceSheet } from "@/components/choice-sheet";
 import { EmptyRow } from "@/components/empty-row";
 import type { Glyph } from "@/components/glyphs";
-import { StatePanel, useNow } from "@/components/incident-parts";
+import { StateLines, useNow } from "@/components/incident-parts";
 import { useListEnd } from "@/components/list-end";
 import { ListStatus } from "@/components/list-status";
 import { SeverityPill, StatusPill } from "@/components/pill";
 import { RowChevron } from "@/components/row-chevron";
+import { RowIcon } from "@/components/row-icon";
 import { withRowMenu } from "@/components/row-menu";
 import { RowText } from "@/components/row-text";
 import { DeclareButton } from "@/components/declare-button";
@@ -58,6 +59,9 @@ import { currentSync } from "@/lib/sync-client";
  */
 /** Room under the list for the floating Declare button (Android), so the last incident scrolls clear of it. */
 const FAB_ROOM = 88;
+
+/** The past incidents' row: a clock turning back. */
+const HISTORY_GLYPH: Glyph = { ios: "clock.arrow.circlepath", android: "history", web: "history" };
 
 /** Nothing open: a shield with a check, as the dashboard's all-clear. */
 const ALL_CLEAR_GLYPH: Glyph = {
@@ -246,7 +250,12 @@ function IncidentList({ onReload }: { onReload: () => void }) {
           {pagingNotice}
           <FieldGroup.Section>
             <FieldGroup.SectionHeader>
-              <ListStatus view={view} summary={summary} />
+              {/* Why the list may be out of date, under its status as on an incident: inside the list, so it scrolls
+                  with it and never sits under the tab bar. */}
+              <Column spacing={spacing[1]} alignment="start">
+                <ListStatus view={view} summary={summary} />
+                <StateLines view={view} errorCode={error?.code} />
+              </Column>
             </FieldGroup.SectionHeader>
             {rows.map((row) =>
               withRowMenu(
@@ -309,6 +318,23 @@ function IncidentList({ onReload }: { onReload: () => void }) {
               />
             ) : null}
           </FieldGroup.Section>
+          {view === "refused" ? (
+            <FieldGroup.Section>
+              <ListItem onPress={onReload}>
+                <RowText color={colors.primary}>{m.reload()}</RowText>
+              </ListItem>
+            </FieldGroup.Section>
+          ) : null}
+          {/* The history, under the open ones: resolved and declined incidents (src/screens/past-incidents.tsx). */}
+          <FieldGroup.Section>
+            <ListItem
+              onPress={() => router.push("/incidents/past")}
+              leading={<RowIcon glyph={HISTORY_GLYPH} color={colors.mutedForeground} plain />}
+              trailing={<RowChevron />}
+            >
+              <Text>{m.incidents_past_title()}</Text>
+            </ListItem>
+          </FieldGroup.Section>
           {refusals.length > 0 ? (
             <FieldGroup.Section>
               {[...refusals.filter((refusal) => listed.has(refusal.incidentId)), ...unlisted].map(
@@ -330,7 +356,6 @@ function IncidentList({ onReload }: { onReload: () => void }) {
         </FieldGroup>
       </NativeHost>
       {can(role, "incident:declare") ? <DeclareButton /> : null}
-      <StatePanel view={view} errorCode={error?.code} onReload={onReload} />
       {sheet}
     </View>
   );

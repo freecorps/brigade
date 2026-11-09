@@ -526,6 +526,11 @@ not findable by id once 0.5 is back. So after this deploy, fix forward. If the c
 go back with it (Durable Object point-in-time restore to before the deploy), and every write since is lost.
 Converted: `dev` 2026-11-09 (3 workspaces, reads of old ids and writes checked), production on the merge of #225.
 
+**Ember 0.5.5 (2026-11-09).** Patch releases since 0.5.0: the migration planner accepts a widened field (an optional
+field added to a shape, a larger union) with no data migration (0.5.4, freecorps/ember#45), and Ember's `Auth` gets
+what RFC 0017 needs (`defineAuth` from `env`, the server-side `Auth.api` call, `Auth.importUsers`; 0.5.5). Nothing
+in them changes how a shard stores its rows, so 0.5.0's "fix forward" note above is unchanged.
+
 Kept as they are, on purpose:
 
 - **G1, G6**: Brigade's payload, envelope and delivery rules (critical sounds, CallKit, the handle fallback, a token of

@@ -644,5 +644,8 @@ the old path removed only at the end. Order and details: RFC 0016 "Order of work
     Ember client and no supported self-hosted instance runs the old engine.
     - Owner, 2026-11-09: only Freecorps runs Brigade (no self-hosted instance to support), and the app's only users
       are the two owners on TestFlight. Every build so far said `0.1.0`, so `minApp` could not tell builds with the
-      Ember client from older ones. The app is now `0.2.0`, a version only builds with the Ember client carry. Once
-      the owners run it, `MIN_APP_VERSION` goes to `0.2.0` and the protocol goes.
+      Ember client from older ones. The app is now `0.2.0`, a version only builds with the Ember client carry, and
+      the version is part of the native fingerprint (`apps/mobile/fingerprint.config.cjs`), so it ships as a build,
+      not an update. Once every installation runs it, `MIN_APP_VERSION` goes to `0.2.0` and the protocol goes. That
+      means the owners' phones and any other device they signed in on; the owners confirm this, because the API
+      records no app version per device.

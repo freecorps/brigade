@@ -141,6 +141,23 @@ export function callAckRoute<T extends { origin: string }>(
     : { kind: "none" };
 }
 
+/**
+ * Whether a call's ack that HTTPS could not deliver (`failed`, or `signed_out`: the session could not be read) is tried
+ * on the open workspace's socket: only when that socket, as it is now (read again after the HTTPS tries, which take
+ * seconds), is the call's workspace at the call's instance.
+ */
+export function socketFallback(
+  outcome: AckOutcome,
+  route: { instance: { origin: string }; workspace: string },
+  now: { shard: string | undefined; activeOrigin: string | undefined },
+): boolean {
+  return (
+    (outcome === "failed" || outcome === "signed_out") &&
+    now.shard === route.workspace &&
+    now.activeOrigin === route.instance.origin
+  );
+}
+
 /** An ack over HTTPS, as the call screen reads a mutation's outcome (`conflict` is acknowledged already). */
 export function ackMutationOutcome(outcome: AckOutcome): MutationOutcome {
   if (outcome === "acknowledged") return { ok: true, version: 0 };

@@ -6,7 +6,12 @@ import { BrigadeCall } from "../../modules/brigade-call";
 import { CallSession } from "@/lib/call-session";
 import { clientsFor, instances } from "@/lib/instance-clients";
 import { activeInstance } from "@/lib/instances";
-import { acknowledgeFromNotification, ackMutationOutcome, callAckRoute } from "@/lib/page-action";
+import {
+  acknowledgeFromNotification,
+  ackMutationOutcome,
+  callAckRoute,
+  socketFallback,
+} from "@/lib/page-action";
 import type { MutationOutcome } from "@freecorps/brigade-sync";
 import { currentSync, type WorkspaceSync } from "@/lib/sync-client";
 
@@ -55,15 +60,15 @@ export const callSession = new CallSession(
             sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
           },
         );
-        // HTTPS could not get through (or the session could not be read), but the open workspace is the call's and
-        // its socket may still: tried there before giving up.
-        const active = activeInstance(list);
+        // HTTPS could not get through (or the session could not be read), but the open workspace may be the call's
+        // and its socket may still: tried there before giving up, as they are now, after the seconds HTTPS took.
+        const open = currentSync();
+        const shown = activeInstance(instances.current());
         if (
-          (outcome === "failed" || outcome === "signed_out") &&
-          sync?.shard === route.workspace &&
-          active?.origin === route.instance.origin
+          open &&
+          socketFallback(outcome, route, { shard: open.shard, activeOrigin: shown?.origin })
         ) {
-          return socketAck(sync, incident);
+          return socketAck(open, incident);
         }
         return ackMutationOutcome(outcome);
       }

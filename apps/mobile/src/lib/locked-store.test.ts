@@ -1,5 +1,11 @@
 import { expect, test } from "vite-plus/test";
-import { keepReadable, lockedReadable, sessionKeys, type KeyStore } from "@/lib/locked-store";
+import {
+  keepReadable,
+  lockedReadable,
+  MAX_CHUNKS,
+  sessionKeys,
+  type KeyStore,
+} from "@/lib/locked-store";
 
 /** A key store that records the options each write used. */
 function memory(initial: Record<string, string> = {}) {
@@ -107,4 +113,13 @@ test("an item that cannot be read (a locked phone) is left for the next launch",
     ["a"],
   );
   expect(writes).toEqual([]);
+});
+
+test("a value split into as many chunks as @better-auth/expo allows is written again whole", async () => {
+  const chunks = Object.fromEntries(
+    Array.from({ length: MAX_CHUNKS }, (_, i) => [`brigade_cookie.0.${i}`, `c${i}`]),
+  );
+  const { store, writes } = memory({ brigade_cookie: "marker", ...chunks });
+  await keepReadable(lockedReadable(store, AFTER_FIRST_UNLOCK), ["brigade_cookie"]);
+  expect(writes.map(([key]) => key)).toEqual(["brigade_cookie", ...Object.keys(chunks)]);
 });

@@ -29,8 +29,8 @@ export function lockedReadable<S extends KeyStore>(store: S, accessible: number)
   };
 }
 
-/** How many chunks `@better-auth/expo` may split a value into; more is never written. */
-const MAX_CHUNKS = 64;
+/** How many chunks `@better-auth/expo` (1.7.13: `MAX_STORAGE_CHUNKS`) may split a value into; more is never written. */
+export const MAX_CHUNKS = 100;
 
 /**
  * The keys a session under `storagePrefix` is kept in, as `@better-auth/expo` names them (`:` written `_`): the

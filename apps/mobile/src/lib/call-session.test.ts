@@ -62,7 +62,7 @@ describe("callScript", () => {
       "Brigade page. Press 1 at any time to acknowledge. SEV1 · Checkout down. 502s from payments. Press 1 to acknowledge, or hang up to pass the page on.",
     );
     expect(callScript(CALL, "pt-BR")).toMatch(
-      /^Acionamento do Brigade\. Pressione 1 a qualquer momento para confirmar\. SEV1 · Checkout down\. .*Pressione 1/,
+      /^Acionamento do Brigade\. Pressione 1 a qualquer momento para confirmar\. SEV1 · Checkout down\. 502s from payments\. Pressione 1/,
     );
     expect(speechLanguage("pt-BR")).toBe("pt-BR");
     expect(speechLanguage("en")).toBe("en-US");

@@ -57,16 +57,28 @@ test("items kept before are written again with every chunk, in each slot, and no
     ...sessionKeys("brigade:abc"),
     "missing",
   ]);
-  expect(writes.map(([key]) => key)).toEqual([
-    "instances",
-    "brigade_cookie",
-    "brigade_session_data.0",
-    "brigade_session_data.1",
-    "brigade_abc_cookie",
-    "brigade_abc_cookie.1.0",
-    "brigade_abc_cookie.1.1",
-  ]);
-  expect(Object.fromEntries(items)).toMatchObject({ brigade_cookie: "c" });
+  expect(writes).toEqual(
+    [
+      "instances",
+      "brigade_cookie",
+      "brigade_session_data.0",
+      "brigade_session_data.1",
+      "brigade_abc_cookie",
+      "brigade_abc_cookie.1.0",
+      "brigade_abc_cookie.1.1",
+    ].map((key) => [key, { keychainAccessible: AFTER_FIRST_UNLOCK }]),
+  );
+  // Each written back as it was; the cleared chunk stays empty.
+  expect(Object.fromEntries(items)).toEqual({
+    instances: "[]",
+    brigade_cookie: "c",
+    "brigade_session_data.0": "s0",
+    "brigade_session_data.1": "s1",
+    brigade_abc_cookie: "marker",
+    "brigade_abc_cookie.1.0": "a0",
+    "brigade_abc_cookie.1.1": "a1",
+    "brigade_abc_cookie.1.2": "",
+  });
 });
 
 test("an item the auth client changed between the two reads is not put back", async () => {

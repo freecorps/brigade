@@ -116,18 +116,22 @@ test("a page from an instance no longer on the phone sends nothing", async () =>
   expect(sent).toEqual([]);
 });
 
-test("an answered call acknowledges over the socket when it is the shown instance and workspace", () => {
-  expect(callAckRoute({}, instances, shown, "ws_one")).toEqual({ kind: "sync" });
+test("an answered call acknowledges over HTTPS, the shown workspace too; over the socket only without a workspace", () => {
+  // The socket may not be open yet (a call woke the app on the lock screen) or died with the suspended app.
   expect(
     callAckRoute({ origin: shown.origin, workspace: "ws_one" }, instances, shown, "ws_one"),
-  ).toEqual({ kind: "sync" });
-  // The shown instance from another snapshot of the list is still the shown one.
+  ).toEqual({ kind: "http", instance: shown, workspace: "ws_one" });
   expect(
     callAckRoute({ origin: shown.origin, workspace: "ws_one" }, instances, { ...shown }, "ws_one"),
-  ).toEqual({ kind: "sync" });
-  // An older build's call names no workspace: the open one, as before.
+  ).toEqual({ kind: "http", instance: shown, workspace: "ws_one" });
+  // A call that names no instance, or an older instance's without a workspace: the open one, as before.
+  expect(callAckRoute({}, instances, shown, "ws_one")).toEqual({ kind: "sync" });
   expect(callAckRoute({ origin: shown.origin }, instances, shown, "ws_one")).toEqual({
     kind: "sync",
+  });
+  // ... and with no workspace open, nowhere.
+  expect(callAckRoute({ origin: shown.origin }, instances, shown, undefined)).toEqual({
+    kind: "none",
   });
 });
 

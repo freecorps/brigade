@@ -25,6 +25,7 @@ import {
   board,
   clientsFor,
   instances,
+  keepSessionsReadable,
   relayDeps,
   type InstanceClients,
 } from "@/lib/instance-clients";
@@ -258,7 +259,8 @@ function usePaging(
 export function Session({ children }: { children: (ready: boolean) => ReactNode }) {
   const list = useSyncExternalStore(instances.subscribe, instances.current);
   useEffect(() => {
-    void instances.load();
+    // Then the sessions kept before this build become readable on the lock screen, for a call's "press 1".
+    void instances.load().then(() => keepSessionsReadable());
   }, []);
   const active = activeInstance(list);
   const clients = active ? clientsFor(active) : undefined;

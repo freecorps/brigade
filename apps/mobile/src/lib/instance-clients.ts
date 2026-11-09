@@ -13,6 +13,7 @@ import {
   type AuthClient,
 } from "@/lib/auth-client";
 import type { DeviceDeps } from "@/lib/device";
+import { keepReadable, lockedReadable, sessionKeys } from "@/lib/locked-store";
 import {
   judgeAddress,
   loadAddressConfig,
@@ -47,10 +48,16 @@ function newInstanceId(): string {
   return Array.from(getRandomBytes(12), (byte) => ALPHABET[byte % ALPHABET.length]).join("");
 }
 
+/**
+ * Secure storage for what a call answered on the lock screen reads: the instances and their sessions, readable after
+ * the phone's first unlock (src/lib/locked-store.ts).
+ */
+const secureStore = lockedReadable(SecureStore, SecureStore.AFTER_FIRST_UNLOCK);
+
 /** The instances this phone signs in to, the build's default one first until the member adds others. */
 export const instances = instancesStore({
-  read: () => SecureStore.getItemAsync(INSTANCES_KEY),
-  write: (raw) => SecureStore.setItemAsync(INSTANCES_KEY, raw),
+  read: () => secureStore.getItemAsync(INSTANCES_KEY),
+  write: (raw) => secureStore.setItemAsync(INSTANCES_KEY, raw),
   defaultOrigin,
   newId: newInstanceId,
 });
@@ -76,7 +83,7 @@ export function clientsFor(instance: Instance): InstanceClients {
     clients = {
       instance,
       server,
-      authClient: brigadeAuthClient(server.auth, SecureStore, storage.auth),
+      authClient: brigadeAuthClient(server.auth, secureStore, storage.auth),
       storage,
       phoneWorkspaces: phoneWorkspacesAt(storage.workspaces),
       pendingFiles: pendingFilesFor(instance.id),
@@ -84,6 +91,19 @@ export function clientsFor(instance: Instance): InstanceClients {
     made.set(key, clients);
   }
   return clients;
+}
+
+/**
+ * Writes the instances and every instance's session again as readable on the lock screen, for items kept before this
+ * build (src/lib/locked-store.ts). Run at launch; does nothing harmful when the phone is locked (it reads nothing then).
+ */
+export async function keepSessionsReadable(): Promise<void> {
+  const list = await instances.load().catch(() => null);
+  if (!list) return;
+  await keepReadable(secureStore, [
+    INSTANCES_KEY,
+    ...list.instances.flatMap((one) => sessionKeys(instanceStorage(one.id).auth)),
+  ]);
 }
 
 /** The clients of the instance the app shows; undefined without any (a release build with no server). */
@@ -179,7 +199,7 @@ export async function sessionAt(origin: string): Promise<Instance | undefined> {
   const list = await instances.load();
   const home = sessionHome(list, origin, defaultOrigin);
   if (!home) return undefined;
-  return (await sessionKept(SecureStore, instanceStorage(home.id).auth)) ? home : undefined;
+  return (await sessionKept(secureStore, instanceStorage(home.id).auth)) ? home : undefined;
 }
 
 /**
@@ -192,7 +212,7 @@ export async function sessionAt(origin: string): Promise<Instance | undefined> {
  */
 export async function keepSignIn(origin: string, cookie: string): Promise<Instance> {
   const instance = await addAndKeep(instances, origin, (one) =>
-    storeSessionCookie(SecureStore, instanceStorage(one.id).auth, cookie),
+    storeSessionCookie(secureStore, instanceStorage(one.id).auth, cookie),
   );
   clientsFor(instance).authClient.$store.notify("$sessionSignal");
   return instance;

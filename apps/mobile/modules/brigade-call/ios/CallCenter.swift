@@ -490,6 +490,8 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
   private func flushSpeech() {
     guard let (text, language) = pendingSpeech else { return }
     pendingSpeech = nil
+    // What comes next replaces what is being read: 1 pressed mid-sentence is confirmed at once, not after the incident.
+    if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
     let utterance = AVSpeechUtterance(string: text)
     utterance.voice = AVSpeechSynthesisVoice(language: language)
     log.info("speaking")

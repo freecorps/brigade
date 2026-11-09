@@ -10,7 +10,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 /**
 * | output |
 * | --- |
-* | "Brigade page. {title}. {body}" |
+* | "Brigade page. Press 1 at any time to acknowledge. {title}. {body}" |
 *
 * @param {Call_ScriptInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options
@@ -18,6 +18,6 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 */
 export const call_script = /** @type {((inputs: Call_ScriptInputs, options?: { locale?: "en" | "pt-BR" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Call_ScriptInputs, { locale?: "en" | "pt-BR" }, {}>} */ ((i, options = {}) => {
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
-	if (locale === "pt-BR") return /** @type {LocalizedString} */ (`Acionamento do Brigade. ${i?.title}. ${i?.body}`)
-	return /** @type {LocalizedString} */ (`Brigade page. ${i?.title}. ${i?.body}`)
+	if (locale === "pt-BR") return /** @type {LocalizedString} */ (`Acionamento do Brigade. Pressione 1 a qualquer momento para confirmar. ${i?.title}. ${i?.body}`)
+	return /** @type {LocalizedString} */ (`Brigade page. Press 1 at any time to acknowledge. ${i?.title}. ${i?.body}`)
 });

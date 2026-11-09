@@ -11,10 +11,11 @@ import { currentSync } from "@/lib/sync-client";
 
 export const callSession = new CallSession(
   {
-    // A named mutation through Brigade Sync, like every write (RFC 0004), on the member's workspace. The socket is
-    // live while the call is in the foreground. A call from another instance or workspace goes over HTTPS as the
-    // Acknowledge action does, with that instance's session. Signed out, there is no one to ack as: the call screen
-    // says it failed.
+    // Over HTTPS as the Acknowledge action does, with the session of the instance the call came from
+    // (`callAckRoute`): a call often wakes the app on the lock screen or from suspension, before the workspace's socket
+    // is open, and the session is readable there (src/lib/locked-store.ts). Only an older instance's call, which names
+    // no workspace, goes over the open workspace's socket. Signed out, there is no one to ack as: the call screen says
+    // it failed.
     ack: async (incident, call) => {
       const list = await instances.load();
       const sync = currentSync();

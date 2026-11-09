@@ -429,7 +429,7 @@
   "call_channel_pages": "Acionamentos",
   "push_channel_updates": "Atualizações de incidentes",
   "call_title": "Chamada",
-  "call_script": "Acionamento do Brigade. {title}. {body}",
+  "call_script": "Acionamento do Brigade. Pressione 1 a qualquer momento para confirmar. {title}. {body}",
   "call_script_prompt": "Pressione 1 para confirmar, ou desligue para passar o acionamento adiante.",
   "call_script_acked": "Confirmado. Obrigado.",
   "call_speaking": "Lendo o incidente em voz alta",

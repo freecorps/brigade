@@ -429,7 +429,7 @@
   "call_channel_pages": "Pages",
   "push_channel_updates": "Incident updates",
   "call_title": "Call",
-  "call_script": "Brigade page. {title}. {body}",
+  "call_script": "Brigade page. Press 1 at any time to acknowledge. {title}. {body}",
   "call_script_prompt": "Press 1 to acknowledge, or hang up to pass the page on.",
   "call_script_acked": "Acknowledged. Thank you.",
   "call_speaking": "Reading the incident aloud",

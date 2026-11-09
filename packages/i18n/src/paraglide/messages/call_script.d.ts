@@ -8,7 +8,7 @@ export type Call_ScriptInputs = {
 /**
 * | output |
 * | --- |
-* | "Brigade page. {title}. {body}" |
+* | "Brigade page. Press 1 at any time to acknowledge. {title}. {body}" |
 *
 * @param {Call_ScriptInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

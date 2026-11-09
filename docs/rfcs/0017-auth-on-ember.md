@@ -106,5 +106,6 @@ Workspaces, members, invitations, API tokens (RFC 0014: `api_token` stays in D1 
 push transport, the watchdog and the probes use no session, and a socket already open keeps the token it was given
 until it refreshes. What does need it is what needs a session today, now read from the object instead of D1:
 minting a token (opening or refreshing an app or dashboard socket, so the call screen's "press 1" ack over the
-socket), the HTTP ack route a notification action calls, and signing in. So the object is on the acknowledge path as
-D1 is today; the ack from a notification keeps its device-key path (RFC 0006), which needs no session.
+socket), the HTTP ack route a notification action calls (`acknowledgeIncident`, the session's cookie), and signing in. So the
+object is on the acknowledge path exactly where D1 is today: an `Auth` object that does not answer fails an ack as a
+D1 that does not answer does, and step 2's tests cover both acks against it.

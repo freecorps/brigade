@@ -67,8 +67,15 @@ the fallback the bot keeps when the audio session cannot start.
   On-device speech recognition would need the microphone and speech permissions, behaves differently per platform
   and language, and is what the voice bot's server-side STT replaces; a key press works in a noisy room and for
   someone who cannot speak at that moment. Saying "acknowledge" arrives with the bot.
-- **The ack is a named mutation**, `incident.ack` (`packages/schema`, permission `incident:ack`), sent through
-  Brigade Sync. The first ack wins; a second is a `conflict`, which the call screen shows as acknowledged (someone
+- **The ack is a named mutation**, `incident.ack` (`packages/schema`, permission `incident:ack`), sent over HTTPS
+  as the notification's Acknowledge action sends it (idempotent, retried), to the instance and workspace the call
+  names: a call often wakes the app on the lock screen or from suspension, before the workspace's socket is open, or
+  after iOS closed it. Only an older instance's call, which names no workspace, goes over the open workspace's socket.
+  The session and the list of instances are kept readable after the phone's first unlock
+  (`kSecAttrAccessibleAfterFirstUnlock`, apps/mobile src/lib/locked-store.ts), so a locked iPhone can acknowledge;
+  a first device test (2026-11-08) found 1 did nothing there while they were readable only unlocked. The call says
+  "press 1 at any time" before the incident, and a 1 pressed mid-sentence cuts the reading short with the
+  confirmation. The first ack wins; a second is a `conflict`, which the call screen shows as acknowledged (someone
   did, paging stopped).
 
 ### Fallbacks (paging paths need one)

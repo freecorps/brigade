@@ -112,10 +112,12 @@ export function pageInstance<T extends { origin: string }>(
 }
 
 /**
- * Where an answered call's ack goes: over the open workspace's socket (`sync`) for a call from the instance and
- * workspace the app shows, or one that names no instance (as before several instances); over HTTPS (`http`, the
- * Acknowledge action's route) to the instance it came from otherwise; nowhere (`none`) for an instance not on this
- * phone, or another instance's call without its workspace.
+ * Where an answered call's ack goes: over HTTPS (`http`, the Acknowledge action's route, idempotent and retried) to
+ * the instance and workspace the call names, the shown one included. A call often wakes the app on the lock screen or
+ * from suspension, when the open workspace's socket is not open yet or died with the suspended app, so it is not
+ * waited for. Only a call that names no workspace (an older instance's) goes over the open workspace's socket (`sync`),
+ * from the shown instance or one that names none; nowhere (`none`) for an instance not on this phone, or another
+ * instance's call without its workspace.
  */
 export function callAckRoute<T extends { origin: string }>(
   call: { origin?: string | null; workspace?: string | null },
@@ -123,18 +125,37 @@ export function callAckRoute<T extends { origin: string }>(
   active: T | undefined,
   openWorkspace: string | undefined,
 ): { kind: "sync" } | { kind: "http"; instance: T; workspace: string } | { kind: "none" } {
-  if (!call.origin) return { kind: "sync" };
+  // Named no instance (a version 1 call): the shown one, in the workspace it names when it names one.
+  if (!call.origin) {
+    return call.workspace && active
+      ? { kind: "http", instance: active, workspace: call.workspace }
+      : { kind: "sync" };
+  }
   const instance = instances.find((one) => one.origin === call.origin);
   if (!instance) return { kind: "none" };
   const workspace = call.workspace ?? undefined;
+  if (workspace !== undefined) return { kind: "http", instance, workspace };
   // By origin, not identity: the list and the active instance may come from different snapshots.
-  if (
-    instance.origin === active?.origin &&
-    (workspace === undefined || workspace === openWorkspace)
-  ) {
-    return { kind: "sync" };
-  }
-  return workspace === undefined ? { kind: "none" } : { kind: "http", instance, workspace };
+  return instance.origin === active?.origin && openWorkspace !== undefined
+    ? { kind: "sync" }
+    : { kind: "none" };
+}
+
+/**
+ * Whether a call's ack that HTTPS could not deliver (`failed`, or `signed_out`: the session could not be read) is tried
+ * on the open workspace's socket: only when that socket, as it is now (read again after the HTTPS tries, which take
+ * seconds), is the call's workspace at the call's instance.
+ */
+export function socketFallback(
+  outcome: AckOutcome,
+  route: { instance: { origin: string }; workspace: string },
+  now: { shard: string | undefined; activeOrigin: string | undefined },
+): boolean {
+  return (
+    (outcome === "failed" || outcome === "signed_out") &&
+    now.shard === route.workspace &&
+    now.activeOrigin === route.instance.origin
+  );
 }
 
 /** An ack over HTTPS, as the call screen reads a mutation's outcome (`conflict` is acknowledged already). */

@@ -7,6 +7,7 @@ import {
   acknowledgeFromNotification,
   ackMutationOutcome,
   callAckRoute,
+  socketFallback,
   pageInstance,
   type AckDeps,
 } from "./page-action";
@@ -116,18 +117,28 @@ test("a page from an instance no longer on the phone sends nothing", async () =>
   expect(sent).toEqual([]);
 });
 
-test("an answered call acknowledges over the socket when it is the shown instance and workspace", () => {
-  expect(callAckRoute({}, instances, shown, "ws_one")).toEqual({ kind: "sync" });
+test("an answered call acknowledges over HTTPS, the shown workspace too; over the socket only without a workspace", () => {
+  // The socket may not be open yet (a call woke the app on the lock screen) or died with the suspended app.
   expect(
     callAckRoute({ origin: shown.origin, workspace: "ws_one" }, instances, shown, "ws_one"),
-  ).toEqual({ kind: "sync" });
-  // The shown instance from another snapshot of the list is still the shown one.
+  ).toEqual({ kind: "http", instance: shown, workspace: "ws_one" });
   expect(
     callAckRoute({ origin: shown.origin, workspace: "ws_one" }, instances, { ...shown }, "ws_one"),
-  ).toEqual({ kind: "sync" });
-  // An older build's call names no workspace: the open one, as before.
+  ).toEqual({ kind: "http", instance: shown, workspace: "ws_one" });
+  // A call that names no instance, or an older instance's without a workspace: the open one, as before.
+  expect(callAckRoute({}, instances, shown, "ws_one")).toEqual({ kind: "sync" });
+  // One that names no instance but a workspace: that workspace, at the shown instance.
+  expect(callAckRoute({ workspace: "ws_two" }, instances, shown, "ws_one")).toEqual({
+    kind: "http",
+    instance: shown,
+    workspace: "ws_two",
+  });
   expect(callAckRoute({ origin: shown.origin }, instances, shown, "ws_one")).toEqual({
     kind: "sync",
+  });
+  // ... and with no workspace open, nowhere.
+  expect(callAckRoute({ origin: shown.origin }, instances, shown, undefined)).toEqual({
+    kind: "none",
   });
 });
 
@@ -154,4 +165,28 @@ test("the call screen reads an HTTPS ack like a mutation: already acknowledged i
     ok: false,
     error: { code: "forbidden" },
   });
+});
+
+test("a call's ack HTTPS could not deliver is tried on the socket only when it is the call's workspace now", () => {
+  const route = { instance: shown, workspace: "ws_one" };
+  const here = { shard: "ws_one", activeOrigin: shown.origin };
+  expect(socketFallback("failed", route, here)).toBe(true);
+  // The session could not be read (a locked phone before the migration): the socket is the only way left.
+  expect(socketFallback("signed_out", route, here)).toBe(true);
+  // An answer from the instance settles it: no second try.
+  for (const outcome of [
+    "acknowledged",
+    "already",
+    "inactive",
+    "not_found",
+    "forbidden",
+  ] as const) {
+    expect(socketFallback(outcome, route, here)).toBe(false);
+  }
+  // Another workspace or instance open by then, or none.
+  expect(socketFallback("failed", route, { ...here, shard: "ws_two" })).toBe(false);
+  expect(socketFallback("failed", route, { ...here, activeOrigin: acme.origin })).toBe(false);
+  expect(socketFallback("failed", route, { shard: undefined, activeOrigin: undefined })).toBe(
+    false,
+  );
 });

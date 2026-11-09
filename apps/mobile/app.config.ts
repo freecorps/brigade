@@ -70,7 +70,7 @@ const appConfig = (config: ConfigContext["config"], cameraPermission: string): E
     owner: "freecorps",
     // Deep links (`brigade://`), and the dev client's own URL scheme.
     scheme: "brigade",
-    version: "0.1.0",
+    version: "0.2.0",
     orientation: "portrait",
     // Placeholder until the real icon: the dashboard's two rank chevrons (apps/web site-header.tsx) in white on the
     // brand hue (packages/ui `--primary`), opaque as the App Store requires.

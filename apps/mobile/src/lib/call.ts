@@ -15,22 +15,14 @@ import {
 import type { MutationOutcome } from "@freecorps/brigade-sync";
 import { currentSync, type WorkspaceSync } from "@/lib/sync-client";
 
-/** How long the socket gets to answer an ack: a socket iOS closed under a suspended app never would. */
-const SOCKET_ACK_MS = 10_000;
-
-/** `incident.ack` over the open workspace's socket, given up after `SOCKET_ACK_MS`. */
+/**
+ * `incident.ack` over the open workspace's socket. Not given up on a timer: a change sent there stays queued and goes
+ * out once the socket is back (after a restart too), so saying "failed" meanwhile would be wrong, and a responder who
+ * then hung up to pass the page on could still acknowledge it later without knowing. The call screen says
+ * "Acknowledging…" until the shard answers.
+ */
 function socketAck(sync: WorkspaceSync, incident: string): Promise<MutationOutcome> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<MutationOutcome>((resolve) => {
-    timer = setTimeout(
-      () => resolve({ ok: false, error: { code: "closed", message: "No answer in time" } }),
-      SOCKET_ACK_MS,
-    );
-  });
-  return Promise.race([
-    sync.client.mutate(sync.shard, "incident.ack", { id: incident }),
-    late,
-  ]).finally(() => clearTimeout(timer));
+  return sync.client.mutate(sync.shard, "incident.ack", { id: incident });
 }
 
 export const callSession = new CallSession(
@@ -61,7 +53,7 @@ export const callSession = new CallSession(
           },
         );
         // HTTPS could not get through (or the session could not be read), but the open workspace may be the call's
-        // and its socket may still: tried there before giving up, as they are now, after the seconds HTTPS took.
+        // and its socket may still: tried there, as they are now, after the seconds HTTPS took.
         const open = currentSync();
         const shown = activeInstance(instances.current());
         if (

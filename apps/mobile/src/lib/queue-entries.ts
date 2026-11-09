@@ -1,9 +1,8 @@
-// A change kept on the phone in either client's shape (src/lib/pending.ts): Brigade Sync's `SavedMutation`, under the
-// workspace's id, or Ember's `PendingMutationRecord` of `workspace:mutate`, under the workspace's Ember shard. The
-// adapter sends a Brigade change to Ember with its client id and its mutation id as the mid (apps/api
-// src/sync-adapter.ts), so a change moved from one shape to the other keeps its id, and the shard that ran it answers
-// it instead of running it again. Pure, so it is tested in Node.
-import type { SavedMutation } from "@freecorps/brigade-sync";
+// A change kept on the phone (src/lib/pending.ts): Ember's `PendingMutationRecord` of `workspace:mutate`, under the
+// workspace's Ember shard, or Brigade Sync's `SavedMutation`, under the workspace's id, which builds before 0.2.0
+// kept. Ember takes a Brigade change with its client id and its mutation id as the mid, so a change moved from one
+// shape to the other keeps its id, and the shard that ran it answers it instead of running it again. Pure, so it is
+// tested in Node.
 import { WORKSPACE_MUTATE, type PendingMutationRecord } from "@freecorps/brigade-sync/ember";
 
 type Entry = Record<string, unknown>;
@@ -37,19 +36,6 @@ export function emberFromSaved(entry: unknown, shard: string): PendingMutationRe
     fn: WORKSPACE_MUTATE,
     args: { name: entry.name, args: entry.args },
     createdAt: entry.createdAt,
-  };
-}
-
-/** A kept Ember change as Brigade Sync keeps it, with the same id; null for anything else. */
-export function savedFromEmber(entry: unknown): SavedMutation | null {
-  if (!object(entry) || typeof entry.shard !== "string") return null;
-  const record = emberRecord(entry, entry.shard);
-  if (!record) return null;
-  return {
-    mutationId: record.mid,
-    name: record.args.name as string,
-    args: record.args.args,
-    createdAt: record.createdAt,
   };
 }
 

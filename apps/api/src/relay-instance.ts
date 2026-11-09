@@ -57,8 +57,9 @@ export const BRIGADE_API_VERSION = 1;
 /**
  * The oldest app version this instance supports (`GET /config` `brigade.minApp`, RFC 0015 section 5): an older app
  * says "Update the app". Raised when the API drops something old apps need (raw tokens, envelope version 1: Q29).
+ * `0.2.0`: the first app version with Ember's client only, so Brigade Sync and its adapter can go (RFC 0016 step 5).
  */
-export const MIN_APP_VERSION = "0.1.0";
+export const MIN_APP_VERSION = "0.2.0";
 
 /** Keys read per isolate, by the secrets' values: importing is WebCrypto work, done once. */
 const keys = new Map<string, Promise<InstanceKey | undefined>>();

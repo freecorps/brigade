@@ -1,7 +1,7 @@
-// The dashboard's Brigade Sync client (RFC 0004): one per tab, on the same origin as the page. The web Worker
-// forwards `/api/sync/<workspace>` to the API Worker, which hands the socket to the workspace's shard.
+// The dashboard's sync client (RFC 0016 step 5): Ember's, one per tab, on the same origin as the page. The web Worker
+// forwards `/api/ember/*` to the API Worker, and `/api/ember-token/<workspace>` mints the token for its shard.
 import { newId, type Actor } from "@freecorps/brigade-schema";
-import { createSyncClient, TOKEN, type SyncClient } from "@freecorps/brigade-sync";
+import { TOKEN } from "@freecorps/brigade-sync";
 import { createEmberSyncClient, type EmberSyncClient } from "@freecorps/brigade-sync/ember";
 
 export const CLIENT_ID_STORAGE_KEY = "brigade-sync-client";
@@ -22,12 +22,6 @@ function syncActor(): Actor {
   // with `internal` instead of running it as someone else.
   if (!currentActor) throw new Error("No signed-in member yet");
   return currentActor;
-}
-
-/** `ws://host/api/sync/demo` from an `http:` page, `wss://` from an `https:` one. */
-export function syncUrl(location: Pick<Location, "protocol" | "host">, shard: string): string {
-  const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${scheme}//${location.host}/api/sync/${encodeURIComponent(shard)}`;
 }
 
 /**
@@ -69,83 +63,32 @@ function browserClientId(): string {
   );
 }
 
-export function createBrowserSyncClient(): SyncClient {
-  const clientId = browserClientId();
-  return createSyncClient({
-    url: (shard) => syncUrl(window.location, shard),
-    actor: syncActor,
-    clientId,
-  });
-}
-
-/** Which engine serves a workspace (RFC 0016): `ember` once it switched, `brigade` (Brigade Sync) before. */
-export type WorkspaceEngine = "ember" | "brigade";
-
 type Minted = { token: string; expiresAt: number };
 
-/** The workspace the dashboard shows (components/session): only its turn back reloads the page. */
-let openWorkspace: string | undefined;
-
-export function setOpenWorkspace(workspaceId: string): void {
-  openWorkspace = workspaceId;
-}
-
-/** Tokens a probe already minted, handed to the Ember client's first connect instead of minting another. */
-const primed = new Map<string, Minted>();
-
 /**
- * Asks the API for an Ember token for `workspaceId` (`POST /api/ember-token/:workspace`). A workspace still on
- * `WorkspaceDO` answers 409, and an instance from before Ember 404: both are `brigade`, as are a missing session or
- * membership (401, 403), whose errors the Brigade Sync path shows as before. When the API cannot say (offline, a
- * 5xx), `brigade` too: a workspace on Ember is served Brigade Sync by its adapter, so the dashboard still works.
+ * A fresh Ember token for `workspaceId` (`POST /api/ember-token/:workspace`), or null when signed out or not a member
+ * (401, 403): the client then stops asking until its next connect, and the session gate shows why.
  */
-export async function probeWorkspaceEngine(
+export async function emberToken(
   workspaceId: string,
   fetchImpl: typeof fetch = fetch,
-): Promise<WorkspaceEngine> {
-  try {
-    const response = await fetchImpl(`/api/ember-token/${encodeURIComponent(workspaceId)}`, {
-      method: "POST",
-      credentials: "same-origin",
-    });
-    if (!response.ok) return "brigade";
-    const minted = (await response.json()) as Partial<Minted> | null;
-    if (typeof minted?.token !== "string" || typeof minted.expiresAt !== "number") return "brigade";
-    primed.set(workspaceId, minted as Minted);
-    return "ember";
-  } catch {
-    return "brigade";
-  }
-}
-
-/** A fresh Ember token, or null when signed out. A workspace turned back to `WorkspaceDO` reloads the page. */
-async function emberToken(workspaceId: string): Promise<string | null> {
-  const ready = primed.get(workspaceId);
-  primed.delete(workspaceId);
-  // Kept a margin from its expiry, as Ember's client refreshes 30 s ahead.
-  if (ready && ready.expiresAt - Date.now() > 60_000) return ready.token;
-  const response = await fetch(`/api/ember-token/${encodeURIComponent(workspaceId)}`, {
+): Promise<string | null> {
+  const response = await fetchImpl(`/api/ember-token/${encodeURIComponent(workspaceId)}`, {
     method: "POST",
     credentials: "same-origin",
   });
-  if (response.status === 401) return null;
-  if (response.status === 409) {
-    // Turned back (RFC 0016 `back`): the page starts over on Brigade Sync, if it shows that workspace. A workspace
-    // left behind only loses its token; its client closes once nothing uses it.
-    if (workspaceId === openWorkspace) window.location.reload();
-    return null;
-  }
+  if (response.status === 401 || response.status === 403) return null;
   if (!response.ok) throw new Error(`Ember token: ${response.status}`);
-  const minted = (await response.json()) as Partial<Minted> | null;
+  const minted = (await response.json().catch(() => null)) as Partial<Minted> | null;
   if (typeof minted?.token !== "string") throw new Error("Ember token: no token in the answer");
   return minted.token;
 }
 
-/** The dashboard's client for workspaces on Ember, on the same origin (`/api/ember/ws`). */
+/** The dashboard's client, on the same origin (`/api/ember/ws`). */
 export function createBrowserEmberClient(): EmberSyncClient {
   return createEmberSyncClient({
     url: () => `${window.location.origin}/api/ember`,
-    token: emberToken,
+    token: (workspaceId) => emberToken(workspaceId),
     actor: syncActor,
     clientId: browserClientId(),
   });

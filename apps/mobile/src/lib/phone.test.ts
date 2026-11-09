@@ -262,7 +262,7 @@ test("a one-shot change runs on the client its opener picks (Ember's for a works
     async () => "session=abc",
     async ({ workspaceId, cookie, actor }) => {
       opened.push({ workspaceId, cookie, role: (actor() as { role?: string }).role });
-      return { client, shard: workspaceId, engine: "ember" } as unknown as WorkspaceSync;
+      return { client, shard: workspaceId } as unknown as WorkspaceSync;
     },
   );
   expect(await mutate("device.register", { id: "dev_1" } as never)).toEqual({

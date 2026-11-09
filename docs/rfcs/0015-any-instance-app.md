@@ -569,7 +569,8 @@ above (docs/api/openapi.json). As built:
   deviation from "Dead ends"): a handle the relay minted stops opening only when the relay lost a key from
   `RELAY_HANDLE_KEYS`, and on the hosted relay one bad deploy would otherwise drop every instance's phones; a phone
   that moved to another relay registers a new handle when it opens.
-- **`GET /config`** adds `brigade: { api, minApp }` (`api` 1, `minApp` the oldest app version supported, `0.1.0`)
+- **`GET /config`** adds `brigade: { api, minApp }` (`api` 1, `minApp` the oldest app version supported: `0.1.0`,
+  then `0.2.0` from 2026-11-09, the first build with Ember's client only, RFC 0016 step 5)
   and, with the instance key and a public `RELAY_URL` (https), `relay: { origin, instance, app? }`, `app` from
   `RELAY_APP_URL`. With the `RELAY` binding, `RELAY_URL` is only that address.
 - **The watchdog** asks the signed `GET /v1/health?deep=1` when the instance key is set: `relay_bad_signature` (also

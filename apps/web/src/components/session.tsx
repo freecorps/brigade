@@ -6,7 +6,6 @@ import { LoaderCircleIcon, RefreshCwIcon } from "lucide-react";
 import {
   createContext,
   useContext,
-  useEffect,
   useMemo,
   useRef,
   useState,
@@ -20,13 +19,8 @@ import { Button } from "@/components/ui/button";
 import { Field, FormError } from "@/components/ui/field";
 import { authClient, checkWorkspaceName, createWorkspace, openWorkspace } from "@/lib/auth";
 import { usePageTitle } from "@/lib/page-title";
-import {
-  probeWorkspaceEngine,
-  setOpenWorkspace,
-  setSyncActor,
-  type WorkspaceEngine,
-} from "@/lib/sync";
-import { emberClient, syncClient } from "@/sync-client";
+import { setSyncActor } from "@/lib/sync";
+import { syncClient } from "@/sync-client";
 
 /**
  * What the dashboard needs before it renders: a session (else the sign-in page), an active workspace (else the
@@ -77,27 +71,10 @@ export function useMember(): Member {
   return member;
 }
 
-/** Which engine serves `workspaceId` (RFC 0016), asked once per workspace: undefined while asking. */
-function useWorkspaceEngine(workspaceId: string | undefined): WorkspaceEngine | undefined {
-  const [state, setState] = useState<{ id: string; engine: WorkspaceEngine }>();
-  useEffect(() => {
-    if (workspaceId === undefined) return;
-    let live = true;
-    void probeWorkspaceEngine(workspaceId).then((engine) => {
-      if (live) setState({ id: workspaceId, engine });
-    });
-    return () => {
-      live = false;
-    };
-  }, [workspaceId]);
-  return state && state.id === workspaceId ? state.engine : undefined;
-}
-
 /** Mounted only with a session and an active workspace, so its queries never run signed out. */
 function ActiveWorkspace({ userId, children }: { userId: string; children: ReactNode }) {
   const workspace = authClient.useActiveOrganization();
   const member = authClient.useActiveMember();
-  const engine = useWorkspaceEngine(workspace.data?.id);
   // Just after a switch, the member read may still be the old workspace's: its role is not this one's.
   if (
     !workspace.data ||
@@ -124,20 +101,11 @@ function ActiveWorkspace({ userId, children }: { userId: string; children: React
     );
   }
 
-  if (engine === undefined) {
-    return (
-      <AppShell live={false}>
-        <Loading />
-      </AppShell>
-    );
-  }
-
   // Brigade gives every member one of its roles; anything else reads nothing, like the shard would answer.
   const role = isRole(member.data.role) ? member.data.role : "viewer";
   setSyncActor({ kind: "user", id: userId, role });
-  setOpenWorkspace(workspace.data.id);
   return (
-    <SyncProvider client={engine === "ember" ? emberClient : syncClient} shard={workspace.data.id}>
+    <SyncProvider client={syncClient} shard={workspace.data.id}>
       {/* Keyed: a switch starts every card over, so no state of one workspace shows in another. */}
       <MemberProvider
         key={workspace.data.id}

@@ -1,26 +1,13 @@
 // The workspace's sync client: one per signed-in member and workspace, made by the session (src/components/
 // session.tsx) and closed when they sign out or the workspace changes, so no socket or row outlives its session.
-// Brigade Sync's (RFC 0004) here, or Ember's for a workspace on Ember (RFC 0016 step 5, src/lib/ember-client.ts),
-// under the same hooks. Changes the shard has not confirmed are kept in the member's queue (src/lib/pending.ts, and src/lib/
-// ember-queue.ts for Ember's client) and survive a restart.
-import type { Actor } from "@freecorps/brigade-schema";
-import { createSyncClient, type SyncClientLike, type SyncSocket } from "@freecorps/brigade-sync";
-import { getRandomBytes } from "expo-crypto";
-import type { WorkspaceEngine } from "@/lib/engine";
-import {
-  restoreQueue,
-  restoredChanges,
-  type MemberQueue,
-  type RestoredChanges,
-} from "@/lib/pending";
-import type { Server } from "@/lib/sync";
+// Ember's (RFC 0016 step 5, src/lib/ember-client.ts) under the app's hooks. Changes the shard has not confirmed are
+// kept in the member's queue (src/lib/pending.ts, src/lib/ember-queue.ts) and survive a restart.
+import type { SyncClientLike } from "@freecorps/brigade-sync";
+import type { MemberQueue, RestoredChanges } from "@/lib/pending";
 
 export type WorkspaceSync = {
   client: SyncClientLike;
   shard: string;
-  engine: WorkspaceEngine;
-  /** Set once Ember's client heard the workspace was turned back to `WorkspaceDO`: closed, never reused. */
-  turnedBack?: boolean;
   /** The member's kept queue; none for a client that only finishes a sign-out. */
   queue?: MemberQueue;
   /** The changes the queue gave back at launch, for the screens that made them; none until `restore`. */
@@ -31,57 +18,6 @@ export type WorkspaceSync = {
    */
   restore: () => void;
 };
-
-export function createWorkspaceSync({
-  server,
-  workspaceId,
-  actor,
-  cookie,
-  queue,
-}: {
-  server: Server;
-  workspaceId: string;
-  actor: () => Actor;
-  /** The session's `Cookie` header, read on every connect so a refreshed session is the one sent. */
-  cookie: () => string;
-  queue?: MemberQueue;
-}): WorkspaceSync {
-  const client = createSyncClient({
-    url: server.sync,
-    actor,
-    // A native socket carries no browser cookies: the session goes in the upgrade's `Cookie` header, which the
-    // API checks like the dashboard's (apps/api/src/actor.ts). React Native's WebSocket takes headers as a third
-    // argument.
-    transport: (url) => new NativeWebSocket(url, undefined, { headers: { Cookie: cookie() } }),
-    // Hermes has no crypto.getRandomValues.
-    randomBytes: getRandomBytes,
-    // The id the queue's changes were sent with: the shard de-duplicates re-sent mutations by (clientId,
-    // mutationId), so one it ran before the app was killed is answered, not run again. Without a queue, a new one.
-    clientId: queue?.clientId,
-    pendingStorage: queue?.storage,
-  });
-  let restored = false;
-  const sync: WorkspaceSync = {
-    client,
-    shard: workspaceId,
-    engine: "brigade",
-    queue,
-    restored: restoredChanges([]),
-    restore: () => {
-      if (restored || !queue) return;
-      restored = true;
-      sync.restored = restoreQueue(client, workspaceId, queue);
-    },
-  };
-  return sync;
-}
-
-/** React Native's WebSocket, whose constructor takes headers (the DOM's, which TypeScript knows, does not). */
-const NativeWebSocket = WebSocket as unknown as new (
-  url: string,
-  protocols: undefined,
-  options: { headers: Record<string, string> },
-) => SyncSocket;
 
 let current: WorkspaceSync | null = null;
 

@@ -1,10 +1,10 @@
 import { m } from "@freecorps/brigade-i18n";
-import { queryErrorReason } from "@freecorps/brigade-i18n/incident";
 import { OLDER_DAYS, PAST_DAYS, pastSince } from "@freecorps/brigade-schema";
-import { useQuery } from "@freecorps/brigade-sync/react";
+import { nextFailed, syncView } from "@freecorps/brigade-sync";
+import { useConnectionState, useQuery } from "@freecorps/brigade-sync/react";
 import { useState } from "react";
 import { INCIDENT_COLUMNS, IncidentItem, IncidentItemSkeleton } from "@/components/incident-item";
-import { useNow } from "@/components/incidents-card";
+import { ConnectionPill, StatePanel, useNow } from "@/components/incidents-card";
 import { usePreferences } from "@/components/preferences";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -25,12 +25,19 @@ export function PastIncidentsCard() {
   // Fixed per day, not per tick: a new `since` would ask the shard again.
   const [today] = useState(() => Date.now());
   const { rows, status, error } = useQuery("incidents.past", { since: pastSince(days, today) });
+  // As the open incidents: connecting, live, reconnecting, unavailable (never answered) or refused.
+  const connection = useConnectionState();
+  const [failed, setFailed] = useState(false);
+  const latched = nextFailed(failed, status, connection);
+  if (latched !== failed) setFailed(latched);
+  const view = syncView(status, connection, latched);
   return (
     <Card aria-labelledby="past-incidents-title">
       <CardHeader
         id="past-incidents-title"
         title={m.incidents_past_title()}
         description={m.incidents_past_window({ days })}
+        action={<ConnectionPill view={view} />}
       />
       <CardContent className="flex flex-col gap-4">
         {rows.length > 0 ? (
@@ -67,17 +74,14 @@ export function PastIncidentsCard() {
           <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
             {m.incidents_past_empty({ days })}
           </p>
-        ) : status === "error" ? (
-          <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-            {m.sync_refused_hint({ reason: queryErrorReason(error?.code) })}
-          </p>
-        ) : status === "loading" ? (
+        ) : view === "connecting" ? (
           <ul aria-hidden className="-mx-4 divide-y border-y sm:-mx-6">
             {[0, 1].map((index) => (
               <IncidentItemSkeleton key={index} />
             ))}
           </ul>
         ) : null}
+        <StatePanel view={view} errorCode={error?.code} sent={null} />
         {status === "ready" ? (
           <Button
             variant="outline"

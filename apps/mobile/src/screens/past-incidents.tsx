@@ -1,17 +1,19 @@
 import { Column, FieldGroup, Row, Text } from "@expo/ui";
 import { m } from "@freecorps/brigade-i18n";
-import { formatAge, queryErrorReason } from "@freecorps/brigade-i18n/incident";
+import { formatAge } from "@freecorps/brigade-i18n/incident";
 import { formatIncidentNumber, OLDER_DAYS, PAST_DAYS, pastSince } from "@freecorps/brigade-schema";
-import { useQuery } from "@freecorps/brigade-sync/react";
+import { nextFailed, syncView } from "@freecorps/brigade-sync";
+import { useConnectionState, useQuery } from "@freecorps/brigade-sync/react";
 import { fontSize, spacing } from "@freecorps/brigade-ui";
 import { router } from "expo-router";
 import { useState } from "react";
 import { View } from "react-native";
 import { EmptyRow } from "@/components/empty-row";
 import type { Glyph } from "@/components/glyphs";
-import { useNow } from "@/components/incident-parts";
+import { StateLines, useNow } from "@/components/incident-parts";
 import { ListItem } from "@/components/list-item";
 import { useListEnd } from "@/components/list-end";
+import { ListStatus } from "@/components/list-status";
 import { NativeHost } from "@/components/native-host";
 import { SeverityPill, StatusPill } from "@/components/pill";
 import { RowChevron } from "@/components/row-chevron";
@@ -27,6 +29,12 @@ const HISTORY_GLYPH: Glyph = { ios: "clock.arrow.circlepath", android: "history"
  * first; a row opens its incident, where it can be reopened. "Show older" goes `OLDER_DAYS` further back.
  */
 export function PastIncidents() {
+  // A refused list is asked for again only by a new subscriber: "Reload" remounts the list.
+  const [attempt, setAttempt] = useState(0);
+  return <PastList key={attempt} onReload={() => setAttempt((n) => n + 1)} />;
+}
+
+function PastList({ onReload }: { onReload: () => void }) {
   const colors = useTheme();
   const { locale } = useLocale();
   const now = useNow(60_000);
@@ -34,6 +42,12 @@ export function PastIncidents() {
   // Fixed while the screen is open: a new `since` would ask the shard again.
   const [opened] = useState(() => Date.now());
   const { rows, status, error } = useQuery("incidents.past", { since: pastSince(days, opened) });
+  // As the open incidents: connecting, live, reconnecting, unavailable (never answered) or refused.
+  const connection = useConnectionState();
+  const [failed, setFailed] = useState(false);
+  const latched = nextFailed(failed, status, connection);
+  if (latched !== failed) setFailed(latched);
+  const view = syncView(status, connection, latched);
   const listEnd = useListEnd();
   return (
     <View style={{ flex: 1 }}>
@@ -41,7 +55,10 @@ export function PastIncidents() {
         <FieldGroup>
           <FieldGroup.Section>
             <FieldGroup.SectionHeader>
-              <Text>{m.incidents_past_window({ days })}</Text>
+              <Column spacing={spacing[1]} alignment="start">
+                <ListStatus view={view} summary={m.incidents_past_window({ days })} />
+                <StateLines view={view} errorCode={error?.code} />
+              </Column>
             </FieldGroup.SectionHeader>
             {rows.map((row) => (
               <ListItem
@@ -79,14 +96,6 @@ export function PastIncidents() {
                 </Column>
               </ListItem>
             ))}
-            {status === "error" ? (
-              // An instance from before the history (`unknown_query`), or a refusal: said, not an empty list.
-              <EmptyRow
-                title={m.incidents_past_title()}
-                description={m.sync_refused_hint({ reason: queryErrorReason(error?.code) })}
-                glyph={HISTORY_GLYPH}
-              />
-            ) : null}
             {rows.length === 0 && status === "ready" ? (
               <EmptyRow
                 title={m.incidents_past_title()}
@@ -95,6 +104,13 @@ export function PastIncidents() {
               />
             ) : null}
           </FieldGroup.Section>
+          {view === "refused" ? (
+            <FieldGroup.Section>
+              <ListItem onPress={onReload}>
+                <RowText color={colors.primary}>{m.reload()}</RowText>
+              </ListItem>
+            </FieldGroup.Section>
+          ) : null}
           {status === "ready" ? (
             <FieldGroup.Section>
               <ListItem onPress={() => setDays((current) => current + OLDER_DAYS)}>

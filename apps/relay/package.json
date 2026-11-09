@@ -28,7 +28,7 @@
   },
   "dependencies": {
     "@freecorps/brigade-push": "workspace:*",
-    "@freecorps/ember-push": "0.4.0"
+    "@freecorps/ember-push": "0.5.0"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.65.0",

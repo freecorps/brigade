@@ -357,7 +357,7 @@ Shard without one.
 - **Sensitive mutations** (removing a member, changing a role, acknowledging from a notification) also check the
   session in D1 at the moment they run, as today.
 
-Revisit (Q33) once the migration is done.
+Q33 is decided: auth moves to Ember's `Auth` object (RFC 0017).
 
 ## Monitoring, crons and the edges
 

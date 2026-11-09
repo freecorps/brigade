@@ -131,6 +131,9 @@ RFC 0002 "Auth" re-tested on a new store, a live session migration (or every pho
 pages), and D1's `member` table is needed anyway for cross-workspace reads. Proposal: decide after step 8 of RFC 0016,
 with a spike that migrates sessions on `dev` without signing anyone out.
 
+**Decided (owner, 2026-11-09):** auth moves to Ember's `Auth` object, with everyone signing in again once (the only
+users are the two owners). Workspaces, members and invitations stay in D1. Design and order of work: RFC 0017.
+
 # Decided
 
 | #   | Question                       | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |

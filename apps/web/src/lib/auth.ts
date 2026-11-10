@@ -12,9 +12,10 @@ import {
   type SignUpMode,
 } from "@freecorps/brigade-i18n/auth";
 import { memberName, WORKSPACE_NAME_MAX, workspaceName } from "@freecorps/brigade-schema";
-import { inferAdditionalFields, organizationClient } from "better-auth/client/plugins";
+import { inferAdditionalFields } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 import { useEffect, useState } from "react";
+import { loadWorkspaces, pickWorkspace } from "./workspaces";
 
 // The sign-in checks and error wording are shared with the mobile app (packages/i18n).
 export {
@@ -47,10 +48,8 @@ export function makeAuthClient(customFetchImpl?: typeof fetch) {
     // Relative to the page: the dashboard and its API share an origin, in dev and deployed.
     baseURL: `${typeof window === "undefined" ? "http://localhost" : window.location.origin}/api/auth`,
     // `locale`: the language Brigade writes to the user in, emails included (apps/api src/auth.ts).
-    plugins: [
-      organizationClient(),
-      inferAdditionalFields({ user: { locale: { type: "string", required: false } } }),
-    ],
+    // No organization plugin: the dashboard keeps the workspace it shows itself (lib/workspaces.ts, RFC 0017).
+    plugins: [inferAdditionalFields({ user: { locale: { type: "string", required: false } } })],
     ...(customFetchImpl ? { fetchOptions: { customFetchImpl } } : {}),
   });
 }
@@ -121,23 +120,17 @@ let savingLocale: Promise<unknown> = Promise.resolve();
 let wantedLocale: Locale | null = null;
 
 /**
- * Opens a workspace `POST /workspaces` just created. `set-active` (not a plain session refetch) is what tells the
- * session, active-organization and active-member hooks to fetch again; without it a hook already mounted (the
- * header's) keeps the `null` it read before the workspace existed and the dashboard waits forever.
+ * Opens a workspace just created or joined: picks it and loads the member's workspaces again, so every part of the
+ * dashboard already mounted (the header's switcher) sees it. Should the list not load, a fresh page load opens it
+ * (the pick is kept in this browser).
  */
 export async function openWorkspace(
   id: string,
-  client: Pick<typeof authClient, "organization"> = authClient,
+  load: () => Promise<unknown> = loadWorkspaces,
   reload: () => void = () => window.location.assign("/"),
 ): Promise<void> {
-  try {
-    const { error } = await client.organization.setActive({ organizationId: id });
-    if (!error) return;
-  } catch {
-    // A network failure: fall through.
-  }
-  // The server already made the workspace active (`POST /workspaces` does), so a fresh page load opens it.
-  reload();
+  pickWorkspace(id);
+  if (!(await load())) reload();
 }
 
 /**
@@ -157,20 +150,12 @@ export async function signOutDashboard(
 }
 
 /**
- * Makes another of the member's workspaces active in the session (`set-active`, which also tells the session,
- * active-organization and active-member hooks to fetch again): the dashboard then opens that workspace's shard. True
- * once the server answered.
+ * Shows another of the member's workspaces: the dashboard then opens that workspace's shard. Kept in this browser, so
+ * it needs no answer from the server.
  */
-export async function switchWorkspace(
-  id: string,
-  client: Pick<typeof authClient, "organization"> = authClient,
-): Promise<boolean> {
-  try {
-    const { error } = await client.organization.setActive({ organizationId: id });
-    return !error;
-  } catch {
-    return false;
-  }
+export function switchWorkspace(id: string): Promise<boolean> {
+  pickWorkspace(id);
+  return Promise.resolve(true);
 }
 
 export type SignUpField = "name" | "email" | "password" | "workspace";

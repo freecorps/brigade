@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { authClient, saveLocale, signOutDashboard, switchWorkspace } from "@/lib/auth";
 import { ENVIRONMENT } from "@/lib/environment";
+import { useWorkspaces } from "@/lib/workspaces";
 import { isThemePreference, themePreferences, type ThemePreference } from "@/lib/theme";
 
 const LANGUAGE_NAMES: Record<Locale, () => string> = {
@@ -43,6 +44,12 @@ const THEMES: Record<ThemePreference, { icon: LucideIcon; name: () => string }> 
   system: { icon: MonitorIcon, name: m.theme_system },
 };
 
+/** The app's name, signed in: only on wider screens once there is a workspace name to take the room. */
+function AppNameBesideWorkspace() {
+  const shown = useWorkspaces().active;
+  return <span className={shown ? "max-sm:sr-only" : undefined}>{m.app_name()}</span>;
+}
+
 export function SiteHeader() {
   const session = authClient.useSession();
   return (
@@ -55,11 +62,7 @@ export function SiteHeader() {
           <BrigadeMark />
           {/* On phones the workspace name takes the room; the mark still says which app this is. Signed in without a
               workspace (the create-workspace form), there is no name, so the app's stays. */}
-          <span
-            className={session.data?.session.activeOrganizationId ? "max-sm:sr-only" : undefined}
-          >
-            {m.app_name()}
-          </span>
+          {session.data ? <AppNameBesideWorkspace /> : <span>{m.app_name()}</span>}
         </Link>
         {session.data ? <WorkspaceSwitcher /> : null}
         {/* Production is what Brigade is: only the other environments say which they are. */}
@@ -87,8 +90,9 @@ export function SiteHeader() {
  * Truncated; the full name is in its title and in the account menu.
  */
 export function WorkspaceSwitcher({ place = "header" }: { place?: "header" | "sidebar" }) {
-  const workspace = authClient.useActiveOrganization();
-  const list = authClient.useListOrganizations();
+  const workspaces = useWorkspaces();
+  const workspace = { data: workspaces.active };
+  const list = { data: workspaces.list, error: workspaces.error, refetch: workspaces.refetch };
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState<string | null>(null);
@@ -241,7 +245,7 @@ export function AccountMenu({
   email: string;
   place?: "header" | "sidebar";
 }) {
-  const workspace = authClient.useActiveOrganization().data?.name;
+  const workspace = useWorkspaces().active?.name;
   const [signingOut, setSigningOut] = useState(false);
   const [failed, setFailed] = useState(false);
   const signOut = async () => {

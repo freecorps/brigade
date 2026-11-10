@@ -20,6 +20,16 @@ import {
   switchWorkspace,
 } from "../src/lib/auth";
 import { pageTitle } from "../src/lib/page-title";
+import {
+  activeOf,
+  loadMembers,
+  loadWorkspaces,
+  parseMemberships,
+  pickedWorkspace,
+  pickWorkspace,
+  WORKSPACE_KEY,
+} from "../src/lib/workspaces";
+import { memoryStorage, throwingStorage } from "./storage";
 
 beforeEach(() => {
   void setLocale("en");
@@ -238,45 +248,27 @@ describe("createWorkspace", () => {
 });
 
 describe("opening a new workspace", () => {
-  test("set-active tells the session and organization hooks to fetch again", async () => {
-    const calls: string[] = [];
-    const client = makeAuthClient(async (input) => {
-      calls.push(new URL(input instanceof Request ? input.url : String(input)).pathname);
-      return Response.json({ id: "ws_1" });
-    });
-    const signals = ["$sessionSignal", "$activeOrgSignal", "$activeMemberSignal"] as const;
-    const before = signals.map((name) => client.$store.atoms[name]?.get());
+  test("picks it and loads the member's workspaces again; a list that does not load falls back to a page load", async () => {
     let reloaded = false;
-    await openWorkspace("ws_1", client, () => {
-      reloaded = true;
-    });
-    expect(reloaded).toBe(false);
-    expect(calls).toEqual(["/api/auth/organization/set-active"]);
-    // A plain session refetch toggles none of the organization signals, so a mounted
-    // `useActiveOrganization` would keep its stale `null`.
-    // Better Auth flips each signal in a short timeout after the response.
-    await vi.waitFor(() => {
-      signals.forEach((name, index) => {
-        expect(client.$store.atoms[name]?.get(), name).not.toBe(before[index]);
-      });
-    });
-  });
-});
-
-describe("opening a new workspace when set-active fails", () => {
-  test("an error answer or a network failure falls back to a page load", async () => {
-    for (const fail of [
-      async () => Response.json({ message: "Too many requests" }, { status: 429 }),
-      async () => {
-        throw new TypeError("Failed to fetch");
-      },
-    ]) {
-      let reloaded = false;
-      await openWorkspace("ws_1", makeAuthClient(fail as typeof fetch), () => {
+    await openWorkspace(
+      "ws_1",
+      async () => [{ id: "ws_1", name: "Acme", role: "owner" }],
+      () => {
         reloaded = true;
-      });
-      expect(reloaded).toBe(true);
-    }
+      },
+    );
+    expect(reloaded).toBe(false);
+    expect(pickedWorkspace()).toBe("ws_1");
+    await openWorkspace(
+      "ws_2",
+      async () => undefined,
+      () => {
+        reloaded = true;
+      },
+    );
+    expect(reloaded).toBe(true);
+    // Kept for that page load (in the browser's storage, `pickWorkspace`).
+    expect(pickedWorkspace()).toBe("ws_2");
   });
 });
 
@@ -305,23 +297,83 @@ describe("signing out", () => {
 });
 
 describe("switching workspaces", () => {
-  test("set-active with the chosen workspace; an error or no answer is a failed switch", async () => {
-    const bodies: unknown[] = [];
-    const client = makeAuthClient(async (input, init) => {
-      const request = input instanceof Request ? input : new Request(String(input), init);
-      bodies.push(await request.json());
-      return Response.json({ id: "ws_2" });
+  test("kept in this browser: the next page load opens the chosen one", async () => {
+    expect(await switchWorkspace("ws_3")).toBe(true);
+    expect(pickedWorkspace()).toBe("ws_3");
+    const storage = memoryStorage();
+    pickWorkspace("ws_4", storage);
+    expect(storage.data.get(WORKSPACE_KEY)).toBe("ws_4");
+    // Blocked storage keeps the pick in the tab all the same.
+    pickWorkspace("ws_5", throwingStorage);
+    expect(pickedWorkspace()).toBe("ws_5");
+  });
+});
+
+describe("the workspace shown", () => {
+  const list = [
+    { id: "ws_1", name: "Acme", role: "owner" as const },
+    { id: "ws_2", name: "Ops", role: "viewer" as const },
+  ];
+  test("the pick while it is a membership, else the oldest; none without any", () => {
+    expect(activeOf(list, "ws_2")?.id).toBe("ws_2");
+    expect(activeOf(list, "ws_gone")?.id).toBe("ws_1");
+    expect(activeOf(list, null)?.id).toBe("ws_1");
+    expect(activeOf([], "ws_1")).toBeUndefined();
+    expect(activeOf(undefined, "ws_1")).toBeUndefined();
+  });
+
+  test("the API's list as kept: malformed entries left out, an unknown role reads as a viewer", () => {
+    expect(
+      parseMemberships({
+        workspaces: [
+          { id: "ws_1", name: "Acme", role: "owner" },
+          { id: "ws_2", name: "Ops", role: "superuser" },
+          { id: 3, name: "Bad" },
+          null,
+        ],
+      }),
+    ).toEqual([
+      { id: "ws_1", name: "Acme", role: "owner" },
+      { id: "ws_2", name: "Ops", role: "viewer" },
+    ]);
+    expect(parseMemberships(null)).toEqual([]);
+  });
+
+  test("loads from GET /api/workspaces; an error answer keeps the list it had", async () => {
+    const paths: string[] = [];
+    const ok = (async (input: string) => {
+      paths.push(input);
+      return Response.json({ workspaces: list });
+    }) as typeof fetch;
+    expect(await loadWorkspaces(ok)).toEqual(list);
+    expect(paths).toEqual(["/api/workspaces"]);
+    expect(
+      await loadWorkspaces((async () => new Response(null, { status: 503 })) as typeof fetch),
+    ).toBeUndefined();
+  });
+
+  test("members from GET /api/workspaces/:id/members; a 403 says the caller left", async () => {
+    const members = await loadMembers("ws_1", (async () =>
+      Response.json({
+        members: [
+          { userId: "usr_1", role: "owner", user: { name: " Ana ", email: "ana@example.com" } },
+        ],
+      })) as typeof fetch);
+    expect(members).toEqual({
+      ok: true,
+      members: [{ userId: "usr_1", name: "Ana", email: "ana@example.com", role: "owner" }],
     });
-    expect(await switchWorkspace("ws_2", client)).toBe(true);
-    expect(bodies).toEqual([{ organizationId: "ws_2" }]);
-    for (const fail of [
-      async () => Response.json({ message: "Forbidden" }, { status: 403 }),
-      async () => {
+    expect(
+      await loadMembers("ws_1", (async () => new Response(null, { status: 403 })) as typeof fetch),
+    ).toEqual({
+      ok: false,
+      left: true,
+    });
+    expect(
+      await loadMembers("ws_1", (async () => {
         throw new TypeError("Failed to fetch");
-      },
-    ]) {
-      expect(await switchWorkspace("ws_2", makeAuthClient(fail as typeof fetch))).toBe(false);
-    }
+      }) as typeof fetch),
+    ).toEqual({ ok: false, left: false });
   });
 });
 

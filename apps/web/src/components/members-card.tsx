@@ -12,9 +12,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { FormError } from "@/components/ui/field";
 import { authClient } from "@/lib/auth";
+import { useMembers, useWorkspaces } from "@/lib/workspaces";
 import {
   changeMember,
-  listedMembers,
   memberChangeReason,
   memberChoices,
   selfDemotion,
@@ -25,31 +25,30 @@ import {
 } from "@/lib/members";
 
 /**
- * The workspace's members from D1 (Better Auth's full organization: names, emails, roles), for every role
+ * The workspace's members from D1 (`GET /api/workspaces/:id/members`: names, emails, roles), for every role
  * (RFC 0003: `workspace:read`). Owners and admins change roles and remove members; anyone can leave. Every change
  * goes through the API (`/workspaces/:id/members/:userId`), which updates D1, the shard and paging together.
  */
 export function MembersCard() {
   const { workspaceId, role } = useMember();
-  const organization = authClient.useActiveOrganization();
+  const listed = useMembers(workspaceId);
+  const workspaces = useWorkspaces();
   const session = authClient.useSession();
   const [inviting, setInviting] = useState(false);
-  const members = listedMembers(organization.data?.members);
+  const members = listed.members ?? [];
   const manage = role === "owner" || role === "admin";
   const list = (invite?: Invite) => (
     <MembersList
       invite={invite}
       members={members}
-      loading={organization.isPending && !organization.data}
-      reload={organization.error && !organization.data ? () => organization.refetch() : undefined}
+      loading={listed.isPending}
+      reload={listed.error && !listed.members ? () => void listed.refetch() : undefined}
       change={(userId, change) => changeMember(workspaceId, userId, change)}
       refresh={async () => {
-        // `set-active` (not a refetch of one hook) refreshes the session, the workspace and the signed-in
-        // member's own role together, as `openWorkspace` relies on. It refuses (403) someone D1 no longer has
-        // in the workspace. The removal itself already moved their sessions off it (`deleteMembership` in
-        // apps/api), and Better Auth's 403 also sets this session's active workspace to none.
-        const { error } = await authClient.organization.setActive({ organizationId: workspaceId });
-        return error?.status !== 403;
+        // The members and the signed-in member's own role (the workspace list) together. False (403) for
+        // someone D1 no longer has in the workspace: the dashboard then falls back to another of theirs.
+        const [stillIn] = await Promise.all([listed.refetch(), workspaces.refetch()]);
+        return stillIn;
       }}
       left={() => window.location.assign("/")}
     />

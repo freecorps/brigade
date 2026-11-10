@@ -1,5 +1,5 @@
 import { m } from "@freecorps/brigade-i18n";
-import { isRole, type Role } from "@freecorps/brigade-schema";
+import type { Role } from "@freecorps/brigade-schema";
 import { SyncProvider } from "@freecorps/brigade-sync/react";
 import { Link, Navigate, useNavigate } from "@tanstack/react-router";
 import { LoaderCircleIcon, RefreshCwIcon } from "lucide-react";
@@ -20,6 +20,7 @@ import { Field, FormError } from "@/components/ui/field";
 import { authClient, checkWorkspaceName, createWorkspace, openWorkspace } from "@/lib/auth";
 import { usePageTitle } from "@/lib/page-title";
 import { setSyncActor } from "@/lib/sync";
+import { useWorkspaces, type Membership } from "@/lib/workspaces";
 import { syncClient } from "@/sync-client";
 
 /**
@@ -44,14 +45,38 @@ export function RequireWorkspace({ children }: { children: ReactNode }) {
     );
   }
   if (!session.data) return <Navigate to="/sign-in" replace />;
-  if (!session.data.session.activeOrganizationId) {
+  return <SignedIn userId={session.data.user.id}>{children}</SignedIn>;
+}
+
+/** Signed in: the member's workspaces (lib/workspaces.ts), then the one shown, or the form when there is none. */
+function SignedIn({ userId, children }: { userId: string; children: ReactNode }) {
+  const workspaces = useWorkspaces();
+  if (workspaces.isPending) {
+    return (
+      <PlainFrame>
+        <Loading />
+      </PlainFrame>
+    );
+  }
+  if (!workspaces.list) {
+    return (
+      <PlainFrame>
+        <Unavailable retry={() => void workspaces.refetch()} />
+      </PlainFrame>
+    );
+  }
+  if (!workspaces.active) {
     return (
       <PlainFrame>
         <CreateWorkspace />
       </PlainFrame>
     );
   }
-  return <ActiveWorkspace userId={session.data.user.id}>{children}</ActiveWorkspace>;
+  return (
+    <ActiveWorkspace userId={userId} workspace={workspaces.active}>
+      {children}
+    </ActiveWorkspace>
+  );
 }
 
 /** The signed-in member's workspace, user id and role, for what the dashboard shows or hides (RFC 0003). */
@@ -71,48 +96,22 @@ export function useMember(): Member {
   return member;
 }
 
-/** Mounted only with a session and an active workspace, so its queries never run signed out. */
-function ActiveWorkspace({ userId, children }: { userId: string; children: ReactNode }) {
-  const workspace = authClient.useActiveOrganization();
-  const member = authClient.useActiveMember();
-  // Just after a switch, the member read may still be the old workspace's: its role is not this one's.
-  if (
-    !workspace.data ||
-    !member.data ||
-    (member.data.organizationId !== undefined && member.data.organizationId !== workspace.data.id)
-  ) {
-    // The shell without the shard's parts (counts, the time zone): the frame stays put through a switch.
-    if (workspace.error || member.error) {
-      return (
-        <AppShell live={false}>
-          <Unavailable
-            retry={() => {
-              void workspace.refetch();
-              void member.refetch();
-            }}
-          />
-        </AppShell>
-      );
-    }
-    return (
-      <AppShell live={false}>
-        <Loading />
-      </AppShell>
-    );
-  }
-
-  // Brigade gives every member one of its roles; anything else reads nothing, like the shard would answer.
-  const role = isRole(member.data.role) ? member.data.role : "viewer";
+/** Mounted only with a session and a workspace to show, so its queries never run signed out. */
+function ActiveWorkspace({
+  userId,
+  workspace,
+  children,
+}: {
+  userId: string;
+  workspace: Membership;
+  children: ReactNode;
+}) {
+  const { role } = workspace;
   setSyncActor({ kind: "user", id: userId, role });
   return (
-    <SyncProvider client={syncClient} shard={workspace.data.id}>
+    <SyncProvider client={syncClient} shard={workspace.id}>
       {/* Keyed: a switch starts every card over, so no state of one workspace shows in another. */}
-      <MemberProvider
-        key={workspace.data.id}
-        workspaceId={workspace.data.id}
-        userId={userId}
-        role={role}
-      >
+      <MemberProvider key={workspace.id} workspaceId={workspace.id} userId={userId} role={role}>
         <AppShell live>{children}</AppShell>
       </MemberProvider>
     </SyncProvider>

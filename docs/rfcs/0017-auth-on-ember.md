@@ -117,6 +117,11 @@ Each is an Ember change with its own tests, released before Brigade uses it.
    `activeOrganizationId` is only a hint for a phone that kept nothing. Its `expoClient` keeps both engines' cookies
    (`cookiePrefix: ["better-auth", "brigade"]`), so the same build signs in before and after the cutover.
 4. Cutover, `dev` then production: import `user` and `account` from D1, set `AUTH_ENGINE=ember`, everyone signs in.
+   The import is an operator route beside the workspace migration's (`POST /admin/ember/auth/import`, the
+   `MIGRATION_TOKEN` secret as `Authorization: Bearer`): D1's rows, 200 users with their accounts per call to the
+   object's `importUsers`, ids and password hashes as they are, ids already there skipped, so it runs again safely
+   (`?after=<next>` when one request did not finish). In order: import, switch the engine, import once more for
+   anyone who signed up in between. Before switching, the environment's `DASHBOARD_URL` is on HTTPS (step 2).
    Sessions are not imported (that is the sign-out), and neither is `verification`: a password-reset or verification
    link sent before the cutover stops working, and its owner asks for another one (the owners are told). The
    `rateLimit` counts start over.

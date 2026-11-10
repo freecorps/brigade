@@ -26,6 +26,43 @@ export function authEngine(env: Env | Record<string, unknown>): "d1" | "ember" {
 /** The `Auth` object (one per deployment: Ember's `instance` default). */
 const authObject = (env: Pick<Env, "AUTH">) => env.AUTH.getByName("auth");
 
+/** Users copied per call to the object: one transaction each, small enough for one RPC. */
+export const IMPORT_PAGE = 200;
+
+export type AuthImportPage =
+  | { ok: true; users: number; accounts: number; skipped: number; next: string | null }
+  | { ok: false; error: string };
+
+/**
+ * Copies one page of D1's `user` rows after id `after`, with their `account` rows, into the object (RFC 0017 step 4,
+ * the cutover): ids and password hashes as they are, so everyone signs in again with the password they had. Ember's
+ * `importUsers` skips ids already there, so it can run again; `next` is the last id copied while more may follow.
+ * Sessions and `verification` are not copied (that is the sign-out).
+ */
+export async function importAuthPage(
+  env: Pick<Env, "DB" | "AUTH">,
+  after = "",
+): Promise<AuthImportPage> {
+  const { results: users } = await env.DB.prepare(
+    `select id, name, email, "emailVerified", image, "createdAt", "updatedAt", locale, "passwordResetAt"
+     from "user" where id > ? order by id limit ?`,
+  )
+    .bind(after, IMPORT_PAGE)
+    .all<Record<string, unknown> & { id: string }>();
+  if (users.length === 0) return { ok: true, users: 0, accounts: 0, skipped: 0, next: null };
+  const ids = users.map((user) => user.id);
+  const { results: accounts } = await env.DB.prepare(
+    `select id, "accountId", "providerId", "userId", "accessToken", "refreshToken", "idToken",
+       "accessTokenExpiresAt", "refreshTokenExpiresAt", scope, password, "createdAt", "updatedAt"
+     from account where "userId" in (select value from json_each(?))`,
+  )
+    .bind(JSON.stringify(ids))
+    .all<Record<string, unknown>>();
+  const result = await authObject(env).importUsers({ users, accounts });
+  if (!result.ok) return result;
+  return { ...result, next: users.length === IMPORT_PAGE ? ids[ids.length - 1]! : null };
+}
+
 /** An `Auth.api` answer, or the error Better Auth refused it with (logged by the callers that catch it). */
 export async function onObject(
   env: Pick<Env, "AUTH">,

@@ -22,6 +22,7 @@ import { exports } from "cloudflare:workers";
 import { WORKSPACE_LIMIT } from "../src/auth.ts";
 import worker, { authEngine } from "../src/index.ts";
 import { createWorkspaceInD1 } from "../src/workspace-create.ts";
+import { serveMigration } from "../src/ember-admin.ts";
 
 const ORIGIN = "http://api.test";
 const PASSWORD = "correct horse battery staple";
@@ -447,5 +448,97 @@ describe("QR sign-in on the Ember engine", () => {
       status: "expired",
       reason: "signed_out",
     });
+  });
+});
+
+describe("the cutover's import (RFC 0017 step 4)", () => {
+  const TOKEN = "import-token";
+  const importRoute = (after = "") =>
+    serveMigration(
+      new Request(`${ORIGIN}/admin/ember/auth/import${after ? `?after=${after}` : ""}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      }),
+      { ...env, MIGRATION_TOKEN: TOKEN },
+      "/admin/ember/auth/import",
+    );
+
+  /** A request to `/auth` on D1's engine, as before the cutover. */
+  async function onD1(path: string, body: unknown) {
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(
+      new Request(`${ORIGIN}/auth${path}`, {
+        method: "POST",
+        headers: {
+          Origin: ORIGIN,
+          "cf-connecting-ip": clientIp(),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    return response;
+  }
+
+  test("someone who signed up on D1 signs in on the object with the password they had; a second run copies nothing again", async () => {
+    const email = address("Dora");
+    const up = await onD1("/sign-up/email", {
+      name: "Dora",
+      email,
+      password: PASSWORD,
+      locale: "pt-BR",
+    });
+    expect(up.status).toBe(200);
+    const { user } = (await up.json()) as { user: { id: string } };
+    // Not on the object yet: nobody signs in there before the import.
+    expect((await call("/sign-in/email", { email, password: PASSWORD })).status).toBe(401);
+
+    const first = await importRoute();
+    expect(first.status).toBe(200);
+    const done = (await first.json()) as {
+      ok: boolean;
+      users: number;
+      accounts: number;
+      next: string | null;
+    };
+    expect(done).toMatchObject({ ok: true, next: null });
+    expect(done.users).toBeGreaterThanOrEqual(1);
+    expect(done.accounts).toBeGreaterThanOrEqual(1);
+
+    const signedIn = await call("/sign-in/email", { email, password: PASSWORD });
+    expect(signedIn.status).toBe(200);
+    expect(cookieOf(signedIn)).toContain(`${EMBER_AUTH_PROJECT}.session_token=`);
+    const session = (await (
+      await call("/get-session", undefined, cookieOf(signedIn), "GET")
+    ).json()) as {
+      user: { id: string; locale: string };
+    };
+    // The same user: its id (every membership in D1 names it) and its language.
+    expect(session.user).toMatchObject({ id: user.id, locale: "pt-BR" });
+    expect((await call("/sign-in/email", { email, password: "not the password" })).status).toBe(
+      401,
+    );
+    // An import leaves no profile journal behind: the copy in D1 is the row it came from.
+    expect(await journal()).toBe(0);
+
+    const again = (await (await importRoute()).json()) as {
+      ok: boolean;
+      users: number;
+      skipped: number;
+    };
+    expect(again).toMatchObject({ ok: true, users: 0 });
+    expect(again.skipped).toBeGreaterThanOrEqual(1);
+  });
+
+  test("without the operator's token the route is not there", async () => {
+    const response = await serveMigration(
+      new Request(`${ORIGIN}/admin/ember/auth/import`, { method: "POST" }),
+      { ...env, MIGRATION_TOKEN: TOKEN },
+      "/admin/ember/auth/import",
+    );
+    expect(response.status).toBe(404);
   });
 });

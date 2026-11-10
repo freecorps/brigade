@@ -7,8 +7,11 @@
 //   POST /admin/ember/switch/:workspaceId     freeze the DO, copy again, arm the ticks, then D1 says `ember`; refused
 //                                             (409 `too_large`) past `READ_CAP_GUARD` rows in a table, unless ?force=1
 //   POST /admin/ember/back/:workspaceId       D1 says `brigade` again, and the DO holds the workspace as at the copy
+//   POST /admin/ember/auth/import?after=<id>  D1's users and accounts into the Auth object (RFC 0017 step 4), up to
+//                                             `IMPORT_PAGES` pages; `next` to go on from (can run again)
 
 import { same } from "./alert-intake.ts";
+import { importAuthPage } from "./auth-ember.ts";
 import {
   AlreadySwitched,
   backWorkspace,
@@ -21,8 +24,10 @@ import { WORKSPACE_ID } from "./workspace.ts";
 export const ADMIN_BASE = "/admin/ember";
 const ACTION = /^\/admin\/ember\/(copy|switch|back)\/([^/]+)$/;
 const LIST_LIMIT = 500;
+/** Pages of users one import request copies (`IMPORT_PAGE` each), well inside a request's subrequests. */
+export const IMPORT_PAGES = 25;
 
-type AdminEnv = Pick<Env, "DB" | "WORKSPACE" | "SHARD"> & { MIGRATION_TOKEN?: string };
+type AdminEnv = Pick<Env, "DB" | "WORKSPACE" | "SHARD" | "AUTH"> & { MIGRATION_TOKEN?: string };
 
 const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -59,6 +64,32 @@ export async function serveMigration(
       workspaces: results,
       next: results.length === LIST_LIMIT ? results.at(-1)!.id : null,
     });
+  }
+  if (pathname === `${ADMIN_BASE}/auth/import`) {
+    if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+    let after = new URL(request.url).searchParams.get("after") ?? "";
+    const total = { users: 0, accounts: 0, skipped: 0 };
+    try {
+      for (let page = 0; page < IMPORT_PAGES; page++) {
+        const result = await importAuthPage(env, after);
+        if (!result.ok) {
+          log("auth import refused", { after, error: result.error });
+          return json({ ok: false, error: result.error, after, ...total }, 422);
+        }
+        total.users += result.users;
+        total.accounts += result.accounts;
+        total.skipped += result.skipped;
+        if (result.next === null) {
+          log("auth import done", total);
+          return json({ ok: true, ...total, next: null });
+        }
+        after = result.next;
+      }
+      return json({ ok: true, ...total, next: after });
+    } catch (error) {
+      log("auth import failed", { after, error: String(error) });
+      return json({ error: "unavailable", message: String(error), after, ...total }, 503);
+    }
   }
   const match = ACTION.exec(pathname);
   if (!match) return notFound();

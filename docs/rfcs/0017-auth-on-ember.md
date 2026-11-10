@@ -110,6 +110,12 @@ Each is an Ember change with its own tests, released before Brigade uses it.
    session token: a Brigade API token (RFC 0014) sent there matches no session, so it signs nobody in.
 3. Clients: the workspace picker without the organization plugin, on both engines. An EAS update for the app (no
    native change).
+   The dashboard (#238): the list from `GET /api/workspaces`, the pick kept in the browser (`brigade:workspace`),
+   falling back to the oldest membership; members from `GET /api/workspaces/:id/members`. The app: the same list,
+   per instance (`src/lib/memberships.ts`), the pick kept as the workspace last opened (`KnownWorkspace`, already in
+   secure storage, so an existing install opens where it was and offline as before); a D1 session's
+   `activeOrganizationId` is only a hint for a phone that kept nothing. Its `expoClient` keeps both engines' cookies
+   (`cookiePrefix: ["better-auth", "brigade"]`), so the same build signs in before and after the cutover.
 4. Cutover, `dev` then production: import `user` and `account` from D1, set `AUTH_ENGINE=ember`, everyone signs in.
    Sessions are not imported (that is the sign-out), and neither is `verification`: a password-reset or verification
    link sent before the cutover stops working, and its owner asks for another one (the owners are told). The

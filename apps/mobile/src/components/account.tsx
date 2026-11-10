@@ -16,7 +16,7 @@ import type { Glyph } from "@/components/glyphs";
 import { ListItem } from "@/components/list-item";
 import { RowIcon } from "@/components/row-icon";
 import { useSwitcher } from "@/components/instances";
-import { openInstance, useMember, useOnline } from "@/components/session";
+import { openInstance, useMember, useMemberships, useOnline } from "@/components/session";
 import { otherTrouble } from "@/lib/switcher";
 import { useLocale } from "@/hooks/use-locale";
 import { useTheme } from "@/hooks/use-theme";
@@ -162,8 +162,8 @@ const SETTINGS_GLYPH: Glyph = { ios: "gearshape", android: "settings", web: "set
 const RETRY_GLYPH: Glyph = { ios: "arrow.clockwise", android: "refresh", web: "refresh" };
 
 /**
- * The member's workspaces (Better Auth's organization list), the active one first known even offline, each with
- * whether this phone gets its pages. `pick` makes another active: the session moves to it, the incident list,
+ * The member's workspaces (`GET /api/workspaces`, src/lib/memberships.ts), the open one known even offline, each with
+ * whether this phone gets its pages. `pick` opens another: the app keeps it as the one to open, the incident list,
  * on-call and the widget follow, and the phone registers there too while staying registered in the others, so it
  * keeps getting their pages (RFC 0006 "Device registration"). Changes not sent yet still go out from the workspace
  * they were made in (src/lib/drain.ts).
@@ -171,22 +171,22 @@ const RETRY_GLYPH: Glyph = { ios: "arrow.clockwise", android: "refresh", web: "r
 export function useWorkspaces() {
   const member = useMember();
   const current = member.workspaceId;
-  const { authClient } = useInstance();
-  const list = authClient.useListOrganizations();
+  const clients = useInstance();
+  const list = useMemberships(clients, member.userId)?.list;
   const [switching, setSwitching] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   // The active one is always shown, even before (or without) the list, or with a list read before it existed:
   // offline, it is all the app knows.
-  const workspaces = list.data?.some((workspace) => workspace.id === current)
-    ? list.data
-    : [{ id: current, name: member.workspaceName }, ...(list.data ?? [])];
+  const workspaces = list?.some((workspace) => workspace.id === current)
+    ? list
+    : [{ id: current, name: member.workspaceName }, ...(list ?? [])];
   const pick = async (id: string) => {
     if (id === current || switching) return;
     setSwitching(id);
     setFailed(false);
     let ok = false;
     try {
-      ok = !(await authClient.organization.setActive({ organizationId: id })).error;
+      ok = await clients.memberships.pick(id);
     } catch {
       ok = false;
     }

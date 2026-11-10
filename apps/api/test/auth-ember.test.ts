@@ -371,3 +371,64 @@ describe("workspaces on the Ember engine", () => {
     expect(rows).toEqual({ workspaces: 0, memberships: 0 });
   });
 });
+
+describe("QR sign-in on the Ember engine", () => {
+  const phoneUA = { "User-Agent": "Brigade/1.0 (iPhone)" };
+
+  async function approved(owner: { cookie: string }) {
+    const created = await route("/app-sign-in", owner.cookie, {}, { method: "POST" });
+    expect(created.status).toBe(201);
+    const { id, code } = (await created.json()) as { id: string; code: string };
+    const claim = await route("/app-sign-in/claim", undefined, phoneUA, {
+      method: "POST",
+      body: { code, deviceName: "Nia's iPhone" },
+    });
+    expect(claim.status).toBe(201);
+    const phone = (await claim.json()) as { claimId: string; secret: string; number: string };
+    const approval = await route(
+      `/app-sign-in/${id}/approve`,
+      owner.cookie,
+      {},
+      {
+        method: "POST",
+        body: { number: phone.number },
+      },
+    );
+    expect(approval.status).toBe(200);
+    return phone;
+  }
+
+  const poll = (phone: { claimId: string; secret: string }) =>
+    route(`/app-sign-in/claim/${phone.claimId}`, undefined, {
+      ...phoneUA,
+      Authorization: `Bearer ${phone.secret}`,
+    });
+
+  test("the phone gets a session made on the object, with the project's cookie", async () => {
+    const nia = await signUp("Nia");
+    const answer = (await (await poll(await approved(nia))).json()) as {
+      status: string;
+      session: { cookie: string };
+      user: { id: string };
+    };
+    expect(answer).toMatchObject({ status: "approved", user: { id: nia.id } });
+    const cookie = answer.session.cookie.split(";")[0]!;
+    expect(cookie).toMatch(new RegExp(`^${EMBER_AUTH_PROJECT}\\.session_token=`));
+    const session = (await (await call("/get-session", undefined, cookie, "GET")).json()) as {
+      user: { id: string };
+      session: { deviceName: string; signInMethod: string };
+    };
+    expect(session.user.id).toBe(nia.id);
+    expect(session.session).toMatchObject({ deviceName: "Nia's iPhone", signInMethod: "qr" });
+  });
+
+  test("a dashboard signed out before the pickup leaves the phone without a session", async () => {
+    const oto = await signUp("Oto");
+    const phone = await approved(oto);
+    expect((await call("/sign-out", {}, oto.cookie)).status).toBe(200);
+    expect(await (await poll(phone)).json()).toMatchObject({
+      status: "expired",
+      reason: "signed_out",
+    });
+  });
+});

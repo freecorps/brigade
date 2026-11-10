@@ -99,7 +99,9 @@ Each is an Ember change with its own tests, released before Brigade uses it.
    (`createWorkspaceInD1`: the limit counted before and again after the insert, the shard provisioned, both undone
    when either fails), and the first owner's bootstrap makes the verified account on the object (server-only
    `brigadeCreateOwner`, undone with `brigadeRemoveOwner`) and the workspace the same way.
-   Left: QR sign-in's session on the object. Until then `AUTH_ENGINE` stays `d1` everywhere.
+   And QR sign-in's session on the object (server-only `brigadeQrSession`, its cookie signed with the object's secret;
+   `brigadeEndSession` when it cannot be delivered), with no active workspace in it. That completes step 2: every
+   route of the API works on either engine. `AUTH_ENGINE` stays `d1` until the clients (step 3) and the cutover.
    The object's options are set once, so its cookies are `Secure` from the instance's address rather than per
    request: `DASHBOARD_URL` on HTTPS, which an environment must have before it switches.
    For step 3: the app's `expoClient` keeps only the cookies with its `cookiePrefix`, which becomes `brigade` (the

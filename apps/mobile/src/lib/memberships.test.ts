@@ -196,3 +196,18 @@ test("a list that could not be read is a failure only with nothing kept to open 
   expect(cannotOpen(true, "Kept", undefined)).toBe(true);
   expect(cannotOpen(false, undefined, undefined)).toBe(false);
 });
+
+test("forgotten while the same member is still signed in, owning it again reads from scratch", async () => {
+  const { store } = fakeStore([[A], []], kept("org_a"));
+  store.own("usr_1");
+  await settle();
+  expect(openingOf(store.current("usr_1"))).toMatchObject({ workspaceId: "org_a" });
+  // A sign-out that timed out before the session went: the pick and list are forgotten, the session stays.
+  await store.forget();
+  expect(store.current("usr_1")).toBeNull();
+  store.own("usr_1");
+  await settle();
+  // Nothing kept any more, and the list read again: the view can offer what to do.
+  expect(store.current("usr_1")).toMatchObject({ known: null, list: [] });
+  expect(openingOf(store.current("usr_1"))).toEqual({ kind: "none" });
+});

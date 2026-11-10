@@ -149,9 +149,12 @@ export function useMemberships(
   const state = useSyncExternalStore(store.subscribe, () =>
     userId ? store.current(userId) : null,
   );
+  // Forgotten (a sign-out) while a session is still here, as when it timed out before the session went: theirs
+  // again, read from scratch, so the view can still offer what to do. A finished sign-out leaves no `userId`.
+  const unowned = userId !== undefined && state === null;
   useEffect(() => {
     if (userId) store.own(userId);
-  }, [store, userId]);
+  }, [store, userId, unowned]);
   return state;
 }
 

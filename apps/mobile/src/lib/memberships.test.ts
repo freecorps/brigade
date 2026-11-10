@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import {
+  cannotOpen,
   keptWorkspace,
   listWorkspaces,
   membershipsStore,
@@ -185,4 +186,13 @@ test("a failed read keeps the list before it, and an older load never replaces a
   expect(store.current("usr_1")?.list).toEqual([B]);
   await store.load();
   expect(store.current("usr_1")).toMatchObject({ list: [B], error: true });
+});
+
+test("a list that could not be read is a failure only with nothing kept to open the workspace with", () => {
+  // Offline with the kept name and role: it opens.
+  expect(cannotOpen(true, "Kept", "admin")).toBe(false);
+  // A session's hint with nothing kept: nothing to show it with.
+  expect(cannotOpen(true, undefined, undefined)).toBe(true);
+  expect(cannotOpen(true, "Kept", undefined)).toBe(true);
+  expect(cannotOpen(false, undefined, undefined)).toBe(false);
 });

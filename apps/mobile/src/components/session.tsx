@@ -69,7 +69,7 @@ import {
   type FinishResult,
 } from "@/lib/sign-out";
 import { primeToken } from "@/lib/ember-token";
-import { openingOf, type Memberships } from "@/lib/memberships";
+import { cannotOpen, openingOf, type Memberships } from "@/lib/memberships";
 import { memberActor, settledRole, type Server } from "@/lib/sync";
 import { setCurrentSync, type WorkspaceSync } from "@/lib/sync-client";
 import { createEmberWorkspaceSync, openOneShot } from "@/lib/ember-client";
@@ -940,7 +940,9 @@ function ActiveWorkspace({
         },
       };
     }
-    if (listFailed) return { kind: "unavailable", retry: () => void memberships.load() };
+    if (cannotOpen(listFailed, workspaceName, roleNow)) {
+      return { kind: "unavailable", retry: () => void memberships.load() };
+    }
     return { kind: "loading" };
   }, [
     ready,
@@ -949,6 +951,7 @@ function ActiveWorkspace({
     email,
     workspaceId,
     workspaceName,
+    roleNow,
     listFailed,
     memberships,
     actor.role,

@@ -115,6 +115,18 @@ export function openingOf(state: Memberships | null, hint?: string | null): Open
   return state.error && !state.loading ? { kind: "unavailable" } : { kind: "pending" };
 }
 
+/**
+ * Whether the open workspace is unavailable: the list could not be read and nothing else gives its name or the
+ * member's role. Offline, a kept name and role open it without the list, so that is not a failure.
+ */
+export function cannotOpen(
+  listFailed: boolean,
+  name: string | undefined,
+  role: Role | undefined,
+): boolean {
+  return listFailed && (name === undefined || role === undefined);
+}
+
 export type MembershipsStore = {
   subscribe: (listener: () => void) => () => void;
   /** The state for `userId`; null while the store is someone else's or nobody's. */

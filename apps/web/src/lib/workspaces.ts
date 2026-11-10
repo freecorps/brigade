@@ -13,6 +13,8 @@ export type Membership = { id: string; name: string; role: Role };
 export const WORKSPACE_KEY = "brigade:workspace";
 
 type State = {
+  /** The signed-in user the list is for (`ownWorkspaces`); another account's list is never shown. */
+  owner: string | null;
   /** Undefined until the first answer. */
   list?: Membership[];
   /** The last load failed (the list, if any, is the one before). */
@@ -22,7 +24,9 @@ type State = {
 };
 
 const listeners = new Set<() => void>();
-let state: State = { error: false, loading: false, picked: readPick() };
+let state: State = { owner: null, error: false, loading: false, picked: readPick() };
+/** Bumped by every load and reset: only the latest load's answer is kept. */
+let generation = 0;
 
 function set(next: Partial<State>) {
   state = { ...state, ...next };
@@ -65,6 +69,7 @@ export function activeOf(
 export async function loadWorkspaces(
   fetchImpl: typeof fetch = fetch,
 ): Promise<Membership[] | undefined> {
+  const mine = ++generation;
   // Before any list, a new try is loading again, not the failure before it.
   set(state.list === undefined ? { loading: true, error: false } : { loading: true });
   try {
@@ -73,12 +78,32 @@ export async function loadWorkspaces(
     });
     if (!response.ok) throw new Error(`GET /api/workspaces: ${response.status}`);
     const list = parseMemberships(await response.json());
-    set({ list, error: false, loading: false });
+    // A later load (or another account's) answers for now; this one's is older.
+    if (mine === generation) set({ list, error: false, loading: false });
     return list;
   } catch {
-    set({ error: true, loading: false });
+    if (mine === generation) set({ error: true, loading: false });
     return undefined;
   }
+}
+
+/**
+ * Makes the list `userId`'s: another account signed in in this tab (a session that ended, then a sign-in without a
+ * page load) starts from no list, and any load still on its way for the one before is dropped.
+ */
+export function ownWorkspaces(userId: string, fetchImpl: typeof fetch = fetch): void {
+  if (state.owner === userId) {
+    if (state.list === undefined && !state.loading) void loadWorkspaces(fetchImpl);
+    return;
+  }
+  generation++;
+  set({ owner: userId, list: undefined, error: false, loading: false });
+  void loadWorkspaces(fetchImpl);
+}
+
+/** The list and whose it is, as they stand (tests). */
+export function currentWorkspaces(): { owner: string | null; list?: Membership[] } {
+  return { owner: state.owner, list: state.list };
 }
 
 /** Shows workspace `id` from now on, in this tab and the next page load. */
@@ -101,7 +126,8 @@ export function pickedWorkspace(): string | null {
 
 /** Forgets the list (signing out): the next account starts from its own. */
 export function resetWorkspaces(): void {
-  set({ list: undefined, error: false, loading: false });
+  generation++;
+  set({ owner: null, list: undefined, error: false, loading: false });
 }
 
 function subscribe(listener: () => void) {
@@ -109,16 +135,24 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener);
 }
 
-/** The member's workspaces and the one shown, loaded once per page and on `refetch`. */
-export function useWorkspaces() {
+/**
+ * The member's workspaces and the one shown, loaded once per page and on `refetch`. `userId`: the signed-in user's,
+ * given by the one component that knows it (`RequireWorkspace`), so the list is always theirs; the others read it as
+ * it stands.
+ */
+export function useWorkspaces(userId?: string) {
   const current = useSyncExternalStore(subscribe, () => state);
   useEffect(() => {
-    if (state.list === undefined && !state.loading) void loadWorkspaces();
-  }, []);
+    if (userId !== undefined) ownWorkspaces(userId);
+    else if (state.list === undefined && !state.loading) void loadWorkspaces();
+  }, [userId]);
+  // Not yet the right account's list: as if none had come.
+  const stale = userId !== undefined && current.owner !== userId;
+  const list = stale ? undefined : current.list;
   return {
-    list: current.list,
-    active: activeOf(current.list, current.picked),
-    isPending: current.list === undefined && !current.error,
+    list,
+    active: activeOf(list, current.picked),
+    isPending: list === undefined && (stale || !current.error),
     error: current.error,
     refetch: () => loadWorkspaces(),
     pick: pickWorkspace,

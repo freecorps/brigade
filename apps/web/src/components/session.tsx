@@ -50,7 +50,7 @@ export function RequireWorkspace({ children }: { children: ReactNode }) {
 
 /** Signed in: the member's workspaces (lib/workspaces.ts), then the one shown, or the form when there is none. */
 function SignedIn({ userId, children }: { userId: string; children: ReactNode }) {
-  const workspaces = useWorkspaces();
+  const workspaces = useWorkspaces(userId);
   if (workspaces.isPending) {
     return (
       <PlainFrame>

@@ -22,8 +22,10 @@ import {
 import { pageTitle } from "../src/lib/page-title";
 import {
   activeOf,
+  currentWorkspaces,
   loadMembers,
   loadWorkspaces,
+  ownWorkspaces,
   parseMemberships,
   pickedWorkspace,
   pickWorkspace,
@@ -350,6 +352,38 @@ describe("the workspace shown", () => {
     expect(
       await loadWorkspaces((async () => new Response(null, { status: 503 })) as typeof fetch),
     ).toBeUndefined();
+  });
+
+  test("loads at once: only the latest one's answer is kept", async () => {
+    const answers: ((response: Response) => void)[] = [];
+    const slow = (() =>
+      new Promise<Response>((resolve) => answers.push(resolve))) as unknown as typeof fetch;
+    const first = loadWorkspaces(slow);
+    const second = loadWorkspaces(slow);
+    answers[1]!(Response.json({ workspaces: [list[1]] }));
+    await second;
+    answers[0]!(Response.json({ workspaces: [list[0]] }));
+    await first;
+    expect(currentWorkspaces().list).toEqual([list[1]]);
+  });
+
+  test("another account in this tab never sees the list before, nor a load still on its way for it", async () => {
+    const answers: ((response: Response) => void)[] = [];
+    const slow = (() =>
+      new Promise<Response>((resolve) => answers.push(resolve))) as unknown as typeof fetch;
+    ownWorkspaces("usr_ana", slow);
+    answers[0]!(Response.json({ workspaces: [list[0]] }));
+    await vi.waitFor(() =>
+      expect(currentWorkspaces()).toEqual({ owner: "usr_ana", list: [list[0]] }),
+    );
+    ownWorkspaces("usr_ana", slow);
+    // The same account: kept, no new load.
+    expect(answers).toHaveLength(1);
+    ownWorkspaces("usr_bia", slow);
+    expect(currentWorkspaces()).toEqual({ owner: "usr_bia", list: undefined });
+    // Bia's own load, then a late answer for a load started before: only Bia's stays.
+    answers[1]!(Response.json({ workspaces: [list[1]] }));
+    await vi.waitFor(() => expect(currentWorkspaces().list).toEqual([list[1]]));
   });
 
   test("members from GET /api/workspaces/:id/members; a 403 says the caller left", async () => {

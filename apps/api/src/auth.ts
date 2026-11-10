@@ -1047,13 +1047,40 @@ export function emberAuthOptions(bindings: AuthBindings, self: Self = {}) {
 export type SessionById = { userId: string; expiresAt: number };
 
 /**
- * What the API read from D1's `session` itself, on the object (RFC 0017 "Sessions are read over RPC"): a session by id
- * (a socket's, a device's, the one a token names), through `Auth.api("brigadeSession", { body: { id } })`. Server-only:
- * never on the HTTP router, so no client reaches it.
+ * What the API did with D1's identity tables itself, on the object (RFC 0017), through `Auth.api(endpoint, { body })`.
+ * Server-only: never on the HTTP router, so no client reaches them.
+ * - `brigadeSession` `{ id }`: a session by id (a socket's, a device's, the one a token names), or null.
+ * - `brigadeCreateOwner` `{ email, name, password }`: the first owner of a new instance (src/bootstrap.ts), verified, as
+ *   on D1. `brigadeRemoveOwner` `{ id }` undoes it when the rest of the setup failed.
  */
 export const brigadeSessions = {
   id: "brigade-sessions",
   endpoints: {
+    brigadeCreateOwner: createAuthEndpoint.serverOnly({ method: "POST" }, async (ctx) => {
+      const body = Object(ctx.body) as Record<string, unknown>;
+      const { email, name, password } = body;
+      if (typeof email !== "string" || typeof name !== "string" || typeof password !== "string") {
+        throw APIError.from("BAD_REQUEST", { code: "INVALID_OWNER", message: "Invalid owner" });
+      }
+      const { internalAdapter } = ctx.context;
+      const hash = await ctx.context.password.hash(password);
+      const user = await internalAdapter.createUser(
+        { email, name, emailVerified: true },
+        { method: "email-password" },
+      );
+      await internalAdapter.linkAccount({
+        userId: user.id,
+        providerId: "credential",
+        accountId: user.id,
+        password: hash,
+      });
+      return ctx.json({ id: user.id });
+    }),
+    brigadeRemoveOwner: createAuthEndpoint.serverOnly({ method: "POST" }, async (ctx) => {
+      const id: unknown = Reflect.get(Object(ctx.body), "id");
+      if (typeof id === "string") await ctx.context.internalAdapter.deleteUser(id);
+      return ctx.json({ ok: true });
+    }),
     brigadeSession: createAuthEndpoint.serverOnly({ method: "POST" }, async (ctx) => {
       const id: unknown = Reflect.get(Object(ctx.body), "id");
       if (typeof id !== "string") return ctx.json(null);

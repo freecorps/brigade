@@ -36,7 +36,7 @@ import {
   type InvitationCode,
 } from "./invitations.ts";
 import type { MemberChangeResult } from "./members.ts";
-import { authEngine, emberAuthEngine, emberSessionAuth } from "./auth-ember.ts";
+import { authEngine, emberAuthEngine, emberSessionAuth, onObject } from "./auth-ember.ts";
 export { authEngine } from "./auth-ember.ts";
 import { emailSender } from "./email.ts";
 import { consumeDeadLetters, consumeEvents, type NotifyEnv } from "./notify.ts";
@@ -70,7 +70,9 @@ import {
   type RelayInstanceEnv,
   type RelaySetup,
 } from "./relay-instance.ts";
-import { BOOTSTRAP_PATH, bootstrapFirstUser } from "./bootstrap.ts";
+import { resolveLocale } from "@freecorps/brigade-i18n";
+import { createWorkspaceInD1 } from "./workspace-create.ts";
+import { BOOTSTRAP_PATH, bootstrapFirstUser, type OwnerMaker } from "./bootstrap.ts";
 import {
   EMBER_BASE_PATH,
   issueEmberToken,
@@ -232,7 +234,7 @@ export default {
     if (pathname === "/workspaces") {
       return READ_METHODS.includes(request.method)
         ? listWorkspaces(request, env, auth)
-        : createWorkspace(request, auth);
+        : createWorkspace(request, auth, env);
     }
     // Before anyone signs in: the sign-up mode, and the first owner of a new instance (RFC 0002 "Auth").
     if (pathname === "/config") {
@@ -240,7 +242,13 @@ export default {
       return serveConfig(request, instanceAccess(setup), await relayConfig(setup));
     }
     if (pathname === BOOTSTRAP_PATH) {
-      return bootstrapFirstUser(request, (env as SetupEnv).BOOTSTRAP_TOKEN, env.DB, auth);
+      return bootstrapFirstUser(
+        request,
+        (env as SetupEnv).BOOTSTRAP_TOKEN,
+        env.DB,
+        auth,
+        authEngine(env) === "ember" ? emberOwners(env) : undefined,
+      );
     }
     const member = MEMBER_PATH.exec(pathname);
     if (member) return changeMember(request, env, auth, member[1]!, member[2]!, waitUntil);
@@ -906,7 +914,11 @@ export async function listWorkspaces(
  * `afterCreateOrganization` hook provisions the shard (`workspace.created` in its outbox); if that fails, the
  * workspace is deleted again and this answers 500.
  */
-export async function createWorkspace(request: Request, lazyAuth: () => Auth): Promise<Response> {
+export async function createWorkspace(
+  request: Request,
+  lazyAuth: () => Auth,
+  env?: Env,
+): Promise<Response> {
   if (request.method !== "POST") {
     return json({ error: "method_not_allowed" }, 405, {
       Allow: [...READ_METHODS, "POST"].join(", "),
@@ -935,6 +947,23 @@ export async function createWorkspace(request: Request, lazyAuth: () => Auth): P
   );
   if (!name.ok) return json({ error: "invalid_args", issues: name.issues }, 400);
 
+  // On the Ember engine (RFC 0017) there is no organization plugin: Brigade writes the workspace to D1 itself.
+  if (env && authEngine(env) === "ember") {
+    const locale = Reflect.get(session.user, "locale");
+    const created = await createWorkspaceInD1(
+      env.DB,
+      {
+        id: session.user.id,
+        locale: resolveLocale(typeof locale === "string" ? locale : undefined),
+      },
+      name.value,
+      provisionWith(env),
+    );
+    if (created.ok) return json({ id: created.id, name: created.name }, 201);
+    return created.code === "workspace_limit"
+      ? json({ error: "workspace_limit" }, 403)
+      : json({ error: "internal" }, 500);
+  }
   try {
     const workspace = await auth.api.createOrganization({
       // The slug is only a unique handle for now; the id names the shard.
@@ -1782,3 +1811,27 @@ export const emberAuth = emberAuthEngine(authBindings);
 
 /** The `AUTH` Durable Object (wrangler.jsonc). */
 export const AuthDO = emberAuth.Auth;
+
+/**
+ * The first owner on the Ember engine (src/bootstrap.ts): the verified account on the object (Brigade's server-only
+ * endpoints, src/auth.ts), whose profile hook copies it to D1, and the workspace in D1 by Brigade.
+ */
+export function emberOwners(env: Env): OwnerMaker {
+  return {
+    createOwner: async (owner) =>
+      ((await onObject(env, "brigadeCreateOwner", { body: owner })) as { id: string }).id,
+    createWorkspace: async (ownerId, name) => {
+      const created = await createWorkspaceInD1(
+        env.DB,
+        { id: ownerId, locale: "en" },
+        name,
+        provisionWith(env),
+      );
+      if (!created.ok) throw new Error(`creating the first workspace failed: ${created.code}`);
+      return created.id;
+    },
+    removeOwner: async (ownerId) => {
+      await onObject(env, "brigadeRemoveOwner", { body: { id: ownerId } });
+    },
+  };
+}

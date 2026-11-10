@@ -19,7 +19,9 @@ import {
 } from "../src/auth-ember.ts";
 import { sessionCookie } from "./session.ts";
 import { exports } from "cloudflare:workers";
+import { WORKSPACE_LIMIT } from "../src/auth.ts";
 import worker, { authEngine } from "../src/index.ts";
+import { createWorkspaceInD1 } from "../src/workspace-create.ts";
 
 const ORIGIN = "http://api.test";
 const PASSWORD = "correct horse battery staple";
@@ -53,11 +55,23 @@ async function call(path: string, body?: unknown, cookie?: string, method = "POS
 }
 
 /** A Worker route (not `/auth`) on the Ember engine. */
-async function route(path: string, cookie?: string, headers: Record<string, string> = {}) {
+async function route(
+  path: string,
+  cookie?: string,
+  headers: Record<string, string> = {},
+  init: { method?: string; body?: unknown } = {},
+) {
   const ctx = createExecutionContext();
   const response = await worker.fetch(
     new Request(`${ORIGIN}${path}`, {
-      headers: { ...(cookie ? { Cookie: cookie } : {}), ...headers },
+      method: init.method ?? "GET",
+      headers: {
+        Origin: ORIGIN,
+        ...(cookie ? { Cookie: cookie } : {}),
+        ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...headers,
+      },
+      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
     }),
     ember,
     ctx,
@@ -294,5 +308,66 @@ describe("sessions on the Ember engine", () => {
     ).json()) as { session: { id: string } };
     expect((await findSession(env, onD1.session.id))?.userId).toBe(user.id);
     expect(await findSession(env, "ses_01M5W19VG0081040G2081040G2")).toBeNull();
+  });
+});
+
+describe("workspaces on the Ember engine", () => {
+  const create = (cookie: string, name: string) =>
+    route("/workspaces", cookie, {}, { method: "POST", body: { name } });
+
+  test("POST /workspaces makes the workspace in D1 with its owner, and provisions its shard", async () => {
+    const kai = await signUp("Kai");
+    const created = await create(kai.cookie, "  Kai Ops  ");
+    expect(created.status).toBe(201);
+    const { id, name } = (await created.json()) as { id: string; name: string };
+    expect(id).toMatch(/^ws_/);
+    expect(name).toBe("Kai Ops");
+    expect(await (await route("/workspaces", kai.cookie)).json()).toEqual({
+      workspaces: [{ id, name: "Kai Ops", role: "owner" }],
+    });
+    // The shard has it, in the owner's language (Kai signed up in pt-BR).
+    await runInDurableObject(env.WORKSPACE.getByName(id), (_instance, state) => {
+      const meta = state.storage.sql
+        .exec<{ value: string }>("select value from shard_meta where key = 'workspace'")
+        .one();
+      expect(meta.value).toBe(id);
+      const [event] = state.storage.sql
+        .exec<{ event: string }>("select event from outbox")
+        .toArray()
+        .map((row) => JSON.parse(row.event) as { type: string; data: { locale: string } });
+      expect(event).toMatchObject({ type: "workspace.created", data: { locale: "pt-BR" } });
+    });
+    expect((await create(kai.cookie, "\u202e")).status).toBe(400);
+    expect(
+      (await route("/workspaces", undefined, {}, { method: "POST", body: { name: "X" } })).status,
+    ).toBe(401);
+  });
+
+  test(`no more than ${WORKSPACE_LIMIT} workspaces each, even created at once`, async () => {
+    const lia = await signUp("Lia");
+    const statuses = await Promise.all(
+      Array.from({ length: WORKSPACE_LIMIT + 2 }, (_, i) => create(lia.cookie, `Team ${i}`)),
+    ).then((responses) => responses.map((response) => response.status));
+    expect(statuses.filter((status) => status === 201)).toHaveLength(WORKSPACE_LIMIT);
+    expect(statuses.filter((status) => status === 403)).toHaveLength(2);
+    const memberships = await env.DB.prepare(`select count(*) as n from member where "userId" = ?`)
+      .bind(lia.id)
+      .first<{ n: number }>();
+    expect(memberships?.n).toBe(WORKSPACE_LIMIT);
+  });
+
+  test("a workspace whose shard could not be provisioned is deleted again", async () => {
+    const max = await signUp("Max");
+    const created = await createWorkspaceInD1(env.DB, { id: max.id, locale: "en" }, "Doomed", () =>
+      Promise.reject(new Error("shard down")),
+    );
+    expect(created).toEqual({ ok: false, code: "internal" });
+    const rows = await env.DB.prepare(
+      `select (select count(*) from organization where name = 'Doomed') as workspaces,
+              (select count(*) from member where "userId" = ?) as memberships`,
+    )
+      .bind(max.id)
+      .first<{ workspaces: number; memberships: number }>();
+    expect(rows).toEqual({ workspaces: 0, memberships: 0 });
   });
 });

@@ -27,7 +27,7 @@ export function authEngine(env: Env | Record<string, unknown>): "d1" | "ember" {
 const authObject = (env: Pick<Env, "AUTH">) => env.AUTH.getByName("auth");
 
 /** An `Auth.api` answer, or the error Better Auth refused it with (logged by the callers that catch it). */
-async function onObject(
+export async function onObject(
   env: Pick<Env, "AUTH">,
   endpoint: string,
   input: Parameters<ReturnType<typeof authObject>["api"]>[1],

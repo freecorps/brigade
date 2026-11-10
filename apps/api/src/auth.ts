@@ -22,8 +22,13 @@ import {
   hasRequestState,
 } from "@better-auth/core/context";
 import { expo } from "@better-auth/expo";
-import { betterAuth, type BetterAuthOptions } from "better-auth";
-import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
+import { betterAuth, type BetterAuthOptions, type BetterAuthPlugin } from "better-auth";
+import {
+  APIError,
+  createAuthEndpoint,
+  createAuthMiddleware,
+  getSessionFromCtx,
+} from "better-auth/api";
 import { organization } from "better-auth/plugins";
 import {
   dashboardLink,
@@ -1034,9 +1039,35 @@ export function emberAuthOptions(bindings: AuthBindings, self: Self = {}) {
     databaseHooks: { session: { delete: databaseHooks.session.delete } },
     // The table metadata check is D1's (`validateSchema`); the object migrates its own tables.
     advanced: { ...advanced, database: { generateId: advanced.database.generateId } },
-    plugins: plugins.filter((plugin) => plugin.id !== "organization"),
+    plugins: [...plugins.filter((plugin) => plugin.id !== "organization"), brigadeSessions],
   } satisfies BetterAuthOptions;
 }
+
+/** A session as the API checks one by id: whose it is and when it expires (ms since the epoch). */
+export type SessionById = { userId: string; expiresAt: number };
+
+/**
+ * What the API read from D1's `session` itself, on the object (RFC 0017 "Sessions are read over RPC"): a session by id
+ * (a socket's, a device's, the one a token names), through `Auth.api("brigadeSession", { body: { id } })`. Server-only:
+ * never on the HTTP router, so no client reaches it.
+ */
+export const brigadeSessions = {
+  id: "brigade-sessions",
+  endpoints: {
+    brigadeSession: createAuthEndpoint.serverOnly({ method: "POST" }, async (ctx) => {
+      const id: unknown = Reflect.get(Object(ctx.body), "id");
+      if (typeof id !== "string") return ctx.json(null);
+      const row = await ctx.context.adapter.findOne<{
+        userId: string;
+        expiresAt: Date | string | number;
+      }>({ model: "session", where: [{ field: "id", value: id }] });
+      const found: SessionById | null = row
+        ? { userId: row.userId, expiresAt: new Date(row.expiresAt).getTime() }
+        : null;
+      return ctx.json(found);
+    }),
+  },
+} satisfies BetterAuthPlugin;
 
 /** Better Auth's error code when a user already belongs to `WORKSPACE_LIMIT` workspaces. */
 export const WORKSPACE_LIMIT_CODE = "YOU_HAVE_REACHED_THE_MAXIMUM_NUMBER_OF_ORGANIZATIONS";

@@ -6,10 +6,11 @@ import type { Actor } from "@freecorps/brigade-schema";
 import type { DeviceRegisterAnswer } from "../ember/devices.ts";
 import { workspaceEngine } from "./ember.ts";
 import { emberMutation, emberSessions } from "./ember-workspace.ts";
+import { findSession } from "./auth-ember.ts";
 import { readRole } from "./members.ts";
 import type { DeviceRegisterResult } from "./workspace.ts";
 
-type DevicesEnv = Pick<Env, "DB" | "WORKSPACE"> & { SHARD?: Env["SHARD"] };
+type DevicesEnv = Pick<Env, "DB" | "WORKSPACE" | "AUTH"> & { SHARD?: Env["SHARD"] };
 
 /** `WorkspaceDO.registerDevice`'s signature. */
 export type RegisterDevice = (
@@ -81,22 +82,15 @@ export function emberRegisterDevice(env: DevicesEnv & { SHARD: Env["SHARD"] }): 
       let free: { sessionId: string; before: number } | undefined;
       if (heldBy !== undefined) {
         const before = Date.now();
-        let session: { expiresAt: string | number } | null;
+        let session: { expiresAt: number } | null;
         try {
-          session = await env.DB.prepare(`select "expiresAt" from "session" where id = ?`)
-            .bind(heldBy)
-            .first<{ expiresAt: string | number }>();
+          session = await findSession(env, heldBy);
         } catch (error) {
           log("checking a device's session failed", { error: String(error) });
           return { ok: false, code: "unavailable" };
         }
-        // However the adapter stored it (ISO text or ms); a value that cannot be read keeps the device its member's.
-        const expiresAt =
-          session === null
-            ? 0
-            : typeof session.expiresAt === "number"
-              ? session.expiresAt
-              : Date.parse(session.expiresAt);
+        // A value that cannot be read (NaN) keeps the device its member's.
+        const expiresAt = session === null ? 0 : session.expiresAt;
         if (expiresAt <= before) free = { sessionId: heldBy, before };
       }
       result = await call({

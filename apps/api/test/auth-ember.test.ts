@@ -10,7 +10,15 @@ import {
 } from "cloudflare:test";
 import { USER_JOURNAL_TABLE } from "@freecorps/ember-auth";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
-import { COPY_GRACE_MS, copyUser, EMBER_AUTH_PROJECT, secureCookies } from "../src/auth-ember.ts";
+import {
+  COPY_GRACE_MS,
+  copyUser,
+  EMBER_AUTH_PROJECT,
+  findSession,
+  secureCookies,
+} from "../src/auth-ember.ts";
+import { sessionCookie } from "./session.ts";
+import { exports } from "cloudflare:workers";
 import worker, { authEngine } from "../src/index.ts";
 
 const ORIGIN = "http://api.test";
@@ -36,6 +44,20 @@ async function call(path: string, body?: unknown, cookie?: string, method = "POS
         ...(cookie ? { Cookie: cookie } : {}),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }),
+    ember,
+    ctx,
+  );
+  await waitOnExecutionContext(ctx);
+  return response;
+}
+
+/** A Worker route (not `/auth`) on the Ember engine. */
+async function route(path: string, cookie?: string, headers: Record<string, string> = {}) {
+  const ctx = createExecutionContext();
+  const response = await worker.fetch(
+    new Request(`${ORIGIN}${path}`, {
+      headers: { ...(cookie ? { Cookie: cookie } : {}), ...headers },
     }),
     ember,
     ctx,
@@ -210,5 +232,67 @@ describe("copyUser", () => {
       updatedAt: new Date("2026-01-15T00:00:00Z"),
     });
     expect(await copied(newer.id)).toMatchObject({ name: "Newer", emailVerified: 1 });
+  });
+});
+
+describe("sessions on the Ember engine", () => {
+  test("the Worker's routes read the request's session on the object", async () => {
+    const gil = await signUp("Gil");
+    expect(await (await route("/workspaces", gil.cookie)).json()).toEqual({ workspaces: [] });
+    // A workspace of Gil's in D1 (where workspaces stay), joined with D1's copy of Gil.
+    const id = `ws_01M5W19VG0081040G2081040${String(people).padStart(2, "0")}`;
+    const now = new Date().toISOString();
+    await env.DB.batch([
+      env.DB.prepare(
+        `insert into organization (id, name, slug, "createdAt") values (?, 'Gil Ops', ?, ?)`,
+      ).bind(id, `ws-${id}`, now),
+      env.DB.prepare(
+        `insert into member (id, "organizationId", "userId", role, "createdAt") values (?, ?, ?, 'owner', ?)`,
+      ).bind(`mem_${id.slice(3)}`, id, gil.id, now),
+    ]);
+    expect(await (await route("/workspaces", gil.cookie)).json()).toEqual({
+      workspaces: [{ id, name: "Gil Ops", role: "owner" }],
+    });
+    expect((await route("/workspaces")).status).toBe(401);
+  });
+
+  test("an Authorization header never replaces the session cookie (Ember's bearer plugin)", async () => {
+    const hal = await signUp("Hal");
+    const response = await route("/workspaces", hal.cookie, {
+      Authorization: "Bearer brg_notasession",
+    });
+    expect(response.status).toBe(200);
+  });
+
+  test("findSession finds a session by id on either engine, and none once it ended", async () => {
+    // On the object.
+    const ivo = await signUp("Ivo");
+    const onObject = (await (await call("/get-session", undefined, ivo.cookie, "GET")).json()) as {
+      session: { id: string };
+    };
+    const found = await findSession(ember, onObject.session.id);
+    expect(found?.userId).toBe(ivo.id);
+    expect(found!.expiresAt).toBeGreaterThan(Date.now());
+    expect((await call("/sign-out", {}, ivo.cookie)).status).toBe(200);
+    expect(await findSession(ember, onObject.session.id)).toBeNull();
+
+    // On D1.
+    const email = address("Jade");
+    const up = await exports.default.fetch(`${ORIGIN}/auth/sign-up/email`, {
+      method: "POST",
+      headers: {
+        Origin: ORIGIN,
+        "Content-Type": "application/json",
+        "cf-connecting-ip": clientIp(),
+      },
+      body: JSON.stringify({ name: "Jade", email, password: PASSWORD }),
+    });
+    const { user } = (await up.json()) as { user: { id: string } };
+    const cookie = await sessionCookie(email, PASSWORD);
+    const onD1 = (await (
+      await exports.default.fetch(`${ORIGIN}/auth/get-session`, { headers: { Cookie: cookie } })
+    ).json()) as { session: { id: string } };
+    expect((await findSession(env, onD1.session.id))?.userId).toBe(user.id);
+    expect(await findSession(env, "ses_01M5W19VG0081040G2081040G2")).toBeNull();
   });
 });

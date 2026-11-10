@@ -20,6 +20,8 @@ import {
   sessionTag,
 } from "../src/actor.ts";
 import {
+  createAuth,
+  type EndingSession,
   pruneRateLimits,
   RATE_LIMIT_KEEP_MS,
   SIGN_IN_ACCOUNT_LIMIT,
@@ -30,6 +32,7 @@ import {
 } from "../src/auth.ts";
 import { DEVICES_REGISTER_PATH } from "../src/device-route.ts";
 import { renderSignUpAttemptEmail } from "../src/email-templates.ts";
+import type { OutgoingEmail } from "../src/email.ts";
 import { endSessionWith, workerAuth } from "../src/index.ts";
 import {
   recordSessionEnd,
@@ -152,6 +155,68 @@ describe("signing up", () => {
     expect(notice.text).not.toContain("Mallory");
     const link = new URL(/https?:\/\/\S+/.exec(notice.text)![0]);
     expect(link.origin + link.pathname).toBe(`${ORIGIN}/sign-in`);
+  });
+
+  test("one instance serving requests at once keeps each request's own (as a long-lived Auth object will)", async () => {
+    const [ana, bia, caio] = await Promise.all([signUp("Ana"), signUp("Bia"), signUp("Caio")]);
+    const sent: OutgoingEmail[] = [];
+    const ending: EndingSession[] = [];
+    const auth = createAuth({
+      database: env.DB,
+      secret: env.BETTER_AUTH_SECRET,
+      signUp: "open",
+      email: {
+        sender: {
+          id: "test",
+          async send(email) {
+            sent.push(email);
+            return { ok: true };
+          },
+        },
+        dashboardUrl: ORIGIN,
+      },
+      onSessionEnding: async (session) => {
+        ending.push(session);
+      },
+    });
+    const call = (path: string, body: unknown, cookie?: string) =>
+      auth.handler(
+        new Request(`${ORIGIN}/auth${path}`, {
+          method: "POST",
+          headers: {
+            Origin: ORIGIN,
+            "Content-Type": "application/json",
+            "cf-connecting-ip": clientIp(),
+            ...(cookie ? { Cookie: cookie } : {}),
+          },
+          body: JSON.stringify(body),
+        }),
+      );
+    const fresh = address("Dora");
+    const answers = await Promise.all([
+      call("/sign-out", {}, bia.cookie),
+      call("/sign-up/email", { name: "Mallory", email: ana.email, password: PASSWORD }),
+      call("/sign-out", {}, caio.cookie),
+      call("/sign-up/email", { name: "Dora", email: fresh, password: PASSWORD }),
+    ]);
+    expect(answers.map((answer) => answer.status)).toEqual([200, 200, 200, 200]);
+
+    // Each sign-out recorded its own session once, before it went.
+    expect(ending.map((one) => one.userId).sort()).toEqual([bia.id, caio.id].sort());
+    const left = await env.DB.prepare(
+      `select count(*) as n from "session" where "userId" in (?, ?)`,
+    )
+      .bind(bia.id, caio.id)
+      .first<{ n: number }>();
+    expect(left?.n).toBe(0);
+    // Only the taken address's owner is told.
+    await vi.waitFor(() =>
+      expect(sent.map((one) => one.subject)).toContain("Someone tried to sign up with your email"),
+    );
+    const notices = sent.filter(
+      (one) => one.subject === "Someone tried to sign up with your email",
+    );
+    expect(notices.map((one) => one.to.email)).toEqual([ana.email]);
   });
 
   test(`the owner is told at most ${SIGN_UP_NOTICE_LIMIT.max} times a day`, async () => {

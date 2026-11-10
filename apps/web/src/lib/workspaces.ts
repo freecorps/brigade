@@ -89,9 +89,12 @@ export async function loadWorkspaces(
 
 /**
  * Makes the list `userId`'s: another account signed in in this tab (a session that ended, then a sign-in without a
- * page load) starts from no list, and any load still on its way for the one before is dropped.
+ * page load) starts from no list, and any load still on its way for the one before is dropped. A list nobody owned
+ * yet (loaded since the page load or the last sign-out, by `openWorkspace` after a sign-up or an invitation) was
+ * loaded with this session, so it is theirs, and a load on its way for it stands.
  */
 export function ownWorkspaces(userId: string, fetchImpl: typeof fetch = fetch): void {
+  if (state.owner === null) set({ owner: userId });
   if (state.owner === userId) {
     if (state.list === undefined && !state.loading) void loadWorkspaces(fetchImpl);
     return;
@@ -136,18 +139,17 @@ function subscribe(listener: () => void) {
 }
 
 /**
- * The member's workspaces and the one shown, loaded once per page and on `refetch`. `userId`: the signed-in user's,
- * given by the one component that knows it (`RequireWorkspace`), so the list is always theirs; the others read it as
- * it stands.
+ * `userId`'s workspaces and the one shown, loaded once per page and on `refetch`. `userId`: the signed-in user's
+ * (`useSignedInWorkspaces` in lib/auth.ts reads it from the session), so every caller, the header too, shows only
+ * their list; undefined (signed out, or the session still loading) shows none.
  */
-export function useWorkspaces(userId?: string) {
+export function useWorkspaces(userId: string | undefined) {
   const current = useSyncExternalStore(subscribe, () => state);
   useEffect(() => {
     if (userId !== undefined) ownWorkspaces(userId);
-    else if (state.list === undefined && !state.loading) void loadWorkspaces();
   }, [userId]);
-  // Not yet the right account's list: as if none had come.
-  const stale = userId !== undefined && current.owner !== userId;
+  // Not yet the right account's list (or nobody's): as if none had come.
+  const stale = userId === undefined || current.owner !== userId;
   const list = stale ? undefined : current.list;
   return {
     list,

@@ -15,7 +15,7 @@ import { memberName, WORKSPACE_NAME_MAX, workspaceName } from "@freecorps/brigad
 import { inferAdditionalFields } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 import { useEffect, useState } from "react";
-import { loadWorkspaces, pickWorkspace } from "./workspaces";
+import { loadWorkspaces, pickWorkspace, useWorkspaces } from "./workspaces";
 
 // The sign-in checks and error wording are shared with the mobile app (packages/i18n).
 export {
@@ -55,6 +55,11 @@ export function makeAuthClient(customFetchImpl?: typeof fetch) {
 }
 
 export const authClient = makeAuthClient();
+
+/** The signed-in user's workspaces and the one shown (lib/workspaces.ts); none while signed out. */
+export function useSignedInWorkspaces() {
+  return useWorkspaces(authClient.useSession().data?.user.id);
+}
 
 let signUpMode: Promise<SignUpMode> | undefined;
 

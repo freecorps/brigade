@@ -11,8 +11,8 @@ import { Empty } from "@/components/ui/empty";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { FormError } from "@/components/ui/field";
-import { authClient } from "@/lib/auth";
-import { useMembers, useWorkspaces } from "@/lib/workspaces";
+import { authClient, useSignedInWorkspaces } from "@/lib/auth";
+import { useMembers } from "@/lib/workspaces";
 import {
   changeMember,
   memberChangeReason,
@@ -32,7 +32,7 @@ import {
 export function MembersCard() {
   const { workspaceId, role } = useMember();
   const listed = useMembers(workspaceId);
-  const workspaces = useWorkspaces();
+  const workspaces = useSignedInWorkspaces();
   const session = authClient.useSession();
   const [inviting, setInviting] = useState(false);
   const members = listed.members ?? [];

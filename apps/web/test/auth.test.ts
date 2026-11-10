@@ -29,6 +29,7 @@ import {
   parseMemberships,
   pickedWorkspace,
   pickWorkspace,
+  resetWorkspaces,
   WORKSPACE_KEY,
 } from "../src/lib/workspaces";
 import { memoryStorage, throwingStorage } from "./storage";
@@ -371,6 +372,7 @@ describe("the workspace shown", () => {
     const answers: ((response: Response) => void)[] = [];
     const slow = (() =>
       new Promise<Response>((resolve) => answers.push(resolve))) as unknown as typeof fetch;
+    resetWorkspaces();
     ownWorkspaces("usr_ana", slow);
     answers[0]!(Response.json({ workspaces: [list[0]] }));
     await vi.waitFor(() =>
@@ -384,6 +386,29 @@ describe("the workspace shown", () => {
     // Bia's own load, then a late answer for a load started before: only Bia's stays.
     answers[1]!(Response.json({ workspaces: [list[1]] }));
     await vi.waitFor(() => expect(currentWorkspaces().list).toEqual([list[1]]));
+  });
+
+  test("a list loaded before anyone owned it (after a sign-up) is the signed-in account's: kept, not loaded again", async () => {
+    resetWorkspaces();
+    let loads = 0;
+    const once = (async () => {
+      loads++;
+      return Response.json({ workspaces: list });
+    }) as typeof fetch;
+    await loadWorkspaces(once);
+    ownWorkspaces("usr_new", once);
+    expect(currentWorkspaces()).toEqual({ owner: "usr_new", list });
+    expect(loads).toBe(1);
+    // A load still on its way when the account is known stands too.
+    resetWorkspaces();
+    let answer: ((response: Response) => void) | undefined;
+    const slow = (() =>
+      new Promise<Response>((resolve) => (answer = resolve))) as unknown as typeof fetch;
+    const loading = loadWorkspaces(slow);
+    ownWorkspaces("usr_new", slow);
+    answer!(Response.json({ workspaces: [list[1]] }));
+    await loading;
+    expect(currentWorkspaces()).toEqual({ owner: "usr_new", list: [list[1]] });
   });
 
   test("members from GET /api/workspaces/:id/members; a 403 says the caller left", async () => {

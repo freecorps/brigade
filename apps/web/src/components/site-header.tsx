@@ -28,9 +28,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { authClient, saveLocale, signOutDashboard, switchWorkspace } from "@/lib/auth";
+import {
+  authClient,
+  saveLocale,
+  signOutDashboard,
+  switchWorkspace,
+  useSignedInWorkspaces,
+} from "@/lib/auth";
 import { ENVIRONMENT } from "@/lib/environment";
-import { useWorkspaces } from "@/lib/workspaces";
 import { isThemePreference, themePreferences, type ThemePreference } from "@/lib/theme";
 
 const LANGUAGE_NAMES: Record<Locale, () => string> = {
@@ -46,7 +51,7 @@ const THEMES: Record<ThemePreference, { icon: LucideIcon; name: () => string }> 
 
 /** The app's name, signed in: only on wider screens once there is a workspace name to take the room. */
 function AppNameBesideWorkspace() {
-  const shown = useWorkspaces().active;
+  const shown = useSignedInWorkspaces().active;
   return <span className={shown ? "max-sm:sr-only" : undefined}>{m.app_name()}</span>;
 }
 
@@ -90,7 +95,7 @@ export function SiteHeader() {
  * Truncated; the full name is in its title and in the account menu.
  */
 export function WorkspaceSwitcher({ place = "header" }: { place?: "header" | "sidebar" }) {
-  const workspaces = useWorkspaces();
+  const workspaces = useSignedInWorkspaces();
   const workspace = { data: workspaces.active };
   const list = { data: workspaces.list, error: workspaces.error, refetch: workspaces.refetch };
   const navigate = useNavigate();
@@ -245,7 +250,7 @@ export function AccountMenu({
   email: string;
   place?: "header" | "sidebar";
 }) {
-  const workspace = useWorkspaces().active?.name;
+  const workspace = useSignedInWorkspaces().active?.name;
   const [signingOut, setSigningOut] = useState(false);
   const [failed, setFailed] = useState(false);
   const signOut = async () => {

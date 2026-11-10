@@ -205,6 +205,9 @@
   // EMAIL_DAILY_CEILING (src/email-ceiling.ts) is the most emails a day from the whole instance; unset is 2000.
   // No other `vars`: no deployed environment may set SYNC_DEV_ACTOR (src/actor.ts); only local runs and the tests do,
   // in their Vite configs.
+  // AUTH_ENGINE (src/auth-ember.ts): identity on Ember's `Auth` object in production (RFC 0017 step 4, switched
+  // 2026-11-10 after `/admin/ember/auth/import`); `d1`, or no value, turns it back.
+  "vars": { "AUTH_ENGINE": "ember" },
   "env": {
     "dev": {
       // Anyone may sign up on dev (RFC 0002 "Sign-up modes"). Every workspace on dev is on Ember (RFC 0016 "Data

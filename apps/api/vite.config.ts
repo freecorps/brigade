@@ -57,6 +57,9 @@ export default defineConfig(async ({ command, mode }) => ({
                 BETTER_AUTH_SECRET: TEST_AUTH_SECRET,
                 SLACK_TOKEN_KEY: TEST_SLACK_TOKEN_KEY,
                 WEBHOOK_SECRET_KEY: TEST_WEBHOOK_SECRET_KEY,
+                // D1's engine unless a test picks Ember's (`{ ...env, AUTH_ENGINE: "ember" }`): the top-level config is
+                // production's, which is on Ember (RFC 0017), and both engines are tested until step 5.
+                AUTH_ENGINE: "d1",
                 // Tests read events from the outbox; test/outbox.test.ts drives the drain itself.
                 OUTBOX_DRAIN: "paused",
                 // The dead-man switch's ping (src/watchdog.ts): a loopback URL nothing listens on;

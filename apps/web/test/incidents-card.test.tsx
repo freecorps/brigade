@@ -33,8 +33,11 @@ vi.mock("../src/lib/auth", async (original) => {
     refetch: async () => {},
   });
   const actual = await original<typeof import("../src/lib/auth")>();
+  // The mocked list below, without the real session hook the actual one would subscribe to.
+  const { useWorkspaces } = await import("../src/lib/workspaces");
   return {
     ...actual,
+    useSignedInWorkspaces: () => useWorkspaces("usr_dev"),
     authClient: {
       useSession: done({
         user: { id: "usr_dev", name: "Dev", email: "dev@example.com" },

@@ -3,7 +3,7 @@
 // session holds an active workspace on Ember's auth, so the dashboard keeps its own; on D1's it works the same.
 // A pick no longer in the list (left, removed, another account signed in here) falls back to the oldest membership.
 import { isRole, type Role } from "@freecorps/brigade-schema";
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { listedMembers, type ListedMember } from "./members";
 import { getStorage } from "./storage";
 
@@ -181,23 +181,42 @@ export async function loadMembers(
   }
 }
 
-/** The workspace's members, loaded when it changes and on `refetch` (false once the caller left it). */
+/**
+ * The workspace's members, loaded when it changes and on `refetch` (false once the caller left it). What is shown is
+ * always this workspace's: another one's members or failure never carry over, and only the latest load's answer is
+ * kept.
+ */
 export function useMembers(workspaceId: string) {
-  const [members, setMembers] = useState<ListedMember[] | undefined>();
-  const [error, setError] = useState(false);
+  const [loaded, setLoaded] = useState<{
+    workspaceId: string;
+    members?: ListedMember[];
+    error: boolean;
+  }>({ workspaceId, error: false });
+  const latest = useRef(0);
   const refetch = useCallback(async () => {
-    const loaded = await loadMembers(workspaceId);
-    if (loaded.ok) {
-      setMembers(loaded.members);
-      setError(false);
+    const mine = ++latest.current;
+    const answer = await loadMembers(workspaceId);
+    const current = mine === latest.current;
+    if (answer.ok) {
+      if (current) setLoaded({ workspaceId, members: answer.members, error: false });
       return true;
     }
-    setError(true);
-    return !loaded.left;
+    // A failed reload keeps this workspace's members it had, never another's.
+    if (current) {
+      setLoaded((before) =>
+        before.workspaceId === workspaceId
+          ? { ...before, error: true }
+          : { workspaceId, error: true },
+      );
+    }
+    return !answer.left;
   }, [workspaceId]);
   useEffect(() => {
-    setMembers(undefined);
     void refetch();
   }, [refetch]);
+  // Until this workspace's answer: as if none had come.
+  const mine = loaded.workspaceId === workspaceId;
+  const members = mine ? loaded.members : undefined;
+  const error = mine && loaded.error;
   return { members, isPending: members === undefined && !error, error, refetch };
 }

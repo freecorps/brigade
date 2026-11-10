@@ -38,6 +38,8 @@ export type UpdatePosted = { ok: true; entryId: string | null };
 export type AlertsAccepted = { ok: true; alerts: number; malformed?: boolean; tooLarge?: true };
 
 export type Workspace = { id: string; name: Infer<typeof workspaceName> };
+/** A workspace the signed-in user is in, with their role there (`GET /workspaces`). */
+export type Membership = Workspace & { role: Role };
 
 export type PagingHealthReason =
   | "no_beat"
@@ -290,6 +292,7 @@ export const OPERATION_ERRORS = {
   getPagingHealth: ["unavailable"],
   pingHeartbeat: ["not_found", ...SHARD_FAILED],
   sendAlerts: ["not_found", ...SHARD_FAILED],
+  listWorkspaces: ["unauthenticated", "unavailable"],
   createWorkspace: [...SIGNED_IN, "invalid_args", "workspace_limit", "internal"],
   changeMemberRole: [...MEMBER, "invalid_args"],
   removeMember: MEMBER,
@@ -598,6 +601,10 @@ export function createClient(options: ClientOptions) {
       call<AlertsAccepted, "sendAlerts">("sendAlerts", "POST", () => `/alerts/${segment(token)}`, {
         body: payload,
       }),
+
+    /** `GET /workspaces`: the signed-in user's workspaces and their role in each, oldest membership first. */
+    listWorkspaces: () =>
+      call<{ workspaces: Membership[] }, "listWorkspaces">("listWorkspaces", "GET", "/workspaces"),
 
     /** `POST /workspaces`: the signed-in user becomes its owner. */
     createWorkspace: (body: { name: Infer<typeof workspaceName> }) =>

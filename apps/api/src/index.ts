@@ -867,7 +867,10 @@ export async function listWorkspaces(
     )
       .bind(session.user.id)
       .all<{ id: string; name: string; role: string }>();
-    return json({ workspaces: results.map(({ id, name, role }) => ({ id, name, role })) });
+    // Whose it is depends on the cookie: never from a shared cache, nor to the next person signing in here.
+    return json({ workspaces: results.map(({ id, name, role }) => ({ id, name, role })) }, 200, {
+      "Cache-Control": "private, no-store",
+    });
   } catch (error) {
     console.error(JSON.stringify({ message: "listing workspaces failed", error: String(error) }));
     return json({ error: "unavailable" }, 503);

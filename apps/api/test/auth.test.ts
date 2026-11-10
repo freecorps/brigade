@@ -465,6 +465,9 @@ describe("GET /workspaces", () => {
     expect(await list(eva.cookie)).toEqual({ status: 200, body: { workspaces: [] } });
     expect(await list()).toEqual({ status: 401, body: { error: "unauthenticated" } });
     expect((await list(ana.cookie, "HEAD")).status).toBe(200);
+    // Per cookie: never from a shared cache.
+    const answer = await api("/workspaces", { headers: { Cookie: ana.cookie } });
+    expect(answer.headers.get("Cache-Control")).toBe("private, no-store");
   });
 
   test("other methods than GET, HEAD and POST are refused with Allow", async () => {

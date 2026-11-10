@@ -23,6 +23,7 @@
         "@freecorps/brigade-status-edge": "workspace:*",
         "@freecorps/brigade-sync": "workspace:*",
         "@freecorps/brigade-ui": "workspace:*",
+        "@freecorps/ember-auth": "0.5.5",
         "@freecorps/ember-runtime": "0.5.5",
         "@freecorps/ember-server": "0.5.5",
         "better-auth": "1.7.17",
@@ -459,6 +460,8 @@
 
     "@bcoe/v8-coverage": ["@bcoe/v8-coverage@0.2.3", "", {}, "sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw=="],
 
+    "@better-auth/api-key": ["@better-auth/api-key@1.7.19", "", { "dependencies": { "zod": "^4.5.4" }, "peerDependencies": { "@better-auth/core": "^1.7.19", "@better-auth/utils": "^0.4.2 || ^0.5.0", "better-auth": "^1.7.19", "better-call": "1.4.5" } }, "sha512-tbRuF9jBidh0EgTSGROs6DgIfnM6Uaj+U8Yj4Vboxxl2uI2Ze+B9dg+Nqd+Izy9nQ5KLkx8au9HsQw37WtwNKg=="],
+
     "@better-auth/core": ["@better-auth/core@1.7.17", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "zod": "^4.5.4" }, "peerDependencies": { "@better-auth/utils": "^0.4.2 || ^0.5.0", "@better-fetch/fetch": "1.3.3", "@opentelemetry/api": "^1.9.0", "better-call": "1.4.5", "jose": "^6.1.0", "kysely": "^0.28.5 || ^0.29.0", "nanostores": "^1.0.1" }, "optionalPeers": ["@opentelemetry/api"] }, "sha512-GB3OtOjNfeOKxKOQByXLdj3CNNDbZ65HdbfHSZhoLI6VzlURlb2VXMFnf05NE8fhDoytXY+zlbqTcwaWKTS7/g=="],
 
     "@better-auth/drizzle-adapter": ["@better-auth/drizzle-adapter@1.7.17", "", { "peerDependencies": { "@better-auth/core": "^1.7.17", "@better-auth/utils": "^0.4.2 || ^0.5.0", "drizzle-orm": "^0.45.2 || >=1.0.0-rc.1 <2.0.0" }, "optionalPeers": ["drizzle-orm"] }, "sha512-A63iAB9tZLw/HU2bwf+FNwd3Hm5dzoNULOJckzPVMnddf0hO/gnjM94D/yVuu7w9cg8QTVAV7Zu3ehz1lKnX9A=="],
@@ -722,6 +725,8 @@
     "@freecorps/brigade-ui": ["@freecorps/brigade-ui@workspace:packages/ui"],
 
     "@freecorps/brigade-web": ["@freecorps/brigade-web@workspace:apps/web"],
+
+    "@freecorps/ember-auth": ["@freecorps/ember-auth@0.5.5", "", { "dependencies": { "@better-auth/api-key": "~1.7.17", "@better-auth/core": "~1.7.17", "@better-auth/utils": "0.5.1", "better-auth": "~1.7.17", "jose": "^6.2.3" } }, "sha512-yadAG8aOXs+MhR2BADT/4nreTvUmd5H+s5hapnfv6hxow9SmCB+1MFQ9MEcf9AxhpHNxglbAv+jnK8nS8Vs/cQ=="],
 
     "@freecorps/ember-client": ["@freecorps/ember-client@0.5.5", "", { "dependencies": { "@freecorps/ember-values": "0.5.5" } }, "sha512-aUotpyzPnLMUxo1+whKIOZCMc81y8kqXd8NhZxNmuSZL2DkTTMb7niT+SZjVm+Ob1ptFnn2H6cyX9pIuZxnQ5w=="],
 

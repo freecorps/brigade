@@ -35,6 +35,7 @@
     "@freecorps/brigade-status-edge": "workspace:*",
     "@freecorps/brigade-sync": "workspace:*",
     "@freecorps/brigade-ui": "workspace:*",
+    "@freecorps/ember-auth": "0.5.5",
     "@freecorps/ember-runtime": "0.5.5",
     "@freecorps/ember-server": "0.5.5",
     "better-auth": "1.7.17"

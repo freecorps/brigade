@@ -5,6 +5,8 @@
   "main": "./src/index.ts",
   // Matches the installed workerd so local and deployed behaviour agree.
   "compatibility_date": "2026-10-19",
+  // `node:async_hooks` alone, for Ember's `Auth` object (src/auth-ember.ts) and Better Auth's request state.
+  "compatibility_flags": ["nodejs_als"],
   // No public workers.dev or preview URLs in any environment: the API is reached only through the web Worker's `API`
   // service binding (apps/web), whose `dev` environment has the public workers.dev URL. Both keys are inherited by
   // environments.
@@ -26,6 +28,8 @@
       // shard is `workspace:<id>`, reached only once D1's `workspace_engine` says `ember`.
       { "name": "SHARD", "class_name": "Shard" },
       { "name": "SYSTEM", "class_name": "System" },
+      // Ember's `Auth` object (RFC 0017, src/auth-ember.ts): identity once `AUTH_ENGINE` is `ember`, idle until then.
+      { "name": "AUTH", "class_name": "AuthDO" },
     ],
   },
   "migrations": [
@@ -33,6 +37,7 @@
     { "tag": "v2", "new_sqlite_classes": ["ProbeDO"] },
     { "tag": "v3", "new_sqlite_classes": ["WatchdogDO"] },
     { "tag": "v4", "new_sqlite_classes": ["Shard", "System"] },
+    { "tag": "v5", "new_sqlite_classes": ["AuthDO"] },
   ],
   // The dead-man switch's clock: a heartbeat through the paging pipeline every minute (src/index.ts `scheduled`).
   // Inherited by the environments. Locally it never fires on its own: under `vp run dev` (the Vite plugin) run it with
@@ -212,6 +217,7 @@
           { "name": "WATCHDOG", "class_name": "WatchdogDO" },
           { "name": "SHARD", "class_name": "Shard" },
           { "name": "SYSTEM", "class_name": "System" },
+          { "name": "AUTH", "class_name": "AuthDO" },
         ],
       },
       "d1_databases": [
@@ -307,6 +313,7 @@
           { "name": "WATCHDOG", "class_name": "WatchdogDO" },
           { "name": "SHARD", "class_name": "Shard" },
           { "name": "SYSTEM", "class_name": "System" },
+          { "name": "AUTH", "class_name": "AuthDO" },
         ],
       },
       "d1_databases": [

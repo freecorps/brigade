@@ -36,6 +36,7 @@ import {
   type InvitationCode,
 } from "./invitations.ts";
 import type { MemberChangeResult } from "./members.ts";
+import { emberAuthEngine } from "./auth-ember.ts";
 import { emailSender } from "./email.ts";
 import { consumeDeadLetters, consumeEvents, type NotifyEnv } from "./notify.ts";
 import { parseReceiptToken, receiptWorkspace, type ReceiptResult } from "./receipts.ts";
@@ -203,6 +204,12 @@ export default {
         REFUSED_PREFIXES.some((prefix) => route.startsWith(prefix))
       ) {
         return json({ error: "not_found" }, 404);
+      }
+      if (authEngine(env) === "ember") {
+        return (
+          (await emberAuth.engine.fetch(request, env as unknown as Record<string, unknown>)) ??
+          json({ error: "not_found" }, 404)
+        );
       }
       const response = await auth().handler(request);
       return route === "/organization/get-full-organization"
@@ -540,26 +547,39 @@ export function workerAuth(
   request: Request,
   onWorkspaceCreated?: AuthBindings["onWorkspaceCreated"],
 ): Auth {
+  return createAuth(
+    authBindings(env, {
+      waitUntil: (promise) => ctx.waitUntil(promise),
+      // The web Worker forwards with the browser's URL, so this is the protocol and origin the browser used.
+      secureCookies: new URL(request.url).protocol === "https:",
+      origin: new URL(request.url).origin,
+      onWorkspaceCreated: onWorkspaceCreated ?? provisionWith(env),
+    }),
+  );
+}
+
+/**
+ * Brigade's bindings for Better Auth's options, on either engine (RFC 0017): D1 for its counters and ledgers, the
+ * instance's sign-up rules, and what a reset or an ended session does in the workspaces. `extra`: what only one engine
+ * has (the request's origin and cookies on D1, the workspace hook of the organization plugin).
+ */
+function authBindings(env: Env, extra: Partial<AuthBindings> = {}): AuthBindings {
   // Closed without email; verification before sign-in only where it can be done (src/sign-up.ts).
   const access = instanceAccess(env as SetupEnv);
-  return createAuth({
+  return {
     database: env.DB,
     secret: env.BETTER_AUTH_SECRET,
     signUp: access.signUp,
     requireVerifiedEmail: access.requireVerifiedEmail,
-    waitUntil: (promise) => ctx.waitUntil(promise),
-    // The web Worker forwards with the browser's URL, so this is the protocol and origin the browser used.
-    secureCookies: new URL(request.url).protocol === "https:",
-    origin: new URL(request.url).origin,
-    onWorkspaceCreated: onWorkspaceCreated ?? provisionWith(env),
     onPasswordReset: signOutWith(env),
     onSessionEnding: (session) => recordSessionEnd(env.DB, session),
     onSessionEnded: endSessionWith(env),
+    ...extra,
     // Made only when a verification email goes out, so other requests never read the email settings.
     get email() {
       return { sender: emailSender(env), dashboardUrl: (env as NotifyEnv).DASHBOARD_URL };
     },
-  });
+  };
 }
 
 /**
@@ -1750,3 +1770,17 @@ function flag(error: unknown, name: "retryable" | "overloaded"): boolean {
 function json(body: unknown, status = 200, headers?: HeadersInit): Response {
   return Response.json(body, { status, headers });
 }
+
+/** Which Better Auth serves `/auth` (RFC 0017): D1's, until `AUTH_ENGINE` is `ember`. */
+export function authEngine(env: Env): "d1" | "ember" {
+  return Reflect.get(env, "AUTH_ENGINE") === "ember" ? "ember" : "d1";
+}
+
+/**
+ * Ember's `Auth` object (RFC 0017) with the same bindings as D1's instance. Made last: its options are built when this
+ * module loads, from the helpers above.
+ */
+export const emberAuth = emberAuthEngine(authBindings);
+
+/** The `AUTH` Durable Object (wrangler.jsonc). */
+export const AuthDO = emberAuth.Auth;

@@ -514,6 +514,7 @@ describe("GET /sync/:workspaceId", () => {
       WATCHDOG: env.WATCHDOG,
       SHARD: env.SHARD,
       SYSTEM: env.SYSTEM,
+      AUTH: env.AUTH,
       DB: env.DB,
       EMAIL: env.EMAIL,
       RECEIPT_LIMIT: env.RECEIPT_LIMIT,

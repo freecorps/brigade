@@ -250,6 +250,28 @@ describe("POST /setup/first-user on the Ember engine", () => {
     ).toBe(409);
   });
 
+  test("D1 is cleaned up even when the object cannot remove the owner", async () => {
+    const owners = emberOwners(ember);
+    const response = await bootstrapFirstUser(
+      new Request(`${ORIGIN}/setup/first-user`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
+        body: JSON.stringify({ ...FIRST, email: "ember-unreachable@example.com" }),
+      }),
+      TOKEN,
+      env.DB,
+      () => workerAuth(ember, createExecutionContext(), new Request(ORIGIN)),
+      {
+        ...owners,
+        createWorkspace: () => Promise.reject(new Error("shard down")),
+        removeOwner: () => Promise.reject(new Error("object unreachable")),
+      },
+    );
+    expect(response.status).toBe(500);
+    expect(await count("user")).toBe(0);
+    expect(await count("organization")).toBe(0);
+  });
+
   test("a run whose workspace fails leaves no owner on the object or in D1", async () => {
     const first = { ...FIRST, email: "ember-doomed@example.com" };
     const owners = emberOwners(ember);

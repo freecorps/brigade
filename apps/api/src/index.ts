@@ -950,19 +950,26 @@ export async function createWorkspace(
   // On the Ember engine (RFC 0017) there is no organization plugin: Brigade writes the workspace to D1 itself.
   if (env && authEngine(env) === "ember") {
     const locale = Reflect.get(session.user, "locale");
-    const created = await createWorkspaceInD1(
-      env.DB,
-      {
-        id: session.user.id,
-        locale: resolveLocale(typeof locale === "string" ? locale : undefined),
-      },
-      name.value,
-      provisionWith(env),
-    );
-    if (created.ok) return json({ id: created.id, name: created.name }, 201);
-    return created.code === "workspace_limit"
-      ? json({ error: "workspace_limit" }, 403)
-      : json({ error: "internal" }, 500);
+    try {
+      const created = await createWorkspaceInD1(
+        env.DB,
+        {
+          id: session.user.id,
+          locale: resolveLocale(typeof locale === "string" ? locale : undefined),
+        },
+        name.value,
+        provisionWith(env),
+      );
+      if (created.ok) return json({ id: created.id, name: created.name }, 201);
+      return created.code === "workspace_limit"
+        ? json({ error: "workspace_limit" }, 403)
+        : json({ error: "internal" }, 500);
+    } catch (error) {
+      console.error(
+        JSON.stringify({ message: "Creating a workspace failed", error: String(error) }),
+      );
+      return json({ error: "internal" }, 500);
+    }
   }
   try {
     const workspace = await auth.api.createOrganization({

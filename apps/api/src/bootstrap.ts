@@ -144,8 +144,14 @@ export async function bootstrapFirstUser(
     // then the user, whose accounts, sessions and memberships go with it (`on delete cascade`).
     try {
       if (userId) {
-        // On the object too (its D1 copy goes below).
-        await owners?.removeOwner(userId);
+        // On the object too; its D1 copy goes below whether or not the object could be reached.
+        try {
+          await owners?.removeOwner(userId);
+        } catch (error) {
+          console.error(
+            JSON.stringify({ message: "removing the first owner failed", error: String(error) }),
+          );
+        }
         await db.batch([
           db
             .prepare(

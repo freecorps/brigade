@@ -11,19 +11,30 @@ export type CreatedWorkspace =
   | { ok: true; id: string; name: string }
   | { ok: false; code: "workspace_limit" | "internal" };
 
-/** Deletes a workspace just made, with its memberships, as the organization plugin's undo did. */
+/** Deletes a workspace just made, with its memberships, as the organization plugin's undo did. Never throws. */
 async function undo(db: D1Database, workspaceId: string): Promise<void> {
-  await db.batch([
-    db.prepare(`delete from member where "organizationId" = ?`).bind(workspaceId),
-    db.prepare(`delete from organization where id = ?`).bind(workspaceId),
-  ]);
+  try {
+    await db.batch([
+      db.prepare(`delete from member where "organizationId" = ?`).bind(workspaceId),
+      db.prepare(`delete from organization where id = ?`).bind(workspaceId),
+    ]);
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        message: "undoing a new workspace failed",
+        workspace: workspaceId,
+        error: String(error),
+      }),
+    );
+  }
 }
 
 /**
  * Makes workspace `name` (already checked by `workspaceName`) with `owner` as its owner, then provisions its shard
- * (`provision`, as `onWorkspaceCreated` does on D1). At most `WORKSPACE_LIMIT` memberships per user: counted first, and
- * again once the rows are in, since creates at once could all pass the first count; a create past the limit and one
- * whose shard could not be provisioned are deleted again, so no workspace exists without its shard.
+ * (`provision`, as `onWorkspaceCreated` does on D1). At most `WORKSPACE_LIMIT` memberships per user, checked in the
+ * same transaction as the insert: both rows go in only while the owner has fewer, so creates at once cannot pass it
+ * together. One whose shard could not be provisioned is deleted again, so no workspace is left without its shard.
+ * Throws only when D1 cannot take the rows.
  */
 export async function createWorkspaceInD1(
   db: D1Database,
@@ -32,38 +43,25 @@ export async function createWorkspaceInD1(
   provision: NonNullable<AuthBindings["onWorkspaceCreated"]>,
   now = Date.now(),
 ): Promise<CreatedWorkspace> {
-  const held = await db
-    .prepare(`select count(*) as n from member where "userId" = ?`)
-    .bind(owner.id)
-    .first<{ n: number }>();
-  if ((held?.n ?? 0) >= WORKSPACE_LIMIT) return { ok: false, code: "workspace_limit" };
-
   const id = authId("organization", now, randomBytes);
   const at = new Date(now).toISOString();
-  await db.batch([
-    db
-      .prepare(`insert into organization (id, name, slug, "createdAt") values (?, ?, ?, ?)`)
-      // The slug is only a unique handle for now; the id names the shard.
-      .bind(id, name, `ws-${crypto.randomUUID()}`, at),
+  // One D1 batch is one transaction: the count, then each insert, with no other write in between.
+  const [workspace] = await db.batch([
     db
       .prepare(
-        `insert into member (id, "organizationId", "userId", role, "createdAt") values (?, ?, ?, 'owner', ?)`,
+        `insert into organization (id, name, slug, "createdAt")
+         select ?1, ?2, ?3, ?4 where (select count(*) from member where "userId" = ?5) < ?6`,
+      )
+      // The slug is only a unique handle for now; the id names the shard.
+      .bind(id, name, `ws-${crypto.randomUUID()}`, at, owner.id, WORKSPACE_LIMIT),
+    db
+      .prepare(
+        `insert into member (id, "organizationId", "userId", role, "createdAt")
+         select ?1, ?2, ?3, 'owner', ?4 where exists (select 1 from organization where id = ?2)`,
       )
       .bind(authId("member", now, randomBytes), id, owner.id, at),
   ]);
-
-  // Keep the user's first WORKSPACE_LIMIT, oldest first (the order the plugin's recount used).
-  const { results } = await db
-    .prepare(
-      `select "organizationId" as id from member where "userId" = ? order by "createdAt", id`,
-    )
-    .bind(owner.id)
-    .all<{ id: string }>();
-  const rank = results.findIndex((row) => row.id === id);
-  if (rank === -1 || rank >= WORKSPACE_LIMIT) {
-    await undo(db, id);
-    return { ok: false, code: "workspace_limit" };
-  }
+  if (workspace?.meta.changes !== 1) return { ok: false, code: "workspace_limit" };
 
   try {
     await provision({ id, name, ownerId: owner.id, locale: owner.locale });

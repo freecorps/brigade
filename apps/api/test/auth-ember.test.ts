@@ -422,6 +422,23 @@ describe("QR sign-in on the Ember engine", () => {
     expect(session.session).toMatchObject({ deviceName: "Nia's iPhone", signInMethod: "qr" });
   });
 
+  test("a cookie that fails to sign leaves no session on the object, and the next poll gets one", async () => {
+    const pia = await signUp("Pia");
+    const phone = await approved(pia);
+    const qrSessions = async () =>
+      (
+        (await (await call("/list-sessions", undefined, pia.cookie, "GET")).json()) as {
+          signInMethod?: string;
+        }[]
+      ).filter((one) => one.signInMethod === "qr").length;
+    // Signing the cookie (HMAC) fails once, after the session was made on the object.
+    vi.spyOn(crypto.subtle, "sign").mockRejectedValueOnce(new Error("signing failed"));
+    expect((await poll(phone)).status).toBe(503);
+    expect(await qrSessions()).toBe(0);
+    expect(await (await poll(phone)).json()).toMatchObject({ status: "approved" });
+    expect(await qrSessions()).toBe(1);
+  });
+
   test("a dashboard signed out before the pickup leaves the phone without a session", async () => {
     const oto = await signUp("Oto");
     const phone = await approved(oto);

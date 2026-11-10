@@ -1044,6 +1044,15 @@ export function emberAuthOptions(bindings: AuthBindings, self: Self = {}) {
   } satisfies BetterAuthOptions;
 }
 
+/**
+ * A failure inside one of the object's endpoints, as Better Auth's refusal: `Auth.api` answers it as `{ ok: false }`
+ * (src/auth-ember.ts throws it in the Worker), where any other error would cross the RPC as an unhandled rejection.
+ */
+function failedOnObject(what: string, error: unknown): APIError {
+  console.error(JSON.stringify({ message: `${what} failed`, error: String(error) }));
+  return APIError.from("INTERNAL_SERVER_ERROR", { code: "FAILED", message: `${what} failed` });
+}
+
 /** `session.signInMethod` for a session a QR sign-in made (src/app-sign-in.ts). */
 export const SIGN_IN_METHOD_QR = "qr";
 
@@ -1084,12 +1093,18 @@ export const brigadeSessions = {
         { email, name, emailVerified: true },
         { method: "email-password" },
       );
-      await internalAdapter.linkAccount({
-        userId: user.id,
-        providerId: "credential",
-        accountId: user.id,
-        password: hash,
-      });
+      try {
+        await internalAdapter.linkAccount({
+          userId: user.id,
+          providerId: "credential",
+          accountId: user.id,
+          password: hash,
+        });
+      } catch (error) {
+        // No account without its password: the caller never got this user's id to undo it.
+        await internalAdapter.deleteUser(user.id);
+        throw failedOnObject("creating the first owner", error);
+      }
       return ctx.json({ id: user.id });
     }),
     brigadeQrSession: createAuthEndpoint.serverOnly({ method: "POST" }, async (ctx) => {
@@ -1106,18 +1121,24 @@ export const brigadeSessions = {
         userAgent: text(body.userAgent),
       });
       const cookie = ctx.context.authCookies.sessionToken;
-      const made: QrSession = {
-        token: session.token,
-        signed: `${session.token}.${await makeSignature(session.token, ctx.context.secret)}`,
-        cookie: {
-          name: cookie.name,
-          path: cookie.attributes.path ?? "/",
-          secure: cookie.attributes.secure === true,
-        },
-        expiresAt: new Date(session.expiresAt).getTime(),
-        user: { id: user.id, name: user.name, email: user.email },
-      };
-      return ctx.json(made);
+      try {
+        const made: QrSession = {
+          token: session.token,
+          signed: `${session.token}.${await makeSignature(session.token, ctx.context.secret)}`,
+          cookie: {
+            name: cookie.name,
+            path: cookie.attributes.path ?? "/",
+            secure: cookie.attributes.secure === true,
+          },
+          expiresAt: new Date(session.expiresAt).getTime(),
+          user: { id: user.id, name: user.name, email: user.email },
+        };
+        return ctx.json(made);
+      } catch (error) {
+        // The caller never got its token to end it: no session left live and undelivered.
+        await internalAdapter.deleteSession(session.token);
+        throw failedOnObject("making a QR sign-in's session", error);
+      }
     }),
     brigadeEndSession: createAuthEndpoint.serverOnly({ method: "POST" }, async (ctx) => {
       const token: unknown = Reflect.get(Object(ctx.body), "token");

@@ -78,7 +78,9 @@ by itself, since the object starts empty. An instance switches once, by hand:
    skipped, and `?after=<next>` goes on where an answer stopped.
 3. `wrangler secret put AUTH_ENGINE` with `ember` (a secret, so later deploys of the config keep it). Every session
    ends there: everyone signs in again with the password they had. `DASHBOARD_URL` must be on HTTPS.
-4. The import once more, for anyone who signed up between 2 and 3.
+4. The import once more, for anyone who signed up between 2 and 3. It skips ids already on the object, so a password
+   changed on D1 between 2 and 3 stays the old one there: keep that gap short, and check D1 for one before switching
+   (`account."updatedAt"` and `user."passwordResetAt"` after the import); its owner resets it again on the object.
 
 Turning back is `wrangler secret delete AUTH_ENGINE` (RFC 0017 "Turning back" says what D1 does not get back).
 

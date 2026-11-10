@@ -42,17 +42,33 @@ vi.mock("../src/lib/auth", async (original) => {
     refetch: async () => {},
   });
   const actual = await original<typeof import("../src/lib/auth")>();
+  // The mocked list below, without the real session hook the actual one would subscribe to.
+  const { useWorkspaces } = await import("../src/lib/workspaces");
   return {
     ...actual,
+    useSignedInWorkspaces: () => useWorkspaces("usr_dev"),
     authClient: {
       useSession: done(() => ({
         user: { id: "usr_dev", name: "Dev", email: "dev@example.com" },
-        session: { activeOrganizationId: "demo" },
+        session: {},
       })),
-      useActiveOrganization: done(() => ({ id: "demo", name: "Demo" })),
-      useListOrganizations: done(() => [{ id: "demo", name: "Demo" }]),
-      useActiveMember: done(() => ({ role })),
     },
+  };
+});
+// The member's one workspace, "demo", as `GET /api/workspaces` would list it (lib/workspaces.ts).
+vi.mock("../src/lib/workspaces", async (original) => {
+  const actual = await original<typeof import("../src/lib/workspaces")>();
+  const shown = () => ({ id: "demo", name: "Demo", role: role });
+  return {
+    ...actual,
+    useWorkspaces: () => ({
+      list: [shown()],
+      active: shown(),
+      isPending: false,
+      error: false,
+      refetch: async () => [shown()],
+      pick: () => {},
+    }),
   };
 });
 vi.mock("../src/sync-client", () => ({

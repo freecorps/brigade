@@ -1073,7 +1073,8 @@ export type SessionById = { userId: string; expiresAt: number };
  * Server-only: never on the HTTP router, so no client reaches them.
  * - `brigadeSession` `{ id }`: a session by id (a socket's, a device's, the one a token names), or null.
  * - `brigadeCreateOwner` `{ email, name, password }`: the first owner of a new instance (src/bootstrap.ts), verified, as
- *   on D1. `brigadeRemoveOwner` `{ id }` undoes it when the rest of the setup failed.
+ *   on D1, replacing an account a failed run left at that address. `brigadeRemoveOwner` `{ id }` undoes it when the
+ *   rest of the setup failed.
  * - `brigadeQrSession` `{ userId, deviceName, ipAddress, userAgent }`: a QR sign-in's session for the phone
  *   (src/app-sign-in.ts), its cookie value signed with the object's secret; `brigadeEndSession` `{ token }` ends it
  *   when it could not be delivered.
@@ -1088,6 +1089,10 @@ export const brigadeSessions = {
         throw APIError.from("BAD_REQUEST", { code: "INVALID_OWNER", message: "Invalid owner" });
       }
       const { internalAdapter } = ctx.context;
+      // Only the bootstrap calls this, on an instance whose D1 has no user, holding its latch: an account at this
+      // address on the object is what a failed run could not remove, and would make every run after it fail.
+      const leftover = await internalAdapter.findUserByEmail(email.toLowerCase());
+      if (leftover) await internalAdapter.deleteUser(leftover.user.id);
       const hash = await ctx.context.password.hash(password);
       const user = await internalAdapter.createUser(
         { email, name, emailVerified: true },

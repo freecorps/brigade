@@ -270,6 +270,13 @@ describe("POST /setup/first-user on the Ember engine", () => {
     expect(response.status).toBe(500);
     expect(await count("user")).toBe(0);
     expect(await count("organization")).toBe(0);
+    // The account the object kept does not block the next run at the same address.
+    const again = await setup(
+      { ...FIRST, email: "ember-unreachable@example.com" },
+      { engine: "ember" },
+    );
+    expect(again.status).toBe(201);
+    expect(await count("user")).toBe(1);
   });
 
   test("a run whose workspace fails leaves no owner on the object or in D1", async () => {

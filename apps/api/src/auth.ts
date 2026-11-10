@@ -448,7 +448,7 @@ async function checkResetRequest(
 }
 
 /** Runs `/request-password-reset` again with `body`, through Better Auth (`createAuth`), after the response. */
-type BackgroundReset = (body: Record<string, unknown>, request: Request) => Promise<unknown>;
+export type BackgroundReset = (body: Record<string, unknown>, request: Request) => Promise<unknown>;
 
 /**
  * Counts one more request under `key` in D1's `rateLimit` table and answers the count in the current window
@@ -1010,11 +1010,39 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
   } satisfies BetterAuthOptions;
 }
 
+/**
+ * The same options for Ember's `Auth` Durable Object (RFC 0017): one long-lived instance on the object's own SQLite,
+ * which Ember sets (`database` goes), with the workspaces left in D1 for Brigade to manage itself. So no organization
+ * plugin and no active workspace in the session (the clients keep theirs, `GET /workspaces`), and the session's
+ * cookie cache stays off, as it is on D1: an ended session must stop working at once (RFC 0004 "Session
+ * revocation"). Ember adds its `jwt()` and `bearer()` plugins and names the cookies after the project.
+ */
+export function emberAuthOptions(bindings: AuthBindings, self: Self = {}) {
+  const {
+    // Ember's: the object's SQLite, and the Worker's `BETTER_AUTH_SECRET` (unless `EMBER_AUTH_SECRET` is set).
+    database: _database,
+    secret: _secret,
+    plugins,
+    databaseHooks,
+    session,
+    advanced,
+    ...options
+  } = authOptions(bindings, undefined, self);
+  return {
+    ...options,
+    session: { ...session, cookieCache: { enabled: false } },
+    databaseHooks: { session: { delete: databaseHooks.session.delete } },
+    // The table metadata check is D1's (`validateSchema`); the object migrates its own tables.
+    advanced: { ...advanced, database: { generateId: advanced.database.generateId } },
+    plugins: plugins.filter((plugin) => plugin.id !== "organization"),
+  } satisfies BetterAuthOptions;
+}
+
 /** Better Auth's error code when a user already belongs to `WORKSPACE_LIMIT` workspaces. */
 export const WORKSPACE_LIMIT_CODE = "YOU_HAVE_REACHED_THE_MAXIMUM_NUMBER_OF_ORGANIZATIONS";
 
 /** What hooks need of the instance `authOptions` configures (`createAuth`): its own `/request-password-reset`. */
-type Self = { requestReset?: BackgroundReset };
+export type Self = { requestReset?: BackgroundReset };
 
 /**
  * After a password reset, in its request: marks the address verified (the link reached it, as a verification link

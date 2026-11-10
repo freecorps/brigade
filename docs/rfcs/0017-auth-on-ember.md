@@ -35,8 +35,13 @@ plugin goes, and what it gave the clients is replaced below.
 
 **D1 keeps a read copy of `user`.** The joins on `user` (name, email, locale for notifications, members lists,
 invitations, Slack) keep working against a D1 `user` table the `Auth` object writes after every change, through
-Ember's profile sync hook (`onUserChange`, run after the write commits). Recovery of a lost write: the copy is
-rewritten from `Auth.userForSync` on a cron sweep of rows changed in the last day, and at sign-in.
+Ember's profile sync hook (`onUserChange`, run after the write commits). Recovery of a lost write uses Ember's
+profile journal: a trigger writes a `_ember_user_journal` row in the same transaction as the user's, and the hook
+deletes it once D1 has the copy, so a row older than a minute is a copy that never landed (D1 refused it, or the
+object stopped between the two). Brigade's `Auth` class (`src/auth-ember.ts`, Ember's with an alarm) writes those
+again from the user's current row (`userForSync`), with backoff while D1 refuses; a refused copy never fails the
+request whose write went through. An older copy never replaces a newer one (`updatedAt`). Deletes are not copied:
+there is no way to delete a user, and D1's row carries the memberships.
 
 **Sessions are read over RPC.** The statements on `session` (`src/actor.ts`, `src/ember.ts`, `src/ember-devices.ts`,
 `src/app-sign-in.ts`, `src/workspace.ts`, `src/auth.ts`) become `Auth.lookupSession`, and the writes (ending a removed
@@ -84,6 +89,15 @@ Each is an Ember change with its own tests, released before Brigade uses it.
 1. Ember: A1–A4, a release.
 2. API: the `Auth` binding (Durable Object migration `v5`), `auth.config.ts`, the `user` copy, sessions over RPC, the
    workspace routes, behind `AUTH_ENGINE` (`d1` by default, `ember`). Tests run on both until step 5.
+   Done: `GET /workspaces` (#231); options without per-instance state (#232), so one long-lived instance serves every
+   request; Better Auth 1.7.17, Ember Auth's (#233); the `AuthDO` object (`nodejs_als`, migration `v5`) with
+   `emberAuthOptions` (no organization plugin, no `database`/`secret`, the cookie cache off) and the `user` copy,
+   serving `/auth` when `AUTH_ENGINE` is `ember`. Left: every other route's session through the object
+   (`Auth.lookupSession` instead of D1), creating a workspace without the organization plugin, and QR sign-in's
+   session on the object. Until then `AUTH_ENGINE` stays `d1` everywhere.
+   For step 3: the app's `expoClient` keeps only the cookies with its `cookiePrefix`, which becomes `brigade` (the
+   project) with the object. Ember also adds `bearer()`, which reads `Authorization: Bearer` on `/auth` routes as a
+   session token: a Brigade API token (RFC 0014) sent there matches no session, so it signs nobody in.
 3. Clients: the workspace picker without the organization plugin, on both engines. An EAS update for the app (no
    native change).
 4. Cutover, `dev` then production: import `user` and `account` from D1, set `AUTH_ENGINE=ember`, everyone signs in.

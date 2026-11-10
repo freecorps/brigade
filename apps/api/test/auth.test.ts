@@ -803,6 +803,7 @@ describe("GET /sync/:workspaceId: the actor", () => {
       WATCHDOG: env.WATCHDOG,
       SHARD: env.SHARD,
       SYSTEM: env.SYSTEM,
+      AUTH: env.AUTH,
       DB: env.DB,
       EMAIL: env.EMAIL,
       RECEIPT_LIMIT: env.RECEIPT_LIMIT,

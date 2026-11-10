@@ -477,6 +477,30 @@ describe("GET /workspaces", () => {
   });
 });
 
+describe("GET /workspaces/:id/members", () => {
+  test("any member lists everyone with their role, name and address; others get 403", async () => {
+    const [ana, bia, eva] = await Promise.all([signUp("Ana"), signUp("Bia"), signUp("Eva")]);
+    const workspace = await createWorkspace(ana.cookie, "Acme");
+    await addMember(workspace.id, bia.user.id, "viewer");
+    const list = (cookie?: string, id = workspace.id) =>
+      api(`/workspaces/${id}/members`, { headers: cookie ? { Cookie: cookie } : {} });
+
+    const seen = await list(bia.cookie);
+    expect(seen.status).toBe(200);
+    expect(seen.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await seen.json()).toEqual({
+      members: [
+        { userId: ana.user.id, role: "owner", user: { name: "Ana", email: ana.email } },
+        { userId: bia.user.id, role: "viewer", user: { name: "Bia", email: bia.email } },
+      ],
+    });
+    expect((await list(eva.cookie)).status).toBe(403);
+    expect((await list(eva.cookie, "ws_01J00000000000000000000000")).status).toBe(403);
+    expect((await list(undefined)).status).toBe(401);
+    expect((await list(ana.cookie, "nope")).status).toBe(400);
+  });
+});
+
 describe("POST /workspaces", () => {
   test("creates a workspace owned by the user, active in the session, with its shard provisioned", async () => {
     const ana = await signUp("Ana");

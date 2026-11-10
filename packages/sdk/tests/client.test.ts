@@ -70,6 +70,7 @@ const CALLS: Record<keyof BrigadeClient, (client: BrigadeClient) => Promise<unkn
   sendAlerts: (c) => c.sendAlerts(`${WS}.mon_x.secret`, { title: "Checkout is down" }),
   listWorkspaces: (c) => c.listWorkspaces(),
   createWorkspace: (c) => c.createWorkspace({ name: "Acme" }),
+  listMembers: (c) => c.listMembers(WS),
   changeMemberRole: (c) => c.changeMemberRole(WS, USER, { role: "admin" }),
   removeMember: (c) => c.removeMember(WS, USER),
   listInvitations: (c) => c.listInvitations(WS),

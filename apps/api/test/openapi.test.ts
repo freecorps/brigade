@@ -393,6 +393,10 @@ const CASES: Record<string, () => Promise<Case>> = {
       status: 201,
     };
   },
+  listMembers: async () => {
+    const t = await team();
+    return { path: `/workspaces/${t.id}/members`, init: {}, cookie: t.caio.cookie, status: 200 };
+  },
   changeMemberRole: async () => {
     const t = await team();
     return {

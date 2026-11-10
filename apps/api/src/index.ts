@@ -114,6 +114,7 @@ export { WorkspaceDO } from "./workspace.ts";
 export { Shard, System } from "@freecorps/ember-runtime";
 
 const WORKSPACE_PATH = /^\/workspaces\/([^/]+)$/;
+const MEMBERS_PATH = /^\/workspaces\/([^/]+)\/members$/;
 const MEMBER_PATH = /^\/workspaces\/([^/]+)\/members\/([^/]+)$/;
 const INVITATIONS_PATH = /^\/workspaces\/([^/]+)\/invitations$/;
 const INVITATION_PATH = /^\/workspaces\/([^/]+)\/invitations\/([^/]+?)(\/resend)?$/;
@@ -336,6 +337,8 @@ export default {
 
     const workspace = WORKSPACE_PATH.exec(pathname)?.[1];
     if (workspace !== undefined) return workspaceInfo(request, env, auth, workspace);
+    const members = MEMBERS_PATH.exec(pathname)?.[1];
+    if (members !== undefined) return listMembers(request, env, auth, members);
     if (pathname !== "/health") return json({ error: "not_found" }, 404);
     if (!READ_METHODS.includes(request.method)) {
       return json({ error: "method_not_allowed" }, 405, { Allow: READ_METHODS.join(", ") });
@@ -869,6 +872,51 @@ function provisionWith(env: Env): NonNullable<AuthBindings["onWorkspaceCreated"]
     );
     if (!result.ok) throw new Error(`Provisioning workspace ${id} failed: ${result.code}`);
   };
+}
+
+/**
+ * `GET /workspaces/:id/members`: the workspace's members from D1, oldest first, with their names and addresses, for
+ * any member (RFC 0003 `workspace:read`), in the shape of Better Auth's full organization's `members`
+ * (`{ userId, role, user: { name, email } }`), which the dashboard read before (RFC 0017: the organization plugin goes).
+ * 403 `not_a_member` whether or not the workspace exists (open question Q16).
+ */
+export async function listMembers(
+  request: Request,
+  env: Env,
+  lazyAuth: () => Auth,
+  workspaceId: string,
+): Promise<Response> {
+  if (!READ_METHODS.includes(request.method)) {
+    return json({ error: "method_not_allowed" }, 405, { Allow: READ_METHODS.join(", ") });
+  }
+  if (!ORGANIZATION_ID.test(workspaceId)) return json({ error: "invalid_workspace_id" }, 400);
+  try {
+    const session = await lazyAuth().api.getSession({ headers: request.headers });
+    if (!session) return json({ error: "unauthenticated" }, 401);
+    if ((await memberRole(env.DB, workspaceId, session.user.id)) === undefined) {
+      return json({ error: "not_a_member" }, 403);
+    }
+    const { results } = await env.DB.prepare(
+      `select m."userId", m.role, u.name, u.email from member m join "user" u on u.id = m."userId"
+        where m."organizationId" = ? order by m."createdAt", m.id`,
+    )
+      .bind(workspaceId)
+      .all<{ userId: string; role: string; name: string; email: string }>();
+    return json(
+      {
+        members: results.map(({ userId, role, name, email }) => ({
+          userId,
+          role,
+          user: { name, email },
+        })),
+      },
+      200,
+      { "Cache-Control": "private, no-store" },
+    );
+  } catch (error) {
+    console.error(JSON.stringify({ message: "listing members failed", error: String(error) }));
+    return json({ error: "unavailable" }, 503);
+  }
 }
 
 /**

@@ -38,6 +38,8 @@ export type UpdatePosted = { ok: true; entryId: string | null };
 export type AlertsAccepted = { ok: true; alerts: number; malformed?: boolean; tooLarge?: true };
 
 export type Workspace = { id: string; name: Infer<typeof workspaceName> };
+/** A workspace's member, as `GET /workspaces/:id/members` lists them. */
+export type WorkspaceMember = { userId: string; role: Role; user: { name: string; email: string } };
 /** A workspace the signed-in user is in, with their role there (`GET /workspaces`). */
 export type Membership = Workspace & { role: Role };
 
@@ -294,6 +296,7 @@ export const OPERATION_ERRORS = {
   sendAlerts: ["not_found", ...SHARD_FAILED],
   listWorkspaces: ["unauthenticated", "unavailable"],
   createWorkspace: [...SIGNED_IN, "invalid_args", "workspace_limit", "internal"],
+  listMembers: ["unauthenticated", "invalid_workspace_id", "not_a_member", "unavailable"],
   changeMemberRole: [...MEMBER, "invalid_args"],
   removeMember: MEMBER,
   listInvitations: [
@@ -609,6 +612,14 @@ export function createClient(options: ClientOptions) {
     /** `POST /workspaces`: the signed-in user becomes its owner. */
     createWorkspace: (body: { name: Infer<typeof workspaceName> }) =>
       call<Workspace, "createWorkspace">("createWorkspace", "POST", "/workspaces", { body }),
+
+    /** `GET /workspaces/:id/members`: everyone in the workspace, oldest membership first. */
+    listMembers: (workspaceId: string) =>
+      call<{ members: WorkspaceMember[] }, "listMembers">(
+        "listMembers",
+        "GET",
+        () => `/workspaces/${segment(workspaceId)}/members`,
+      ),
 
     /** `PATCH /workspaces/:id/members/:userId`. */
     changeMemberRole: (workspaceId: string, userId: string, body: { role: Role }) =>

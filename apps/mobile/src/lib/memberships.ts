@@ -161,6 +161,8 @@ export function membershipsStore(deps: {
   let state: Memberships | null = null;
   /** Bumped by every load, member change and forget: only the latest load's answer is kept. */
   let generation = 0;
+  /** Bumped by every change of member and forget: a read of what was kept applies only to the ownership it began in. */
+  let ownership = 0;
   /** Writes one at a time, in order, so the last pick is the one kept. */
   let writes: Promise<void> = Promise.resolve();
 
@@ -216,6 +218,7 @@ export function membershipsStore(deps: {
         return;
       }
       generation++;
+      const mine = ++ownership;
       set({ userId, error: false, loading: false, known: undefined });
       // After every write and removal still on its way: owned again right after a forget, the pick it removes is
       // never read back.
@@ -223,8 +226,8 @@ export function membershipsStore(deps: {
         .then(() => deps.read())
         .catch(() => null)
         .then((raw) => {
-          // A pick made meanwhile is newer than what was kept.
-          if (state?.userId === userId && state.known === undefined) {
+          // A pick made meanwhile is newer than what was kept; a forget since (even if owned again) dropped it.
+          if (mine === ownership && state?.userId === userId && state.known === undefined) {
             update(userId, { known: keptWorkspace(raw, userId) });
           }
         });
@@ -243,6 +246,7 @@ export function membershipsStore(deps: {
     keep,
     async forget() {
       generation++;
+      ownership++;
       set(null);
       await persist(deps.remove);
     },

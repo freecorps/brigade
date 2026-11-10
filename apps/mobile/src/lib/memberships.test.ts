@@ -244,3 +244,28 @@ test("owned again while a forget is still removing the pick, the removed pick is
   expect(store.current("usr_1")?.known).toBeNull();
   expect(openingOf(store.current("usr_1"))).toEqual({ kind: "unavailable" });
 });
+
+test("a read from before a forget never lands on the store owned again after it", async () => {
+  const reads: ((raw: string | null) => void)[] = [];
+  const store = membershipsStore({
+    list: async () => undefined,
+    // Every read waits for the test to answer it.
+    read: () => new Promise<string | null>((resolve) => reads.push(resolve)),
+    write: async () => {},
+    remove: async () => {},
+  });
+  store.own("usr_1");
+  await settle();
+  await store.forget();
+  store.own("usr_1");
+  await settle();
+  expect(reads).toHaveLength(2);
+  // The first read answers late, with the pick from before the forget, while the new one is still out.
+  reads[0]?.(kept("org_a"));
+  await settle();
+  expect(store.current("usr_1")?.known).toBeUndefined();
+  reads[1]?.(null);
+  await settle();
+  expect(store.current("usr_1")?.known).toBeNull();
+  expect(openingOf(store.current("usr_1"))).toEqual({ kind: "unavailable" });
+});

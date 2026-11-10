@@ -16,6 +16,11 @@ import {
   type RandomBytes,
 } from "@freecorps/brigade-schema";
 import { isLocale, resolveLocale, type Locale } from "@freecorps/brigade-i18n";
+import {
+  defineRequestState,
+  getCurrentAuthContext,
+  hasRequestState,
+} from "@better-auth/core/context";
 import { expo } from "@better-auth/expo";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
@@ -258,16 +263,14 @@ export const INVALID_LOCALE_CODE = "INVALID_LOCALE";
  * RFC 0008): one of Brigade's locales exactly, or null on `/update-user` to unset it; a sign-up without one takes
  * the closest to the request's first `Accept-Language`, if any.
  */
-const beforeHook = (
-  bindings: AuthBindings,
-  signingOut: SigningOut,
-  background?: BackgroundReset,
-) => {
-  // Requests whose limits `checkResetRequest` already counted and that it handed to this instance again in the
-  // background: let through as they are. Per instance, so per request.
+const beforeHook = (bindings: AuthBindings, background?: BackgroundReset) => {
+  // Requests whose limits `checkResetRequest` already counted and that it handed to Better Auth again in the
+  // background: let through as they are.
   const admitted = new WeakSet<Request>();
   return createAuthMiddleware(async (ctx) => {
-    if (ctx.path === "/sign-out") return recordSignOut(bindings, ctx, signingOut);
+    if (ctx.path === "/sign-out") {
+      return recordSignOut(bindings, ctx, (await requestState.get()).signingOut);
+    }
     if (ctx.path === "/send-verification-email") {
       // Only for oneself: Better Auth would otherwise email any unverified address it is given, signed in or not.
       const session = await getSessionFromCtx(ctx);
@@ -616,10 +619,10 @@ async function recordSignOut(
   );
   if (!token) return;
   try {
-    const session = await bindings.database
-      .prepare(`select id, "userId" from "session" where token = ?`)
-      .bind(token)
-      .first<{ id: string; userId: string }>();
+    const session = await ctx.context.adapter.findOne<{ id: string; userId: string }>({
+      model: "session",
+      where: [{ field: "token", value: token }],
+    });
     if (!session) return;
     await ending(endingSession(session, ctx));
     signingOut.sessionId = session.id;
@@ -635,12 +638,15 @@ async function recordSignOut(
  * After Better Auth's `/sign-out`: whether the session `recordSignOut` recorded is gone from D1. False when it is
  * still there or D1 cannot say: the sign-out then answers 503 with the cookie kept, and the client signs out again.
  */
-async function signedOut(bindings: AuthBindings, sessionId: string): Promise<boolean> {
+async function signedOut(
+  ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0],
+  sessionId: string,
+): Promise<boolean> {
   try {
-    const row = await bindings.database
-      .prepare(`select 1 as found from "session" where id = ?`)
-      .bind(sessionId)
-      .first();
+    const row = await ctx.context.adapter.findOne({
+      model: "session",
+      where: [{ field: "id", value: sessionId }],
+    });
     return row === null;
   } catch (error) {
     console.error(
@@ -665,11 +671,23 @@ function endingSession(
   };
 }
 
-export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self: Self = noSelf) {
+/**
+ * What one request to Better Auth carries from hook to hook: the session its `/sign-out` recorded. Better Auth runs
+ * every call, HTTP or `auth.api.*`, in a request state of its own (nested calls share it), so this holds per request
+ * whether the instance is made for one request (D1) or lives on (an `Auth` Durable Object, RFC 0017).
+ */
+const requestState = defineRequestState<{ signingOut: SigningOut }>(() => ({ signingOut: {} }));
+
+/**
+ * The session the current request's `/sign-out` recorded, if any. Outside a request to Better Auth (its adapters
+ * called directly, as a QR sign-in does, src/app-sign-in.ts) there is no request state, and no sign-out.
+ */
+async function signingOutSessionId(): Promise<string | undefined> {
+  return (await hasRequestState()) ? (await requestState.get()).signingOut.sessionId : undefined;
+}
+
+export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self: Self = {}) {
   const random = randomBytes;
-  // One instance per request (src/index.ts `workerAuth`), so these are the request's own.
-  const signingOut: SigningOut = {};
-  const taken: { user?: TakenUser; request?: Request } = {};
   return {
     appName: "Brigade",
     ...(bindings.origin ? { baseURL: bindings.origin } : {}),
@@ -687,14 +705,8 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
       // A uniform sign-up (RFC 0002 "Auth"): with no session handed out, Better Auth answers a sign-up with a taken
       // address the same as one that created an account (a made-up user, no session, the password hashed all the
       // same), so the answer cannot tell whether an address has an account. The clients sign in right after.
-      autoSignIn: false,
       // Its owner is told instead (`signUpNotice`, from the `after` hook, which also evens out the answer's timing).
-      // Called synchronously by Better Auth; only noted here.
-      onExistingUserSignUp: ({ user }, request) => {
-        taken.user = { id: user.id, email: user.email, locale: Reflect.get(user, "locale") };
-        taken.request = request;
-        return Promise.resolve();
-      },
+      autoSignIn: false,
       // Password reset (RFC 0002 "Auth"): the link is the dashboard's `/reset-password#token=…`, and using it proves
       // control of the address, so it also marks the address verified and ends every session. That is how an
       // address someone else signed up with and never verified comes back to its owner.
@@ -742,7 +754,7 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
       // before the reset.
       onPasswordReset: async ({ user }, request) => {
         const at = Date.now();
-        await self.resetDone(user.id, at);
+        await resetDone(user.id, at);
         // Its owner signs in again from where they reset it, whoever holds the address at its limit
         // (`SIGN_IN_AFTER_RESET`). Never in the reset's way.
         const ip = request?.headers.get("cf-connecting-ip");
@@ -824,18 +836,18 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
     // The dashboard is same-origin (Better Auth trusts its own base URL); the mobile app is `APP_ORIGIN`.
     trustedOrigins: [APP_ORIGIN],
     hooks: {
-      before: beforeHook(bindings, signingOut, self.requestReset),
+      before: beforeHook(bindings, self.requestReset),
       after: createAuthMiddleware(async (ctx) => {
-        if (ctx.path === "/sign-up/email" && taken.user) {
-          const { user, request } = taken;
-          taken.user = undefined;
-          await signUpNotice(bindings, user, request);
+        if (ctx.path === "/sign-up/email") {
+          const user = await takenBy(ctx);
+          if (user) await signUpNotice(bindings, user, ctx.request);
         }
+        const { signingOut } = await requestState.get();
         const sessionId = signingOut.sessionId;
         signingOut.sessionId = undefined;
         // A sign-out whose session Better Auth did not delete (it logs and answers 200): say so, so the client tries
         // again, and drop the cookie Better Auth cleared anyway, so the client keeps the session it still has.
-        if (ctx.path === "/sign-out" && sessionId && !(await signedOut(bindings, sessionId))) {
+        if (ctx.path === "/sign-out" && sessionId && !(await signedOut(ctx, sessionId))) {
           ctx.context.responseHeaders?.delete("set-cookie");
           throw signOutFailed();
         }
@@ -898,7 +910,7 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
           // when it cannot be, with `onSessionEnded` alone.
           before: async (session, ctx) => {
             const ending = bindings.onSessionEnding;
-            if (!ending || session.id === signingOut.sessionId) return;
+            if (!ending || session.id === (await signingOutSessionId())) return;
             try {
               await ending(endingSession(session, ctx));
             } catch (error) {
@@ -1001,23 +1013,54 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
 /** Better Auth's error code when a user already belongs to `WORKSPACE_LIMIT` workspaces. */
 export const WORKSPACE_LIMIT_CODE = "YOU_HAVE_REACHED_THE_MAXIMUM_NUMBER_OF_ORGANIZATIONS";
 
-/**
- * What hooks need of the instance `authOptions` configures (`createAuth`): its adapters, and its own
- * `/request-password-reset`, run after the response.
- */
-type Self = {
-  /**
-   * After a password reset: marks the address verified (the link reached it, as a verification link would) and
-   * records `passwordResetAt`, which lets each shard's member reconcile drop devices and sockets from before it should
-   * its own sign-out fail; then deletes the user's other reset links, any of which would reset the password again.
-   */
-  resetDone(userId: string, at: number): Promise<void>;
-  requestReset?: BackgroundReset;
-};
+/** What hooks need of the instance `authOptions` configures (`createAuth`): its own `/request-password-reset`. */
+type Self = { requestReset?: BackgroundReset };
 
-const noSelf: Self = {
-  resetDone: () => Promise.reject(new Error("authOptions has no instance: use createAuth")),
-};
+/**
+ * After a password reset, in its request: marks the address verified (the link reached it, as a verification link
+ * would) and records `passwordResetAt`, which lets each shard's member reconcile drop devices and sockets from before
+ * it should its own sign-out fail; then deletes the user's other reset links, any of which would reset the password
+ * again.
+ */
+async function resetDone(userId: string, at: number): Promise<void> {
+  const { internalAdapter, adapter } = (await getCurrentAuthContext()).context;
+  await internalAdapter.updateUser(userId, { emailVerified: true, passwordResetAt: at });
+  await adapter.deleteMany({
+    model: "verification",
+    where: [
+      { field: "value", value: userId },
+      { field: "identifier", operator: "starts_with", value: "reset-password:" },
+    ],
+  });
+}
+
+/**
+ * After `/sign-up/email`: the account that already had the address, when the sign-up was for a taken one. Better
+ * Auth then answers with a made-up user (the same answer as for a new account), so the address's account in the
+ * database is another one. None for a new account, a refused sign-up, or one the database cannot answer for.
+ */
+async function takenBy(
+  ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0],
+): Promise<TakenUser | undefined> {
+  const returned: unknown = ctx.context.returned;
+  const answered = Reflect.get(Object(Reflect.get(Object(returned), "user")), "id");
+  const email: unknown = Reflect.get(Object(ctx.body), "email");
+  if (typeof answered !== "string" || typeof email !== "string") return undefined;
+  try {
+    const found = await ctx.context.internalAdapter.findUserByEmail(email.toLowerCase());
+    if (!found || found.user.id === answered) return undefined;
+    return {
+      id: found.user.id,
+      email: found.user.email,
+      locale: Reflect.get(found.user, "locale"),
+    };
+  } catch (error) {
+    console.error(
+      JSON.stringify({ message: "sign-up notice lookup failed", error: String(error) }),
+    );
+    return undefined;
+  }
+}
 
 type WorkspaceStore = {
   /** Deletes a workspace Better Auth just created, with its memberships. */
@@ -1056,17 +1099,6 @@ export function createAuth(bindings: AuthBindings) {
         },
       },
       {
-        async resetDone(userId: string, at: number): Promise<void> {
-          const { internalAdapter, adapter } = await auth.$context;
-          await internalAdapter.updateUser(userId, { emailVerified: true, passwordResetAt: at });
-          await adapter.deleteMany({
-            model: "verification",
-            where: [
-              { field: "value", value: userId },
-              { field: "identifier", operator: "starts_with", value: "reset-password:" },
-            ],
-          });
-        },
         requestReset: (body: Record<string, unknown>, request: Request): Promise<unknown> =>
           auth.api.requestPasswordReset({
             body: body as { email: string },

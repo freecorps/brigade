@@ -92,9 +92,11 @@ Each is an Ember change with its own tests, released before Brigade uses it.
    Done: `GET /workspaces` (#231); options without per-instance state (#232), so one long-lived instance serves every
    request; Better Auth 1.7.17, Ember Auth's (#233); the `AuthDO` object (`nodejs_als`, migration `v5`) with
    `emberAuthOptions` (no organization plugin, no `database`/`secret`, the cookie cache off) and the `user` copy,
-   serving `/auth` when `AUTH_ENGINE` is `ember`. Left: every other route's session through the object
-   (`Auth.lookupSession` instead of D1), creating a workspace without the organization plugin, and QR sign-in's
-   session on the object. Until then `AUTH_ENGINE` stays `d1` everywhere.
+   serving `/auth` when `AUTH_ENGINE` is `ember`; every other route's session read on the object (#235: `getSession`
+   through `Auth.api`, without `Authorization`, which Ember's `bearer()` would take for a session token; a session by
+   id, for sockets, devices and Ember tokens, through Brigade's server-only `brigadeSession` endpoint, `findSession`).
+   Left: creating a workspace without the organization plugin (`POST /workspaces`, the first owner's bootstrap), and
+   QR sign-in's session on the object. Until then `AUTH_ENGINE` stays `d1` everywhere.
    The object's options are set once, so its cookies are `Secure` from the instance's address rather than per
    request: `DASHBOARD_URL` on HTTPS, which an environment must have before it switches.
    For step 3: the app's `expoClient` keeps only the cookies with its `cookiePrefix`, which becomes `brigade` (the

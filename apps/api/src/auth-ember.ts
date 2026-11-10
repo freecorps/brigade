@@ -10,7 +10,77 @@
 
 import { defineAuth, USER_JOURNAL_TABLE } from "@freecorps/ember-auth";
 import { emberAuth, type AuthClass, type ProfileSyncHook } from "@freecorps/ember-auth/worker";
-import { emberAuthOptions, type AuthBindings, type BackgroundReset } from "./auth.ts";
+import {
+  emberAuthOptions,
+  type Auth as D1Auth,
+  type AuthBindings,
+  type BackgroundReset,
+  type SessionById,
+} from "./auth.ts";
+
+/** Which Better Auth holds identity (RFC 0017): D1's, until `AUTH_ENGINE` is `ember`. */
+export function authEngine(env: Env | Record<string, unknown>): "d1" | "ember" {
+  return Reflect.get(env, "AUTH_ENGINE") === "ember" ? "ember" : "d1";
+}
+
+/** The `Auth` object (one per deployment: Ember's `instance` default). */
+const authObject = (env: Pick<Env, "AUTH">) => env.AUTH.getByName("auth");
+
+/** An `Auth.api` answer, or the error Better Auth refused it with (logged by the callers that catch it). */
+async function onObject(
+  env: Pick<Env, "AUTH">,
+  endpoint: string,
+  input: Parameters<ReturnType<typeof authObject>["api"]>[1],
+) {
+  const answer = await authObject(env).api(endpoint, input);
+  if (!answer.ok) throw new Error(`Auth.${endpoint}: ${answer.error.status} ${answer.error.code}`);
+  return answer.value;
+}
+
+/**
+ * The session `id`, from whichever engine holds them: whose it is and when it expires, or null when there is no such
+ * session (signed out, revoked, reset, or expired and cleaned up). Throws when the engine cannot say.
+ */
+export async function findSession(
+  env: Pick<Env, "DB" | "AUTH">,
+  id: string,
+): Promise<SessionById | null> {
+  if (authEngine(env) === "ember") {
+    return (
+      ((await onObject(env, "brigadeSession", { body: { id } })) as SessionById | null) ?? null
+    );
+  }
+  const row = await env.DB.prepare(`select "userId", "expiresAt" from "session" where id = ?`)
+    .bind(id)
+    .first<{ userId: string; expiresAt: string | number }>();
+  // However the adapter stored it (ISO text or ms).
+  return row ? { userId: row.userId, expiresAt: new Date(row.expiresAt).getTime() } : null;
+}
+
+/**
+ * What the Worker's routes use of Better Auth, on the object: the request's session (`api.getSession`, the same answer
+ * as D1's instance gives). Everything else of the D1 instance (creating a workspace through the organization plugin,
+ * its adapters) has no place on the object and refuses, until its route has its own way (RFC 0017, step 2).
+ * `Authorization` is not passed on: Ember's `bearer()` would read an API token there as a session token.
+ */
+export function emberSessionAuth(env: Env): D1Auth {
+  const unsupported = (what: string) => () =>
+    Promise.reject(new Error(`${what} is not on the Ember auth engine yet`));
+  const facade = {
+    api: {
+      getSession: async ({ headers }: { headers: Headers }) => {
+        const forwarded = [...headers].filter(([name]) => name.toLowerCase() !== "authorization");
+        return (await onObject(env, "getSession", { headers: forwarded })) ?? null;
+      },
+      createOrganization: unsupported("createOrganization"),
+    },
+    handler: unsupported("the D1 handler"),
+    get $context() {
+      return Promise.reject(new Error("the D1 adapters are not on the Ember auth engine"));
+    },
+  };
+  return facade as unknown as D1Auth;
+}
 
 /** The object's name: one per deployment, as Ember's own default. */
 export const EMBER_AUTH_PROJECT = "brigade";

@@ -23,6 +23,7 @@
 
 import { idPattern, newId, type RandomBytes } from "@freecorps/brigade-schema";
 import { makeSignature } from "better-auth/crypto";
+import { findSession } from "./auth-ember.ts";
 import { countRequest, type Auth } from "./auth.ts";
 import { json, readJson } from "./member-route.ts";
 
@@ -129,7 +130,7 @@ export type AppSignInStatus =
 /** Why the phone's claim answers `expired`. */
 export type ClaimEndReason = "denied" | "wrong_number" | "timeout" | "delivered" | "signed_out";
 
-export type AppSignInEnv = Pick<Env, "DB" | "BETTER_AUTH_SECRET" | "APP_SIGN_IN_LIMIT"> & {
+export type AppSignInEnv = Pick<Env, "DB" | "AUTH" | "BETTER_AUTH_SECRET" | "APP_SIGN_IN_LIMIT"> & {
   /** The dashboard's public origin (src/notify-email.ts), what the QR names as the server. */
   DASHBOARD_URL?: string;
 };
@@ -392,7 +393,7 @@ async function pollClaim(
     }
     // Bound to the dashboard session that asked: signed out there since, no session here. Read before the claim
     // moves, so a failure here leaves it `approved` for the next poll; signed out ends it for good.
-    const signedOut = !(await askerAlive(env.DB, row, now));
+    const signedOut = !(await askerAlive(env, row, now));
     // Approved: only the poll that moves it on gets a session (or the `signed_out` answer).
     const taken = await env.DB.prepare(
       `update app_sign_in set state = ?3, "endedAt" = ?2
@@ -482,7 +483,7 @@ async function newSession(
       ...(cookie.attributes.secure ? ["Secure"] : []),
       "SameSite=Lax",
     ];
-    if (!(await askerAlive(env.DB, row, Date.now()))) {
+    if (!(await askerAlive(env, row, Date.now()))) {
       await context.internalAdapter.deleteSession(session.token);
       return "signed_out";
     }
@@ -505,12 +506,9 @@ type Delivered = {
 };
 
 /** Whether the dashboard session that asked for `row`'s code still exists, unexpired, for its user. */
-async function askerAlive(db: D1Database, row: Row, now: number): Promise<boolean> {
-  const asker = await db
-    .prepare(`select "expiresAt" from "session" where id = ? and "userId" = ?`)
-    .bind(row.sessionId, row.userId)
-    .first<{ expiresAt: string | number }>();
-  return asker !== null && new Date(asker.expiresAt).getTime() > now;
+async function askerAlive(env: AppSignInEnv, row: Row, now: number): Promise<boolean> {
+  const asker = await findSession(env, row.sessionId);
+  return asker?.userId === row.userId && asker.expiresAt > now;
 }
 
 /** `session.signInMethod` for a session a QR sign-in made (src/auth.ts). */

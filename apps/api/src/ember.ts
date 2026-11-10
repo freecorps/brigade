@@ -29,6 +29,7 @@ import * as status from "../ember/status.ts";
 import * as ticks from "../ember/ticks.ts";
 import * as workspace from "../ember/workspace.ts";
 import type { Role } from "@freecorps/brigade-schema";
+import { findSession } from "./auth-ember.ts";
 import { memberRole, resolveActor } from "./actor.ts";
 import { creatorNow, withinLimit } from "./api-tokens.ts";
 import { readBounded } from "./body.ts";
@@ -85,7 +86,7 @@ export const capAt = (a: number | undefined, b: number | null | undefined): numb
 
 export const workspaceShard = (workspaceId: string) => `workspace:${workspaceId}`;
 
-type EmberAuthEnv = { DB: D1Database; BETTER_AUTH_SECRET: string };
+type EmberAuthEnv = Pick<Env, "DB" | "AUTH"> & { BETTER_AUTH_SECRET: string };
 
 /**
  * The identity for `token` (RFC 0016 "Auth"), or null: a token this instance minted and unexpired, whose subject D1
@@ -120,12 +121,8 @@ export async function verifyIdentity(
     // The session must still be in D1: a sign-out, a password reset or a takeover deletes its row (`session_end` is
     // only a queue of the shard work left after that, and is emptied once done, so it cannot say a session ended).
     if (claims.sid === undefined) return null;
-    const session = await env.DB.prepare(
-      `select 1 as found from "session" where id = ? and "userId" = ? limit 1`,
-    )
-      .bind(claims.sid, claims.sub)
-      .first();
-    if (!session) return null;
+    const session = await findSession(env, claims.sid);
+    if (session?.userId !== claims.sub) return null;
     role = await memberRole(env.DB, claims.ws, claims.sub);
   }
   if (role === undefined) return null;

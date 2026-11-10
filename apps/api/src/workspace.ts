@@ -149,6 +149,7 @@ export interface WorkspaceInfo {
   databaseSize: number;
 }
 
+import { findSession } from "./auth-ember.ts";
 import { WORKSPACE_ID } from "./workspace-ids.ts";
 
 export { ORGANIZATION_ID, WORKSPACE_ID } from "./workspace-ids.ts";
@@ -1507,22 +1508,15 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (!device) return true;
     if (device.sessionId === undefined) return false;
     const checkedAt = Date.now();
-    let session: { expiresAt: string | number } | null;
+    let session: { expiresAt: number } | null;
     try {
-      session = await this.env.DB.prepare(`select "expiresAt" from "session" where id = ?`)
-        .bind(device.sessionId)
-        .first<{ expiresAt: string | number }>();
+      session = await findSession(this.env, device.sessionId);
     } catch (error) {
       this.log("checking a device's session failed", { error });
       return "unavailable";
     }
-    // However the adapter stored it (ISO text or ms); a value that cannot be read keeps the device its member's.
-    const expiresAt =
-      session === null
-        ? 0
-        : typeof session.expiresAt === "number"
-          ? session.expiresAt
-          : Date.parse(session.expiresAt);
+    // A value that cannot be read (NaN) keeps the device its member's.
+    const expiresAt = session === null ? 0 : session.expiresAt;
     if (!(expiresAt <= checkedAt)) return false;
     try {
       this.serverMutation("device.signOut", {

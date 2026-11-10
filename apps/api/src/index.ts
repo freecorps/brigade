@@ -36,7 +36,8 @@ import {
   type InvitationCode,
 } from "./invitations.ts";
 import type { MemberChangeResult } from "./members.ts";
-import { emberAuthEngine } from "./auth-ember.ts";
+import { authEngine, emberAuthEngine, emberSessionAuth } from "./auth-ember.ts";
+export { authEngine } from "./auth-ember.ts";
 import { emailSender } from "./email.ts";
 import { consumeDeadLetters, consumeEvents, type NotifyEnv } from "./notify.ts";
 import { parseReceiptToken, receiptWorkspace, type ReceiptResult } from "./receipts.ts";
@@ -547,6 +548,8 @@ export function workerAuth(
   request: Request,
   onWorkspaceCreated?: AuthBindings["onWorkspaceCreated"],
 ): Auth {
+  // On the object (RFC 0017), the routes read their sessions there; `/auth` itself goes to it before this.
+  if (authEngine(env) === "ember") return emberSessionAuth(env);
   return createAuth(
     authBindings(env, {
       waitUntil: (promise) => ctx.waitUntil(promise),
@@ -1769,11 +1772,6 @@ function flag(error: unknown, name: "retryable" | "overloaded"): boolean {
 
 function json(body: unknown, status = 200, headers?: HeadersInit): Response {
   return Response.json(body, { status, headers });
-}
-
-/** Which Better Auth serves `/auth` (RFC 0017): D1's, until `AUTH_ENGINE` is `ember`. */
-export function authEngine(env: Env): "d1" | "ember" {
-  return Reflect.get(env, "AUTH_ENGINE") === "ember" ? "ember" : "d1";
 }
 
 /**

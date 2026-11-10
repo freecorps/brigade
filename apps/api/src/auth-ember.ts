@@ -131,6 +131,16 @@ const copyAfterChange: ProfileSyncHook = async (event, user, { storage, env }) =
 };
 
 /**
+ * Whether the object's cookies are `Secure` (and `__Secure-` prefixed). D1's instance decides per request from its
+ * protocol; the object's options are set once, so from the instance's public address: the dashboard's (the web Worker
+ * forwards with the browser's URL, the app reaches the same host), HTTPS on every deployed environment.
+ */
+export function secureCookies(env: Record<string, unknown>): boolean {
+  const url = env.DASHBOARD_URL;
+  return typeof url === "string" && url.startsWith("https://");
+}
+
+/**
  * The engine: Ember's auth for the Worker (`fetch`, `api`, `stub`) and its `Auth` class with the D1 copy's alarm.
  * `bindingsOf` gives Brigade's bindings for the options from the Worker's env (src/index.ts, as for D1); the object's own
  * `waitUntil` and API reach them once it runs.
@@ -143,6 +153,7 @@ export function emberAuthEngine(
     defineAuth((env) =>
       emberAuthOptions(
         bindingsOf(env as unknown as Env, {
+          secureCookies: secureCookies(env),
           // After the response, in the object: its `waitUntil` once it runs.
           waitUntil: (promise) => {
             if (live.waitUntil) live.waitUntil(promise);

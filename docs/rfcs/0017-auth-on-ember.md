@@ -95,6 +95,8 @@ Each is an Ember change with its own tests, released before Brigade uses it.
    serving `/auth` when `AUTH_ENGINE` is `ember`. Left: every other route's session through the object
    (`Auth.lookupSession` instead of D1), creating a workspace without the organization plugin, and QR sign-in's
    session on the object. Until then `AUTH_ENGINE` stays `d1` everywhere.
+   The object's options are set once, so its cookies are `Secure` from the instance's address rather than per
+   request: `DASHBOARD_URL` on HTTPS, which an environment must have before it switches.
    For step 3: the app's `expoClient` keeps only the cookies with its `cookiePrefix`, which becomes `brigade` (the
    project) with the object. Ember also adds `bearer()`, which reads `Authorization: Bearer` on `/auth` routes as a
    session token: a Brigade API token (RFC 0014) sent there matches no session, so it signs nobody in.

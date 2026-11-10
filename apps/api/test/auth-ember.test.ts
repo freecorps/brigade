@@ -10,7 +10,7 @@ import {
 } from "cloudflare:test";
 import { USER_JOURNAL_TABLE } from "@freecorps/ember-auth";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
-import { COPY_GRACE_MS, copyUser, EMBER_AUTH_PROJECT } from "../src/auth-ember.ts";
+import { COPY_GRACE_MS, copyUser, EMBER_AUTH_PROJECT, secureCookies } from "../src/auth-ember.ts";
 import worker, { authEngine } from "../src/index.ts";
 
 const ORIGIN = "http://api.test";
@@ -88,6 +88,12 @@ afterEach(() => {
 });
 
 describe("the Ember engine", () => {
+  test("its cookies are Secure where the instance is served over HTTPS", () => {
+    expect(secureCookies({ DASHBOARD_URL: "https://brigade.example.com" })).toBe(true);
+    expect(secureCookies({ DASHBOARD_URL: "http://localhost:5173" })).toBe(false);
+    expect(secureCookies({})).toBe(false);
+  });
+
   test("is off unless AUTH_ENGINE says ember", () => {
     expect(authEngine(env)).toBe("d1");
     expect(authEngine(ember)).toBe("ember");

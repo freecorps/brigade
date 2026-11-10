@@ -491,6 +491,54 @@ const LISTED: readonly Operation[] = [
     ),
   },
   {
+    method: "get",
+    path: "/workspaces/{workspaceId}/members",
+    operationId: "listMembers",
+    tag: "Members",
+    summary: "List a workspace's members",
+    description:
+      "Any member: everyone in the workspace with their role, name and address, oldest membership first. " +
+      "`403 not_a_member` whether or not the workspace exists.",
+    auth: "session",
+    parameters: [workspaceId],
+    responses: answers(
+      {
+        200: {
+          description: "The members.",
+          body: {
+            type: "object",
+            properties: {
+              members: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    userId: { type: "string", pattern: idPattern("usr") },
+                    role: ref("Role"),
+                    user: {
+                      type: "object",
+                      properties: {
+                        name: { type: "string" },
+                        email: { type: "string", format: "email" },
+                      },
+                      required: ["name", "email"],
+                    },
+                  },
+                  required: ["userId", "role", "user"],
+                },
+              },
+            },
+            required: ["members"],
+          },
+        },
+      },
+      refusals(
+        { 401: ["unauthenticated"] },
+        { 400: ["invalid_workspace_id"], 403: ["not_a_member"], 503: ["unavailable"] },
+      ),
+    ),
+  },
+  {
     method: "patch",
     path: "/workspaces/{workspaceId}/members/{userId}",
     operationId: "changeMemberRole",

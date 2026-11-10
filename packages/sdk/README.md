@@ -190,6 +190,7 @@ a short or empty page with a `nextCursor`, so follow it until it is null.
 | `pingHeartbeat(token)`                                                                                       | `POST /heartbeat/:token`                                 |
 | `sendAlerts(token, payload)`                                                                                 | `POST /alerts/:token`                                    |
 | `listWorkspaces()`, `createWorkspace({ name })`                                                              | `GET`, `POST /workspaces`                                |
+| `listMembers(ws)`                                                                                            | `GET /workspaces/:id/members`                            |
 | `changeMemberRole(ws, userId, { role })`, `removeMember(ws, userId)`                                         | `PATCH`, `DELETE /workspaces/:id/members/:userId`        |
 | `listInvitations(ws)`, `invite(ws, { email, role })`, `revokeInvitation(ws, id)`, `resendInvitation(ws, id)` | `/workspaces/:id/invitations…`                           |
 | `getInvitation(id)`, `acceptInvitation(id)`, `declineInvitation(id)`                                         | `/invitations/:id…`                                      |

@@ -8,7 +8,7 @@
 //                                             (409 `too_large`) past `READ_CAP_GUARD` rows in a table, unless ?force=1
 //   POST /admin/ember/back/:workspaceId       D1 says `brigade` again, and the DO holds the workspace as at the copy
 //   POST /admin/ember/auth/import?after=<id>  D1's users and accounts into the Auth object (RFC 0017 step 4), up to
-//                                             `IMPORT_PAGES` pages; `next` to go on from (can run again)
+//                                             `IMPORT_PAGES` pages; `next` to go on from, also on a failure (can run again)
 
 import { same } from "./alert-intake.ts";
 import { importAuthPage } from "./auth-ember.ts";
@@ -74,7 +74,8 @@ export async function serveMigration(
         const result = await importAuthPage(env, after);
         if (!result.ok) {
           log("auth import refused", { after, error: result.error });
-          return json({ ok: false, error: result.error, after, ...total }, 422);
+          // `next`: where to go on from once it is fixed, as every answer names it.
+          return json({ ok: false, error: result.error, ...total, next: after }, 422);
         }
         total.users += result.users;
         total.accounts += result.accounts;
@@ -88,7 +89,7 @@ export async function serveMigration(
       return json({ ok: true, ...total, next: after });
     } catch (error) {
       log("auth import failed", { after, error: String(error) });
-      return json({ error: "unavailable", message: String(error), after, ...total }, 503);
+      return json({ error: "unavailable", message: String(error), ...total, next: after }, 503);
     }
   }
   const match = ACTION.exec(pathname);

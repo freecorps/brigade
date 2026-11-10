@@ -33,7 +33,8 @@ async function undo(db: D1Database, workspaceId: string): Promise<void> {
  * Makes workspace `name` (already checked by `workspaceName`) with `owner` as its owner, then provisions its shard
  * (`provision`, as `onWorkspaceCreated` does on D1). At most `WORKSPACE_LIMIT` memberships per user, checked in the
  * same transaction as the insert: both rows go in only while the owner has fewer, so creates at once cannot pass it
- * together. One whose shard could not be provisioned is deleted again, so no workspace is left without its shard.
+ * together. One whose shard could not be provisioned is deleted again, so no workspace is left without its shard (unless
+D1 cannot delete it either: logged, as the organization plugin's undo is on D1's engine).
  * Throws only when D1 cannot take the rows.
  */
 export async function createWorkspaceInD1(

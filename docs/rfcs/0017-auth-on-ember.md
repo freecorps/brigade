@@ -96,8 +96,9 @@ Each is an Ember change with its own tests, released before Brigade uses it.
    through `Auth.api`, without `Authorization`, which Ember's `bearer()` would take for a session token; a session by
    id, for sockets, devices and Ember tokens, through Brigade's server-only `brigadeSession` endpoint, `findSession`).
    Then workspaces without the organization plugin: `POST /workspaces` writes `organization` and `member` to D1
-   (`createWorkspaceInD1`: the limit counted before and again after the insert, the shard provisioned, both undone
-   when either fails), and the first owner's bootstrap makes the verified account on the object (server-only
+   (`createWorkspaceInD1`: the limit checked in the insert's own transaction, the shard provisioned, the rows deleted
+   again when it cannot be; a D1 that cannot delete them either is logged, as the organization plugin's undo is on
+   D1's engine), and the first owner's bootstrap makes the verified account on the object (server-only
    `brigadeCreateOwner`, undone with `brigadeRemoveOwner`) and the workspace the same way.
    And QR sign-in's session on the object (server-only `brigadeQrSession`, its cookie signed with the object's secret;
    `brigadeEndSession` when it cannot be delivered), with no active workspace in it. That completes step 2: every

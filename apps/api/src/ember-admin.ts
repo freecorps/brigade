@@ -89,7 +89,10 @@ export async function serveMigration(
       return json({ ok: true, ...total, next: after });
     } catch (error) {
       log("auth import failed", { after, error: String(error) });
-      return json({ error: "unavailable", message: String(error), ...total, next: after }, 503);
+      return json(
+        { ok: false, error: "unavailable", message: String(error), ...total, next: after },
+        503,
+      );
     }
   }
   const match = ACTION.exec(pathname);

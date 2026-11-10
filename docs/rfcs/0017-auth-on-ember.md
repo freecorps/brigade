@@ -122,6 +122,10 @@ Each is an Ember change with its own tests, released before Brigade uses it.
    object's `importUsers`, ids and password hashes as they are, ids already there skipped, so it runs again safely
    (`?after=<next>` when one request did not finish). In order: import, switch the engine, import once more for
    anyone who signed up in between. Before switching, the environment's `DASHBOARD_URL` is on HTTPS (step 2).
+   The engine is set per instance, never by the committed top-level config: a self-hosted instance deploys that
+   config too, and switching it before its own import would leave its users on an empty object. `dev` sets it in its
+   config (#241, 2026-11-10); production, as every other instance, as a secret (`wrangler secret put AUTH_ENGINE`,
+   apps/api/README.md "Auth on Ember"), switched 2026-11-10.
    Sessions are not imported (that is the sign-out), and neither is `verification`: a password-reset or verification
    link sent before the cutover stops working, and its owner asks for another one (the owners are told). The
    `rateLimit` counts start over.

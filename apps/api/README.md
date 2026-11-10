@@ -64,6 +64,24 @@ roles and removal, invitations, …) would change D1 without the shard's member 
 event in the outbox (RFC 0005). Member roles, removal and leaving go through `/workspaces/:id/members/:userId`
 (below); deleting a workspace is off.
 
+### Auth on Ember (RFC 0017)
+
+`AUTH_ENGINE` says which Better Auth holds accounts and sessions: unset (or `d1`) is D1's, above; `ember` is the same
+rules in Ember's `Auth` Durable Object (`AUTH`, src/auth-ember.ts), with workspaces still in D1 and D1 keeping a copy
+of `user`. No committed config sets it outside `dev` (which is on Ember): a deploy never moves an instance's accounts
+by itself, since the object starts empty. An instance switches once, by hand:
+
+1. Deploy (the object and `/admin/ember/auth/import` come with every build) and set `MIGRATION_TOKEN` if it is not
+   set (`wrangler secret put MIGRATION_TOKEN`, 32 random bytes).
+2. `POST /admin/ember/auth/import` with `Authorization: Bearer <MIGRATION_TOKEN>` (on the dashboard's origin,
+   `/api/admin/ember/auth/import`) copies D1's users and accounts, password hashes included; ids already there are
+   skipped, and `?after=<next>` goes on where an answer stopped.
+3. `wrangler secret put AUTH_ENGINE` with `ember` (a secret, so later deploys of the config keep it). Every session
+   ends there: everyone signs in again with the password they had. `DASHBOARD_URL` must be on HTTPS.
+4. The import once more, for anyone who signed up between 2 and 3.
+
+Turning back is `wrangler secret delete AUTH_ENGINE` (RFC 0017 "Turning back" says what D1 does not get back).
+
 **Sign-up** (RFC 0002 "Sign-up modes", `src/sign-up.ts`): the `SIGNUP` variable is `open`, `invite` or `closed`, and
 unset (production, staging, a self-hosted instance) is `closed`. Under `invite` and `closed` only an address holding a
 pending invitation may sign up; anything else answers `403 SIGN_UP_CLOSED`. An instance without an email sender is

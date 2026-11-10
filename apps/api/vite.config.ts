@@ -10,17 +10,8 @@ import { workspaceSource } from "../../vite.workspace.ts";
  * `EMAIL_LOG` makes the email notifier log what it would send instead (src/email.ts), unless `EMAIL_FROM` is set.
  * `SIGNUP: "open"`: anyone signs up locally and in the tests, as on `dev` (src/sign-up.ts); the tests of the other modes
  * pass their own.
- * `AUTH_ENGINE: "d1"`: the top-level config is production's, on Ember's `Auth` object (RFC 0017), but a local D1's
- * accounts are not in a local object until they are imported (`POST /admin/ember/auth/import`), so local runs stay on
- * D1's engine (`ember` here, after importing, tries Ember's). The tests test both engines until step 5: a test picks
- * Ember's with `{ ...env, AUTH_ENGINE: "ember" }`.
  */
-export const LOCAL_VARS = {
-  SYNC_DEV_ACTOR: "1",
-  EMAIL_LOG: "1",
-  SIGNUP: "open",
-  AUTH_ENGINE: "d1",
-};
+export const LOCAL_VARS = { SYNC_DEV_ACTOR: "1", EMAIL_LOG: "1", SIGNUP: "open" };
 
 /**
  * Test-only Better Auth secret. Not a credential: it signs cookies inside one test run. Local dev and deployed

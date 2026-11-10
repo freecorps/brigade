@@ -29,7 +29,7 @@ export function lockedReadable<S extends KeyStore>(store: S, accessible: number)
   };
 }
 
-/** How many chunks `@better-auth/expo` (1.7.13: `MAX_STORAGE_CHUNKS`) may split a value into; more is never written. */
+/** How many chunks `@better-auth/expo` (1.7.17: `MAX_STORAGE_CHUNKS`) may split a value into; more is never written. */
 export const MAX_CHUNKS = 100;
 
 /**

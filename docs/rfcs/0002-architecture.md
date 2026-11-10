@@ -323,7 +323,7 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     sidebar) lists them (Better Auth's `organization/list`) and switches with `organization/set-active`, then opens
     the new workspace's shard; the switcher's New workspace (`/workspaces/new`) creates another with `POST /workspaces`. The mobile app does the same
     from its account section (RFC 0006 "Device registration" for what happens to the phone's pages).
-  - **Mobile (email and password, built):** Better Auth's Expo integration, `@better-auth/expo` 1.7.13: the server's
+  - **Mobile (email and password, built):** Better Auth's Expo integration, `@better-auth/expo` 1.7.17: the server's
     `expo()` plugin and the app's `expoClient` with `expo-secure-store`. The app keeps the session cookie in secure
     storage and sends it as a `Cookie` header it sets itself, on Better Auth's routes and on the sync upgrade (RFC
     0004 "Socket topology"), so the app and the dashboard share one kind of session and one check; no bearer plugin.

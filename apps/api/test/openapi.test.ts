@@ -380,6 +380,10 @@ const CASES: Record<string, () => Promise<Case>> = {
       status: 202,
     };
   },
+  listWorkspaces: async () => {
+    const owner = await signUp("Otto");
+    return { path: "/workspaces", init: {}, cookie: owner.cookie, status: 200 };
+  },
   createWorkspace: async () => {
     const owner = await signUp("Olga");
     return {

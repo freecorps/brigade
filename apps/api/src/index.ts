@@ -221,7 +221,11 @@ export default {
     if (pathname.startsWith(`${ADMIN_BASE}/`)) return serveMigration(request, env, pathname);
     const emberToken = EMBER_TOKEN_PATH.exec(pathname)?.[1];
     if (emberToken !== undefined) return issueEmberToken(request, env, auth, emberToken, waitUntil);
-    if (pathname === "/workspaces") return createWorkspace(request, auth);
+    if (pathname === "/workspaces") {
+      return READ_METHODS.includes(request.method)
+        ? listWorkspaces(request, env, auth)
+        : createWorkspace(request, auth);
+    }
     // Before anyone signs in: the sign-up mode, and the first owner of a new instance (RFC 0002 "Auth").
     if (pathname === "/config") {
       const setup = env as SetupEnv;
@@ -845,14 +849,43 @@ function provisionWith(env: Env): NonNullable<AuthBindings["onWorkspaceCreated"]
 }
 
 /**
+ * `GET /workspaces`: the signed-in user's workspaces with their role in each, oldest membership first, read from
+ * D1. What the organization plugin's `list` and `get-active-member` gave the clients, without an active workspace in
+ * the session: the clients keep the one they picked (RFC 0017 "The active workspace leaves the session").
+ */
+export async function listWorkspaces(
+  request: Request,
+  env: Env,
+  lazyAuth: () => Auth,
+): Promise<Response> {
+  try {
+    const session = await lazyAuth().api.getSession({ headers: request.headers });
+    if (!session) return json({ error: "unauthenticated" }, 401);
+    const { results } = await env.DB.prepare(
+      `select o.id, o.name, m.role from member m join organization o on o.id = m."organizationId"
+        where m."userId" = ? order by m."createdAt", o.id`,
+    )
+      .bind(session.user.id)
+      .all<{ id: string; name: string; role: string }>();
+    return json({ workspaces: results.map(({ id, name, role }) => ({ id, name, role })) });
+  } catch (error) {
+    console.error(JSON.stringify({ message: "listing workspaces failed", error: String(error) }));
+    return json({ error: "unavailable" }, 503);
+  }
+}
+
+/**
  * `POST /workspaces` `{ name }`: creates a workspace for the signed-in user, who becomes its owner, and makes
  * it the session's active workspace. Better Auth writes the organization and the membership to D1; its
  * `afterCreateOrganization` hook provisions the shard (`workspace.created` in its outbox); if that fails, the
  * workspace is deleted again and this answers 500.
  */
 export async function createWorkspace(request: Request, lazyAuth: () => Auth): Promise<Response> {
-  if (request.method !== "POST")
-    return json({ error: "method_not_allowed" }, 405, { Allow: "POST" });
+  if (request.method !== "POST") {
+    return json({ error: "method_not_allowed" }, 405, {
+      Allow: [...READ_METHODS, "POST"].join(", "),
+    });
+  }
   const origin = request.headers.get("Origin");
   // A cookie-authenticated write: refuse other sites (Better Auth does the same on its own routes).
   if (origin !== null && origin !== new URL(request.url).origin) {

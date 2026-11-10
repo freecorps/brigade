@@ -430,6 +430,43 @@ const LISTED: readonly Operation[] = [
     ),
   },
   {
+    method: "get",
+    path: "/workspaces",
+    operationId: "listWorkspaces",
+    tag: "Workspaces",
+    summary: "List your workspaces",
+    description:
+      "The signed-in user's workspaces and their role in each, oldest membership first. The client keeps the one " +
+      "it shows; the session holds no active workspace for it.",
+    auth: "session",
+    responses: answers(
+      {
+        200: {
+          description: "The memberships.",
+          body: {
+            type: "object",
+            properties: {
+              workspaces: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string", pattern: WORKSPACE_ID_PATTERN },
+                    name: toJsonSchema(workspaceName),
+                    role: ref("Role"),
+                  },
+                  required: ["id", "name", "role"],
+                },
+              },
+            },
+            required: ["workspaces"],
+          },
+        },
+      },
+      refusals({ 401: ["unauthenticated"] }, { 503: ["unavailable"] }),
+    ),
+  },
+  {
     method: "post",
     path: "/workspaces",
     operationId: "createWorkspace",

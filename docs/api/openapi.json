@@ -360,6 +360,103 @@
       }
     },
     "/workspaces": {
+      "get": {
+        "operationId": "listWorkspaces",
+        "tags": [
+          "Workspaces"
+        ],
+        "summary": "List your workspaces",
+        "description": "The signed-in user's workspaces and their role in each, oldest membership first. The client keeps the one it shows; the session holds no active workspace for it.",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The memberships.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "workspaces": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 80
+                          },
+                          "role": {
+                            "$ref": "#/components/schemas/Role"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "role"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "workspaces"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "operationId": "createWorkspace",
         "tags": [

@@ -433,6 +433,47 @@ describe("Better Auth routes", () => {
   });
 });
 
+describe("GET /workspaces", () => {
+  test("lists the caller's workspaces with their role, oldest membership first", async () => {
+    const [ana, bia, eva] = await Promise.all([signUp("Ana"), signUp("Bia"), signUp("Eva")]);
+    const acme = await createWorkspace(ana.cookie, "Acme");
+    const ops = await createWorkspace(bia.cookie, "Ops");
+    await addMember(ops.id, ana.user.id, "admin");
+    const list = async (cookie?: string, method = "GET") => {
+      const response = await api("/workspaces", {
+        method,
+        headers: cookie ? { Cookie: cookie } : {},
+      });
+      return {
+        status: response.status,
+        body: method === "HEAD" ? undefined : await response.json(),
+      };
+    };
+
+    expect(await list(ana.cookie)).toEqual({
+      status: 200,
+      body: {
+        workspaces: [
+          { id: acme.id, name: "Acme", role: "owner" },
+          { id: ops.id, name: "Ops", role: "admin" },
+        ],
+      },
+    });
+    expect((await list(bia.cookie)).body).toEqual({
+      workspaces: [{ id: ops.id, name: "Ops", role: "owner" }],
+    });
+    expect(await list(eva.cookie)).toEqual({ status: 200, body: { workspaces: [] } });
+    expect(await list()).toEqual({ status: 401, body: { error: "unauthenticated" } });
+    expect((await list(ana.cookie, "HEAD")).status).toBe(200);
+  });
+
+  test("other methods than GET, HEAD and POST are refused with Allow", async () => {
+    const response = await api("/workspaces", { method: "DELETE" });
+    expect(response.status).toBe(405);
+    expect(response.headers.get("Allow")).toBe("GET, HEAD, POST");
+  });
+});
+
 describe("POST /workspaces", () => {
   test("creates a workspace owned by the user, active in the session, with its shard provisioned", async () => {
     const ana = await signUp("Ana");
@@ -605,7 +646,9 @@ describe("POST /workspaces", () => {
       body: '{"name":"Acme"}',
     });
     expect(crossSite.status).toBe(403);
-    expect((await api("/workspaces", { headers: { Cookie: ana.cookie } })).status).toBe(405);
+    expect(
+      (await api("/workspaces", { method: "PUT", headers: { Cookie: ana.cookie } })).status,
+    ).toBe(405);
   });
 });
 

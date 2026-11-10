@@ -650,7 +650,12 @@ async function signOutBackground(clients: InstanceClients): Promise<"done" | "st
   let answered = false;
   let stored = false;
   await signOutPhone(
-    { userId, workspaceId: opened?.kind === "open" ? opened.workspaceId : "" },
+    {
+      userId,
+      // The kept pick still being read (or never read here): the session's hint, as before the store.
+      workspaceId:
+        opened?.kind === "open" ? opened.workspaceId : (sessionHint(data?.session) ?? ""),
+    },
     {
       cookie: () => clients.authClient.getCookie(),
       unregister: null,

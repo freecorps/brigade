@@ -1,0 +1,4 @@
+self-hosted-runner:
+  # Larger GitHub-hosted runner label with Xcode 27 (the iOS job in mobile.yml).
+  labels:
+    - xcode-27

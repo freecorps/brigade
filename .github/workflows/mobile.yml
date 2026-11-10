@@ -72,7 +72,9 @@ jobs:
             runner: ubuntu-24.04
             extension: aab
           - platform: ios
-            runner: macos-26
+            # Expo SDK 58 targets the iOS 27 SDK; the macos-26 image tops out at Xcode 26.6 (iOS 26.5 SDK).
+            # `xcode-27` is GitHub's macOS image with Xcode 27.x (declared in .github/actionlint.yaml).
+            runner: xcode-27
             extension: ipa
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
@@ -147,8 +149,9 @@ jobs:
         if: steps.fingerprint.outputs.built != 'true' && matrix.platform == 'ios'
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          # App Store Connect takes no beta Xcode builds.
-          xcode-version: latest-stable
+          # Pinned, not latest-stable: App Store Connect takes no beta Xcode builds, and a new Xcode is a deliberate
+          # change (it changes the binary, not the fingerprint). 27.1 is the release the store builds came from.
+          xcode-version: "27.1"
       # eas-cli starts its local build plugin with `npx` from apps/mobile, where npm refuses to run under the root
       # `devEngines` (Bun). Installed with Bun outside the repository instead, at eas-cli's own version, and passed
       # through eas-cli's EAS_LOCAL_BUILD_PLUGIN_PATH, as scripts/mobile-build.mjs does.

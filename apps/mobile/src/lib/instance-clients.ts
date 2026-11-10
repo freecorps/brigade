@@ -35,6 +35,7 @@ import {
 } from "@/lib/instances";
 import type { PendingFiles } from "@/lib/pending";
 import { pendingFilesFor } from "@/lib/pending-files";
+import { listWorkspaces, membershipsStore, type MembershipsStore } from "@/lib/memberships";
 import { phoneWorkspacesAt } from "@/lib/phone";
 import type { PhoneWorkspacesStore } from "@/lib/phone-workspaces";
 import { buildRelay, loadConfig, withHandle, type InstanceConfig } from "@/lib/relay";
@@ -68,6 +69,8 @@ export type InstanceClients = {
   authClient: AuthClient;
   storage: InstanceStorage;
   phoneWorkspaces: PhoneWorkspacesStore;
+  /** The member's workspaces there and the one the app opens (src/lib/memberships.ts). */
+  memberships: MembershipsStore;
   pendingFiles: PendingFiles;
 };
 
@@ -80,12 +83,20 @@ export function clientsFor(instance: Instance): InstanceClients {
   if (!clients) {
     const storage = instanceStorage(instance.id);
     const server = serverAt(instance.origin);
+    const authClient = brigadeAuthClient(server.auth, secureStore, storage.auth);
     clients = {
       instance,
       server,
-      authClient: brigadeAuthClient(server.auth, secureStore, storage.auth),
+      authClient,
       storage,
       phoneWorkspaces: phoneWorkspacesAt(storage.workspaces),
+      memberships: membershipsStore({
+        list: async () =>
+          listWorkspaces(server.workspaces, await authClient.getCookie().catch(() => "")),
+        read: () => SecureStore.getItemAsync(storage.workspace),
+        write: (raw) => SecureStore.setItemAsync(storage.workspace, raw),
+        remove: () => SecureStore.deleteItemAsync(storage.workspace),
+      }),
       pendingFiles: pendingFilesFor(instance.id),
     };
     made.set(key, clients);

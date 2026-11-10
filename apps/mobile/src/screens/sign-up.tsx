@@ -81,7 +81,7 @@ export function SignUp() {
       return;
     }
     if (!instance) return;
-    const { authClient, server } = instance;
+    const { authClient, server, memberships } = instance;
     sending.current = true;
     setBusy(true);
     setFailure(null);
@@ -106,13 +106,9 @@ export function SignUp() {
     }
     const cookie = await authClient.getCookie().catch(() => "");
     const created = await createWorkspace(server.workspaces, values.workspace.trim(), cookie);
-    if (created?.ok) {
-      try {
-        await authClient.organization.setActive({ organizationId: created.id });
-      } catch {
-        // The server made it active already; the session reads it once back online.
-      }
-    }
+    // Their only workspace: the app opens it once the session reads the list, which is read again here in case it
+    // was read before the workspace existed.
+    if (created?.ok) await memberships.load().catch(() => undefined);
     // Signed in: the stack moves to the incidents, or to the sign-in screen's "create a workspace" if that failed.
     // Opened with nothing behind it (a link straight to sign-up), it goes home, which shows either.
     sending.current = false;

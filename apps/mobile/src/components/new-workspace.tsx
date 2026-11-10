@@ -16,9 +16,9 @@ export function workspaceNameError(name: string): string | undefined {
 }
 
 /**
- * Names and creates a workspace the member owns (`POST /api/workspaces`), then makes it active, which opens it: the
- * session moves to it and the phone registers there too, keeping its other workspaces' registrations (RFC 0006
- * "Device registration"). `onDone`: after it is active.
+ * Names and creates a workspace the member owns (`POST /api/workspaces`), then picks it, which opens it: the app
+ * keeps it as the one to open (src/lib/memberships.ts) and the phone registers there too, keeping its other
+ * workspaces' registrations (RFC 0006 "Device registration"). `onDone`: after it is picked.
  */
 export function NewWorkspaceForm({
   onDone,
@@ -54,7 +54,7 @@ export function NewWorkspaceForm({
 
   const submit = async () => {
     if (sending.current || !instance) return;
-    const { authClient, server } = instance;
+    const { authClient, server, memberships } = instance;
     const found = workspaceNameError(name);
     setError(found);
     if (found) {
@@ -75,15 +75,9 @@ export function NewWorkspaceForm({
             : m.auth_error_generic(),
       );
     }
-    // Created with a request of the app's own, which Better Auth's client does not see: its cached list of the
-    // member's workspaces (the account section's) is read again, so the new one shows there.
-    authClient.$store.notify("$listOrg");
-    // The server made it active already; this tells the session hooks to read it again.
-    try {
-      await authClient.organization.setActive({ organizationId: created.id });
-    } catch {
-      // Offline right after creating it: the session reads the new workspace once back.
-    }
+    // The list is read again with it (the account section's too), and it opens. Offline right after creating it, the
+    // app stays where it is and the new workspace is listed once the list is read again.
+    await memberships.pick(created.id).catch(() => false);
     sending.current = false;
     setBusy(false);
     onDone?.();

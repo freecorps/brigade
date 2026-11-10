@@ -88,3 +88,22 @@ test("forgetting the session signs out here without telling the server", async (
   expect(fetch).not.toHaveBeenCalled();
   expect(await client.getCookie()).toBe("");
 });
+
+test("a session from either engine is kept: D1's `better-auth.*` cookies and Ember's `brigade.*` ones", async () => {
+  for (const name of ["better-auth.session_token", "__Secure-brigade.session_token"]) {
+    const storage = memoryStore();
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        new Response(JSON.stringify({ token: "t", user: { id: "usr_1" } }), {
+          headers: {
+            "content-type": "application/json",
+            "set-cookie": `${name}=fresh.sig; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=3600`,
+          },
+        }),
+    );
+    const client = brigadeAuthClient("https://brigade.test/api/auth", storage);
+    await client.signIn.email({ email: "a@brigade.test", password: "password1234" });
+    expect(await client.getCookie()).toContain(`${name}=fresh.sig`);
+  }
+});

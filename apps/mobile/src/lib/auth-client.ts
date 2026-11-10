@@ -2,8 +2,9 @@
 // the Keychain or Android Keystore (expo-secure-store) by `@better-auth/expo`, which sends it back as a `Cookie` header
 // and the app's scheme as `expo-origin` (apps/api/src/auth.ts, `APP_ORIGIN`). One per instance (RFC 0015 section 5),
 // each under its own storage prefix (src/lib/instances.ts `instanceStorage`); src/lib/instance-clients.ts makes them.
+// No organization plugin: the member's workspaces come from `GET /api/workspaces` (src/lib/memberships.ts, RFC 0017).
 import { expoClient, getCookie, getSetCookie, storageAdapter } from "@better-auth/expo/client";
-import { inferAdditionalFields, organizationClient } from "better-auth/client/plugins";
+import { inferAdditionalFields } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 import type * as SecureStore from "expo-secure-store";
 import { defaultBuildOrigin } from "@/lib/build-origin";
@@ -37,8 +38,10 @@ export function brigadeAuthClient(
         // read, so the app opens signed in without the network); `:` is written `_`.
         storagePrefix,
         storage,
+        // The cookies it keeps: `better-auth.*` from D1's engine, `brigade.*` from Ember's (its cookies are named
+        // after the project, RFC 0017), so a session from either is kept.
+        cookiePrefix: ["better-auth", "brigade"],
       }),
-      organizationClient(),
       // `locale`: the language Brigade writes to the user in, set at sign-up (apps/api src/auth.ts).
       inferAdditionalFields({ user: { locale: { type: "string", required: false } } }),
     ],

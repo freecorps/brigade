@@ -94,11 +94,11 @@ export function usePageTaps(): void {
     }
     if (step === "switch" && clients) {
       switchingTo = page.workspace;
-      void clients.authClient.organization
-        .setActive({ organizationId: page.workspace })
-        .then((result) => {
+      void clients.memberships
+        .pick(page.workspace)
+        .then((picked) => {
           // Not a member there any more, or offline: the app stays where it is and the page is dropped.
-          if (result.error && pending === page) pending = null;
+          if (!picked && pending === page) pending = null;
         })
         .catch(() => {
           if (pending === page) pending = null;

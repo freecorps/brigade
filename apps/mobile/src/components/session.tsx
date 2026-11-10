@@ -69,7 +69,8 @@ import {
   type FinishResult,
 } from "@/lib/sign-out";
 import { primeToken } from "@/lib/ember-token";
-import { knownWorkspace, memberActor, settledRole, type Server } from "@/lib/sync";
+import { openingOf, type Memberships } from "@/lib/memberships";
+import { memberActor, settledRole, type Server } from "@/lib/sync";
 import { setCurrentSync, type WorkspaceSync } from "@/lib/sync-client";
 import { createEmberWorkspaceSync, openOneShot } from "@/lib/ember-client";
 import { clearWidget, WidgetSnapshot } from "@/components/widget";
@@ -128,6 +129,30 @@ export function useMember(): Member {
 export function useOnline(): boolean {
   const network = useNetworkState();
   return (network.isInternetReachable ?? network.isConnected) !== false;
+}
+
+/** D1's active organization on a session, if any: only a hint of which workspace to open (src/lib/memberships.ts). */
+function sessionHint(session: object | null | undefined): string | undefined {
+  const value: unknown = session ? Reflect.get(session, "activeOrganizationId") : undefined;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/**
+ * The member's workspaces at the instance and the one kept as last opened, read for `userId` (src/lib/memberships.ts);
+ * null without a member, or until they are theirs.
+ */
+export function useMemberships(
+  clients: InstanceClients,
+  userId: string | undefined,
+): Memberships | null {
+  const store = clients.memberships;
+  const state = useSyncExternalStore(store.subscribe, () =>
+    userId ? store.current(userId) : null,
+  );
+  useEffect(() => {
+    if (userId) store.own(userId);
+  }, [store, userId]);
+  return state;
 }
 
 /** The latest value, for effects that should run on something else changing. */
@@ -292,7 +317,8 @@ function BackgroundInstance({ clients }: { clients: InstanceClients }) {
   const session = clients.authClient.useSession();
   const online = useOnline();
   const userId = session.data?.user.id;
-  const workspaceId = session.data?.session.activeOrganizationId ?? undefined;
+  const opening = openingOf(useMemberships(clients, userId), sessionHint(session.data?.session));
+  const workspaceId = opening.kind === "open" ? opening.workspaceId : undefined;
   const store = clients.phoneWorkspaces;
   const listed = useSyncExternalStore(store.subscribe, () =>
     userId ? store.current(userId) : null,
@@ -373,13 +399,20 @@ function InstanceSession({
   }, [online, failed, refetch]);
 
   const data = session.data;
-  const workspaceId = data?.session.activeOrganizationId;
+  const memberships = useMemberships(clients, data?.user.id);
+  const opening = openingOf(memberships, sessionHint(data?.session));
+  const workspaceId = opening.kind === "open" ? opening.workspaceId : undefined;
+  // A list that could not be read is read again on reconnect too.
+  const listFailed = Boolean(memberships?.error);
+  useEffect(() => {
+    if (online && listFailed) void clients.memberships.load();
+  }, [online, listFailed, clients]);
   // Emails to them come in the phone's language (RFC 0008).
   useUserLocale(authClient, data?.user);
   // With nobody in a workspace to register for, kept sign-outs are still finished; ActiveWorkspace does both.
   usePaging(server, !(data && workspaceId), online, null);
   let view: SessionView;
-  if (data && workspaceId) {
+  if (data && opening.kind === "open") {
     return (
       // Keyed: switching workspaces opens the new one from scratch (its own socket, queue of unsent changes and
       // registration), while the old one's registration stays, so its pages still arrive (RFC 0006).
@@ -389,14 +422,22 @@ function InstanceSession({
         userId={data.user.id}
         name={data.user.name}
         email={data.user.email}
-        workspaceId={workspaceId}
+        workspaceId={opening.workspaceId}
+        liveName={opening.listed ? opening.name : undefined}
+        liveRole={opening.listed ? opening.role : undefined}
+        known={memberships?.known?.workspaceId === opening.workspaceId ? memberships.known : null}
+        listFailed={listFailed}
         sessionToken={data.session.token}
         online={online}
       >
         {children}
       </ActiveWorkspace>
     );
-  } else if (data) view = { kind: "no-workspace", signOut: () => signOut(clients) };
+  } else if (data && opening.kind === "none") {
+    view = { kind: "no-workspace", signOut: () => signOut(clients) };
+  } else if (data && opening.kind === "unavailable") {
+    view = { kind: "unavailable", retry: () => void clients.memberships.load() };
+  } else if (data) view = { kind: "loading" };
   else if (session.isPending) view = { kind: "loading" };
   else if (session.error) view = { kind: "unavailable", retry: () => void session.refetch() };
   else view = { kind: "signed-out" };
@@ -498,23 +539,23 @@ async function signOut(clients: InstanceClients): Promise<void> {
   await signOutHere(clients);
   await forgetMember(clients);
   clearWidget();
-  await SecureStore.deleteItemAsync(clients.storage.workspace).catch(() => {});
+  await clients.memberships.forget();
   await dropQueues(clients.pendingFiles).catch(() => {});
 }
 
 /**
- * Opens instance `id` (the switcher, RFC 0015 section 5), in `workspaceId` when given: that workspace is made active
- * there first, with that instance's own session, so it opens on it. A workspace that could not be made active (offline)
- * still opens the instance, on the workspace it had. The instance left keeps paging this phone in the background.
+ * Opens instance `id` (the switcher, RFC 0015 section 5), in `workspaceId` when given: that workspace is picked there
+ * first (src/lib/memberships.ts), from that instance's own list, so it opens on it. A workspace that could not be
+ * picked (offline, not listed) still opens the instance, on the workspace it had. The instance left keeps paging this
+ * phone in the background.
  */
 export async function openInstance(id: string, workspaceId?: string): Promise<void> {
   const instance = instances.current().instances.find((one) => one.id === id);
   if (!instance) return;
-  if (workspaceId) {
+  if (workspaceId)
     await clientsFor(instance)
-      .authClient.organization.setActive({ organizationId: workspaceId })
-      .catch(() => undefined);
-  }
+      .memberships.pick(workspaceId)
+      .catch(() => false);
   await instances.activate(id);
 }
 
@@ -599,13 +640,17 @@ export async function signOutInstance(
 async function signOutBackground(clients: InstanceClients): Promise<"done" | "stuck"> {
   // As last read (the background instance keeps it), so this works offline too.
   const data = clients.authClient.$store.atoms.session?.get().data as
-    | { user: { id: string }; session: { activeOrganizationId?: string | null } }
+    | { user: { id: string }; session: object }
     | null
     | undefined;
+  const userId = data?.user.id ?? "";
+  const opened = userId
+    ? openingOf(clients.memberships.current(userId), sessionHint(data?.session))
+    : null;
   let answered = false;
   let stored = false;
   await signOutPhone(
-    { userId: data?.user.id ?? "", workspaceId: data?.session.activeOrganizationId ?? "" },
+    { userId, workspaceId: opened?.kind === "open" ? opened.workspaceId : "" },
     {
       cookie: () => clients.authClient.getCookie(),
       unregister: null,
@@ -621,7 +666,7 @@ async function signOutBackground(clients: InstanceClients): Promise<"done" | "st
     },
   );
   await forgetMember(clients);
-  await SecureStore.deleteItemAsync(clients.storage.workspace).catch(() => {});
+  await clients.memberships.forget();
   return backgroundSignOut(answered, stored);
 }
 
@@ -645,6 +690,10 @@ function ActiveWorkspace({
   name,
   email,
   workspaceId,
+  liveName,
+  liveRole,
+  known,
+  listFailed,
   sessionToken,
   online,
   children,
@@ -654,49 +703,32 @@ function ActiveWorkspace({
   name: string;
   email: string;
   workspaceId: string;
+  /** The workspace's name and the member's role there as the list says; undefined until it does. */
+  liveName: string | undefined;
+  liveRole: Role | undefined;
+  /** The workspace and role as kept from the last time it was opened: offline, the app opens with them. */
+  known: { name: string; role: Role } | null;
+  /** The last read of the list had no answer. */
+  listFailed: boolean;
   sessionToken: string;
   online: boolean;
   children: (ready: boolean) => ReactNode;
 }) {
-  const { authClient, server, phoneWorkspaces, pendingFiles } = clients;
+  const { authClient, server, phoneWorkspaces, memberships, pendingFiles } = clients;
   const knownKey = clients.storage.workspace;
-  const workspace = authClient.useActiveOrganization();
-  const member = authClient.useActiveMember();
 
-  // The workspace and role as last read: offline, the app opens with them and reads them again once online.
-  const [known, setKnown] = useState<{ name: string; role: Role } | null | undefined>(undefined);
-  useEffect(() => {
-    let live = true;
-    void SecureStore.getItemAsync(knownKey)
-      .catch(() => null)
-      .then((raw) => {
-        if (live) setKnown(knownWorkspace(raw, userId, workspaceId));
-      });
-    return () => {
-      live = false;
-    };
-  }, [knownKey, userId, workspaceId]);
-  const liveName = workspace.data?.name;
-  const liveRole = member.data?.role;
+  // Kept as last opened with the name and role as read: offline, the next launch opens it with them.
   useEffect(() => {
     if (liveName === undefined || liveRole === undefined) return;
-    const role = memberActor(userId, liveRole).role;
-    void SecureStore.setItemAsync(
-      knownKey,
-      JSON.stringify({ userId, workspaceId, name: liveName, role }),
-    ).catch(() => {});
-  }, [knownKey, userId, workspaceId, liveName, liveRole]);
-  const refetchWorkspace = useLatest(workspace.refetch);
-  const refetchMember = useLatest(member.refetch);
-  // Back online: read them again, so a remembered name or role does not linger.
+    memberships.keep({ userId, workspaceId, name: liveName, role: liveRole });
+  }, [memberships, userId, workspaceId, liveName, liveRole]);
+  // Back online: the list is read again, so a remembered name or role does not linger.
   const wasOnline = useRef(online);
   useEffect(() => {
     const back = online && !wasOnline.current;
     wasOnline.current = online;
-    if (!back) return;
-    void refetchWorkspace.current();
-    void refetchMember.current();
-  }, [online, refetchWorkspace, refetchMember]);
+    if (back) void memberships.load();
+  }, [online, memberships]);
 
   const workspaceName = liveName ?? known?.name;
   const actor = memberActor(userId, liveRole ?? known?.role);
@@ -865,7 +897,7 @@ function ActiveWorkspace({
         lifetime: SESSION_LIFETIME_MS,
       },
     );
-    await SecureStore.deleteItemAsync(knownKey).catch(() => {});
+    await memberships.forget();
     // The engine record of builds before 0.2.0's Ember-only client (`<known key>.engines`).
     await SecureStore.deleteItemAsync(`${knownKey}.engines`).catch(() => {});
     // Their shifts leave the home and lock screens with them.
@@ -875,7 +907,18 @@ function ActiveWorkspace({
     await forgetMember(clients);
     await dropQueues(pendingFiles).catch(() => {});
     return result;
-  }, [clients, authClient, server, knownKey, pendingFiles, sync, userId, workspaceId, stopPaging]);
+  }, [
+    clients,
+    authClient,
+    server,
+    knownKey,
+    memberships,
+    pendingFiles,
+    sync,
+    userId,
+    workspaceId,
+    stopPaging,
+  ]);
 
   const ready = Boolean(sync && restored === sync && workspaceName !== undefined);
   const value = useMemo<SessionView>(() => {
@@ -897,16 +940,7 @@ function ActiveWorkspace({
         },
       };
     }
-    // Still reading what was remembered: not a failure yet.
-    if (known !== undefined && (workspace.error || member.error)) {
-      return {
-        kind: "unavailable",
-        retry: () => {
-          void workspace.refetch();
-          void member.refetch();
-        },
-      };
-    }
+    if (listFailed) return { kind: "unavailable", retry: () => void memberships.load() };
     return { kind: "loading" };
   }, [
     ready,
@@ -915,9 +949,8 @@ function ActiveWorkspace({
     email,
     workspaceId,
     workspaceName,
-    known,
-    workspace,
-    member,
+    listFailed,
+    memberships,
     actor.role,
     paging,
     pagedWorkspaces,

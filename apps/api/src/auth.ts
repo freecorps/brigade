@@ -43,6 +43,7 @@ import {
   signUpAllowed,
   type SignUpMode,
 } from "./sign-up.ts";
+import { makeSignature } from "better-auth/crypto";
 import { createAccessControl } from "better-auth/plugins/access";
 import { adminAc, defaultStatements, ownerAc } from "better-auth/plugins/organization/access";
 
@@ -1043,17 +1044,117 @@ export function emberAuthOptions(bindings: AuthBindings, self: Self = {}) {
   } satisfies BetterAuthOptions;
 }
 
+/**
+ * A failure inside one of the object's endpoints, as Better Auth's refusal: `Auth.api` answers it as `{ ok: false }`
+ * (src/auth-ember.ts throws it in the Worker), where any other error would cross the RPC as an unhandled rejection.
+ */
+function failedOnObject(what: string, error: unknown): APIError {
+  console.error(JSON.stringify({ message: `${what} failed`, error: String(error) }));
+  return APIError.from("INTERNAL_SERVER_ERROR", { code: "FAILED", message: `${what} failed` });
+}
+
+/** `session.signInMethod` for a session a QR sign-in made (src/app-sign-in.ts). */
+export const SIGN_IN_METHOD_QR = "qr";
+
+/** A QR sign-in's session as the phone gets it: the cookie's signed value and attributes, and whose it is. */
+export type QrSession = {
+  token: string;
+  signed: string;
+  cookie: { name: string; path: string; secure: boolean };
+  expiresAt: number;
+  user: { id: string; name: string; email: string };
+};
+
 /** A session as the API checks one by id: whose it is and when it expires (ms since the epoch). */
 export type SessionById = { userId: string; expiresAt: number };
 
 /**
- * What the API read from D1's `session` itself, on the object (RFC 0017 "Sessions are read over RPC"): a session by id
- * (a socket's, a device's, the one a token names), through `Auth.api("brigadeSession", { body: { id } })`. Server-only:
- * never on the HTTP router, so no client reaches it.
+ * What the API did with D1's identity tables itself, on the object (RFC 0017), through `Auth.api(endpoint, { body })`.
+ * Server-only: never on the HTTP router, so no client reaches them.
+ * - `brigadeSession` `{ id }`: a session by id (a socket's, a device's, the one a token names), or null.
+ * - `brigadeCreateOwner` `{ email, name, password }`: the first owner of a new instance (src/bootstrap.ts), verified, as
+ *   on D1, replacing an account a failed run left at that address. `brigadeRemoveOwner` `{ id }` undoes it when the
+ *   rest of the setup failed.
+ * - `brigadeQrSession` `{ userId, deviceName, ipAddress, userAgent }`: a QR sign-in's session for the phone
+ *   (src/app-sign-in.ts), its cookie value signed with the object's secret; `brigadeEndSession` `{ token }` ends it
+ *   when it could not be delivered.
  */
 export const brigadeSessions = {
   id: "brigade-sessions",
   endpoints: {
+    brigadeCreateOwner: createAuthEndpoint.serverOnly({ method: "POST" }, async (ctx) => {
+      const body = Object(ctx.body) as Record<string, unknown>;
+      const { email, name, password } = body;
+      if (typeof email !== "string" || typeof name !== "string" || typeof password !== "string") {
+        throw APIError.from("BAD_REQUEST", { code: "INVALID_OWNER", message: "Invalid owner" });
+      }
+      const { internalAdapter } = ctx.context;
+      // Only the bootstrap calls this, on an instance whose D1 has no user, holding its latch: an account at this
+      // address on the object is what a failed run could not remove, and would make every run after it fail.
+      const leftover = await internalAdapter.findUserByEmail(email.toLowerCase());
+      if (leftover) await internalAdapter.deleteUser(leftover.user.id);
+      const hash = await ctx.context.password.hash(password);
+      const user = await internalAdapter.createUser(
+        { email, name, emailVerified: true },
+        { method: "email-password" },
+      );
+      try {
+        await internalAdapter.linkAccount({
+          userId: user.id,
+          providerId: "credential",
+          accountId: user.id,
+          password: hash,
+        });
+      } catch (error) {
+        // No account without its password: the caller never got this user's id to undo it.
+        await internalAdapter.deleteUser(user.id);
+        throw failedOnObject("creating the first owner", error);
+      }
+      return ctx.json({ id: user.id });
+    }),
+    brigadeQrSession: createAuthEndpoint.serverOnly({ method: "POST" }, async (ctx) => {
+      const body = Object(ctx.body) as Record<string, unknown>;
+      const text = (value: unknown) => (typeof value === "string" ? value : "");
+      const { internalAdapter } = ctx.context;
+      const user = await internalAdapter.findUserById(text(body.userId));
+      if (!user)
+        throw APIError.from("NOT_FOUND", { code: "USER_GONE", message: "The user is gone" });
+      const session = await internalAdapter.createSession(user.id, false, {
+        deviceName: text(body.deviceName),
+        signInMethod: SIGN_IN_METHOD_QR,
+        ipAddress: text(body.ipAddress),
+        userAgent: text(body.userAgent),
+      });
+      const cookie = ctx.context.authCookies.sessionToken;
+      try {
+        const made: QrSession = {
+          token: session.token,
+          signed: `${session.token}.${await makeSignature(session.token, ctx.context.secret)}`,
+          cookie: {
+            name: cookie.name,
+            path: cookie.attributes.path ?? "/",
+            secure: cookie.attributes.secure === true,
+          },
+          expiresAt: new Date(session.expiresAt).getTime(),
+          user: { id: user.id, name: user.name, email: user.email },
+        };
+        return ctx.json(made);
+      } catch (error) {
+        // The caller never got its token to end it: no session left live and undelivered.
+        await internalAdapter.deleteSession(session.token);
+        throw failedOnObject("making a QR sign-in's session", error);
+      }
+    }),
+    brigadeEndSession: createAuthEndpoint.serverOnly({ method: "POST" }, async (ctx) => {
+      const token: unknown = Reflect.get(Object(ctx.body), "token");
+      if (typeof token === "string") await ctx.context.internalAdapter.deleteSession(token);
+      return ctx.json({ ok: true });
+    }),
+    brigadeRemoveOwner: createAuthEndpoint.serverOnly({ method: "POST" }, async (ctx) => {
+      const id: unknown = Reflect.get(Object(ctx.body), "id");
+      if (typeof id === "string") await ctx.context.internalAdapter.deleteUser(id);
+      return ctx.json({ ok: true });
+    }),
     brigadeSession: createAuthEndpoint.serverOnly({ method: "POST" }, async (ctx) => {
       const id: unknown = Reflect.get(Object(ctx.body), "id");
       if (typeof id !== "string") return ctx.json(null);

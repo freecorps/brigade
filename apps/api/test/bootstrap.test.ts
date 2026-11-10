@@ -4,7 +4,7 @@ import { env } from "cloudflare:workers";
 import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, test } from "vite-plus/test";
 import { bootstrapFirstUser } from "../src/bootstrap.ts";
-import worker, { workerAuth } from "../src/index.ts";
+import worker, { emberOwners, workerAuth } from "../src/index.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
 import { sessionCookie } from "./session.ts";
 
@@ -30,11 +30,20 @@ beforeEach(async () => {
 
 function setup(
   body: unknown = FIRST,
-  { token = TOKEN, secret = TOKEN as string | null, method = "POST" } = {},
+  {
+    token = TOKEN,
+    secret = TOKEN as string | null,
+    method = "POST",
+    engine = undefined as "ember" | undefined,
+  } = {},
 ) {
   // null: the secret is not set.
   const { BOOTSTRAP_TOKEN: _unset, ...rest } = env as typeof env & { BOOTSTRAP_TOKEN?: string };
-  const instance = (secret === null ? rest : { ...rest, BOOTSTRAP_TOKEN: secret }) as typeof env;
+  const instance = {
+    ...rest,
+    ...(secret === null ? {} : { BOOTSTRAP_TOKEN: secret }),
+    ...(engine ? { AUTH_ENGINE: engine } : {}),
+  } as typeof env;
   const request = new Request(`${ORIGIN}/setup/first-user`, {
     method,
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -189,5 +198,106 @@ describe("POST /setup/first-user", () => {
 
   test("only POST", async () => {
     expect((await setup(FIRST, { method: "GET" })).status).toBe(405);
+  });
+});
+
+describe("POST /setup/first-user on the Ember engine", () => {
+  const ember = { ...env, AUTH_ENGINE: "ember" } as typeof env;
+  const signIn = (email: string, password: string) =>
+    worker.fetch(
+      new Request(`${ORIGIN}/auth/sign-in/email`, {
+        method: "POST",
+        headers: {
+          Origin: ORIGIN,
+          "Content-Type": "application/json",
+          "cf-connecting-ip": "203.0.113.9",
+        },
+        body: JSON.stringify({ email, password }),
+      }) as Parameters<typeof worker.fetch>[0],
+      ember,
+      createExecutionContext(),
+    );
+
+  test("the owner on the Auth object, verified and copied to D1; the workspace in D1 with its shard", async () => {
+    const first = { ...FIRST, email: "ember-owner@example.com" };
+    const response = await setup(first, { engine: "ember" });
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { userId: string; workspaceId: string };
+    expect(
+      await env.DB.prepare(`select name, "emailVerified" from "user" where id = ?`)
+        .bind(body.userId)
+        .first(),
+    ).toEqual({
+      name: "Owner",
+      emailVerified: 1,
+    });
+    expect(
+      await env.DB.prepare(`select role from member where "organizationId" = ? and "userId" = ?`)
+        .bind(body.workspaceId, body.userId)
+        .first(),
+    ).toEqual({ role: "owner" });
+    await runInDurableObject(env.WORKSPACE.getByName(body.workspaceId), (_instance, state) => {
+      expect(
+        state.storage.sql
+          .exec<{ value: string }>("select value from shard_meta where key = 'workspace'")
+          .one().value,
+      ).toBe(body.workspaceId);
+    });
+    // The password signs in on the object, and the instance is set up for good.
+    expect((await signIn(first.email, PASSWORD)).status).toBe(200);
+    expect(
+      (await setup({ ...first, email: "second@example.com" }, { engine: "ember" })).status,
+    ).toBe(409);
+  });
+
+  test("D1 is cleaned up even when the object cannot remove the owner", async () => {
+    const owners = emberOwners(ember);
+    const response = await bootstrapFirstUser(
+      new Request(`${ORIGIN}/setup/first-user`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
+        body: JSON.stringify({ ...FIRST, email: "ember-unreachable@example.com" }),
+      }),
+      TOKEN,
+      env.DB,
+      () => workerAuth(ember, createExecutionContext(), new Request(ORIGIN)),
+      {
+        ...owners,
+        createWorkspace: () => Promise.reject(new Error("shard down")),
+        removeOwner: () => Promise.reject(new Error("object unreachable")),
+      },
+    );
+    expect(response.status).toBe(500);
+    expect(await count("user")).toBe(0);
+    expect(await count("organization")).toBe(0);
+    // The account the object kept does not block the next run at the same address.
+    const again = await setup(
+      { ...FIRST, email: "ember-unreachable@example.com" },
+      { engine: "ember" },
+    );
+    expect(again.status).toBe(201);
+    expect(await count("user")).toBe(1);
+  });
+
+  test("a run whose workspace fails leaves no owner on the object or in D1", async () => {
+    const first = { ...FIRST, email: "ember-doomed@example.com" };
+    const owners = emberOwners(ember);
+    const response = await bootstrapFirstUser(
+      new Request(`${ORIGIN}/setup/first-user`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
+        body: JSON.stringify(first),
+      }),
+      TOKEN,
+      env.DB,
+      () => workerAuth(ember, createExecutionContext(), new Request(ORIGIN)),
+      { ...owners, createWorkspace: () => Promise.reject(new Error("shard down")) },
+    );
+    expect(response.status).toBe(500);
+    expect(await count("user")).toBe(0);
+    expect(await count("organization")).toBe(0);
+    expect((await signIn(first.email, PASSWORD)).status).toBe(401);
+    // And it can run again.
+    expect((await setup(first, { engine: "ember" })).status).toBe(201);
   });
 });

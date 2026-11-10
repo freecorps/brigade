@@ -95,8 +95,14 @@ Each is an Ember change with its own tests, released before Brigade uses it.
    serving `/auth` when `AUTH_ENGINE` is `ember`; every other route's session read on the object (#235: `getSession`
    through `Auth.api`, without `Authorization`, which Ember's `bearer()` would take for a session token; a session by
    id, for sockets, devices and Ember tokens, through Brigade's server-only `brigadeSession` endpoint, `findSession`).
-   Left: creating a workspace without the organization plugin (`POST /workspaces`, the first owner's bootstrap), and
-   QR sign-in's session on the object. Until then `AUTH_ENGINE` stays `d1` everywhere.
+   Then workspaces without the organization plugin: `POST /workspaces` writes `organization` and `member` to D1
+   (`createWorkspaceInD1`: the limit checked in the insert's own transaction, the shard provisioned, the rows deleted
+   again when it cannot be; a D1 that cannot delete them either is logged, as the organization plugin's undo is on
+   D1's engine), and the first owner's bootstrap makes the verified account on the object (server-only
+   `brigadeCreateOwner`, undone with `brigadeRemoveOwner`) and the workspace the same way.
+   And QR sign-in's session on the object (server-only `brigadeQrSession`, its cookie signed with the object's secret;
+   `brigadeEndSession` when it cannot be delivered), with no active workspace in it. That completes step 2: every
+   route of the API works on either engine. `AUTH_ENGINE` stays `d1` until the clients (step 3) and the cutover.
    The object's options are set once, so its cookies are `Secure` from the instance's address rather than per
    request: `DASHBOARD_URL` on HTTPS, which an environment must have before it switches.
    For step 3: the app's `expoClient` keeps only the cookies with its `cookiePrefix`, which becomes `brigade` (the

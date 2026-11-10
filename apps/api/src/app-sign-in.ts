@@ -23,8 +23,8 @@
 
 import { idPattern, newId, type RandomBytes } from "@freecorps/brigade-schema";
 import { makeSignature } from "better-auth/crypto";
-import { findSession } from "./auth-ember.ts";
-import { countRequest, type Auth } from "./auth.ts";
+import { authEngine, findSession, onObject } from "./auth-ember.ts";
+import { countRequest, SIGN_IN_METHOD_QR, type Auth, type QrSession } from "./auth.ts";
 import { json, readJson } from "./member-route.ts";
 
 export const APP_SIGN_IN_PATH = "/app-sign-in";
@@ -455,6 +455,45 @@ async function newSession(
   row: Row,
   request: Request,
 ): Promise<"signed_out" | Delivered> {
+  const made =
+    authEngine(env) === "ember"
+      ? await sessionOnObject(env, row, request)
+      : await sessionOnD1(env, auth, row, request);
+  try {
+    const maxAge = Math.max(0, Math.floor((made.expiresAt - Date.now()) / 1000));
+    const attributes = [
+      `${made.cookie.name}=${encodeURIComponent(made.signed)}`,
+      `Max-Age=${maxAge}`,
+      `Path=${made.cookie.path}`,
+      "HttpOnly",
+      ...(made.cookie.secure ? ["Secure"] : []),
+      "SameSite=Lax",
+    ];
+    if (!(await askerAlive(env, row, Date.now()))) {
+      await made.end();
+      return "signed_out";
+    }
+    return {
+      status: "approved" as const,
+      session: { cookie: attributes.join("; "), expiresAt: new Date(made.expiresAt).toISOString() },
+      user: made.user,
+    };
+  } catch (error) {
+    await made.end();
+    throw error;
+  }
+}
+
+/** A QR sign-in's session, made, and how to end it again when it cannot be delivered. */
+type MadeSession = QrSession & { end(): Promise<void> };
+
+/** On D1's instance: through its adapters, with the user's first workspace active as a sign-in would. */
+async function sessionOnD1(
+  env: AppSignInEnv,
+  auth: () => Auth,
+  row: Row,
+  request: Request,
+): Promise<MadeSession> {
   const context = await auth().$context;
   const user = await context.internalAdapter.findUserById(row.userId);
   if (!user) throw new Error("the user is gone");
@@ -471,31 +510,49 @@ async function newSession(
     userAgent: request.headers.get("user-agent") ?? "",
     activeOrganizationId: workspace?.id ?? null,
   });
+  const end = () => context.internalAdapter.deleteSession(session.token);
   try {
-    const signed = `${session.token}.${await makeSignature(session.token, env.BETTER_AUTH_SECRET)}`;
-    const expiresAt = new Date(session.expiresAt);
-    const maxAge = Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000));
-    const attributes = [
-      `${cookie.name}=${encodeURIComponent(signed)}`,
-      `Max-Age=${maxAge}`,
-      `Path=${cookie.attributes.path ?? "/"}`,
-      "HttpOnly",
-      ...(cookie.attributes.secure ? ["Secure"] : []),
-      "SameSite=Lax",
-    ];
-    if (!(await askerAlive(env, row, Date.now()))) {
-      await context.internalAdapter.deleteSession(session.token);
-      return "signed_out";
-    }
     return {
-      status: "approved" as const,
-      session: { cookie: attributes.join("; "), expiresAt: expiresAt.toISOString() },
+      token: session.token,
+      signed: `${session.token}.${await makeSignature(session.token, env.BETTER_AUTH_SECRET)}`,
+      cookie: {
+        name: cookie.name,
+        path: cookie.attributes.path ?? "/",
+        secure: cookie.attributes.secure === true,
+      },
+      expiresAt: new Date(session.expiresAt).getTime(),
       user: { id: user.id, name: user.name, email: user.email },
+      end,
     };
   } catch (error) {
-    await context.internalAdapter.deleteSession(session.token);
+    await end();
     throw error;
   }
+}
+
+/**
+ * On Ember's `Auth` object (RFC 0017): Brigade's server-only `brigadeQrSession`, which signs the cookie with the
+ * object's own secret. No active workspace: the app keeps the one it shows.
+ */
+async function sessionOnObject(
+  env: AppSignInEnv,
+  row: Row,
+  request: Request,
+): Promise<MadeSession> {
+  const made = (await onObject(env, "brigadeQrSession", {
+    body: {
+      userId: row.userId,
+      deviceName: row.deviceName,
+      ipAddress: request.headers.get("cf-connecting-ip") ?? "",
+      userAgent: request.headers.get("user-agent") ?? "",
+    },
+  })) as QrSession;
+  return {
+    ...made,
+    end: async () => {
+      await onObject(env, "brigadeEndSession", { body: { token: made.token } });
+    },
+  };
 }
 
 /** What the phone's poll answers when it gets its session. */
@@ -511,8 +568,7 @@ async function askerAlive(env: AppSignInEnv, row: Row, now: number): Promise<boo
   return asker?.userId === row.userId && asker.expiresAt > now;
 }
 
-/** `session.signInMethod` for a session a QR sign-in made (src/auth.ts). */
-export const SIGN_IN_METHOD_QR = "qr";
+export { SIGN_IN_METHOD_QR } from "./auth.ts";
 
 /** How the dashboard sees a row at `now`. */
 function view(row: Row, now: number) {

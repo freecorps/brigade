@@ -9,6 +9,17 @@ import { memberName, workspaceName } from "@freecorps/brigade-schema";
 import { authId, type Auth } from "./auth.ts";
 import { readBounded } from "./body.ts";
 
+/**
+ * How the first owner and their workspace are made where Better Auth's adapters and organization plugin are not the
+ * API's (Ember's `Auth` object, RFC 0017): the account on the object, the workspace in D1 by Brigade. Without it, D1's
+ * instance makes both, as before.
+ */
+export type OwnerMaker = {
+  createOwner(owner: { email: string; name: string; password: string }): Promise<string>;
+  createWorkspace(ownerId: string, name: string): Promise<string>;
+  removeOwner(ownerId: string): Promise<void>;
+};
+
 export const BOOTSTRAP_PATH = "/setup/first-user";
 
 /** A token shorter than this is refused as a configuration error: it could be guessed. */
@@ -35,6 +46,7 @@ export async function bootstrapFirstUser(
   token: string | undefined,
   db: D1Database,
   lazyAuth: () => Auth,
+  owners?: OwnerMaker,
 ): Promise<Response> {
   // A secret stored with a trailing newline (piped from `echo`) still matches what the script sends.
   token = token?.trim();
@@ -95,6 +107,11 @@ export async function bootstrapFirstUser(
     // Kept: the instance is set up, so the latch stays claimed for good.
     if ((users?.n ?? 0) > 0) return json({ error: "already_set_up" }, 409);
 
+    if (owners) {
+      userId = await owners.createOwner({ email, name: name.value, password });
+      const workspaceId = await owners.createWorkspace(userId, workspace.value);
+      return json({ userId, workspaceId, email }, 201);
+    }
     const auth = lazyAuth();
     const context = await auth.$context;
     const hash = await context.password.hash(password);
@@ -127,6 +144,14 @@ export async function bootstrapFirstUser(
     // then the user, whose accounts, sessions and memberships go with it (`on delete cascade`).
     try {
       if (userId) {
+        // On the object too; its D1 copy goes below whether or not the object could be reached.
+        try {
+          await owners?.removeOwner(userId);
+        } catch (error) {
+          console.error(
+            JSON.stringify({ message: "removing the first owner failed", error: String(error) }),
+          );
+        }
         await db.batch([
           db
             .prepare(

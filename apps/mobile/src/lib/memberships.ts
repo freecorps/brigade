@@ -217,8 +217,10 @@ export function membershipsStore(deps: {
       }
       generation++;
       set({ userId, error: false, loading: false, known: undefined });
-      void deps
-        .read()
+      // After every write and removal still on its way: owned again right after a forget, the pick it removes is
+      // never read back.
+      void writes
+        .then(() => deps.read())
         .catch(() => null)
         .then((raw) => {
           // A pick made meanwhile is newer than what was kept.

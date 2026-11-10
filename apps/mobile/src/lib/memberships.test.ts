@@ -211,3 +211,36 @@ test("forgotten while the same member is still signed in, owning it again reads 
   expect(store.current("usr_1")).toMatchObject({ known: null, list: [] });
   expect(openingOf(store.current("usr_1"))).toEqual({ kind: "none" });
 });
+
+test("owned again while a forget is still removing the pick, the removed pick is never read back", async () => {
+  let stored: string | null = kept("org_a");
+  let finishRemoval: (() => void) | undefined;
+  const store = membershipsStore({
+    // The list cannot be read: only what is kept could open a workspace.
+    list: async () => undefined,
+    read: async () => stored,
+    write: async (raw) => {
+      stored = raw;
+    },
+    remove: () =>
+      new Promise<void>((resolve) => {
+        finishRemoval = () => {
+          stored = null;
+          resolve();
+        };
+      }),
+  });
+  store.own("usr_1");
+  await settle();
+  expect(openingOf(store.current("usr_1"))).toMatchObject({ workspaceId: "org_a" });
+  const forgetting = store.forget();
+  // The session is still here: owned again before the removal is done.
+  store.own("usr_1");
+  await settle();
+  expect(store.current("usr_1")?.known).toBeUndefined();
+  finishRemoval?.();
+  await forgetting;
+  await settle();
+  expect(store.current("usr_1")?.known).toBeNull();
+  expect(openingOf(store.current("usr_1"))).toEqual({ kind: "unavailable" });
+});

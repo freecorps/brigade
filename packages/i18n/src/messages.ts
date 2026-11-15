@@ -112,6 +112,7 @@ export declare const declare_title_placeholder: ServerMessages["declare_title_pl
 export declare const devices_card: ServerMessages["devices_card"];
 export declare const dismiss: ServerMessages["dismiss"];
 export declare const email_invite: ServerMessages["email_invite"];
+export declare const email_operator_answer: ServerMessages["email_operator_answer"];
 export declare const email_operator_status: ServerMessages["email_operator_status"];
 export declare const email_reminder: ServerMessages["email_reminder"];
 export declare const email_reminder_intro: ServerMessages["email_reminder_intro"];

@@ -397,9 +397,9 @@ results (a new monitor is up on its first success).
      detail is never public; the plain `/health` stays `{ ok: true }`). It proves the token, and asks each push provider
      whether it would take a page without sending one: APNs gets the relay's cached provider token on a request for a
      device that cannot exist (all zeros), so `400 BadDeviceToken` means it took the token, and so does `429 TooManyRequests` (that
-     device token rate-limited; `429 TooManyProviderTokenUpdates` is the provider token refreshed too often, which
-     pages would hit too, so an error), while `403 InvalidProviderToken` / `ExpiredProviderToken` means
-     the key is revoked or wrong. Only the host of the relay's `APNS_ENVIRONMENT` is asked: one key signs for both
+     device token rate-limited), while `403 InvalidProviderToken` / `ExpiredProviderToken` means
+     the key is revoked or wrong. Any other `429` is a limit that may pass (`transient`, below): the one seen is
+     `TooManyProviderTokenUpdates`, a new provider token on a connection less than 20 minutes after another. Only the host of the relay's `APNS_ENVIRONMENT` is asked: one key signs for both
      hosts, so a key one takes the other takes too. FCM is asked for an OAuth access
      token for `FCM_SERVICE_ACCOUNT`, a fresh one each time (each provider gets 3 s, inside the consumer's 5 s) (`not_configured` without it: a relay serving iOS only). A relay from
      before the deep check answers its plain `/health` there; then the consumer falls back to proving the token as
@@ -419,11 +419,22 @@ results (a new monitor is up on its first success).
      an FCM account Google refuses, or a D1 that does not answer stops the pings, so the operators hear of it (a
      provider `not_configured` or `unknown` does not). A failure that will not pass by itself (APNs refusing the
      provider token, a key that will not sign, Google refusing the account) counts on its first beat. One that may (the
-     relay marks it `transient`: a provider timing out or answering 5xx, Google's token endpoint slow or busy; and any
-     failed D1 read) counts only on the **3rd proved beat in a row** it fails (`TRANSIENT_FAILURES_TO_DEGRADE`, a count
+     relay marks it `transient`: a provider timing out or answering 5xx, APNs answering a limit (`429`), Google's token
+     endpoint slow or busy; and any failed D1 read) counts only on the **3rd proved beat in a row** it fails (`TRANSIENT_FAILURES_TO_DEGRADE`, a count
      per check in the watchdog's storage): before that the beat still pings and the status does not change, so one
      slow answer does not page the operators. A check that passes starts its count again, so a provider failing two beats in three never degrades (accepted:
      the pages themselves are retried, and a lasting outage fails three in a row). Anything else is silence.
+     **`TooManyProviderTokenUpdates` is transient (decided).** It first counted at once, as "the provider token
+     refreshed too often, which pages would hit too". In production it was one beat at a time, the next always
+     passing, about three times a day from the day the instance's own key was first proved on every beat (step 3).
+     The likely cause (the logs do not say when a token is signed): the instance and the relay each sign a provider
+     token for the one key, per isolate, and APNs refuses a new token on a connection less than 20 minutes after
+     another, so two new ones meeting there get the second refused, and the same token is taken a minute later. Each
+     refusal of the relay's token emailed the operators "degraded" and skipped that beat's ping; no page was refused
+     in that week. So it waits for the third beat in a row like any failure that may pass; a signer that really
+     changes tokens too often fails every beat and still degrades, two minutes later. One token shared by the
+     instance and the relay would end the refusals themselves; it was left out, since it puts a store on the paging
+     path for a refusal the next request did not repeat.
      The instance's own key is the exception: it fails the same way (`direct_apns_failing`, `direct_fcm_failing`,
      with the same count for a transient failure) but never stops the ping or makes the status `degraded`, since a
      page it cannot send goes through the relay; the change is emailed to the operators all the same.
@@ -455,7 +466,9 @@ results (a new monitor is up on its first success).
   row): APNs (`apns_failing`), FCM (`fcm_failing`) or the D1 read (`d1_failing`). `unknown` is before the first proof (a new deployment; local runs, where
   the cron only fires by hand). The watchdog itself unreachable is a 503, which the dashboard shows as "couldn't
   check". Each change of status or reasons on a beat or a proof is a `brigade.status_changed` event in the watchdog's
-  outbox and a log line (`paging pipeline degraded`). It is emailed to the instance's operators (decided, Q19):
+  outbox and a log line (`paging pipeline degraded`). With a failing provider check goes what it was answered
+  (`answers`, by reason: APNs' own `reason`, or `unreachable`, `status_500`), kept as one short word and never as free
+  text; the log and the operators' email say it ("The check's answer: …"), `GET /health/paging` never does. It is emailed to the instance's operators (decided, Q19):
   `OPERATOR_EMAILS`, comma-separated, at most 10 addresses, through the email notifier's sender, in English (no
   operator has a locale; the strings are in `packages/i18n` with `pt-BR` too). The watchdog sends it itself, not the Queue's
   consumer: a stalled Queue is one of the things it reports, and an email waiting in it would arrive with the recovery
@@ -465,8 +478,9 @@ results (a new monitor is up on its first success).
   at most 5 times, then logged as given up. At most `OPERATOR_EMAIL_HOURLY_CAP` (6) changes an hour are emailed, the
   rest only logged; it never holds up a page. `no_beat` never is: a beat or a proof is what
   records a change, and no beat means neither runs, so only `GET /health/paging` and the external check see it.
-  Tests: `apps/relay/test/deep-health.test.ts`, `apps/api/test/watchdog.test.ts` ("a relay with the deep check: …",
-  "a transient deep-check failure …", "OPERATOR_EMAILS are emailed …", "a stalled queue: the watchdog emails the
+  Tests: `apps/relay/test/deep-health.test.ts` ("APNs answering 429 TooManyRequests …"),
+  `apps/api/test/watchdog.test.ts` ("a relay with the deep check: …", "a transient deep-check failure …", "what a
+  failing provider check was answered …", "OPERATOR_EMAILS are emailed …", "a stalled queue: the watchdog emails the
   operators itself …", "an email that failed is tried again …").
 
   Not covered: each workspace shard's own alarm and outbox (the watchdog proves the shared code and the shared

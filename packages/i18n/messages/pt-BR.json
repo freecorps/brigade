@@ -2860,6 +2860,7 @@
       }
     }
   ],
+  "email_operator_answer": "{reason} Resposta da verificação: {answer}.",
   "email_webhook_disabled": [
     {
       "declarations": ["input part", "input workspace", "input webhook", "input failures"],

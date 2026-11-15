@@ -117,7 +117,7 @@ describe("GET /health?deep=1", () => {
     expect(refused.apns).not.toHaveProperty("transient");
   });
 
-  test("APNs answering 429 took the provider token: ok", async () => {
+  test("APNs answering 429 TooManyRequests took the provider token: ok; any other 429 is a limit that may pass", async () => {
     const response = await handle(
       deep(),
       env,
@@ -125,17 +125,19 @@ describe("GET /health?deep=1", () => {
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ ok: true, apns: { status: "ok" } });
-    // The provider token refreshed too often: pages would be refused too.
-    const updates = await handle(
-      deep(),
-      env,
-      providers({ status: 429, reason: "TooManyProviderTokenUpdates" }).send,
-    );
-    expect(updates.status).toBe(503);
-    expect(await updates.json()).toMatchObject({
-      ok: false,
-      apns: { status: "error", reason: "TooManyProviderTokenUpdates" },
-    });
+    // A new provider token too soon after another on the connection (the instance's own signer beside the relay's):
+    // the next request with it is taken, so the watchdog must not count one of these as a refused key.
+    for (const [answer, reason] of [
+      [{ status: 429, reason: "TooManyProviderTokenUpdates" }, "TooManyProviderTokenUpdates"],
+      [{ status: 429 }, "status_429"],
+    ] as const) {
+      const limited = await handle(deep(), env, providers(answer).send);
+      expect(limited.status).toBe(503);
+      expect(await limited.json()).toMatchObject({
+        ok: false,
+        apns: { status: "error", reason, transient: true },
+      });
+    }
   });
 
   test("FCM with a service account asks Google for a fresh access token each time, and says when it refuses", async () => {

@@ -2853,6 +2853,7 @@
       }
     }
   ],
+  "email_operator_answer": "{reason} The check's answer: {answer}.",
   "email_webhook_disabled": [
     {
       "declarations": ["input part", "input workspace", "input webhook", "input failures"],

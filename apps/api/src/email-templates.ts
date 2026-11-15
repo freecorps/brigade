@@ -6,6 +6,7 @@
 import type { Locale } from "@freecorps/brigade-i18n";
 import {
   email_invite,
+  email_operator_answer,
   email_operator_status,
   email_reminder,
   email_reminder_intro,
@@ -372,7 +373,12 @@ const PAGING_REASONS: Record<string, typeof paging_reason_no_beat> = {
  * Nothing in it is user content, a URL or an id.
  */
 export function renderOperatorStatusEmail(
-  facts: { status: "ok" | "degraded" | "unknown"; reasons: readonly string[] },
+  facts: {
+    status: "ok" | "degraded" | "unknown";
+    reasons: readonly string[];
+    /** What a failing check was answered, by reason (src/notify-operators.ts `providerAnswer`: one short word). */
+    answers?: Readonly<Record<string, string>>;
+  },
   to: { email: string; name?: string },
   locale: Locale,
 ): OutgoingEmail {
@@ -385,7 +391,10 @@ export function renderOperatorStatusEmail(
   // yet), so the operators hear of it.
   const reasons = facts.reasons.flatMap((reason) => {
     const say = PAGING_REASONS[reason];
-    return say ? [say({}, { locale })] : [];
+    if (!say) return [];
+    const answer = facts.answers?.[reason];
+    const text = say({}, { locale });
+    return [answer ? email_operator_answer({ reason: text, answer }, { locale }) : text];
   });
   return renderMessage(
     {

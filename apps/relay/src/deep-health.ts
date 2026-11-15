@@ -10,17 +10,17 @@ import type { ProviderTokens } from "./provider-tokens.ts";
  * - **APNs**: the relay's provider token (the same cached JWT a page uses, src/provider-tokens.ts: Ember's transport,
  *   or the relay's own signer when APNs refused Ember's, checked with that one too) on a request for a device token that
  *   cannot exist (all zeros). APNs checks the provider token first: `400 BadDeviceToken` means it took the token
- *   (nothing is delivered: there is no such device), and so does `429` (too many requests are counted after the token
- *   is checked); `403 InvalidProviderToken` / `ExpiredProviderToken` that the key was revoked or is wrong. A key that
- *   does not sign is an error too. Only `APNS_ENVIRONMENT`'s host is asked: the same key signs for both hosts, so a key
- *   APNs takes on one it takes on the other.
+ *   (nothing is delivered: there is no such device), and so does `429 TooManyRequests` (too many requests are counted
+ *   after the token is checked); `403 InvalidProviderToken` / `ExpiredProviderToken` that the key was revoked or is
+ *   wrong. A key that does not sign is an error too. Only `APNS_ENVIRONMENT`'s host is asked: the same key signs for
+ *   both hosts, so a key APNs takes on one it takes on the other.
  * - **FCM**: a fresh OAuth access token for the service account in `FCM_SERVICE_ACCOUNT` (the JWT grant, with a
  *   cache of its own: src/provider-tokens.ts `freshGoogle`), never the pages' cached one. A relay without that secret serves iOS only: `not_configured`,
  *   which is not a failure.
  *
- * An error that may pass by itself (`transient`: the provider not answering in time, a 5xx, Google's token endpoint
- * slow or busy) is told apart from one that will not (a refused key or account): the watchdog stops the external
- * check only after a few transient ones in a row, and at once for the others.
+ * An error that may pass by itself (`transient`: the provider not answering in time, a 5xx, a limit APNs answers 429
+ * for, Google's token endpoint slow or busy) is told apart from one that will not (a refused key or account): the
+ * watchdog stops the external check only after a few transient ones in a row, and at once for the others.
  */
 export type ProviderCheck =
   | { status: "ok" }
@@ -95,8 +95,7 @@ async function checkApns(
       const response = await send(request);
       const reason = await readReason(response);
       if (response.status === 400 && reason === "BadDeviceToken") return { status: "ok" };
-      // This device token rate limited: the provider token was taken. `TooManyProviderTokenUpdates` (also 429) is
-      // the provider token itself refreshed too often, which pages would hit too: an error.
+      // This device token rate limited: the provider token was taken.
       if (response.status === 429 && reason === "TooManyRequests") return { status: "ok" };
       if (
         (await options.tokens.apnsRefused(options.credentials, token, reason, now)) &&
@@ -105,10 +104,14 @@ async function checkApns(
       ) {
         continue;
       }
+      // Any other 429 is a limit, which passes by itself. `TooManyProviderTokenUpdates` is the one seen: APNs takes a
+      // new provider token on a connection once every 20 minutes, and an instance that pages by itself signs its own
+      // for the same key (apps/api src/direct-push.ts), so the two can arrive new together. The next request with
+      // the same token is taken. Refused beat after beat, pages are refused too, and the watchdog counts it.
       return {
         status: "error",
         reason: reason ?? `status_${response.status}`,
-        ...(response.status >= 500 && { transient: true as const }),
+        ...((response.status >= 500 || response.status === 429) && { transient: true as const }),
       };
     } catch {
       return { status: "error", reason: "unreachable", transient: true };

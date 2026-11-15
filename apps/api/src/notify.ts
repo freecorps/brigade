@@ -26,6 +26,7 @@ import { notifyReminder } from "./notify-reminder.ts";
 import { notifyRotation } from "./notify-rotation.ts";
 import { asksForInvitation, notifyInvitation } from "./notify-invite.ts";
 import { notifySlack, type SlackNotifyEnv } from "./notify-slack.ts";
+import { providerAnswer } from "./notify-operators.ts";
 import { notifyStatus, STATUS_EMAIL_BUDGET_MS, type StatusNotifyEnv } from "./notify-status.ts";
 import { asksForStatusHost, notifyStatusHost } from "./status-domain.ts";
 import type { SaasEnv } from "./status-domain-cf.ts";
@@ -448,12 +449,19 @@ export async function proveHeartbeat(
     d1Health(env.DB),
     directHealth(env, send),
   ]);
+  // What each failing provider check was answered, for the operators (the watchdog's email and log).
+  const answers = {
+    ...relay.answers,
+    ...(direct?.answers.apns === undefined ? {} : { directApns: direct.answers.apns }),
+    ...(direct?.answers.fcm === undefined ? {} : { directFcm: direct.answers.fcm }),
+  };
   const checks: BeatChecks = {
     apns: relay.apns,
     fcm: relay.fcm,
     d1,
     ...(direct ? { directApns: direct.apns, directFcm: direct.fcm } : {}),
     ...(relay.sendToken === undefined ? {} : { sendToken: relay.sendToken }),
+    ...(Object.keys(answers).length > 0 ? { answers } : {}),
   };
   try {
     await within(
@@ -467,30 +475,43 @@ export async function proveHeartbeat(
 }
 
 /** What the relay said; `sendToken` is the send token's own check beside the signed one (both configured). */
-type RelayCheck = { relay: RelayHealth; apns: BeatCheck; fcm: BeatCheck; sendToken?: RelayHealth };
+type RelayCheck = {
+  relay: RelayHealth;
+  apns: BeatCheck;
+  fcm: BeatCheck;
+  sendToken?: RelayHealth;
+  /** What a failing provider check was answered (`BeatChecks.answers`). */
+  answers?: ProviderAnswers;
+};
+type ProviderAnswers = { apns?: string; fcm?: string };
 const UNKNOWN_PROVIDERS = { apns: "unknown", fcm: "unknown" } as const;
 
 /**
- * What the relay's deep health says of APNs and FCM (`{ apns: { status, transient? }, fcm }`), or undefined when the
- * answer names no `apns` (not a deep health answer).
+ * What the relay's deep health says of APNs and FCM (`{ apns: { status, reason?, transient? }, fcm }`), with each
+ * failing one's `reason` as its answer, or undefined when the answer names no `apns` (not a deep health answer).
  */
-function providersOf(body: unknown): { apns: BeatCheck; fcm: BeatCheck } | undefined {
-  const provider = (key: string): BeatCheck | undefined => {
+function providersOf(
+  body: unknown,
+): { apns: BeatCheck; fcm: BeatCheck; answers: ProviderAnswers } | undefined {
+  const answers: ProviderAnswers = {};
+  const provider = (key: "apns" | "fcm"): BeatCheck | undefined => {
     const check = Object(Reflect.get(Object(body), key));
     const status = Reflect.get(check, "status");
-    // An error that may pass by itself (a timeout, a 5xx): the watchdog waits for a few in a row.
-    if (status === "error" && Reflect.get(check, "transient") === true) return "transient";
-    return status === "ok" || status === "error" || status === "not_configured"
-      ? status
-      : undefined;
+    if (status !== "error") {
+      return status === "ok" || status === "not_configured" ? status : undefined;
+    }
+    const answer = providerAnswer(Reflect.get(check, "reason"));
+    if (answer !== undefined) answers[key] = answer;
+    // An error that may pass by itself (a timeout, a 5xx, a limit): the watchdog waits for a few in a row.
+    return Reflect.get(check, "transient") === true ? "transient" : "error";
   };
   const apns = provider("apns");
   if (apns === undefined) return undefined;
   const fcm = provider("fcm") ?? "unknown";
   if ([apns, fcm].some((check) => check === "error" || check === "transient")) {
-    log("push provider check failed", { apns, fcm });
+    log("push provider check failed", { apns, fcm, answers });
   }
-  return { apns, fcm };
+  return { apns, fcm, answers };
 }
 
 /**
@@ -539,6 +560,7 @@ async function relayHealth(
       apns: legacy.apns,
       fcm: legacy.fcm,
       sendToken: legacy.relay,
+      ...(legacy.answers ? { answers: legacy.answers } : {}),
     };
   }
   return tokenDeepHealth(env, send);

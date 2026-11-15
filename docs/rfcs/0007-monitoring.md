@@ -430,11 +430,11 @@ results (a new monitor is up on its first success).
      The likely cause (the logs do not say when a token is signed): the instance and the relay each sign a provider
      token for the one key, per isolate, and APNs refuses a new token on a connection less than 20 minutes after
      another, so two new ones meeting there get the second refused, and the same token is taken a minute later. Each
-     of the relay's emailed the operators "degraded" and skipped that beat's ping; no page was refused in that week.
-     So it waits for the third beat in a row like any failure that may pass; a signer that really changes tokens too
-     often fails every beat and still degrades, two minutes later. One token shared by the instance and the relay
-     would end the refusals themselves; it was left out, since it puts a store on the paging path for a refusal the
-     next request did not repeat.
+     refusal of the relay's token emailed the operators "degraded" and skipped that beat's ping; no page was refused
+     in that week. So it waits for the third beat in a row like any failure that may pass; a signer that really
+     changes tokens too often fails every beat and still degrades, two minutes later. One token shared by the
+     instance and the relay would end the refusals themselves; it was left out, since it puts a store on the paging
+     path for a refusal the next request did not repeat.
      The instance's own key is the exception: it fails the same way (`direct_apns_failing`, `direct_fcm_failing`,
      with the same count for a transient failure) but never stops the ping or makes the status `degraded`, since a
      page it cannot send goes through the relay; the change is emailed to the operators all the same.

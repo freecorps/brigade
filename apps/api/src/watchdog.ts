@@ -412,8 +412,8 @@ export class WatchdogDO extends DurableObject<Env> {
     const failing = this.get(key) === "error";
     const said = found === "error" || found === "transient" ? providerAnswer(answer) : undefined;
     if (failing && said !== undefined) this.set(`${key}_answer`, said);
-    // Not failing, or refused without a word for it (an older consumer): what an earlier failure said does not stay.
-    else if (!failing || found === "error") this.delete(`${key}_answer`);
+    // Not failing, or failing with no word for it (an older consumer): what an earlier failure said does not stay.
+    else this.delete(`${key}_answer`);
   }
 
   /**

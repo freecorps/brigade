@@ -817,6 +817,25 @@ describe("the heartbeat, end to end", () => {
       previous: "ok",
       reasons: ["apns_failing", "direct_apns_failing"],
     });
+    // Nor on a check that stays failing: a later beat without a word for it (transient here) forgets the earlier one,
+    // so the next change does not repeat an answer that beat never gave.
+    await proveAt(10, { apns: "ok", fcm: "ok", d1: "ok" });
+    await proveAt(11, {
+      apns: "error",
+      fcm: "ok",
+      d1: "ok",
+      answers: { apns: "InvalidProviderToken" },
+    });
+    expect((await changes()).at(-1)).toMatchObject({
+      answers: { apns_failing: "InvalidProviderToken" },
+    });
+    await proveAt(12, { apns: "transient", fcm: "error", d1: "ok" });
+    await flushed();
+    expect((await changes()).at(-1)).toEqual({
+      status: "degraded",
+      previous: "degraded",
+      reasons: ["apns_failing", "fcm_failing"],
+    });
   });
 
   test("an email that failed is tried again on the next beats, then given up", async () => {

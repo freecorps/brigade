@@ -34,6 +34,15 @@ export function operatorAddresses(raw: string | undefined): string[] {
   return [...seen];
 }
 
+/**
+ * A provider's answer to a failing check as the watchdog keeps it and the operators read it: one short word (APNs'
+ * `reason`, such as `TooManyProviderTokenUpdates`; `unreachable`; `status_500`), or undefined for anything else. It
+ * comes from the provider through the relay, so it is never taken as free text.
+ */
+export function providerAnswer(value: unknown): string | undefined {
+  return typeof value === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(value) ? value : undefined;
+}
+
 /** What one attempt came to: `sent` to at least one operator; `skipped`, nobody to email or no sender; `failed`. */
 export type OperatorEmailOutcome = "sent" | "skipped" | "failed";
 
@@ -45,7 +54,7 @@ export async function notifyOperators(
 ): Promise<OperatorEmailOutcome> {
   const to = operatorAddresses(env.OPERATOR_EMAILS);
   if (to.length === 0 || !mail) return "skipped";
-  const data = (event.data ?? {}) as { status?: unknown; reasons?: unknown };
+  const data = (event.data ?? {}) as { status?: unknown; reasons?: unknown; answers?: unknown };
   const status =
     data.status === "ok" || data.status === "degraded" || data.status === "unknown"
       ? data.status
@@ -54,12 +63,18 @@ export async function notifyOperators(
   const reasons = Array.isArray(data.reasons)
     ? data.reasons.filter((one): one is string => typeof one === "string")
     : [];
+  // What the provider answered each failing check (the watchdog's `settle`), read again as one short word each.
+  const answers: Record<string, string> = {};
+  for (const [reason, value] of Object.entries(Object(data.answers) as Record<string, unknown>)) {
+    const answer = providerAnswer(value);
+    if (answer !== undefined) answers[reason] = answer;
+  }
   const results = await Promise.all(
     to.map(async (email) => {
       try {
         // About paging itself failing: never dropped by the daily ceiling (src/email-ceiling.ts).
         return await mail.send({
-          ...renderOperatorStatusEmail({ status, reasons }, { email }, "en"),
+          ...renderOperatorStatusEmail({ status, reasons, answers }, { email }, "en"),
           priority: "paging",
         });
       } catch (error) {

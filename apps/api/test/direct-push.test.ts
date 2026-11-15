@@ -358,15 +358,28 @@ describe("the heartbeat's check of the instance's own key (RFC 0007, Q34)", () =
     expect(await directHealth(await secrets(), send)).toEqual({
       apns: "ok",
       fcm: "not_configured",
+      answers: {},
     });
     expect(urls).toEqual([`POST https://api.push.apple.com/3/device/${"0".repeat(64)}`]);
   });
 
-  test("a key APNs refuses is an error at once; APNs out of reach is transient", async () => {
+  test("a key APNs refuses is an error at once; APNs out of reach, or limiting token updates, is transient", async () => {
     const refused = apns({ status: 403, reason: "InvalidProviderToken" });
-    expect(await directHealth(await secrets(), refused.send)).toMatchObject({ apns: "error" });
+    expect(await directHealth(await secrets(), refused.send)).toMatchObject({
+      apns: "error",
+      answers: { apns: "InvalidProviderToken" },
+    });
     expect(logged().at(-1)).toMatchObject({ message: "direct push check failed" });
     const down = apns(null);
-    expect(await directHealth(await secrets(), down.send)).toMatchObject({ apns: "transient" });
+    expect(await directHealth(await secrets(), down.send)).toMatchObject({
+      apns: "transient",
+      answers: { apns: "unreachable" },
+    });
+    // This instance's new provider token right after the relay's on one connection: the next beat's is taken.
+    const limited = apns({ status: 429, reason: "TooManyProviderTokenUpdates" });
+    expect(await directHealth(await secrets(), limited.send)).toMatchObject({
+      apns: "transient",
+      answers: { apns: "TooManyProviderTokenUpdates" },
+    });
   });
 });

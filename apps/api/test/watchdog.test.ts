@@ -119,16 +119,19 @@ function deepBeats(
   heartbeats: () => Promise<BrigadeEvent[]>,
   notifyEnv: () => NotifyEnv,
 ) {
-  const check = (status: string) =>
-    status === "transient"
-      ? { status: "error", reason: "unreachable", transient: true }
-      : { status };
+  const check = (status: string, refused: string) => {
+    if (status === "transient") return { status: "error", reason: "unreachable", transient: true };
+    return status === "error" ? { status, reason: refused } : { status };
+  };
   const deep = (apns: string, fcm = "not_configured") => {
     const urls: string[] = [];
     const send: Fetch = async (request) => {
       urls.push(`${request.method} ${request.url}`);
       const ok = apns === "ok" && fcm !== "error" && fcm !== "transient";
-      return Response.json({ ok, apns: check(apns), fcm: check(fcm) }, { status: ok ? 200 : 503 });
+      return Response.json(
+        { ok, apns: check(apns, "InvalidProviderToken"), fcm: check(fcm, "refused") },
+        { status: ok ? 200 : 503 },
+      );
     };
     return { urls, send };
   };
@@ -536,7 +539,7 @@ describe("the heartbeat, end to end", () => {
   });
 
   test("a relay with the deep check: the providers are recorded; APNs, FCM or D1 failing stops the pings", async () => {
-    const { stub, heartbeats, notifyEnv } = watchdog();
+    const { stub, heartbeats, events, notifyEnv } = watchdog();
     const { deep, beat } = deepBeats(stub, heartbeats, notifyEnv);
     const ok = deep("ok");
     await beat(ok.send, { DB: env.DB });
@@ -549,9 +552,15 @@ describe("the heartbeat, end to end", () => {
     await beat(deep("error").send);
     expect(await stub.health()).toMatchObject({ status: "degraded", reasons: ["apns_failing"] });
     expect(pings()).toHaveLength(1);
+    // What APNs answered goes with the change, for the operators; `GET /health/paging` never has it.
+    const changed = async () =>
+      (await events()).filter((event) => event.type === STATUS_EVENT).at(-1)!.data;
+    expect(await changed()).toMatchObject({ answers: { apns_failing: "InvalidProviderToken" } });
+    expect(JSON.stringify(await stub.health())).not.toContain("InvalidProviderToken");
 
     await beat(deep("ok", "error").send);
     expect(await stub.health()).toMatchObject({ status: "degraded", reasons: ["fcm_failing"] });
+    expect(await changed()).toMatchObject({ answers: { fcm_failing: "refused" } });
     expect(pings()).toHaveLength(1);
 
     // One D1 read per beat: a D1 that keeps throwing degrades the status and silences the external check too, from
@@ -741,6 +750,73 @@ describe("the heartbeat, end to end", () => {
     expect(sent.map((one) => one.subject).at(-1)).toBe(
       "Brigade's paging self-check is back to normal",
     );
+  });
+
+  test("what a failing provider check was answered reaches the status change and the operators' email, as one word", async () => {
+    const { sent, mail } = mailbox();
+    const { stub, events, flushed, proveAt } = await emailingWatchdog(mail);
+    const changes = async () =>
+      (await events()).filter((event) => event.type === STATUS_EVENT).map((event) => event.data);
+    /** APNs refusing a new provider token as changed too often: a limit, so `transient` (apps/relay deep-health). */
+    const limited: BeatChecks = {
+      apns: "transient",
+      fcm: "ok",
+      d1: "ok",
+      answers: { apns: "TooManyProviderTokenUpdates" },
+    };
+    await proveAt(0, { apns: "ok", fcm: "ok", d1: "ok" });
+    // One limited beat, then one that passes, as two signers of one key meeting on a connection look: nobody hears.
+    await proveAt(1, limited);
+    await proveAt(2, { apns: "ok", fcm: "ok", d1: "ok" });
+    await proveAt(3, limited);
+    await proveAt(4, limited);
+    await flushed();
+    expect(await stub.health(NOW + 4 * MINUTE + 2000)).toMatchObject({ status: "ok", reasons: [] });
+    expect(sent).toHaveLength(1);
+    // The third in a row is a limit pages meet too: degraded, and the email says what APNs answered.
+    await proveAt(5, limited);
+    await flushed();
+    expect((await changes()).at(-1)).toEqual({
+      status: "degraded",
+      previous: "ok",
+      reasons: ["apns_failing"],
+      answers: { apns_failing: "TooManyProviderTokenUpdates" },
+    });
+    expect(sent).toHaveLength(2);
+    expect(sent[1]!.text).toContain(
+      "so iPhones can't be paged. The check's answer: TooManyProviderTokenUpdates.",
+    );
+    // Passing again: the answer is forgotten with the failure.
+    await proveAt(6, { apns: "ok", fcm: "ok", d1: "ok" });
+    await flushed();
+    expect((await changes()).at(-1)).toEqual({ status: "ok", previous: "degraded", reasons: [] });
+
+    // The instance's own key, refused at once; an answer that is not one word is never kept or emailed.
+    await proveAt(7, {
+      apns: "ok",
+      fcm: "error",
+      d1: "ok",
+      directApns: "error",
+      answers: { fcm: "<b>not a word</b>", directApns: "InvalidProviderToken" },
+    });
+    await flushed();
+    expect((await changes()).at(-1)).toEqual({
+      status: "degraded",
+      previous: "ok",
+      reasons: ["fcm_failing", "direct_apns_failing"],
+      answers: { direct_apns_failing: "InvalidProviderToken" },
+    });
+    expect(sent.at(-1)!.text).toContain("The check's answer: InvalidProviderToken.");
+    expect(sent.at(-1)!.text).not.toContain("not a word");
+    // An older consumer says no answer: the earlier one does not stay on a failure it did not describe.
+    await proveAt(8, { apns: "ok", fcm: "ok", d1: "ok", directApns: "error" });
+    await proveAt(9, { apns: "error", fcm: "ok", d1: "ok", directApns: "error" });
+    await flushed();
+    expect((await changes()).at(-1)).toEqual({
+      status: "degraded",
+      previous: "ok",
+      reasons: ["apns_failing", "direct_apns_failing"],
+    });
   });
 
   test("an email that failed is tried again on the next beats, then given up", async () => {

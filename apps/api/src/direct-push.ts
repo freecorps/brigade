@@ -133,13 +133,20 @@ function providerEnv(env: DirectPushEnv): ProviderEnv {
 export async function directHealth(
   env: DirectPushEnv,
   send: Fetch,
-): Promise<{ apns: BeatCheck; fcm: BeatCheck } | undefined> {
+): Promise<
+  { apns: BeatCheck; fcm: BeatCheck; answers: { apns?: string; fcm?: string } } | undefined
+> {
   if (!directConfigured(env)) return undefined;
   try {
     const health = await providerHealth(providerEnv(env), send);
     const check = (found: (typeof health)["apns"]): BeatCheck =>
       found.status === "error" ? (found.transient ? "transient" : "error") : found.status;
-    const result = { apns: check(health.apns), fcm: check(health.fcm) };
+    // What each failing provider answered, for the operators (src/watchdog.ts `BeatChecks.answers`).
+    const answers = {
+      ...(health.apns.status === "error" ? { apns: health.apns.reason } : {}),
+      ...(health.fcm.status === "error" ? { fcm: health.fcm.reason } : {}),
+    };
+    const result = { apns: check(health.apns), fcm: check(health.fcm), answers };
     if (result.apns !== "ok" || (result.fcm !== "ok" && result.fcm !== "not_configured")) {
       logCheck("direct push check failed", {
         apns: health.apns.status === "error" ? health.apns.reason : health.apns.status,
@@ -149,7 +156,7 @@ export async function directHealth(
     return result;
   } catch (error) {
     logCheck("direct push check failed", { error: String(error) });
-    return { apns: "transient", fcm: "transient" };
+    return { apns: "transient", fcm: "transient", answers: {} };
   }
 }
 

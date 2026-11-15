@@ -10,7 +10,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Actor } from "@freecorps/brigade-schema";
 import { emailSender, type EmailEnv, type EmailSender } from "./email.ts";
-import { notifyOperators, type OperatorEnv } from "./notify-operators.ts";
+import { notifyOperators, providerAnswer, type OperatorEnv } from "./notify-operators.ts";
 import { OUTBOX_SCHEMA, OutboxDrain, writeOutbox, type BrigadeEvent } from "./outbox.ts";
 
 /** The single watchdog object's name. */
@@ -95,6 +95,12 @@ export type BeatChecks = {
    */
   directApns?: BeatCheck;
   directFcm?: BeatCheck;
+  /**
+   * What a failing check was answered, in one word (src/notify-operators.ts `providerAnswer`): APNs' `reason`, or
+   * what the check made of no answer (`unreachable`, `status_500`). Kept while the check counts as failing, for the
+   * operators' email and the log; never part of `GET /health/paging`. Absent from an older consumer.
+   */
+  answers?: { apns?: string; fcm?: string; directApns?: string; directFcm?: string };
 };
 export type DegradedReason =
   | "no_beat"
@@ -169,6 +175,10 @@ type Keys =
   | "direct_fcm"
   | "direct_apns_failures"
   | "direct_fcm_failures"
+  | "apns_answer"
+  | "fcm_answer"
+  | "direct_apns_answer"
+  | "direct_fcm_answer"
   | "send_token"
   | "relay_limited"
   | "status"
@@ -250,16 +260,20 @@ export class WatchdogDO extends DurableObject<Env> {
       const token = checks?.sendToken;
       if (token === undefined) this.delete("send_token");
       else this.set("send_token", token);
-      for (const key of ["apns", "fcm", "d1"] as const) this.check(key, checks?.[key] ?? "unknown");
+      const answers = checks?.answers;
+      this.check("apns", checks?.apns ?? "unknown", answers?.apns);
+      this.check("fcm", checks?.fcm ?? "unknown", answers?.fcm);
+      this.check("d1", checks?.d1 ?? "unknown");
       // Not part of what pages need (the relay is their fallback), so not part of `failed` below.
-      for (const [key, found] of [
-        ["direct_apns", checks?.directApns],
-        ["direct_fcm", checks?.directFcm],
+      for (const [key, found, answer] of [
+        ["direct_apns", checks?.directApns, answers?.directApns],
+        ["direct_fcm", checks?.directFcm, answers?.directFcm],
       ] as const) {
         if (found === undefined) {
           this.delete(key);
           this.delete(`${key}_failures`);
-        } else this.check(key, found);
+          this.delete(`${key}_answer`);
+        } else this.check(key, found, answer);
       }
       const failed = (["apns", "fcm", "d1"] as const).some((key) => this.get(key) === "error");
       // "The last time a page could have gone out": not while APNs, FCM or D1 is failing, nor the send token.
@@ -377,17 +391,29 @@ export class WatchdogDO extends DurableObject<Env> {
    * Records what a proved beat's check `key` found. A `transient` failure only counts until the
    * `TRANSIENT_FAILURES_TO_DEGRADE`th in a row, which records `error`; before it the check keeps what it was, so the
    * status does not change and the beat still pings. Anything else is recorded as it is and starts the count again.
+   * `answer` (what this failure was answered, `BeatChecks.answers`) is kept only while the check counts as failing, so
+   * the change `settle` writes can say it.
    */
-  private check(key: "apns" | "fcm" | "d1" | "direct_apns" | "direct_fcm", found: BeatCheck): void {
+  private check(
+    key: "apns" | "fcm" | "d1" | "direct_apns" | "direct_fcm",
+    found: BeatCheck,
+    answer?: string,
+  ): void {
     const count: Keys = `${key}_failures`;
     if (found !== "transient") {
       this.set(count, "0");
       this.set(key, found);
-      return;
+    } else {
+      const failures = Number(this.get(count) ?? 0) + 1;
+      this.set(count, String(failures));
+      if (failures >= TRANSIENT_FAILURES_TO_DEGRADE) this.set(key, "error");
     }
-    const failures = Number(this.get(count) ?? 0) + 1;
-    this.set(count, String(failures));
-    if (failures >= TRANSIENT_FAILURES_TO_DEGRADE) this.set(key, "error");
+    if (key === "d1") return;
+    const failing = this.get(key) === "error";
+    const said = found === "error" || found === "transient" ? providerAnswer(answer) : undefined;
+    if (failing && said !== undefined) this.set(`${key}_answer`, said);
+    // Not failing, or refused without a word for it (an older consumer): what an earlier failure said does not stay.
+    else if (!failing || found === "error") this.delete(`${key}_answer`);
   }
 
   /**
@@ -437,8 +463,15 @@ export class WatchdogDO extends DurableObject<Env> {
     this.set("reasons", key);
     // The first beat (nothing to unknown) is not a change anyone needs to hear about.
     if (previous === null && status === "unknown") return;
+    // What each failing check listed was answered, by reason: for the operators (their email, this log).
+    const answers: Partial<Record<DegradedReason, string>> = {};
+    for (const [reason, key] of ANSWER_KEYS) {
+      const answer = reasons.includes(reason) ? this.get(key) : null;
+      if (answer !== null) answers[reason] = answer;
+    }
+    const said = Object.keys(answers).length > 0 ? { answers } : {};
     const [change] = this.write(
-      [{ type: STATUS_EVENT, data: { status, previous, reasons } }],
+      [{ type: STATUS_EVENT, data: { status, previous, reasons, ...said } }],
       now,
       0,
     );
@@ -446,6 +479,7 @@ export class WatchdogDO extends DurableObject<Env> {
       status,
       previous,
       reasons,
+      ...said,
     });
     this.ctx.storage.sql.exec(
       "insert into operator_email_queue (event_id, event, tries, next_at) values (?, ?, 0, ?)",
@@ -615,6 +649,14 @@ export function isSystemEvent(body: unknown): body is BrigadeEvent {
     typeof Reflect.get(body, "time") === "string"
   );
 }
+
+/** Where the watchdog keeps what each failing check was answered (`BeatChecks.answers`), by its reason. */
+const ANSWER_KEYS = [
+  ["apns_failing", "apns_answer"],
+  ["fcm_failing", "fcm_answer"],
+  ["direct_apns_failing", "direct_apns_answer"],
+  ["direct_fcm_failing", "direct_fcm_answer"],
+] as const satisfies readonly (readonly [DegradedReason, Keys])[];
 
 function num(value: string | null): number | null {
   return value === null ? null : Number(value);

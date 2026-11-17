@@ -73,7 +73,7 @@ type Refused = { ok: false; code: "not_found" | "unauthenticated" | "not_a_membe
  * (`acting`, its role possibly lowered), the member is not removed within the tombstone; then the page as it is.
  */
 export const current = internalMutationGeneric({
-  args: { workspaceId: v.string(), actor: v.any() },
+  args: { workspaceId: v.string(), actor: v.unsafeAny() },
   handler: (
     ctx,
     input: { workspaceId: string; actor: Actor },
@@ -107,7 +107,7 @@ export const current = internalMutationGeneric({
  * may go back to D1 when it was refused (the page does not use it, nor still retires it).
  */
 export const configure = internalMutationGeneric({
-  args: { workspaceId: v.string(), actor: v.any(), args: v.any(), now: v.number() },
+  args: { workspaceId: v.string(), actor: v.unsafeAny(), args: v.unsafeAny(), now: v.number() },
   handler: (
     ctx,
     input: { workspaceId: string; actor: Actor; args: { slug: string }; now: number },
@@ -214,7 +214,7 @@ export const plan = internalMutationGeneric({
  * the page is marked to go again (`status_repush`), as the DO's abandoned push marks it when it settles.
  */
 export const record = internalMutationGeneric({
-  args: { kv: v.boolean(), plan: v.any(), done: v.any(), started: v.number() },
+  args: { kv: v.boolean(), plan: v.unsafeAny(), done: v.unsafeAny(), started: v.number() },
   handler: (
     ctx,
     input: { kv: boolean; plan: StatusPushPlan; done: StatusPushDone; started: number },
@@ -393,7 +393,7 @@ function subscriptionChange(
  * its event, with the subscriber's id and never the address. A visitor's change runs as `ACCOUNT_ACTOR`.
  */
 export const subscription = internalMutationGeneric({
-  args: { workspaceId: v.string(), change: v.any(), actor: v.optional(v.any()) },
+  args: { workspaceId: v.string(), change: v.unsafeAny(), actor: v.optional(v.unsafeAny()) },
   handler: (
     ctx,
     input: { workspaceId: string; change: SubscriberChange; actor?: Actor },
@@ -462,7 +462,7 @@ export const followNames = internalMutationGeneric({
 
 /** What a status page email event asks for (`WorkspaceDO.planStatusEmail`). */
 export const planEmail = internalMutationGeneric({
-  args: { event: v.any() },
+  args: { event: v.unsafeAny() },
   handler: (ctx, { event }: { event: BrigadeEvent }): StatusEmailPlan => {
     const c = ctx as MutationCtx;
     const { shard } = emberWorkspace(c);
@@ -475,7 +475,7 @@ export const planEmail = internalMutationGeneric({
 
 /** What a batch of status page emails did (`WorkspaceDO.recordStatusEmail`). */
 export const recordEmail = internalMutationGeneric({
-  args: { event: v.any(), key: v.string(), report: v.any() },
+  args: { event: v.unsafeAny(), key: v.string(), report: v.unsafeAny() },
   handler: (
     ctx,
     input: { event: BrigadeEvent; key: string; report: StatusEmailReport },
@@ -532,7 +532,7 @@ export const domainState = internalMutationGeneric({
  * in D1 and Cloudflare (or the edge) answered. It starts the domain's checks afresh.
  */
 export const changeDomain = internalMutationGeneric({
-  args: { workspaceId: v.string(), actor: v.any(), name: v.string(), args: v.any() },
+  args: { workspaceId: v.string(), actor: v.unsafeAny(), name: v.string(), args: v.unsafeAny() },
   handler: (
     ctx,
     input: { workspaceId: string; actor: Actor; name: string; args: Record<string, unknown> },
@@ -649,7 +649,7 @@ export const domainDue = internalMutationGeneric({
  * next one armed. A check whose lease ran out (a newer one took it) records nothing: what it found may be older.
  */
 export const domainSettle = internalMutationGeneric({
-  args: { config: v.boolean(), row: v.any(), probed: v.any(), started: v.number() },
+  args: { config: v.boolean(), row: v.unsafeAny(), probed: v.unsafeAny(), started: v.number() },
   handler: (
     ctx,
     input: { config: boolean; row: StatusDomainRow; probed: DomainProbe; started: number },

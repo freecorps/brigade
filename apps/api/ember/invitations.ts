@@ -75,7 +75,7 @@ const ws = { workspaceId: v.string() };
  * DO's checks before an invitation change.
  */
 export const check = internalMutationGeneric({
-  args: { ...ws, token: v.optional(v.any()) },
+  args: { ...ws, token: v.optional(v.unsafeAny()) },
   handler: (ctx, input: { workspaceId: string; token?: Actor }) =>
     withLedger(ctx, input.workspaceId, { found: false, tokenBacked: false }, (_ledger, shard) => ({
       found: true,
@@ -133,7 +133,7 @@ export const recordSend = internalMutationGeneric({
 
 /** One invitation mutation for a change D1 already has (`InvitationLedger.apply`). */
 export const apply = internalMutationGeneric({
-  args: { ...ws, actor: v.any(), name: v.string(), args: v.any(), now: v.number() },
+  args: { ...ws, actor: v.unsafeAny(), name: v.string(), args: v.unsafeAny(), now: v.number() },
   handler: (
     ctx,
     input: {
@@ -185,7 +185,7 @@ function removedMeanwhile(shard: EmberShard, name: string, args: unknown, now: n
  * (the shard reset mid-call), so a change D1 already has is never left unowed.
  */
 export const owe = internalMutationGeneric({
-  args: { ...ws, name: v.string(), args: v.any(), now: v.number() },
+  args: { ...ws, name: v.string(), args: v.unsafeAny(), now: v.number() },
   handler: (
     ctx,
     input: { workspaceId: string; name: string; args: Record<string, unknown>; now: number },
@@ -198,7 +198,7 @@ export const owe = internalMutationGeneric({
 
 /** `WorkspaceDO.planInvitationEmail`. */
 export const planEmail = internalMutationGeneric({
-  args: { event: v.any() },
+  args: { event: v.unsafeAny() },
   handler: (ctx, { event }: { event: BrigadeEvent }): InvitationEmailPlan => {
     const data = event.data as { invitationId?: unknown; send?: unknown } | null;
     if (
@@ -220,7 +220,7 @@ export const planEmail = internalMutationGeneric({
 
 /** `WorkspaceDO.recordInvitationEmail`. */
 export const recordEmail = internalMutationGeneric({
-  args: { event: v.any(), key: v.string(), done: v.boolean() },
+  args: { event: v.unsafeAny(), key: v.string(), done: v.boolean() },
   handler: (ctx, input: { event: BrigadeEvent; key: string; done: boolean }): null =>
     withLedger(ctx, input.event.workspaceId, null, (ledger) => {
       ledger.recordEmail(input.key, input.done);
@@ -242,7 +242,7 @@ export const owed = internalMutationGeneric({
 
 /** One owed mutation run (`run`) or dropped, then forgotten; false when it could not run. */
 export const settle = internalMutationGeneric({
-  args: { ...ws, key: v.string(), name: v.string(), args: v.any(), run: v.boolean() },
+  args: { ...ws, key: v.string(), name: v.string(), args: v.unsafeAny(), run: v.boolean() },
   handler: (
     ctx,
     input: { workspaceId: string; key: string; name: string; args: unknown; run: boolean },

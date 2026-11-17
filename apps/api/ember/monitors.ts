@@ -56,7 +56,7 @@ function monitoringOf(ctx: MutationCtx) {
  * shard that serves another workspace, or none, takes them all (nothing here will ever apply them).
  */
 export const report = internalMutationGeneric({
-  args: { workspaceId: v.string(), region: v.string(), reports: v.any() },
+  args: { workspaceId: v.string(), region: v.string(), reports: v.unsafeAny() },
   handler: (
     ctx,
     input: { workspaceId: string; region: string; reports: ProbeReport[] },

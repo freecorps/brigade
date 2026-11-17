@@ -510,7 +510,7 @@ What Brigade needs that Ember does not have, each worked around here and propose
 **Status (2026-11-08).** Ember shipped G1–G8 in 0.3.0 (and app-private SQL tables, G9, in 0.4.0). Brigade uses:
 
 - **G4**: the runtime is mounted with `basePath` (src/ember.ts); nothing rewrites the path.
-- **G7**: the relay is on `@freecorps/ember-push` 0.5.0 and forces an exchange with the token FCM refused, so
+- **G7**: the relay is on `@freecorps/ember-push` (0.5.0 when this was written) and forces an exchange with the token FCM refused, so
   concurrent sends exchange once. It keeps `retries: 0` and its own deadline, which tell a token endpoint out of reach
   from a refused key for its fallback.
 - **G8**: session end, password resets, member changes and revoked API tokens call `revokeSockets` (src/ember-workspace.ts,
@@ -530,6 +530,36 @@ Converted: `dev` 2026-11-09 (3 workspaces, reads of old ids and writes checked),
 field added to a shape, a larger union) with no data migration (0.5.4, freecorps/ember#45), and Ember's `Auth` gets
 what RFC 0017 needs (`defineAuth` from `env`, the server-side `Auth.api` call, `Auth.importUsers`; 0.5.5). Nothing
 in them changes how a shard stores its rows, so 0.5.0's "fix forward" note above is unchanged.
+
+**Ember 0.8.0 (2026-11-17): no rollback of the API past it either, for a different reason.** This entry is from
+reading Ember's source and running this repository's checks. The upgrade has not run in `dev` or production, on a
+device, or over a shard written by 0.5.5: the tests here boot empty shards.
+
+- **What a shard does on its first boot under 0.8.0.** The storage format is the one 0.5.0 introduced (unchanged in
+  0.6, 0.7 and 0.8), so there is no table conversion this time. Ember's own runtime tables go from version 4 to 5:
+  `_jobs` gains `scheduled_at`, and ended jobs are kept instead of deleted, which is what `ctx.scheduler.get` and
+  `list` read. The shard records a `deploy:<version>` bookmark before it upgrades those tables.
+- **Going back.** The check that makes a runtime refuse runtime tables newer than its own is new in 0.8.0. An API
+  Worker built on Ember 0.5 to 0.7 does not have it, and would run on the upgraded tables without saying so. So after
+  this deploy, fix forward. If the code must go back anyway, each shard goes back with it, to the `deploy:<version>`
+  bookmark of this deploy (Durable Object point-in-time restore), and every write since is lost. Not determined:
+  whether Ember's `Auth` object changes its own tables on this boot (0.8.0 adds a journal table to it for
+  cross-shard replication, which Brigade does not use).
+- **From 0.8.0 on, that direction is guarded.** A newer runtime rolled back to 0.8.0 is refused by the shard
+  (`RuntimeSchemaTooNew` or `StorageFormatTooNew`, read-only meanwhile) instead of run silently, and
+  `ember restore --to deploy:<version> --discard-newer` brings such a shard back from the older runtime at the cost
+  of what was written since. A shard whose app-schema migration was refused now runs nothing: no queued action job,
+  no action with a token.
+- **What the code needed.** Types only. `v.any()` now infers `unknown`, so the internal functions that take
+  Brigade's own values use `v.unsafeAny()` (the same validator, typed `any` as before). Ember's client takes function
+  references rather than names, so `EmberSyncClient` builds the two it dispatches through with `unsafeRef`. No
+  function, schema or behaviour changed.
+- **Paging.** The relay uses only the token layer of `@freecorps/ember-push` (`apnsProviderToken`,
+  `fcmAccessToken`). Between 0.5.5 and 0.8.0 the only file of that package that changed is `component.ts`, which the
+  relay does not import.
+- **The CLI and the mount.** Ember's admin commands used to drop the path of `--url`, so they could not reach a
+  runtime mounted with `basePath`. 0.8.0 keeps it: `--url https://<api host>/ember` works for `restore`,
+  `deploy --preflight` and the others.
 
 Kept as they are, on purpose:
 

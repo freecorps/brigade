@@ -168,7 +168,7 @@ export const apply = internalMutationGeneric({
     workspaceId: v.string(),
     actor: actorArg,
     name: v.union(v.literal("member.changeRole"), v.literal("member.remove")),
-    args: v.any(),
+    args: v.unsafeAny(),
     /** A repair's fence, read before D1 was: a change applied since makes it `stale`, and nothing is written. */
     gen: v.optional(v.number()),
   },

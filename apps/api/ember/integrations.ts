@@ -92,7 +92,7 @@ export const slackTakeState = internalMutationGeneric({
 
 /** `slack.connect` as the member who installed (`WorkspaceDO.slackConnect`). */
 export const slackConnect = internalMutationGeneric({
-  args: { ...ws, actor: v.any(), args: v.any(), key: v.string() },
+  args: { ...ws, actor: v.unsafeAny(), args: v.unsafeAny(), key: v.string() },
   handler: (
     ctx,
     input: { workspaceId: string; actor: Actor; args: Record<string, unknown>; key: string },
@@ -121,7 +121,7 @@ export const slackContext = internalMutationGeneric({
 
 /** A Slack user's action as the member their email maps to (`WorkspaceDO.slackAct`). */
 export const slackAct = internalMutationGeneric({
-  args: { ...ws, teamId: v.string(), actor: v.any(), action: v.any(), key: v.string() },
+  args: { ...ws, teamId: v.string(), actor: v.unsafeAny(), action: v.unsafeAny(), key: v.string() },
   handler: (
     ctx,
     input: {
@@ -142,7 +142,7 @@ export const slackAct = internalMutationGeneric({
 
 /** What the Slack notifier should do for `event` (`WorkspaceDO.planSlack`). */
 export const slackPlan = internalMutationGeneric({
-  args: { event: v.any() },
+  args: { event: v.unsafeAny() },
   handler: (ctx, { event }: { event: BrigadeEvent }): SlackPlan => {
     const c = ctx as MutationCtx;
     const { shard, slack } = slackOf(c);
@@ -153,7 +153,7 @@ export const slackPlan = internalMutationGeneric({
 
 /** What doing one job of `event` in Slack did (`WorkspaceDO.recordSlack`). */
 export const slackRecord = internalMutationGeneric({
-  args: { event: v.any(), job: v.string(), outcome: v.any() },
+  args: { event: v.unsafeAny(), job: v.string(), outcome: v.unsafeAny() },
   handler: (
     ctx,
     input: { event: BrigadeEvent; job: string; outcome: SlackJobOutcome },
@@ -213,7 +213,7 @@ export const slackArchive = internalMutationGeneric({
 
 /** `webhook.create`, `webhook.rotateSecret` or `webhook.setHeaders` as `actor` (`WorkspaceDO.webhookRun`). */
 export const webhookRun = internalMutationGeneric({
-  args: { ...ws, actor: v.any(), name: v.string(), args: v.any(), key: v.string() },
+  args: { ...ws, actor: v.unsafeAny(), name: v.string(), args: v.unsafeAny(), key: v.string() },
   handler: (
     ctx,
     input: {
@@ -247,7 +247,7 @@ export const webhookRun = internalMutationGeneric({
 
 /** What the webhook notifier should deliver for `event` (`WorkspaceDO.planWebhooks`). */
 export const webhookPlan = internalMutationGeneric({
-  args: { event: v.any() },
+  args: { event: v.unsafeAny() },
   handler: (ctx, { event }: { event: BrigadeEvent }): WebhookPlan => {
     const c = ctx as MutationCtx;
     const { shard, webhooks } = webhooksOf(c);
@@ -258,7 +258,7 @@ export const webhookPlan = internalMutationGeneric({
 
 /** What one webhook delivery attempt did (`WorkspaceDO.recordWebhook`). */
 export const webhookRecord = internalMutationGeneric({
-  args: { event: v.any(), webhookId: v.string(), outcome: v.any() },
+  args: { event: v.unsafeAny(), webhookId: v.string(), outcome: v.unsafeAny() },
   handler: (
     ctx,
     input: { event: WebhookEventRef; webhookId: string; outcome: WebhookOutcome },
@@ -272,7 +272,7 @@ export const webhookRecord = internalMutationGeneric({
 
 /** The owners' email for an endpoint turned off (`WorkspaceDO.planWebhookEmail`). */
 export const webhookPlanEmail = internalMutationGeneric({
-  args: { event: v.any() },
+  args: { event: v.unsafeAny() },
   handler: (ctx, { event }: { event: BrigadeEvent }): WebhookEmailPlan => {
     const c = ctx as MutationCtx;
     const { shard, webhooks } = webhooksOf(c);
@@ -283,7 +283,7 @@ export const webhookPlanEmail = internalMutationGeneric({
 
 /** What that email did (`WorkspaceDO.recordWebhookEmail`). */
 export const webhookRecordEmail = internalMutationGeneric({
-  args: { event: v.any(), done: v.boolean() },
+  args: { event: v.unsafeAny(), done: v.boolean() },
   handler: (ctx, input: { event: BrigadeEvent; done: boolean }): null => {
     const c = ctx as MutationCtx;
     const { shard, webhooks } = webhooksOf(c);

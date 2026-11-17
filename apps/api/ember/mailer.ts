@@ -35,7 +35,7 @@ function withMailer<T>(
   return out;
 }
 
-const event = v.any();
+const event = v.unsafeAny();
 const NOT_FOUND = { send: false, reason: "not_found" } as const;
 
 /** `WorkspaceDO.planEmail`. */
@@ -47,7 +47,13 @@ export const plan = internalMutationGeneric({
 
 /** `WorkspaceDO.recordEmail`. */
 export const record = internalMutationGeneric({
-  args: { event, key: v.string(), about: v.any(), outcomes: v.any(), final: v.boolean() },
+  args: {
+    event,
+    key: v.string(),
+    about: v.unsafeAny(),
+    outcomes: v.unsafeAny(),
+    final: v.boolean(),
+  },
   handler: (
     ctx,
     input: {
@@ -73,7 +79,7 @@ export const planReminder = internalMutationGeneric({
 
 /** `WorkspaceDO.recordReminder`. */
 export const recordReminder = internalMutationGeneric({
-  args: { event, outcome: v.any(), final: v.boolean() },
+  args: { event, outcome: v.unsafeAny(), final: v.boolean() },
   handler: (ctx, input: { event: BrigadeEvent; outcome: EmailOutcome; final: boolean }): null =>
     withMailer(ctx as MutationCtx, input.event, null, (m) => {
       m.recordReminder(input.event, input.outcome, input.final, ctx.now);
@@ -90,7 +96,7 @@ export const planRotation = internalMutationGeneric({
 
 /** `WorkspaceDO.recordRotationEmail`. */
 export const recordRotation = internalMutationGeneric({
-  args: { event, outcomes: v.any(), final: v.boolean() },
+  args: { event, outcomes: v.unsafeAny(), final: v.boolean() },
   handler: (ctx, input: { event: BrigadeEvent; outcomes: EmailOutcome[]; final: boolean }): null =>
     withMailer(ctx as MutationCtx, input.event, null, (m) => {
       m.recordRotation(input.event, input.outcomes, input.final, ctx.now);

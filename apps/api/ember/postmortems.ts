@@ -43,7 +43,7 @@ function acting(
  * limit, its event), then what the model may read and the sections the draft fills.
  */
 export const requestDraft = internalMutationGeneric({
-  args: { ...ws, actor: v.any(), incidentId: v.string() },
+  args: { ...ws, actor: v.unsafeAny(), incidentId: v.string() },
   handler: (
     ctx,
     input: { workspaceId: string; actor: Actor; incidentId: string },
@@ -92,7 +92,7 @@ export const requestDraft = internalMutationGeneric({
 
 /** The kept revisions of the incident's postmortem, newest first (`WorkspaceDO.readPostmortemRevisions`). */
 export const revisions = internalMutationGeneric({
-  args: { ...ws, actor: v.any(), incidentId: v.string() },
+  args: { ...ws, actor: v.unsafeAny(), incidentId: v.string() },
   handler: (
     ctx,
     input: { workspaceId: string; actor: Actor; incidentId: string },
@@ -111,7 +111,7 @@ export const revisions = internalMutationGeneric({
 
 /** Writes the model's draft, or why there is none, as `sys_ai` (`WorkspaceDO.finishPostmortemDraft`). */
 export const finishDraft = internalMutationGeneric({
-  args: { ...ws, incidentId: v.string(), requestId: v.string(), outcome: v.any() },
+  args: { ...ws, incidentId: v.string(), requestId: v.string(), outcome: v.unsafeAny() },
   handler: (
     ctx,
     input: {

@@ -81,7 +81,7 @@ function scheduleTick(ctx: MutationCtx, p: Pager, shard: EmberShard): void {
 const escalations = (shard: EmberShard) =>
   new Escalations({ shard: shard as never, log, committed: () => {} });
 
-const event = v.any();
+const event = v.unsafeAny();
 
 /**
  * `WorkspaceDO.planPage`'s synchronous part: the plan, and (for a page) that the Queue brought it (`arrived`), in
@@ -130,7 +130,7 @@ export const deadLettered = internalMutationGeneric({
 
 /** `WorkspaceDO.recordPage`: what a page did. */
 export const record = internalMutationGeneric({
-  args: { event, outcomes: v.any(), final: v.boolean(), skipped: v.optional(v.any()) },
+  args: { event, outcomes: v.unsafeAny(), final: v.boolean(), skipped: v.optional(v.unsafeAny()) },
   handler: (
     ctx,
     input: {
@@ -236,7 +236,7 @@ const NOTIFICATION_CLIENT_ID = "notification";
 export const acknowledge = internalMutationGeneric({
   args: {
     workspaceId: v.string(),
-    actor: v.any(),
+    actor: v.unsafeAny(),
     incidentId: v.string(),
     mutationId: v.string(),
   },

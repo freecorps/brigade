@@ -39,7 +39,7 @@ const log = (message: string, fields: Record<string, unknown>) =>
 export const admit = internalMutationGeneric({
   args: {
     workspaceId: v.string(),
-    actor: v.any(),
+    actor: v.unsafeAny(),
     name: v.optional(v.string()),
     resetAt: v.optional(v.number()),
     memberGen: v.optional(v.number()),

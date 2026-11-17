@@ -52,8 +52,8 @@ function runIn(
 export const register = internalMutationGeneric({
   args: {
     workspaceId: v.string(),
-    actor: v.any(),
-    args: v.any(),
+    actor: v.unsafeAny(),
+    args: v.unsafeAny(),
     resetAt: v.optional(v.number()),
     sessionId: v.optional(v.string()),
     memberGen: v.optional(v.number()),

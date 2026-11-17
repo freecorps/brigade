@@ -27,7 +27,7 @@ export const EXPORT_ENTRIES_BATCH = 1;
 
 /** The export's checks, its slot of the hourly limit, the file's opening and the incidents' ids. */
 export const start = internalMutationGeneric({
-  args: { ...ws, actor: v.any(), scope: v.any(), id: v.string() },
+  args: { ...ws, actor: v.unsafeAny(), scope: v.unsafeAny(), id: v.string() },
   handler: (
     ctx,
     input: { workspaceId: string; actor: Actor; scope: ExportScope; id: string },
@@ -73,7 +73,7 @@ export const entries = internalMutationGeneric({
 
 /** Records an export the Worker wrote to R2 (`export.record`, as the member): listed, and its event. */
 export const record = internalMutationGeneric({
-  args: { ...ws, actor: v.any(), args: v.any() },
+  args: { ...ws, actor: v.unsafeAny(), args: v.unsafeAny() },
   handler: (
     ctx,
     input: {

@@ -99,7 +99,7 @@ export const source = internalMutationGeneric({
 
 /** What a verified payload asks for, ingested (`AlertIntake.ingestPayload`). */
 export const ingest = internalMutationGeneric({
-  args: { workspaceId: v.string(), sourceId: v.string(), payload: v.any() },
+  args: { workspaceId: v.string(), sourceId: v.string(), payload: v.unsafeAny() },
   handler: (
     ctx,
     input: { workspaceId: string; sourceId: string; payload: AlertPayload },

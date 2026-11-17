@@ -19,6 +19,7 @@ import {
   type QuerySnapshot,
   type ShardConnectionState,
   type WebSocketConstructor,
+  unsafeRef,
 } from "@freecorps/ember-client";
 import {
   createMemoryStore,
@@ -58,6 +59,10 @@ type Mutations = typeof brigadeMutations;
 /** The shard functions every workspace query and mutation goes through. */
 export const WORKSPACE_QUERY = "workspace:query";
 export const WORKSPACE_MUTATE = "workspace:mutate";
+// Ember's client takes function references, not names (0.8). These two functions dispatch by `name` to Brigade's own
+// queries and mutations, so there is no generated `api` entry to type them with: references by name, checked by the shard.
+const QUERY_REF = unsafeRef<"query">(WORKSPACE_QUERY);
+const MUTATE_REF = unsafeRef<"mutation">(WORKSPACE_MUTATE);
 
 /** The Ember shard of a workspace (apps/api/src/ember.ts `workspaceShard`). */
 export const emberShard = (workspaceId: string): string => `workspace:${workspaceId}`;
@@ -231,9 +236,13 @@ export class EmberSyncClient implements SyncClientLike {
     const watch = (): Watch => {
       const client = this.#client(shard);
       if (bound?.client !== client) {
-        const w = client.watchQuery<never>(WORKSPACE_QUERY, { name, args } as never, {
-          shard: emberShard(shard),
-        }) as unknown as Watch;
+        const w = client.watchQuery(
+          QUERY_REF,
+          { name, args },
+          {
+            shard: emberShard(shard),
+          },
+        ) as unknown as Watch;
         bound = { client, watch: w };
       }
       return bound.watch;
@@ -293,9 +302,13 @@ export class EmberSyncClient implements SyncClientLike {
     try {
       // The optimistic run is the client's default for `workspace:mutate` (`#client`).
       return outcomeOf(
-        await client.mutation(WORKSPACE_MUTATE, { name, args } as never, {
-          shard: emberShard(shard),
-        }),
+        await client.mutation(
+          MUTATE_REF,
+          { name, args },
+          {
+            shard: emberShard(shard),
+          },
+        ),
       );
     } catch (error) {
       return failureOf(error);
@@ -401,7 +414,7 @@ export class EmberSyncClient implements SyncClientLike {
   #optimistic(workspaceId: string): OptimisticUpdate<{ name: string; args: unknown }> {
     const shard = { shard: emberShard(workspaceId) };
     return (store, { name, args }, record) => {
-      const loaded = store.getAllQueries(WORKSPACE_QUERY, shard) as Loaded[];
+      const loaded = store.getAllQueries(QUERY_REF, shard) as Loaded[];
       const seed: { [T in keyof BrigadeTables]?: BrigadeTables[T][] } = {};
       const seen = new Set<string>();
       const live: { query: AnyQuery; loaded: Loaded }[] = [];
@@ -426,12 +439,7 @@ export class EmberSyncClient implements SyncClientLike {
       for (const { query, loaded: entry } of live) {
         try {
           const rows = evaluateQuery(query, entry.args.args as never, view);
-          store.setQuery(
-            WORKSPACE_QUERY,
-            entry.args,
-            { ok: true, rows } satisfies QueryResult,
-            shard,
-          );
+          store.setQuery(QUERY_REF, entry.args, { ok: true, rows } satisfies QueryResult, shard);
         } catch (error) {
           this.#warn(`Query ${entry.args.name} threw`, error);
         }

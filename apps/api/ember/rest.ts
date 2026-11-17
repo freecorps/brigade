@@ -20,7 +20,7 @@ const REFUSED = { ok: false, code: "unauthenticated" } as const;
 
 /** `WorkspaceDO.restRead`. */
 export const read = internalMutationGeneric({
-  args: { workspaceId: v.string(), actor: v.any(), read: v.any() },
+  args: { workspaceId: v.string(), actor: v.unsafeAny(), read: v.unsafeAny() },
   handler: (ctx, input: { workspaceId: string; actor: Actor; read: RestRead }): RestResult => {
     const c = ctx as MutationCtx;
     const { shard } = emberWorkspace(c);
@@ -38,8 +38,8 @@ export const read = internalMutationGeneric({
 export const write = internalMutationGeneric({
   args: {
     workspaceId: v.string(),
-    actor: v.any(),
-    write: v.any(),
+    actor: v.unsafeAny(),
+    write: v.unsafeAny(),
     key: v.string(),
     seed: v.array(v.number()),
     request: v.string(),
@@ -83,9 +83,9 @@ export const write = internalMutationGeneric({
 export const tokenRun = internalMutationGeneric({
   args: {
     workspaceId: v.string(),
-    actor: v.any(),
+    actor: v.unsafeAny(),
     name: v.union(v.literal("apiToken.create"), v.literal("apiToken.revoke")),
-    args: v.any(),
+    args: v.unsafeAny(),
     mutationId: v.string(),
   },
   handler: (

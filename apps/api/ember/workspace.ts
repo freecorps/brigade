@@ -304,7 +304,7 @@ type EventsWriter = {
 
 /** A client's mutation (`mutations`), as the caller's identity. */
 export const mutate = mutationGeneric({
-  args: { name: v.string(), args: v.any() },
+  args: { name: v.string(), args: v.unsafeAny() },
   handler: (ctx: MutationCtx, { name, args }: { name: string; args: unknown }) => {
     const identity = ctx.auth.getUserIdentity();
     let acting: Actor | undefined;
@@ -367,7 +367,7 @@ export function touchDevice(
 export const serverMutate = internalMutationGeneric({
   args: {
     name: v.string(),
-    args: v.any(),
+    args: v.unsafeAny(),
     actor: v.object({
       kind: v.union(
         v.literal("user"),
@@ -402,7 +402,7 @@ export const serverMutate = internalMutationGeneric({
 
 /** A named query (`queries`), as the caller's identity; reactive through the rows it reads. */
 export const query = queryGeneric({
-  args: { name: v.string(), args: v.any() },
+  args: { name: v.string(), args: v.unsafeAny() },
   handler: (ctx: QueryCtx, { name, args }: { name: string; args: unknown }): QueryResult => {
     const store = createEmberStore<BrigadeTables>(ctx.db as never, TABLE_SET);
     const actor = actorOf(ctx.auth.getUserIdentity(), store, ctx.now);

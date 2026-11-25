@@ -178,7 +178,7 @@ does a firing held by a resolve that came before it (recorded as `resolved_early
 The paging pipeline's own watchdog (RFC 0007 "Watching the watcher") writes events too, through its own outbox and
 the same Queue, with `workspaceId` `_system` (no workspace can have it; `source` `brigade://_system/watchdog`, actor
 `sys_watchdog`): `brigade.heartbeat` (`beat`, a counter) once a minute, which the consumer proves and never sends to
-a shard, and `brigade.status_changed` (`status`, `previous`, `reasons`) when the pipeline turns `ok`, `degraded` or
+a shard (several in one batch are all acked and only the newest is proved), and `brigade.status_changed` (`status`, `previous`, `reasons`) when the pipeline turns `ok`, `degraded` or
 `unknown`. Consumers that only care about workspaces skip `_system`.
 
 ## Delivery: transactional outbox
@@ -435,8 +435,10 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   logged: it has no incident timeline. No verified owner is logged too (admins are not a fallback). Tests:
   `apps/api/test/email.test.ts` ("the owners' email about a member taken out of schedules").
 - **Built.** An email to Brigade's operators (`OPERATOR_EMAILS`) on `brigade.status_changed` (Q19, RFC 0007
-  "Watching the watcher"), on the `EmailSender`: sent by the watchdog itself as the status changes, not by the
-  Queue's consumer, and tried again on the next beats when it fails.
+  "Watching the watcher"), on the `EmailSender`: sent by the watchdog itself, not by the Queue's consumer: the
+  newest change once it held 90 s (`OPERATOR_EMAIL_HOLD_MS`), dropped if the status came back to what the operators
+  were last told, waiting for a place past `OPERATOR_EMAIL_HOURLY_CAP`, and tried again on the next beats when it
+  fails. The full rules are in RFC 0007 "Watching the watcher".
 
 ## Alert sources
 

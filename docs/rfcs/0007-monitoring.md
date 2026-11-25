@@ -426,8 +426,8 @@ results (a new monitor is up on its first success).
      endpoint slow or busy; any failed D1 read; the relay not answering (`unreachable`) or limiting (`rate_limited`),
      for its deep check and for the send token's beside it; and a proof back later than 2 minutes, `pipeline_slow`)
      counts only on the **3rd proved beat in a row** it fails (`TRANSIENT_FAILURES_TO_DEGRADE`, a count
-     per check in the watchdog's storage): before that the beat still pings and the status does not change, so one
-     slow answer does not page the operators. A check that passes starts its count again, so a provider failing two beats in three never degrades (accepted:
+     per check in the watchdog's storage): before that the status does not change and the beat still pings (except a
+     late proof, which never pings: the 2-minute rule above), so one slow answer does not page the operators. A check that passes starts its count again, so a provider failing two beats in three never degrades (accepted:
      the pages themselves are retried, and a lasting outage fails three in a row). Anything else is silence.
      **`TooManyProviderTokenUpdates` is transient (decided).** It first counted at once, as "the provider token
      refreshed too often, which pages would hit too". In production it was one beat at a time, the next always

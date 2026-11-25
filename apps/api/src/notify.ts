@@ -73,7 +73,6 @@ import { asksForWebhookEmail, asksForWebhooks } from "./webhooks.ts";
 import {
   HEARTBEAT_EVENT,
   isSystemEvent,
-  STATUS_EVENT,
   WATCHDOG_NAME,
   type BeatCheck,
   type BeatChecks,
@@ -130,8 +129,13 @@ export const RELAY_TIMEOUT_MS = 10_000;
 export const SHARD_CALL_TIMEOUT_MS = 20_000;
 /** How long the watchdog gets to record a proved heartbeat; past it the beat is logged as not recorded. */
 export const WATCHDOG_CALL_TIMEOUT_MS = 10_000;
-/** How long the relay's token check gets when the dead-man switch's heartbeat comes through. */
-export const RELAY_HEALTH_TIMEOUT_MS = 5000;
+/**
+ * How long the relay's token check gets when the dead-man switch's heartbeat comes through. Well above the relay's
+ * own `DEEP_CHECK_TIMEOUT_MS` (3 s per provider, apps/relay src/deep-health.ts) plus its registry read and limits on
+ * `/v1`, so a provider that does not answer in time comes back as the relay's `transient` answer, which the watchdog
+ * waits three beats on, rather than as this call timing out (`relay_unreachable`).
+ */
+export const RELAY_HEALTH_TIMEOUT_MS = 8000;
 /** How long the beat's one D1 read gets. */
 export const D1_HEALTH_TIMEOUT_MS = 3000;
 
@@ -223,12 +227,16 @@ export async function consumeEvents(
   const sideSend = slots.wrap(send);
   // Slack's calls (messages, channels, the timeline mirror) hold at most `SLACK_CONNECTIONS` of those side slots.
   const slackSend = new SideConnections(SLACK_CONNECTIONS).wrap(sideSend);
+  // Several heartbeats in one batch (a Queue that waited, a redelivery): only the newest is proved. The watchdog
+  // ignores one older than a beat it proved, but proved side by side an older, late one could land first and say
+  // `pipeline_slow` a moment before the newest says it is fine.
+  const beat = newestHeartbeat(batch.messages);
   await Promise.all(
     batch.messages.map(async (message) => {
       // The dead-man switch's own events (src/watchdog.ts): never a shard's, never a page.
       if (isSystemEvent(message.body)) {
         // `brigade.status_changed` is emailed by the watchdog itself (src/notify-operators.ts); nothing to do here.
-        if (message.body.type !== STATUS_EVENT) await proveHeartbeat(message.body, env, send);
+        if (message === beat) await proveHeartbeat(message.body, env, send);
         return message.ack();
       }
       const event = parseEvent(message.body);
@@ -415,6 +423,22 @@ export async function consumeDeadLetters(
       }
     }),
   );
+}
+
+/** The batch's newest `brigade.heartbeat` (by when the watchdog wrote it; the last of equals), if any. */
+function newestHeartbeat(messages: readonly Message<unknown>[]): Message<unknown> | undefined {
+  let newest: Message<unknown> | undefined;
+  let newestAt = Number.NEGATIVE_INFINITY;
+  for (const message of messages) {
+    const body = message.body;
+    if (!isSystemEvent(body) || body.type !== HEARTBEAT_EVENT) continue;
+    const at = Date.parse(body.time);
+    if (Number.isFinite(at) && at >= newestAt) {
+      newest = message;
+      newestAt = at;
+    }
+  }
+  return newest;
 }
 
 /**

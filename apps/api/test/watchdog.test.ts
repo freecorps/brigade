@@ -21,6 +21,7 @@ import {
   BEAT_STALE_MS,
   HEARTBEAT_EVENT,
   MAX_PROOF_LATENCY_MS,
+  OPERATOR_EMAIL_HOLD_MS,
   OPERATOR_EMAIL_HOURLY_CAP,
   OPERATOR_EMAIL_TRIES,
   pagingStatus,
@@ -204,6 +205,7 @@ describe("pagingStatus", () => {
       lastBeatAt: now,
       provedBeatAt: now - 10 * MINUTE,
       lastProvedAt: now,
+      slow: true,
       relay: "ok" as const,
     };
     expect(pagingStatus(times, now)).toEqual({
@@ -213,6 +215,21 @@ describe("pagingStatus", () => {
     // Slow but within the window: the pings stop (MAX_PROOF_LATENCY_MS), and the dashboard says why.
     const slow = { ...times, provedBeatAt: now - 2.5 * MINUTE };
     expect(pagingStatus(slow, now)).toEqual({ status: "degraded", reasons: ["pipeline_slow"] });
+    // Slow on fewer beats in a row than it takes (`slow` unset): nothing yet.
+    expect(pagingStatus({ ...slow, slow: false }, now)).toEqual({ status: "ok", reasons: [] });
+  });
+
+  test("stalled only past three and a half minutes, so the beat that finds three unproved minutes is not", () => {
+    // Proved at 12:00, then the 12:01 and 12:02 beats are late: the 12:03 beat is written a second before its proof.
+    expect(BEAT_STALE_MS).toBe(3.5 * MINUTE);
+    expect(pagingStatus(at(NOW, NOW + 3 * MINUTE, NOW), NOW + 3 * MINUTE + 500)).toEqual({
+      status: "ok",
+      reasons: [],
+    });
+    expect(pagingStatus(at(NOW, NOW + 4 * MINUTE, NOW), NOW + 4 * MINUTE)).toEqual({
+      status: "degraded",
+      reasons: ["pipeline_stalled"],
+    });
   });
 
   test("a cron that stopped beating is degraded too", () => {
@@ -351,10 +368,10 @@ describe("the heartbeat, end to end", () => {
     });
   });
 
-  test("the relay down: no ping, degraded, and the change goes to the outbox", async () => {
+  test("the relay down: no ping, degraded on the third beat in a row, and the change goes to the outbox", async () => {
     const { stub, heartbeats, events, notifyEnv } = watchdog();
     await stub.beat();
-    for (const down of [relay(503), relay(null)]) {
+    for (const down of [relay(503), relay(null), relay(503)]) {
       // A beat a millisecond later each time, so each is newer than the last proved.
       await new Promise((resolve) => setTimeout(resolve, 2));
       await stub.beat();
@@ -402,14 +419,62 @@ describe("the heartbeat, end to end", () => {
   });
 
   test("a relay that answers its token check with anything but 400 invalid_body is unreachable", async () => {
-    const { stub, heartbeats, notifyEnv } = watchdog();
     for (const status of [200, 404, 500]) {
-      await new Promise((resolve) => setTimeout(resolve, 2));
-      await stub.beat();
-      await deliver([(await heartbeats()).at(-1)!], notifyEnv(), relay(status).send);
+      const { stub, heartbeats, notifyEnv } = watchdog();
+      for (let n = 0; n < TRANSIENT_FAILURES_TO_DEGRADE; n++) {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        await stub.beat();
+        await deliver([(await heartbeats()).at(-1)!], notifyEnv(), relay(status).send);
+      }
       expect((await stub.health()).reasons, String(status)).toEqual(["relay_unreachable"]);
     }
     expect(pings()).toEqual([]);
+  });
+
+  test("a relay not answering on one beat or two changes nothing and still pings; the third in a row degrades", async () => {
+    const { stub, heartbeats, events, notifyEnv } = watchdog();
+    const beat = async (send: Fetch) => {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      await stub.beat();
+      await deliver([(await heartbeats()).at(-1)!], notifyEnv(), send);
+    };
+    await beat(relay().send);
+    await vi.waitFor(() => expect(pings()).toHaveLength(1));
+    // A deploy, a blip, a provider check that ran long: the relay does not answer, then does.
+    for (const n of [1, 2]) {
+      await beat(relay(null).send);
+      expect(await stub.health(), `beat ${n}`).toMatchObject({ status: "ok", reasons: [] });
+      await vi.waitFor(() => expect(pings()).toHaveLength(1 + n));
+    }
+    await beat(relay().send);
+    await vi.waitFor(() => expect(pings()).toHaveLength(4));
+    // The count started again: two more are still nothing, the third is.
+    await beat(relay(503).send);
+    await beat(relay(null).send);
+    expect(await stub.health()).toMatchObject({ status: "ok", reasons: [] });
+    await vi.waitFor(() => expect(pings()).toHaveLength(6));
+    await beat(relay(503).send);
+    expect(await stub.health()).toMatchObject({
+      status: "degraded",
+      reasons: ["relay_unreachable"],
+    });
+    expect(pings()).toHaveLength(6);
+    // Only that one is a change; a refused token right after is one at once.
+    await beat(relay().send);
+    const changes = (await events()).filter((event) => event.type === STATUS_EVENT);
+    expect(changes.map((event) => event.data)).toEqual([
+      { status: "ok", previous: "unknown", reasons: [] },
+      { status: "degraded", previous: "ok", reasons: ["relay_unreachable"] },
+      { status: "ok", previous: "degraded", reasons: [] },
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    await stub.beat();
+    await deliver(
+      [(await heartbeats()).at(-1)!],
+      { ...notifyEnv(), RELAY_SEND_TOKEN: "rotated" },
+      relay().send,
+    );
+    expect((await stub.health()).reasons).toEqual(["relay_unauthorized"]);
   });
 
   test("no relay configured: no ping, degraded", async () => {
@@ -422,15 +487,52 @@ describe("the heartbeat, end to end", () => {
     expect((await stub.health()).reasons).toEqual(["relay_not_configured"]);
   });
 
-  test("a heartbeat that took too long counts as alive inside, but pings nothing", async () => {
+  test("a heartbeat that took too long counts as alive inside, but pings nothing; three in a row are pipeline_slow", async () => {
     const { stub, heartbeats } = watchdog();
-    await stub.beat(NOW);
-    const [heartbeat] = await heartbeats();
-    const health = await stub.proved(heartbeat!.time, "ok", NOW + MAX_PROOF_LATENCY_MS + 1);
+    const late = async (minute: number, latency: number) => {
+      await stub.beat(NOW + minute * MINUTE);
+      const newest = (await heartbeats()).at(-1)!;
+      return stub.proved(newest.time, "ok", NOW + minute * MINUTE + latency);
+    };
+    await late(0, 1000);
+    await vi.waitFor(() => expect(pings()).toHaveLength(1));
+    // One late beat (a batch that waited): nothing changes, but it pings nothing either.
+    let health = await late(1, MAX_PROOF_LATENCY_MS + 1);
     expect(health.lastProvedAt).not.toBeNull();
-    // The dashboard says why the external check heard nothing.
+    expect(health).toMatchObject({ status: "ok", reasons: [] });
+    health = await late(2, MAX_PROOF_LATENCY_MS + 1);
+    expect(health).toMatchObject({ status: "ok", reasons: [] });
+    // The third in a row: the dashboard says why the external check heard nothing.
+    health = await late(3, MAX_PROOF_LATENCY_MS + 1);
     expect(health).toMatchObject({ status: "degraded", reasons: ["pipeline_slow"] });
-    expect(pings()).toEqual([]);
+    expect(pings()).toHaveLength(1);
+    // One on time ends it.
+    health = await late(4, 1000);
+    expect(health).toMatchObject({ status: "ok", reasons: [] });
+    await vi.waitFor(() => expect(pings()).toHaveLength(2));
+  });
+
+  test("several heartbeats in one batch: only the newest is proved", async () => {
+    const { stub, heartbeats, events, notifyEnv } = watchdog();
+    // A Queue that waited: the beat from three minutes ago comes with the one just written.
+    await stub.beat(Date.now() - 3 * MINUTE);
+    await stub.beat();
+    const [old, fresh] = await heartbeats();
+    const up = relay();
+    // The older one last in the batch too: order does not matter.
+    const result = await deliver([fresh!, old!, fresh!], notifyEnv(), up.send);
+    expect(result.explicitAcks.sort()).toEqual(["msg-0", "msg-1", "msg-2"]);
+    expect(result.retryMessages).toEqual([]);
+    // One proof: one deep check (and the old relay's token check after it).
+    expect(up.urls).toEqual([
+      "GET https://relay.test/health?deep=1",
+      "POST https://relay.test/send",
+    ]);
+    expect(pings()).toEqual([PING_URL]);
+    expect(await stub.health()).toMatchObject({ status: "ok", reasons: [] });
+    expect(
+      (await events()).filter((event) => event.type === STATUS_EVENT).map((event) => event.data),
+    ).toEqual([{ status: "ok", previous: "unknown", reasons: [] }]);
   });
 
   test("a backed-up queue (beats ten minutes late): degraded, no pings, though the relay is up", async () => {
@@ -653,49 +755,145 @@ describe("the heartbeat, end to end", () => {
           .toArray(),
       );
     /** Lets the emails a beat or a proof started in `waitUntil` finish. */
-    const flushed = (left = 0) =>
-      vi.waitFor(async () => expect(await waiting()).toHaveLength(left));
+    const flushed = () =>
+      vi.waitFor(async () =>
+        expect(
+          await runInDurableObject(dog.stub, (instance: WatchdogDO) =>
+            Reflect.get(instance, "emailing"),
+          ),
+        ).toBe(false),
+      );
     /** Beats at `minute` and proves that beat a second later: ok (or as `checks` say). */
     const proveAt = async (minute: number, checks?: BeatChecks) => {
       await dog.stub.beat(NOW + minute * MINUTE);
+      await flushed();
       const newest = (await dog.heartbeats()).at(-1)!;
       await dog.stub.proved(newest.time, "ok", NOW + minute * MINUTE + 1000, checks);
+      await flushed();
     };
     return { ...dog, waiting, flushed, proveAt };
   }
+  const DEGRADED = "Brigade's paging self-check is degraded";
+  const NORMAL = "Brigade's paging self-check is back to normal";
+  const APNS_REFUSED: BeatChecks = { apns: "error", fcm: "ok", d1: "ok" };
+
+  test("a change is emailed once it held for OPERATOR_EMAIL_HOLD_MS: with the second beat after it", async () => {
+    expect(OPERATOR_EMAIL_HOLD_MS).toBeGreaterThan(MINUTE);
+    expect(OPERATOR_EMAIL_HOLD_MS).toBeLessThan(2 * MINUTE);
+    const { sent, mail } = mailbox();
+    const { proveAt, waiting } = await emailingWatchdog(mail);
+    // A new watchdog's first proof (unknown to ok) tells nobody anything.
+    await proveAt(0);
+    expect(sent).toEqual([]);
+    await proveAt(1, APNS_REFUSED);
+    await proveAt(2, APNS_REFUSED);
+    expect(sent).toEqual([]);
+    expect(await waiting()).toEqual([{ tries: 0 }]);
+    await proveAt(3, APNS_REFUSED);
+    expect(sent.map((one) => one.subject)).toEqual([DEGRADED]);
+    expect(sent[0]!.to.email).toBe("ops@example.com");
+    await proveAt(4);
+    await proveAt(5);
+    expect(sent.map((one) => one.subject)).toEqual([DEGRADED]);
+    await proveAt(6);
+    expect(sent.map((one) => one.subject)).toEqual([DEGRADED, NORMAL]);
+    expect(await waiting()).toEqual([]);
+  });
+
+  test("a change undone before its email went out emails nobody, both ways", async () => {
+    const { sent, mail } = mailbox();
+    const { stub, events, heartbeats, proveAt, flushed, waiting } = await emailingWatchdog(mail);
+    await proveAt(0);
+    // Degraded on one proof, ok on the next: logged and evented, emailed to nobody.
+    await proveAt(1, APNS_REFUSED);
+    await proveAt(2);
+    for (let minute = 3; minute <= 5; minute++) await proveAt(minute);
+    expect(sent).toEqual([]);
+    expect(await waiting()).toEqual([]);
+    const changes = async () =>
+      (await events()).filter((event) => event.type === STATUS_EVENT).map((event) => event.data);
+    expect((await changes()).slice(-2)).toEqual([
+      { status: "degraded", previous: "ok", reasons: ["apns_failing"] },
+      { status: "ok", previous: "degraded", reasons: [] },
+    ]);
+    // A Queue that held two beats: the beat at 12:08 finds 12:05 the newest proved (three and a half minutes
+    // would be stalled), and its proof a second later is on time.
+    await stub.beat(NOW + 6 * MINUTE);
+    await stub.beat(NOW + 7 * MINUTE);
+    await stub.beat(NOW + 8 * MINUTE);
+    await flushed();
+    expect((await stub.health(NOW + 8 * MINUTE)).status).toBe("ok");
+    // One more minute of silence is stalled; the backlog's newest beat proved a second later undoes it.
+    await stub.beat(NOW + 9 * MINUTE);
+    await flushed();
+    expect((await stub.health(NOW + 9 * MINUTE)).reasons).toEqual(["pipeline_stalled"]);
+    await stub.proved((await heartbeats()).at(-1)!.time, "ok", NOW + 9 * MINUTE + 1000);
+    await flushed();
+    for (let minute = 10; minute <= 13; minute++) await proveAt(minute);
+    expect(sent).toEqual([]);
+
+    // The other way: degraded and told, then ok for a moment and degraded again: no "back to normal", no repeat.
+    await proveAt(14, APNS_REFUSED);
+    await proveAt(15, APNS_REFUSED);
+    await proveAt(16, APNS_REFUSED);
+    expect(sent.map((one) => one.subject)).toEqual([DEGRADED]);
+    await proveAt(17);
+    await proveAt(18, APNS_REFUSED);
+    for (let minute = 19; minute <= 21; minute++) await proveAt(minute, APNS_REFUSED);
+    expect(sent.map((one) => one.subject)).toEqual([DEGRADED]);
+    expect(await waiting()).toEqual([]);
+  });
+
+  test("a status that keeps changing is still emailed: the newest change, on the first one's time", async () => {
+    const { sent, mail } = mailbox();
+    const { proveAt } = await emailingWatchdog(mail);
+    await proveAt(0);
+    // Degraded with a new reason each minute: each change replaces the last, but the first one's hold still ends.
+    await proveAt(1, APNS_REFUSED);
+    await proveAt(2, { apns: "error", fcm: "error", d1: "ok" });
+    await proveAt(3, { apns: "ok", fcm: "error", d1: "ok" });
+    // Sent by the beat at 12:03, the first one's hold over: the status as the 12:02 proof left it, not as it first
+    // changed.
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.subject).toBe(DEGRADED);
+    expect(sent[0]!.text).toContain("Firebase Cloud Messaging gave the relay no access token.");
+    expect(sent[0]!.text).toContain("Apple's push service refused");
+    // Its proof changed it again (FCM alone): that one waits a hold of its own, the last having gone out.
+    await proveAt(4, { apns: "ok", fcm: "error", d1: "ok" });
+    expect(sent).toHaveLength(1);
+    await proveAt(5, { apns: "ok", fcm: "error", d1: "ok" });
+    expect(sent).toHaveLength(2);
+    expect(sent[1]!.text).not.toContain("Apple's push service refused");
+  });
 
   test("a stalled queue: the watchdog emails the operators itself as the status degrades", async () => {
     const { sent, mail } = mailbox();
     const { stub, heartbeats, events, notifyEnv, flushed, proveAt } = await emailingWatchdog(mail);
     await proveAt(0);
-    // Unknown to ok is a change too.
+    // The Queue stops: beats keep coming, none comes back, and nothing is drained. Stalled from the beat at 12:04,
+    // emailed two beats later.
+    for (let minute = 1; minute <= 6; minute++) await stub.beat(NOW + minute * MINUTE);
     await flushed();
-    expect(sent.map((one) => one.subject)).toEqual([
-      "Brigade's paging self-check is back to normal",
-    ]);
-    // The Queue stops: beats keep coming, none comes back, and nothing is drained.
-    for (let minute = 1; minute <= 4; minute++) await stub.beat(NOW + minute * MINUTE);
-    await flushed();
-    expect(sent).toHaveLength(2);
-    expect(sent[1]!.subject).toBe("Brigade's paging self-check is degraded");
-    expect(sent[1]!.to.email).toBe("ops@example.com");
+    expect(sent.map((one) => one.subject)).toEqual([DEGRADED]);
+    expect(sent[0]!.text).toContain("stopped getting through the event queue");
     // The Queue comes back: the backlog proves the newest beat, back to ok, emailed from the watchdog too.
-    await stub.proved((await heartbeats()).at(-1)!.time, "ok", NOW + 4 * MINUTE + 5000);
+    await stub.proved((await heartbeats()).at(-1)!.time, "ok", NOW + 6 * MINUTE + 5000);
     await flushed();
-    expect(sent.map((one) => one.subject).at(-1)).toBe(
-      "Brigade's paging self-check is back to normal",
-    );
+    await stub.beat(NOW + 7 * MINUTE);
+    await stub.beat(NOW + 8 * MINUTE);
+    await flushed();
+    expect(sent.map((one) => one.subject)).toEqual([DEGRADED, NORMAL]);
     // The changes the Queue held send nothing more through the consumer.
     const changes = (await events()).filter((event) => event.type === STATUS_EVENT);
     expect(changes).toHaveLength(3);
     const result = await deliver(changes, notifyEnv(), relay().send, mail);
     expect(result.explicitAcks).toHaveLength(3);
-    expect(sent).toHaveLength(3);
+    expect(sent).toHaveLength(2);
   });
 
   test("the instance's own push key failing keeps pinging and emails the operators that the relay pages meanwhile", async () => {
     const { sent, mail } = mailbox();
-    const { stub, flushed, proveAt } = await emailingWatchdog(mail);
+    const { stub, proveAt } = await emailingWatchdog(mail);
     /** Just after the proof at `minute`: `health` reads the clock otherwise. */
     const at = (minute: number) => NOW + minute * MINUTE + 2000;
     const direct = (apns: BeatCheck, fcm: BeatCheck = "ok"): BeatChecks => ({
@@ -705,36 +903,37 @@ describe("the heartbeat, end to end", () => {
       directApns: apns,
       directFcm: fcm,
     });
+    const subjects = () => sent.map((one) => one.subject);
     await proveAt(0, direct("ok"));
-    await flushed();
     await pinged(stub, true);
-    expect(sent.map((one) => one.subject)).toEqual([
-      "Brigade's paging self-check is back to normal",
-    ]);
+    expect(sent).toEqual([]);
     // Apple refuses the instance's own key: still ok, still pinging, and the operators hear of it once.
     await proveAt(1, direct("error"));
-    await flushed();
     expect(await stub.health(at(1))).toMatchObject({
       status: "ok",
       reasons: ["direct_apns_failing"],
     });
     await vi.waitFor(() => expect(pings()).toHaveLength(2));
-    expect(sent.map((one) => one.subject).at(-1)).toBe(
-      "Brigade's own push key is failing: pages go through the relay",
-    );
-    expect(sent.at(-1)!.text).toContain("Apple's push service refused this instance's own key");
     await proveAt(2, direct("error"));
-    await flushed();
-    expect(sent).toHaveLength(2);
+    await proveAt(3, direct("error"));
+    expect(subjects()).toEqual(["Brigade's own push key is failing: pages go through the relay"]);
+    expect(sent.at(-1)!.text).toContain("Apple's push service refused this instance's own key");
+    await proveAt(4, direct("error"));
+    expect(sent).toHaveLength(1);
     // A slow answer counts only on the third in a row, as the relay's checks do.
-    await proveAt(3, direct("ok", "transient"));
-    await proveAt(4, direct("ok", "transient"));
-    expect(await stub.health(at(4))).toMatchObject({ status: "ok", reasons: [] });
     await proveAt(5, direct("ok", "transient"));
-    expect(await stub.health(at(5))).toMatchObject({
+    await proveAt(6, direct("ok", "transient"));
+    expect(await stub.health(at(6))).toMatchObject({ status: "ok", reasons: [] });
+    await proveAt(7, direct("ok", "transient"));
+    expect(await stub.health(at(7))).toMatchObject({
       status: "ok",
       reasons: ["direct_fcm_failing"],
     });
+    // The two minutes Apple was fine (ok, no reason) were long enough to say so.
+    expect(subjects()).toEqual([
+      "Brigade's own push key is failing: pages go through the relay",
+      NORMAL,
+    ]);
     // Still unknown (no relay answer yet), a failing own key is listed too.
     const { renderOperatorStatusEmail } = await import("../src/email-templates.ts");
     const unknown = renderOperatorStatusEmail(
@@ -744,17 +943,17 @@ describe("the heartbeat, end to end", () => {
     );
     expect(unknown.text).toContain("Google refused this instance's own Firebase service account");
     // Direct sends turned off: nothing of them is kept.
-    await proveAt(6, { apns: "ok", fcm: "ok", d1: "ok" });
-    await flushed();
-    expect(await stub.health(at(6))).toMatchObject({ status: "ok", reasons: [] });
-    expect(sent.map((one) => one.subject).at(-1)).toBe(
-      "Brigade's paging self-check is back to normal",
-    );
+    for (let minute = 8; minute <= 10; minute++) {
+      await proveAt(minute, { apns: "ok", fcm: "ok", d1: "ok" });
+    }
+    expect(await stub.health(at(10))).toMatchObject({ status: "ok", reasons: [] });
+    // FCM's own key failing for a minute and a bit, then gone: the operators were last told "back to normal".
+    expect(subjects()).toHaveLength(2);
   });
 
   test("what a failing provider check was answered reaches the status change and the operators' email, as one word", async () => {
     const { sent, mail } = mailbox();
-    const { stub, events, flushed, proveAt } = await emailingWatchdog(mail);
+    const { stub, events, proveAt } = await emailingWatchdog(mail);
     const changes = async () =>
       (await events()).filter((event) => event.type === STATUS_EVENT).map((event) => event.data);
     /** APNs refusing a new provider token as changed too often: a limit, so `transient` (apps/relay deep-health). */
@@ -764,54 +963,55 @@ describe("the heartbeat, end to end", () => {
       d1: "ok",
       answers: { apns: "TooManyProviderTokenUpdates" },
     };
-    await proveAt(0, { apns: "ok", fcm: "ok", d1: "ok" });
+    const fine: BeatChecks = { apns: "ok", fcm: "ok", d1: "ok" };
+    await proveAt(0, fine);
     // One limited beat, then one that passes, as two signers of one key meeting on a connection look: nobody hears.
     await proveAt(1, limited);
-    await proveAt(2, { apns: "ok", fcm: "ok", d1: "ok" });
+    await proveAt(2, fine);
     await proveAt(3, limited);
     await proveAt(4, limited);
-    await flushed();
     expect(await stub.health(NOW + 4 * MINUTE + 2000)).toMatchObject({ status: "ok", reasons: [] });
-    expect(sent).toHaveLength(1);
+    expect(sent).toHaveLength(0);
     // The third in a row is a limit pages meet too: degraded, and the email says what APNs answered.
     await proveAt(5, limited);
-    await flushed();
     expect((await changes()).at(-1)).toEqual({
       status: "degraded",
       previous: "ok",
       reasons: ["apns_failing"],
       answers: { apns_failing: "TooManyProviderTokenUpdates" },
     });
-    expect(sent).toHaveLength(2);
-    expect(sent[1]!.text).toContain(
+    await proveAt(6, limited);
+    await proveAt(7, limited);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain(
       "so iPhones can't be paged. The check's answer: TooManyProviderTokenUpdates.",
     );
     // Passing again: the answer is forgotten with the failure.
-    await proveAt(6, { apns: "ok", fcm: "ok", d1: "ok" });
-    await flushed();
+    await proveAt(8, fine);
     expect((await changes()).at(-1)).toEqual({ status: "ok", previous: "degraded", reasons: [] });
 
     // The instance's own key, refused at once; an answer that is not one word is never kept or emailed.
-    await proveAt(7, {
+    const refused: BeatChecks = {
       apns: "ok",
       fcm: "error",
       d1: "ok",
       directApns: "error",
       answers: { fcm: "<b>not a word</b>", directApns: "InvalidProviderToken" },
-    });
-    await flushed();
+    };
+    await proveAt(9, refused);
     expect((await changes()).at(-1)).toEqual({
       status: "degraded",
       previous: "ok",
       reasons: ["fcm_failing", "direct_apns_failing"],
       answers: { direct_apns_failing: "InvalidProviderToken" },
     });
+    await proveAt(10, refused);
+    await proveAt(11, refused);
     expect(sent.at(-1)!.text).toContain("The check's answer: InvalidProviderToken.");
     expect(sent.at(-1)!.text).not.toContain("not a word");
     // An older consumer says no answer: the earlier one does not stay on a failure it did not describe.
-    await proveAt(8, { apns: "ok", fcm: "ok", d1: "ok", directApns: "error" });
-    await proveAt(9, { apns: "error", fcm: "ok", d1: "ok", directApns: "error" });
-    await flushed();
+    await proveAt(12, { apns: "ok", fcm: "ok", d1: "ok", directApns: "error" });
+    await proveAt(13, { apns: "error", fcm: "ok", d1: "ok", directApns: "error" });
     expect((await changes()).at(-1)).toEqual({
       status: "degraded",
       previous: "ok",
@@ -819,8 +1019,8 @@ describe("the heartbeat, end to end", () => {
     });
     // Nor on a check that stays failing: a later beat without a word for it (transient here) forgets the earlier one,
     // so the next change does not repeat an answer that beat never gave.
-    await proveAt(10, { apns: "ok", fcm: "ok", d1: "ok" });
-    await proveAt(11, {
+    await proveAt(14, fine);
+    await proveAt(15, {
       apns: "error",
       fcm: "ok",
       d1: "ok",
@@ -829,8 +1029,7 @@ describe("the heartbeat, end to end", () => {
     expect((await changes()).at(-1)).toMatchObject({
       answers: { apns_failing: "InvalidProviderToken" },
     });
-    await proveAt(12, { apns: "transient", fcm: "error", d1: "ok" });
-    await flushed();
+    await proveAt(16, { apns: "transient", fcm: "error", d1: "ok" });
     expect((await changes()).at(-1)).toEqual({
       status: "degraded",
       previous: "degraded",
@@ -845,58 +1044,93 @@ describe("the heartbeat, end to end", () => {
     );
     const { stub, heartbeats, waiting, flushed, proveAt } = await emailingWatchdog(box.mail);
     await proveAt(0);
-    await vi.waitFor(async () => expect(await waiting()).toEqual([{ tries: 1 }]));
-    // Not again within the minute (a proof a moment later), then on the next beats until it goes.
-    await stub.proved((await heartbeats())[0]!.time, "ok", NOW + 2000);
-    expect(box.tries()).toBe(1);
-    await stub.beat(NOW + MINUTE);
-    await vi.waitFor(async () => expect(await waiting()).toEqual([{ tries: 2 }]));
-    await stub.beat(NOW + 2 * MINUTE);
+    await proveAt(1, APNS_REFUSED);
+    await proveAt(2, APNS_REFUSED);
+    await stub.beat(NOW + 3 * MINUTE);
     await flushed();
-    expect(box.sent.map((one) => one.subject)).toEqual([
-      "Brigade's paging self-check is back to normal",
-    ]);
+    expect(await waiting()).toEqual([{ tries: 1 }]);
+    // Not again within the minute (a proof a moment later), then on the next beats until it goes.
+    await stub.proved(
+      (await heartbeats()).at(-1)!.time,
+      "ok",
+      NOW + 3 * MINUTE + 1000,
+      APNS_REFUSED,
+    );
+    await flushed();
+    expect(box.tries()).toBe(1);
+    await stub.beat(NOW + 4 * MINUTE);
+    await flushed();
+    expect(await waiting()).toEqual([{ tries: 2 }]);
+    await stub.beat(NOW + 5 * MINUTE);
+    await flushed();
+    expect(await waiting()).toEqual([]);
+    expect(box.sent.map((one) => one.subject)).toEqual([DEGRADED]);
 
     // An email that never goes is given up after OPERATOR_EMAIL_TRIES tries.
     const never = mailbox(() => ({ ok: false, retry: true, code: "E_INTERNAL_SERVER_ERROR" }));
     const other = await emailingWatchdog(never.mail);
     await other.proveAt(0);
-    for (let n = 1; n < OPERATOR_EMAIL_TRIES; n++) {
-      await vi.waitFor(async () => expect(await other.waiting()).toEqual([{ tries: n }]));
-      await other.proveAt(n);
+    for (let minute = 1; minute <= 2 + OPERATOR_EMAIL_TRIES; minute++) {
+      await other.proveAt(minute, APNS_REFUSED);
     }
-    await other.flushed();
     expect(never.tries()).toBe(OPERATOR_EMAIL_TRIES);
+    expect(await other.waiting()).toEqual([]);
+  });
+
+  test("a degraded email waiting to be tried again is never sent once the status is back to normal", async () => {
+    let down = 2;
+    const box = mailbox(() =>
+      down-- > 0 ? { ok: false, retry: true, code: "E_INTERNAL_SERVER_ERROR" } : { ok: true },
+    );
+    const { waiting, proveAt } = await emailingWatchdog(box.mail);
+    await proveAt(0);
+    await proveAt(1, APNS_REFUSED);
+    await proveAt(2, APNS_REFUSED);
+    await proveAt(3, APNS_REFUSED);
+    await proveAt(4); // the beat tries again and fails; its proof is back to normal
+    expect(box.tries()).toBe(2);
+    expect(await waiting()).toEqual([]);
+    for (let minute = 5; minute <= 8; minute++) await proveAt(minute);
+    // Neither the stale "degraded" nor a "back to normal" for something never told.
+    expect(box.sent).toEqual([]);
+    expect(box.tries()).toBe(2);
   });
 
   test("OPERATOR_EMAILS are emailed each status change, once each, capped per hour", async () => {
     const { sent, mail } = mailbox();
-    const { flushed, proveAt } = await emailingWatchdog(
+    const { proveAt } = await emailingWatchdog(
       mail,
       " ops@example.com, not an address ,oncall@example.test,Ops@Example.com",
     );
     await proveAt(0);
-    await flushed();
     await proveAt(1, { apns: "error", fcm: "ok", d1: "error" });
-    await flushed();
+    await proveAt(2, { apns: "error", fcm: "ok", d1: "error" });
+    await proveAt(3, { apns: "error", fcm: "ok", d1: "error" });
     const to = (subject: string) =>
       sent
         .filter((one) => one.subject === subject)
         .map((one) => one.to.email)
         .sort();
-    expect(to("Brigade's paging self-check is degraded")).toEqual([
-      "oncall@example.test",
-      "ops@example.com",
-    ]);
-    const degraded = sent.find((one) => one.subject === "Brigade's paging self-check is degraded")!;
+    expect(to(DEGRADED)).toEqual(["oncall@example.test", "ops@example.com"]);
+    const degraded = sent.find((one) => one.subject === DEGRADED)!;
     expect(degraded.text).toContain("Apple's push service refused the relay's key");
     expect(degraded.text).toContain("The database (D1) didn't answer a simple read.");
-    // Flapping: ok and degraded in turn, one change a minute. At most OPERATOR_EMAIL_HOURLY_CAP are emailed.
-    for (let minute = 2; minute <= OPERATOR_EMAIL_HOURLY_CAP + 3; minute++) {
-      await proveAt(minute, minute % 2 ? { apns: "error", fcm: "ok", d1: "ok" } : undefined);
-      await flushed();
+    // Flapping: ok and degraded in turn, three minutes each, long enough to be emailed. At most
+    // OPERATOR_EMAIL_HOURLY_CAP an hour are; the change past it waits for a place.
+    const phase = (minute: number) => Math.floor((minute - 1) / 3) % 2 === 0;
+    for (let minute = 4; minute <= 40; minute++) {
+      await proveAt(minute, phase(minute) ? APNS_REFUSED : undefined);
     }
     expect(sent).toHaveLength(OPERATOR_EMAIL_HOURLY_CAP * 2);
+    expect(sent.filter((_, i) => i % 2 === 0).map((one) => one.subject)).toEqual(
+      Array.from({ length: OPERATOR_EMAIL_HOURLY_CAP }, (_, i) =>
+        i % 2 === 0 ? DEGRADED : NORMAL,
+      ),
+    );
+    // Stays degraded: once the hour frees a place, the operators are told the status as it is.
+    for (let minute = 41; minute <= 66; minute++) await proveAt(minute, APNS_REFUSED);
+    expect(sent).toHaveLength(OPERATOR_EMAIL_HOURLY_CAP * 2 + 2);
+    expect(sent.at(-1)!.subject).toBe(DEGRADED);
     expect(operatorAddresses("a@example.com,,  c@example.test ,x")).toEqual([
       "a@example.com",
       "c@example.test",
@@ -910,14 +1144,15 @@ describe("the heartbeat, end to end", () => {
   test("without OPERATOR_EMAILS, or without email set up, nothing is sent and nothing waits", async () => {
     const { sent, mail } = mailbox();
     const nobody = await emailingWatchdog(mail, "");
-    await nobody.proveAt(0);
-    await nobody.flushed();
     const unset = await emailingWatchdog(mail);
     await runInDurableObject(unset.stub, (instance: WatchdogDO) => {
       Reflect.set(instance, "mail", () => undefined);
     });
-    await unset.proveAt(0);
-    await unset.flushed();
+    for (const dog of [nobody, unset]) {
+      await dog.proveAt(0);
+      for (let minute = 1; minute <= 3; minute++) await dog.proveAt(minute, APNS_REFUSED);
+      expect(await dog.waiting()).toEqual([]);
+    }
     expect(sent).toEqual([]);
   });
 
@@ -934,10 +1169,24 @@ describe("the heartbeat, end to end", () => {
     expect(
       (await mail.send({ to: { email: "x@example.com" }, subject: "s", text: "t", html: "h" })).ok,
     ).toBe(false);
-    const { flushed, proveAt } = await emailingWatchdog(mail);
+    const { proveAt } = await emailingWatchdog(mail);
     await proveAt(0);
-    await flushed();
+    for (let minute = 1; minute <= 3; minute++) await proveAt(minute, APNS_REFUSED);
     expect(inner.sent.map((one) => one.to.email)).toEqual(["ops@example.com"]);
+  });
+
+  test("a watchdog from before the operators' last state was kept: its recorded status is what they were told", async () => {
+    const { sent, mail } = mailbox();
+    const { stub, proveAt } = await emailingWatchdog(mail);
+    await proveAt(0);
+    for (let minute = 1; minute <= 3; minute++) await proveAt(minute, APNS_REFUSED);
+    expect(sent.map((one) => one.subject)).toEqual([DEGRADED]);
+    // Deployed while degraded: nothing says what was emailed, and the old queue still holds two changes.
+    await runInDurableObject(stub, (_instance: WatchdogDO, state) => {
+      state.storage.sql.exec("delete from watchdog_state where key = 'notified'");
+    });
+    for (let minute = 4; minute <= 6; minute++) await proveAt(minute);
+    expect(sent.map((one) => one.subject)).toEqual([DEGRADED, NORMAL]);
   });
 
   test("other system events are acked and never reach a shard", async () => {
@@ -1069,15 +1318,46 @@ describe("the signed deep check (RFC 0015)", () => {
           ),
         "relay_handles_unavailable",
       ],
-      [
-        () => Response.json({ error: "registry_unavailable" }, { status: 503 }),
-        "relay_unreachable",
-      ],
     ] as const) {
       await beat(signedRelay(answer).send, { RELAY_INSTANCE_KEY: key.privateKey, DB: env.DB });
       expect((await stub.health()).reasons, reason).toEqual([reason]);
     }
+    // A registry that does not answer is the relay not answering: on the third beat in a row.
+    const unavailable = () => Response.json({ error: "registry_unavailable" }, { status: 503 });
+    for (let n = 0; n < TRANSIENT_FAILURES_TO_DEGRADE; n++) {
+      await beat(signedRelay(unavailable).send, { RELAY_INSTANCE_KEY: key.privateKey, DB: env.DB });
+    }
+    expect((await stub.health()).reasons).toEqual(["relay_unreachable"]);
     expect(pings()).toEqual([]);
+  });
+
+  test("the send token's check not answering beside an admitted instance counts on the third beat in a row", async () => {
+    const { stub, heartbeats, notifyEnv } = watchdog();
+    const { beat } = deepBeats(stub, heartbeats, notifyEnv);
+    const vars = { RELAY_INSTANCE_KEY: key.privateKey, DB: env.DB };
+    const slowToken = signedRelay(admitted, () => new Response(null, { status: 503 }));
+    await beat(signedRelay(admitted).send, vars);
+    await vi.waitFor(() => expect(pings()).toHaveLength(1));
+    for (const n of [1, 2]) {
+      await beat(slowToken.send, vars);
+      expect(await stub.health(), `beat ${n}`).toMatchObject({ status: "ok", reasons: [] });
+      await vi.waitFor(() => expect(pings()).toHaveLength(1 + n));
+    }
+    await beat(slowToken.send, vars);
+    expect(await stub.health()).toMatchObject({
+      status: "degraded",
+      reasons: ["relay_unreachable"],
+    });
+    expect(pings()).toHaveLength(3);
+    // A refused token is at once.
+    await beat(signedRelay(admitted).send, vars);
+    await beat(signedRelay(admitted).send, { ...vars, RELAY_SEND_TOKEN: "rotated" });
+    expect((await stub.health()).reasons).toEqual(["relay_unauthorized"]);
+    // A new watchdog whose send token never answered yet: not a failure until the third, as for the relay.
+    const fresh = watchdog();
+    const once = deepBeats(fresh.stub, fresh.heartbeats, fresh.notifyEnv);
+    await once.beat(slowToken.send, vars);
+    expect(await fresh.stub.health()).toMatchObject({ status: "ok", reasons: [] });
   });
 
   test("the relay's limits degrade only on the third limited beat in a row (shared egress IPs, Q28)", async () => {

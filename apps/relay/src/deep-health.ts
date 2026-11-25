@@ -66,7 +66,7 @@ async function checkApns(
   now: number,
 ): Promise<ProviderCheck> {
   // Twice at most: again with the relay's own signer when APNs refused the token Ember's transport signed, as a page
-  // would be (src/send.ts), both within the one `DEEP_CHECK_TIMEOUT_MS` (the API gives the whole check 5 s).
+  // would be (src/send.ts), both within the one `DEEP_CHECK_TIMEOUT_MS` (the API gives the whole check 8 s).
   const deadline = Date.now() + DEEP_CHECK_TIMEOUT_MS;
   for (let attempt = 0; ; attempt++) {
     let token: Awaited<ReturnType<ProviderTokens["apns"]>>;

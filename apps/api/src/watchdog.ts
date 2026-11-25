@@ -26,11 +26,15 @@ export const WATCHDOG_ACTOR: Actor = { kind: "system", id: "sys_watchdog", role:
 
 /**
  * The newest proved beat older than this (three missed minutes) makes the pipeline degraded; so does no beat at all.
+ * Half a minute past the cron's third minute, not on it: the beat that finds three unproved minutes behind it is
+ * written a second or so before its own proof comes back, and an exact 3 minutes made that beat `pipeline_stalled`
+ * and its proof `ok` again a second later (two operator emails in one minute).
  */
-export const BEAT_STALE_MS = 3 * 60 * 1000;
+export const BEAT_STALE_MS = 3.5 * 60 * 1000;
 /**
- * A proof that took longer than this to come back pings nothing, and shows as `pipeline_slow`, so the dashboard and
- * the external check agree.
+ * A proof that took longer than this to come back pings nothing; on the `TRANSIENT_FAILURES_TO_DEGRADE`th in a row it
+ * shows as `pipeline_slow`. One late beat (a Queue batch that waited) says little: a Queue that stays backed up is
+ * three in a row, and one stopped is `pipeline_stalled`.
  */
 export const MAX_PROOF_LATENCY_MS = 2 * 60 * 1000;
 /** How long the external check gets per ping. */
@@ -44,10 +48,19 @@ export const OPERATOR_EMAIL_HOURLY_CAP = 6;
 export const OPERATOR_EMAIL_TRIES = 5;
 /** Just under the cron's minute, so a failure on a proof (a few seconds after its beat) is tried on the next beat. */
 const OPERATOR_EMAIL_RETRY_MS = 50 * 1000;
+/**
+ * How long a status change waits before it is emailed, so a change that is undone within it (a beat degraded and its
+ * proof a second later back to ok) emails nobody. A beat and its proof each send what is due, so in practice a change
+ * goes out with the second beat after it, about two minutes later. The external check (`DEAD_MAN_URL`) is what pages;
+ * this email only says why.
+ */
+export const OPERATOR_EMAIL_HOLD_MS = 90 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 /**
- * A deeper check (APNs, FCM, D1) failing transiently on this many proved beats in a row degrades the status and stops
- * the pings; fewer change nothing, so one slow answer does not page the operators.
+ * A check failing transiently on this many proved beats in a row degrades the status and stops the pings; fewer change
+ * nothing, so one slow answer does not page the operators. Transient: a deeper check (APNs, FCM, D1) the consumer
+ * marks so, the relay not answering (`unreachable`) or limiting (`rate_limited`), for its deep check and for the send
+ * token's, and a proof later than `MAX_PROOF_LATENCY_MS` (`pipeline_slow`).
  */
 export const TRANSIENT_FAILURES_TO_DEGRADE = 3;
 
@@ -180,9 +193,14 @@ type Keys =
   | "direct_apns_answer"
   | "direct_fcm_answer"
   | "send_token"
-  | "relay_limited"
+  | "relay_failures"
+  | "send_token_failures"
+  | "slow_proofs"
+  | "slow"
   | "status"
   | "reasons"
+  /** What the operators were last told (`stateKey`): a change back to it before its email went out emails nobody. */
+  | "notified"
   | "last_ping_at"
   | "last_ping_ok"
   | "beats";
@@ -256,10 +274,9 @@ export class WatchdogDO extends DurableObject<Env> {
     const pages = this.ctx.storage.transactionSync(() => {
       this.set("proved_beat_at", String(beatAt));
       this.set("last_proved_at", String(now));
-      const recorded = this.relayCheck(relay);
-      const token = checks?.sendToken;
-      if (token === undefined) this.delete("send_token");
-      else this.set("send_token", token);
+      this.slowCheck(now - beatAt > MAX_PROOF_LATENCY_MS);
+      const recorded = this.relayCheck("relay", relay);
+      const token = this.relayCheck("send_token", checks?.sendToken);
       const answers = checks?.answers;
       this.check("apns", checks?.apns ?? "unknown", answers?.apns);
       this.check("fcm", checks?.fcm ?? "unknown", answers?.fcm);
@@ -277,7 +294,8 @@ export class WatchdogDO extends DurableObject<Env> {
       }
       const failed = (["apns", "fcm", "d1"] as const).some((key) => this.get(key) === "error");
       // "The last time a page could have gone out": not while APNs, FCM or D1 is failing, nor the send token.
-      const up = recorded === "ok" && (token === undefined || token === "ok") && !failed;
+      // A send token not known yet (its every answer so far transient) is no failure either, as for the providers.
+      const up = recorded === "ok" && (token === null || token === "ok") && !failed;
       if (up) this.set("last_ok_at", String(now));
       this.settle(now);
       return up;
@@ -290,60 +308,79 @@ export class WatchdogDO extends DurableObject<Env> {
   }
 
   /**
-   * Emails the operators each status change waiting in `operator_email_queue` (`settle` puts it there, in the same
+   * Emails the operators the status change waiting in `operator_email_queue` (`settle` puts it there, in the same
    * transaction as the change), from here, not through the outbox, the Queue and the consumer: a stalled Queue is one
    * of the things it reports, and an email waiting in it would arrive with the recovery. Runs in `waitUntil` after
-   * every beat and proof, so one that failed, or never finished (the object evicted mid-send), is tried again a minute
-   * later, up to `OPERATOR_EMAIL_TRIES` times. At most `OPERATOR_EMAIL_HOURLY_CAP` changes an hour are emailed; the rest
-   * are only logged. Never throws.
+   * every beat and proof. The queue holds one change, the newest (`settle` replaces the one before), and it waits
+   * `OPERATOR_EMAIL_HOLD_MS`; when it comes back to what the operators were last told (`notified`) before it goes, it
+   * goes nowhere: a flap that passed emails nobody, and a "degraded" whose send failed is never sent after the status
+   * is back to normal. One that failed, or never finished (the object evicted mid-send), is tried again a minute
+   * later, up to `OPERATOR_EMAIL_TRIES` times. At most `OPERATOR_EMAIL_HOURLY_CAP` are emailed an hour; past it the
+   * change waits for the hour to free a place (and is dropped if the status comes back meanwhile). Never throws.
    */
   private async emailOperators(now: number): Promise<void> {
     if (this.emailing) return;
     this.emailing = true;
     const sql = this.ctx.storage.sql;
     try {
-      const due = sql
-        .exec<{ event_id: string; event: string; tries: number }>(
-          "select event_id, event, tries from operator_email_queue where next_at <= ? order by next_at",
-          now,
+      const rows = sql
+        .exec<{ event_id: string; event: string; tries: number; next_at: number }>(
+          "select event_id, event, tries, next_at from operator_email_queue",
+        )
+        .toArray()
+        .map((row) => ({ ...row, change: JSON.parse(row.event) as BrigadeEvent }));
+      // One change at most since `settle` replaces it; a queue from before that keeps its newest.
+      rows.sort((a, b) => Date.parse(a.change.time) - Date.parse(b.change.time));
+      const row = rows.pop();
+      for (const older of rows) {
+        sql.exec("delete from operator_email_queue where event_id = ?", older.event_id);
+      }
+      if (!row) return;
+      const told = changeKey(row.change);
+      if (sameState(told, this.get("notified"))) {
+        log("operator email not sent: back to what was last emailed", { event: row.event_id });
+        sql.exec("delete from operator_email_queue where event_id = ?", row.event_id);
+        return;
+      }
+      if (row.next_at > now) return;
+      sql.exec("delete from operator_emails where at < ?", now - 24 * 60 * 60 * 1000);
+      const sent = sql
+        .exec<{ at: number }>(
+          "select at from operator_emails where at > ? order by at",
+          now - HOUR_MS,
         )
         .toArray();
-      for (const row of due) {
-        sql.exec("delete from operator_emails where at < ?", now - 24 * 60 * 60 * 1000);
-        const { sent } = sql
-          .exec<{ sent: number }>(
-            "select count(*) as sent from operator_emails where at > ?",
-            now - HOUR_MS,
-          )
-          .one();
-        if (sent >= OPERATOR_EMAIL_HOURLY_CAP) {
-          log("operator email not sent: capped", { event: row.event_id });
-          sql.exec("delete from operator_email_queue where event_id = ?", row.event_id);
-          continue;
-        }
-        const outcome = await notifyOperators(
-          JSON.parse(row.event) as BrigadeEvent,
-          this.env as WatchdogEnv,
-          this.mail(),
+      if (sent.length >= OPERATOR_EMAIL_HOURLY_CAP) {
+        log("operator email held: capped", { event: row.event_id });
+        // When the oldest of the hour's emails leaves the hour.
+        sql.exec(
+          "update operator_email_queue set next_at = ? where event_id = ?",
+          sent[0]!.at + HOUR_MS + 1,
+          row.event_id,
         );
-        if (outcome === "sent") {
-          sql.exec(
-            "insert or ignore into operator_emails (event_id, at) values (?, ?)",
-            row.event_id,
-            now,
-          );
-        }
-        if (outcome !== "failed" || row.tries + 1 >= OPERATOR_EMAIL_TRIES) {
-          if (outcome === "failed")
-            log("operator email given up", { event: row.event_id, tries: row.tries + 1 });
-          sql.exec("delete from operator_email_queue where event_id = ?", row.event_id);
-        } else {
-          sql.exec(
-            "update operator_email_queue set tries = tries + 1, next_at = ? where event_id = ?",
-            now + OPERATOR_EMAIL_RETRY_MS,
-            row.event_id,
-          );
-        }
+        return;
+      }
+      const outcome = await notifyOperators(row.change, this.env as WatchdogEnv, this.mail());
+      if (outcome === "sent") {
+        sql.exec(
+          "insert or ignore into operator_emails (event_id, at) values (?, ?)",
+          row.event_id,
+          now,
+        );
+      }
+      // Skipped (nobody to email) counts as told: nobody is left to tell of it.
+      if (outcome !== "failed") this.set("notified", told);
+      if (outcome !== "failed" || row.tries + 1 >= OPERATOR_EMAIL_TRIES) {
+        if (outcome === "failed")
+          log("operator email given up", { event: row.event_id, tries: row.tries + 1 });
+        sql.exec("delete from operator_email_queue where event_id = ?", row.event_id);
+      } else {
+        // A no-op when `settle` replaced the change while it was being sent: the newer one waits its own turn.
+        sql.exec(
+          "update operator_email_queue set tries = tries + 1, next_at = ? where event_id = ?",
+          now + OPERATOR_EMAIL_RETRY_MS,
+          row.event_id,
+        );
       }
     } catch (error) {
       log("operator email failed", { error: String(error) });
@@ -366,6 +403,7 @@ export class WatchdogDO extends DurableObject<Env> {
           lastBeatAt: num(this.get("last_beat_at")),
           provedBeatAt: num(this.get("proved_beat_at")),
           lastProvedAt: num(this.get("last_proved_at")),
+          slow: this.get("slow") === "1",
           relay: this.get("relay") as RelayHealth | null,
           sendToken: this.get("send_token") as RelayHealth | null,
           apns: this.get("apns") as CheckHealth | null,
@@ -417,21 +455,48 @@ export class WatchdogDO extends DurableObject<Env> {
   }
 
   /**
-   * Records what a proved beat found at the relay, and returns what counts. The relay's limits (`rate_limited`) are
-   * transient: its signed deep check is limited per caller IP, and instances on Workers may share Cloudflare's egress
-   * addresses (Q28), so one limited answer says little. Until the `TRANSIENT_FAILURES_TO_DEGRADE`th in a row the relay
-   * keeps what it was (nothing, before any answer); anything else is recorded as it is and starts the count again.
+   * Records what a proved beat found at the relay (`relay`), or the send token's own check beside it (`send_token`,
+   * absent when it did not run), and returns what counts. Not answering (`unreachable`) and its limits
+   * (`rate_limited`) are transient: a relay or a provider behind it slow for one beat, a deploy, a network blip; and
+   * the signed deep check is limited per caller IP, while instances on Workers may share Cloudflare's egress addresses
+   * (Q28). Until the `TRANSIENT_FAILURES_TO_DEGRADE`th in a row the check keeps what it was (nothing, before any
+   * answer); anything else (a refused token or signature, an instance unregistered or revoked, no relay configured) is
+   * recorded as it is, at once, and starts the count again.
    */
-  private relayCheck(found: RelayHealth): RelayHealth | null {
-    if (found !== "rate_limited") {
-      this.set("relay_limited", "0");
-      this.set("relay", found);
+  private relayCheck(
+    key: "relay" | "send_token",
+    found: RelayHealth | undefined,
+  ): RelayHealth | null {
+    const count: Keys = `${key}_failures`;
+    if (found === undefined) {
+      this.delete(key);
+      this.delete(count);
+      return null;
+    }
+    if (found !== "unreachable" && found !== "rate_limited") {
+      this.set(count, "0");
+      this.set(key, found);
       return found;
     }
-    const limited = Number(this.get("relay_limited") ?? 0) + 1;
-    this.set("relay_limited", String(limited));
-    if (limited >= TRANSIENT_FAILURES_TO_DEGRADE) this.set("relay", found);
-    return this.get("relay") as RelayHealth | null;
+    const failures = Number(this.get(count) ?? 0) + 1;
+    this.set(count, String(failures));
+    if (failures >= TRANSIENT_FAILURES_TO_DEGRADE) this.set(key, found);
+    return this.get(key) as RelayHealth | null;
+  }
+
+  /**
+   * Records whether a proof came back later than `MAX_PROOF_LATENCY_MS`: `pipeline_slow` from the
+   * `TRANSIENT_FAILURES_TO_DEGRADE`th in a row, gone with the first that is not. A slow proof pings nothing either way.
+   */
+  private slowCheck(slow: boolean): void {
+    if (!slow) {
+      this.set("slow_proofs", "0");
+      this.delete("slow");
+      return;
+    }
+    const proofs = Number(this.get("slow_proofs") ?? 0) + 1;
+    this.set("slow_proofs", String(proofs));
+    if (proofs >= TRANSIENT_FAILURES_TO_DEGRADE) this.set("slow", "1");
   }
 
   /** Drains the outbox to the Queue; comes back when a failed send's backoff ends. */
@@ -449,8 +514,8 @@ export class WatchdogDO extends DurableObject<Env> {
   }
 
   /**
-   * Recomputes the status and, when it or its reasons changed, writes `brigade.status_changed` to the outbox and to
-   * the operators' email queue (`emailOperators`), and logs it (Workers Logs alerts can watch for `paging pipeline
+   * Recomputes the status and, when it or its reasons changed, writes `brigade.status_changed` to the outbox, puts it
+   * in the operators' email queue in place of any change still waiting there (`emailOperators`), and logs it (Workers Logs alerts can watch for `paging pipeline
    * degraded`). Runs only on a beat or a proof, so `no_beat` (no beat is what runs it) is never logged or evented:
    * only `GET /health/paging` and the external check see it. Call inside a transaction.
    */
@@ -458,7 +523,12 @@ export class WatchdogDO extends DurableObject<Env> {
     const { status, reasons } = this.health(now);
     const previous = this.get("status");
     const key = JSON.stringify([...reasons].sort());
-    if (previous === status && this.get("reasons") === key) return;
+    const previousKey = this.get("reasons");
+    if (previous === status && previousKey === key) return;
+    // A watchdog from before `notified` was kept: what it recorded last was emailed as it changed.
+    if (this.get("notified") === null && previous !== null) {
+      this.set("notified", stateKey(previous, previousKey ?? "[]"));
+    }
     this.set("status", status);
     this.set("reasons", key);
     // The first beat (nothing to unknown) is not a change anyone needs to hear about.
@@ -481,11 +551,22 @@ export class WatchdogDO extends DurableObject<Env> {
       reasons,
       ...said,
     });
-    this.ctx.storage.sql.exec(
+    // The newest change replaces the one waiting: the operators hear of the status as it is, once it held for
+    // `OPERATOR_EMAIL_HOLD_MS`. One already waiting for something the operators were not told keeps its turn, so a
+    // status that keeps changing is still emailed.
+    const sql = this.ctx.storage.sql;
+    const notified = this.get("notified");
+    const waiting = sql
+      .exec<{ event: string; next_at: number }>("select event, next_at from operator_email_queue")
+      .toArray()
+      .filter((row) => !sameState(changeKey(JSON.parse(row.event) as BrigadeEvent), notified))
+      .map((row) => row.next_at);
+    sql.exec("delete from operator_email_queue");
+    sql.exec(
       "insert into operator_email_queue (event_id, event, tries, next_at) values (?, ?, 0, ?)",
       change!.id,
       JSON.stringify(change),
-      now,
+      Math.min(now + OPERATOR_EMAIL_HOLD_MS, ...waiting),
     );
   }
 
@@ -555,9 +636,10 @@ export class WatchdogDO extends DurableObject<Env> {
  * - `pipeline_stalled`: the newest proved beat (or, before any, the first beat) is older than `BEAT_STALE_MS`, so
  *   beats stopped coming through or come through late (the alarm, the drain, the Queue or the consumer stopped, or
  *   the Queue is backed up);
- * - `pipeline_slow`: the last proof took longer than `MAX_PROOF_LATENCY_MS`, which pings nothing;
+ * - `pipeline_slow`: proofs took longer than `MAX_PROOF_LATENCY_MS` on `TRANSIENT_FAILURES_TO_DEGRADE` beats in a row
+ *   (`slow`); each such proof pings nothing;
  * - `relay_unauthorized` / `relay_unreachable` / `relay_not_configured`: what the consumer found at the relay on the
- *   last proof; with an instance key (RFC 0015), `relay_bad_signature` / `relay_instance_unregistered` /
+ *   last proof (`unreachable` and `rate_limited` only as `WatchdogDO.relayCheck` counts them); with an instance key (RFC 0015), `relay_bad_signature` / `relay_instance_unregistered` /
  *   `relay_instance_revoked` / `relay_rate_limited` / `relay_handles_unavailable` from its signed deep health;
  * - `apns_failing` / `fcm_failing` / `d1_failing`: the deeper checks (Q19): APNs refused the relay's provider token,
  *   FCM refused the service account, or (on `TRANSIENT_FAILURES_TO_DEGRADE` proofs in a row) a provider or the D1
@@ -573,6 +655,8 @@ export function pagingStatus(
     /** The time of the newest beat proved (when the cron wrote it, not when it came back). */
     provedBeatAt: number | null;
     lastProvedAt: number | null;
+    /** Proofs came back later than `MAX_PROOF_LATENCY_MS` on enough beats in a row (`WatchdogDO.slowCheck`). */
+    slow?: boolean;
     relay: RelayHealth | null;
     /** The send token's check beside the signed one (`BeatChecks.sendToken`); null or absent without it. */
     sendToken?: RelayHealth | null;
@@ -589,9 +673,7 @@ export function pagingStatus(
   const reasons: DegradedReason[] = [];
   if (now - lastBeatAt > BEAT_STALE_MS) reasons.push("no_beat");
   if (now - (provedBeatAt ?? firstBeatAt) > BEAT_STALE_MS) reasons.push("pipeline_stalled");
-  if (provedBeatAt !== null && lastProvedAt !== null) {
-    if (lastProvedAt - provedBeatAt > MAX_PROOF_LATENCY_MS) reasons.push("pipeline_slow");
-  }
+  if (times.slow) reasons.push("pipeline_slow");
   if (relay === "unauthorized" || times.sendToken === "unauthorized") {
     reasons.push("relay_unauthorized");
   }
@@ -657,6 +739,27 @@ const ANSWER_KEYS = [
   ["direct_apns_failing", "direct_apns_answer"],
   ["direct_fcm_failing", "direct_fcm_answer"],
 ] as const satisfies readonly (readonly [DegradedReason, Keys])[];
+
+/** A status and its sorted reasons (as `settle` keeps them, JSON), as one string to compare. */
+function stateKey(status: string, reasons: string): string {
+  return `${status} ${reasons}`;
+}
+
+/** The state a `brigade.status_changed` event tells of (`stateKey`). */
+function changeKey(event: BrigadeEvent): string {
+  const data = Object(event.data) as { status?: unknown; reasons?: unknown };
+  const reasons = Array.isArray(data.reasons) ? data.reasons.map(String).sort() : [];
+  return stateKey(String(data.status), JSON.stringify(reasons));
+}
+
+/**
+ * Whether two states tell the operators the same: equal, or both nothing wrong (ok or unknown with no reason; never
+ * told counts as that), so a new watchdog's first proof (unknown to ok) emails nobody.
+ */
+function sameState(a: string | null, b: string | null): boolean {
+  const quiet = (key: string | null) => key === null || key === "ok []" || key === "unknown []";
+  return a === b || (quiet(a) && quiet(b));
+}
 
 function num(value: string | null): number | null {
   return value === null ? null : Number(value);

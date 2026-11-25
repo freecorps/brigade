@@ -393,7 +393,8 @@ results (a new monitor is up on its first success).
   2. The alarm drains it with the same `OutboxDrain` as the shards to the `brigade-events` Queue.
   3. The Queue consumer routes the watchdog's events (`workspaceId` `_system`, which no workspace can have) away from
      the shards: for a heartbeat it asks the relay's **deep health check** (decided, Q19): `GET /health?deep=1` with
-     the bearer send token (5 s timeout). The deep check is only for the send token's holder (`401` otherwise, so its
+     the bearer send token (8 s timeout, well above the relay's own 3 s per provider plus its registry read, so a
+     provider that does not answer comes back as the relay's `transient` answer, not as the relay timing out). The deep check is only for the send token's holder (`401` otherwise, so its
      detail is never public; the plain `/health` stays `{ ok: true }`). It proves the token, and asks each push provider
      whether it would take a page without sending one: APNs gets the relay's cached provider token on a request for a
      device that cannot exist (all zeros), so `400 BadDeviceToken` means it took the token, and so does `429 TooManyRequests` (that
@@ -401,7 +402,7 @@ results (a new monitor is up on its first success).
      the key is revoked or wrong. Any other `429` is a limit that may pass (`transient`, below): the one seen is
      `TooManyProviderTokenUpdates`, a new provider token on a connection less than 20 minutes after another. Only the host of the relay's `APNS_ENVIRONMENT` is asked: one key signs for both
      hosts, so a key one takes the other takes too. FCM is asked for an OAuth access
-     token for `FCM_SERVICE_ACCOUNT`, a fresh one each time (each provider gets 3 s, inside the consumer's 5 s) (`not_configured` without it: a relay serving iOS only). A relay from
+     token for `FCM_SERVICE_ACCOUNT`, a fresh one each time (each provider gets 3 s, inside the consumer's 8 s) (`not_configured` without it: a relay serving iOS only). A relay from
      before the deep check answers its plain `/health` there; then the consumer falls back to proving the token as
      before (`POST /send` with no body: `400 invalid_body` means accepted, before any APNs call or log), and the
      providers are `unknown`. **With an instance key** (`RELAY_INSTANCE_KEY`, RFC 0015 sections 3 and 7) the consumer
@@ -413,14 +414,18 @@ results (a new monitor is up on its first success).
      `/v1` (`404`) is `relay_handles_unavailable`, with the send token's old deep check for the providers. Beside it the
      consumer makes **one cheap D1 read** (`select 1`, 3 s), and, when the instance sends pages itself (RFC 0016 step
      2, Q34), runs the same deep check with its own APNs key and Firebase account (`directApns`, `directFcm`). It
-     reports all of it back to the watchdog (`proved`).
+     reports all of it back to the watchdog (`proved`). Several heartbeats in one batch (a Queue that waited, a
+     redelivery) are all acked and only the newest is proved: an older one proved beside it could land first and say
+     `pipeline_slow` a moment before the newest says all is well.
   4. The watchdog pings `DEAD_MAN_URL` (one `GET`, 5 s timeout) only when that beat is newer than any proved before,
      came back within 2 minutes, the relay took the token, and none of the deeper checks failed: a revoked APNs key,
      an FCM account Google refuses, or a D1 that does not answer stops the pings, so the operators hear of it (a
      provider `not_configured` or `unknown` does not). A failure that will not pass by itself (APNs refusing the
      provider token, a key that will not sign, Google refusing the account) counts on its first beat. One that may (the
      relay marks it `transient`: a provider timing out or answering 5xx, APNs answering a limit (`429`), Google's token
-     endpoint slow or busy; and any failed D1 read) counts only on the **3rd proved beat in a row** it fails (`TRANSIENT_FAILURES_TO_DEGRADE`, a count
+     endpoint slow or busy; any failed D1 read; the relay not answering (`unreachable`) or limiting (`rate_limited`),
+     for its deep check and for the send token's beside it; and a proof back later than 2 minutes, `pipeline_slow`)
+     counts only on the **3rd proved beat in a row** it fails (`TRANSIENT_FAILURES_TO_DEGRADE`, a count
      per check in the watchdog's storage): before that the beat still pings and the status does not change, so one
      slow answer does not page the operators. A check that passes starts its count again, so a provider failing two beats in three never degrades (accepted:
      the pages themselves are retried, and a lasting outage fails three in a row). Anything else is silence.
@@ -454,12 +459,14 @@ results (a new monitor is up on its first success).
   they may not be paged. `external` (whether the check is configured and the last ping) is never sent: it is the
   instance operator's business, and with open sign-up any user can own a workspace, so no workspace role stands in for
   that operator (Q19); operators read it in the logs. The dashboard asks with the session's cookie and shows a notice above the incidents while it is not
-  `ok` (nothing while it is), checking every minute while the tab is visible. `degraded` means: no beat for 3 minutes
-  (`no_beat`); the newest proved beat, by when the cron wrote it, older than 3 minutes (`pipeline_stalled`: beats
-  stopped coming through, or come through late from a backed-up Queue); the last proof took over 2 minutes
-  (`pipeline_slow`, which is also why it pinged nothing, so the dashboard and the external check agree); or the relay
-  refused the token (`relay_unauthorized`), did not answer (`relay_unreachable`) or is not configured
-  (`relay_not_configured`) on the last proof, or, for an instance with a relay key (RFC 0015 section 7), its signed
+  `ok` (nothing while it is), checking every minute while the tab is visible. `degraded` means: no beat for 3.5 minutes
+  (`no_beat`); the newest proved beat, by when the cron wrote it, older than 3.5 minutes (`pipeline_stalled`: beats
+  stopped coming through, or come through late from a backed-up Queue; half a minute past the third cron minute, not
+  on it, since the beat that finds three unproved minutes behind it is written a second before its own proof, which
+  made that beat `pipeline_stalled` and its proof `ok` again a second later); proofs took over 2 minutes on the 3rd
+  beat in a row (`pipeline_slow`; each such proof pings nothing); or the relay refused the token
+  (`relay_unauthorized`) or is not configured (`relay_not_configured`) on the last proof, or did not answer on the 3rd
+  in a row (`relay_unreachable`), or, for an instance with a relay key (RFC 0015 section 7), its signed
   deep check refused the instance (`relay_bad_signature`, `relay_instance_unregistered`, `relay_instance_revoked`;
   `relay_rate_limited` only on the 3rd proved beat in a row, as the check is limited per caller IP and instances may
   share egress addresses, Q28) or the relay cannot page handle phones (`relay_handles_unavailable`); or its deeper checks failed as above (at once, or on the 3rd beat in a
@@ -475,13 +482,25 @@ results (a new monitor is up on its first success).
   (seen in production: a 7-minute Queue stall whose "degraded" email came with the "back to normal" one). `settle`
   puts each change in the watchdog's own email queue in the same transaction that records it, and every beat and proof
   sends what is due, in `waitUntil`; a send that reached nobody, or never finished, is tried again on the next beats,
-  at most 5 times, then logged as given up. At most `OPERATOR_EMAIL_HOURLY_CAP` (6) changes an hour are emailed, the
-  rest only logged; it never holds up a page. `no_beat` never is: a beat or a proof is what
+  at most 5 times, then logged as given up. **The email waits and says the status as it is (decided).** Operators
+  got "degraded" and "back to normal" a second apart, the same minute: a relay check that ran past the consumer's
+  timeout for one beat, a beat stalled on an exact 3-minute edge and its proof a second later, and a failed
+  "degraded" email tried again after the recovery. So the queue holds one change, the newest (each change replaces
+  the one waiting, which keeps its turn), and it waits `OPERATOR_EMAIL_HOLD_MS` (90 s, so in practice it goes with
+  the second beat after it). The watchdog keeps what the operators were last told (`notified`; a watchdog from before
+  it takes its last recorded status); a change that comes back to it before it goes is dropped, so a flap emails
+  nobody, and a "degraded" waiting to be tried again is never sent once the status is back to normal. Nothing wrong
+  (ok or unknown, no reason) is one state there, so a new watchdog's first proof emails nobody. At most
+  `OPERATOR_EMAIL_HOURLY_CAP` (6) are emailed an hour; past it the change waits for the hour to free a place (and is
+  dropped if the status came back meanwhile). The event and the log line are still written for every change. It
+  never holds up a page, and the external check, which pages, does not wait on it. `no_beat` never is: a beat or a proof is what
   records a change, and no beat means neither runs, so only `GET /health/paging` and the external check see it.
   Tests: `apps/relay/test/deep-health.test.ts` ("APNs answering 429 TooManyRequests …"),
   `apps/api/test/watchdog.test.ts` ("a relay with the deep check: …", "a transient deep-check failure …", "what a
   failing provider check was answered …", "OPERATOR_EMAILS are emailed …", "a stalled queue: the watchdog emails the
-  operators itself …", "an email that failed is tried again …").
+  operators itself …", "an email that failed is tried again …", "a change undone
+  before its email went out emails nobody …", "a degraded email waiting to be tried again is never sent …", "a relay
+  not answering on one beat or two …", "several heartbeats in one batch …").
 
   Not covered: each workspace shard's own alarm and outbox (the watchdog proves the shared code and the shared
   Queue, not every shard's drain), which waits on a registry of shards, and whether APNs delivers (the deep check

@@ -436,15 +436,18 @@ operators when the pings stop.
 lastBeatAt, lastProvedAt, lastOkAt, relay }` to a member; never `external` (operators read the logs). `relay` is which
 relay pages go through, `{ kind: "none" | "freecorps" | "own", host, app }` (`relaySetup` in src/relay-instance.ts,
 RFC 0015 section 8): the dashboard's "Phones and pages" and "Use the app".
-`degraded` after 3 minutes with no beat (`no_beat`), with the newest proved beat older than 3 minutes
-(`pipeline_stalled`), with the last proof over 2 minutes late (`pipeline_slow`), or with the relay
-`relay_unauthorized`, `relay_unreachable` or `relay_not_configured` (or one of the signed check's reasons above) on
-the last proof, or with `apns_failing`,
+`degraded` after 3.5 minutes with no beat (`no_beat`), with the newest proved beat older than 3.5 minutes
+(`pipeline_stalled`), with proofs over 2 minutes late on the 3rd beat in a row (`pipeline_slow`), or with the relay
+`relay_unauthorized` or `relay_not_configured` (or one of the signed check's reasons above) on the last proof, or
+`relay_unreachable` (the relay's or the send token's check not answering within 8 s) on the 3rd in a row, or with `apns_failing`,
 `fcm_failing` or `d1_failing` from its deeper checks; `unknown` before the first proof. The dashboard shows a notice
 while it is not `ok`. Changes of status or reasons write `brigade.status_changed` and log `paging pipeline degraded`;
-the watchdog emails each to `OPERATOR_EMAILS` (comma-separated, at most 10 addresses, in English) as it happens, not
-through the Queue it may be reporting stalled, and tries a failed one again on the next beats (5 times). At most 6
-changes an hour, never in a page's way (`src/notify-operators.ts`).
+the watchdog emails them to `OPERATOR_EMAILS` (comma-separated, at most 10 addresses, in English) itself, not through
+the Queue it may be reporting stalled: the newest change, once it held 90 s (`OPERATOR_EMAIL_HOLD_MS`), and only if
+it differs from what the operators were last told, so a flap emails nobody and a failed "degraded" is never sent
+after the recovery. A failed one is tried again on the next beats (5 times). At most 6 an hour (past it the change
+waits for a place), never in a page's way (`src/notify-operators.ts`). Several heartbeats in one Queue batch: only the
+newest is proved.
 
 `DEAD_MAN_URL` is an optional secret (`wrangler secret put DEAD_MAN_URL --env dev`; `https:` only, `http:` on
 loopback). Locally the cron never fires on its own, and `secrets.required` keeps optional secrets out of `.dev.vars`,

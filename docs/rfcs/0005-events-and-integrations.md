@@ -436,7 +436,8 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   `apps/api/test/email.test.ts` ("the owners' email about a member taken out of schedules").
 - **Built.** An email to Brigade's operators (`OPERATOR_EMAILS`) on `brigade.status_changed` (Q19, RFC 0007
   "Watching the watcher"), on the `EmailSender`: sent by the watchdog itself, not by the Queue's consumer: the
-  newest change once it held 90 s (`OPERATOR_EMAIL_HOLD_MS`), dropped if the status came back to what the operators
+  newest change once it held 90 s (`OPERATOR_EMAIL_HOLD_MS`; one that replaces a change still waiting keeps that
+  change's turn, so a status that keeps changing is still emailed), dropped if the status came back to what the operators
   were last told, waiting for a place past `OPERATOR_EMAIL_HOURLY_CAP`, and tried again on the next beats when it
   fails. The full rules are in RFC 0007 "Watching the watcher".
 
